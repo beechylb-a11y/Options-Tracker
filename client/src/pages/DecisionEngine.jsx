@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ExternalLink, Zap, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { ExternalLink, Zap, FileText, ChevronDown, ChevronUp, GitCompare, TrendingUp, TrendingDown, Check, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 
@@ -9,6 +9,9 @@ export default function DecisionEngine({ authenticated }) {
   const [mode, setMode] = useState('0dte');
   const [decisions, setDecisions] = useState([]);
   const [showLog, setShowLog] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [comparison, setComparison] = useState(null);
+  const [compLoading, setCompLoading] = useState(false);
   const [expandedDecision, setExpandedDecision] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -83,10 +86,26 @@ export default function DecisionEngine({ authenticated }) {
               45 DTE
             </button>
           </div>
-          <button onClick={() => setShowLog(!showLog)}
+          <button onClick={() => { setShowLog(!showLog); setShowComparison(false); }}
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${showLog ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <FileText size={14} />
             Trade Log ({decisions.length})
+          </button>
+          <button onClick={async () => {
+              setShowComparison(!showComparison);
+              setShowLog(false);
+              if (!comparison && !compLoading) {
+                setCompLoading(true);
+                try {
+                  const data = await api.getComparison();
+                  setComparison(data);
+                } catch(e) { console.error(e); }
+                setCompLoading(false);
+              }
+            }}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${showComparison ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <GitCompare size={14} />
+            Compare
           </button>
           <a href={ENGINE_URL} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover transition-colors text-text-muted">
@@ -178,8 +197,105 @@ export default function DecisionEngine({ authenticated }) {
         </div>
       )}
 
+      {/* Comparison Panel */}
+      {showComparison && (
+        <div className="card mb-4 fade-in" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-medium text-text">Decision Engine vs Actual Results</h3>
+              <p className="text-xs text-text-muted mt-0.5">Auto-matched by underlying + date + strategy</p>
+            </div>
+            {comparison?.summary && (
+              <div className="flex items-center gap-4">
+                <div className="text-center">
+                  <div className="text-[10px] text-text-faint uppercase">Matched</div>
+                  <div className="text-sm font-bold mono">{comparison.summary.totalMatched}/{comparison.summary.totalDecisions}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] text-text-faint uppercase">Engine accuracy</div>
+                  <div className={`text-sm font-bold mono ${comparison.summary.engineAccuracy >= 60 ? 'text-green' : comparison.summary.engineAccuracy >= 40 ? 'text-amber' : 'text-red'}`}>
+                    {comparison.summary.engineAccuracy}%
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] text-text-faint uppercase">Engine P&L</div>
+                  <div className={`text-sm font-bold mono ${comparison.summary.enginePnl >= 0 ? 'text-green' : 'text-red'}`}>
+                    {comparison.summary.enginePnl >= 0 ? '$' : '-$'}{Math.abs(comparison.summary.enginePnl).toFixed(0)}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {compLoading ? (
+            <div className="py-8 text-center text-text-muted text-sm">Loading comparison data...</div>
+          ) : comparison?.matches?.length > 0 ? (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-text-faint text-[10px] uppercase tracking-wider">
+                  <th className="text-left py-2 px-2">Date</th>
+                  <th className="text-left py-2 px-2">Ticker</th>
+                  <th className="text-left py-2 px-2">Engine said</th>
+                  <th className="text-center py-2 px-2">Direction</th>
+                  <th className="text-center py-2 px-2">Score</th>
+                  <th className="text-left py-2 px-2">Actual strategy</th>
+                  <th className="text-right py-2 px-2">Actual P&L</th>
+                  <th className="text-center py-2 px-2">Result</th>
+                  <th className="text-center py-2 px-2">Match</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.matches.map((m, i) => {
+                  const pnl = m.matchedTrade?.totalPnl || 0;
+                  const stratParts = (m.decision.strategy || '').split(' - ');
+                  const engineStrat = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : m.decision.strategy;
+                  return (
+                    <tr key={i} className="table-row">
+                      <td className="py-2 px-2 text-text-muted mono text-xs">
+                        {m.decision.timestamp ? new Date(m.decision.timestamp).toLocaleDateString('en-AU', {day:'numeric', month:'short'}) : '--'}
+                      </td>
+                      <td className="py-2 px-2 font-medium">{m.decision.underlying}</td>
+                      <td className="py-2 px-2 text-text-muted text-xs">{engineStrat}</td>
+                      <td className="py-2 px-2 text-center">
+                        <span className={`text-xs font-medium ${
+                          m.decision.direction === 'Trade' ? 'text-green' : m.decision.direction === 'Trade with caution' ? 'text-amber' : 'text-red'
+                        }`}>
+                          {m.decision.direction === 'Trade' ? '✓ Go' : m.decision.direction === 'Trade with caution' ? '⚠ Caution' : '✗ No'}
+                        </span>
+                      </td>
+                      <td className="py-2 px-2 text-center mono text-xs">{m.decision.setupScore || '--'}</td>
+                      <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">No match</span>}</td>
+                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58' }}>
+                        {m.matchedTrade ? `${pnl >= 0 ? '$' : '-$'}${Math.abs(pnl).toFixed(0)}` : '--'}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {m.matchedTrade?.wl ? (
+                          <span className={`badge ${m.matchedTrade.wl === 'Win' ? 'badge-green' : 'badge-red'}`}>
+                            {m.matchedTrade.wl}
+                          </span>
+                        ) : <span className="text-text-faint text-xs">--</span>}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        {m.matched
+                          ? <Check size={14} className="text-green inline" />
+                          : <X size={14} className="text-text-faint inline" />
+                        }
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="py-8 text-center text-text-faint text-sm">
+              No decisions logged yet. Use "Log trade" in the decision engine, then upload a CSV to see the comparison.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Embedded decision engine */}
-      <div className="card p-0 overflow-hidden" style={{ height: showLog ? 'calc(100vh - 540px)' : 'calc(100vh - 140px)' }}>
+      <div className="card p-0 overflow-hidden" style={{ height: (showLog || showComparison) ? 'calc(100vh - 540px)' : 'calc(100vh - 140px)' }}>
         <iframe
           src={ENGINE_URL + (mode === '45dte' ? '?mode=45' : '')}
           style={{ width: '100%', height: '100%', border: 'none', background: '#0d1117', borderRadius: '12px' }}

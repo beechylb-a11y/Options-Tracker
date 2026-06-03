@@ -47,6 +47,9 @@ export const api = {
   }),
   getDecisions: () => fetchJSON('/api/decisions'),
 
+  // Comparison
+  getComparison: () => fetchJSON('/api/comparison'),
+
   // Journal
   getJournal: () => fetchJSON('/api/journal'),
   addJournalEntry: (entry) => fetchJSON('/api/journal', {

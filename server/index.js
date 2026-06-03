@@ -251,6 +251,154 @@ app.post('/api/journal', requireAuth, async (req, res) => {
 });
 
 // ================================================================
+//  DECISION ↔ TRADE COMPARISON
+//  Matches logged decision engine entries to actual tastytrade trades
+//  by underlying + date (±1 day) + strategy similarity.
+// ================================================================
+app.get('/api/comparison', requireAuth, async (req, res) => {
+  try {
+    const [decisionRows, trackerRows] = await Promise.all([
+      getDecisions(),
+      getTradeTracker()
+    ]);
+
+    const decHeaders = decisionRows[0] || [];
+    const decisions = decisionRows.slice(1).map(row => {
+      const obj = {};
+      decHeaders.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    });
+
+    const trkHeaders = trackerRows[0] || [];
+    const trades = trackerRows.slice(1).map(row => {
+      const obj = {};
+      trkHeaders.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    });
+
+    // Normalise strategy names for fuzzy matching
+    function normStrat(s) {
+      return (s || '').toLowerCase()
+        .replace(/iron condor.*normal/i, 'iron condor')
+        .replace(/long.*condor.*reversed/i, 'long condor')
+        .replace(/short iron condor/i, 'iron condor')
+        .replace(/long iron condor/i, 'long condor')
+        .replace(/short iron butterfly/i, 'iron butterfly')
+        .replace(/long call butterfly/i, 'butterfly')
+        .replace(/long put butterfly/i, 'butterfly')
+        .replace(/short call butterfly/i, 'butterfly')
+        .replace(/bull put spread/i, 'bull put')
+        .replace(/bear call spread/i, 'bear call')
+        .replace(/bull call spread/i, 'bull call')
+        .replace(/bear put spread/i, 'bear put')
+        .replace(/[^a-z ]/g, '').trim();
+    }
+
+    // Match each decision to the best trade
+    const matches = decisions.map(dec => {
+      const decDate = dec.Timestamp ? new Date(dec.Timestamp) : null;
+      const decUnd = (dec.Underlying || '').toUpperCase();
+      const decStrat = normStrat(dec.Strategy);
+      // Extract the actual strategy name from the decision text (e.g. "SPX - Iron Condor - Normal - 2 contracts")
+      const stratParts = (dec.Strategy || '').split(' - ').map(s => s.trim());
+      const decStratClean = normStrat(stratParts.length > 1 ? stratParts.slice(1, -1).join(' ') : dec.Strategy);
+
+      let bestMatch = null;
+      let bestScore = 0;
+
+      trades.forEach(trade => {
+        const tradeDate = trade['Entry Date'] ? new Date(trade['Entry Date']) : null;
+        const tradeUnd = (trade.Underlying || '').toUpperCase();
+        const tradeStrat = normStrat(trade['Strategy (OIC)']);
+
+        // Score the match
+        let score = 0;
+
+        // Underlying must match
+        if (decUnd && tradeUnd && decUnd === tradeUnd) score += 40;
+        else return;
+
+        // Date within ±1 day
+        if (decDate && tradeDate) {
+          const dayDiff = Math.abs(decDate - tradeDate) / (1000 * 60 * 60 * 24);
+          if (dayDiff < 1) score += 40;
+          else if (dayDiff < 2) score += 25;
+          else if (dayDiff < 3) score += 10;
+          else return; // too far apart
+        }
+
+        // Strategy similarity
+        if (decStratClean && tradeStrat) {
+          if (decStratClean === tradeStrat) score += 20;
+          else if (decStratClean.includes(tradeStrat) || tradeStrat.includes(decStratClean)) score += 12;
+          else {
+            // Check for partial word matches
+            const decWords = decStratClean.split(' ');
+            const tradeWords = tradeStrat.split(' ');
+            const overlap = decWords.filter(w => tradeWords.includes(w)).length;
+            score += overlap * 4;
+          }
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = trade;
+        }
+      });
+
+      return {
+        decision: {
+          timestamp: dec.Timestamp,
+          engine: dec.Engine,
+          underlying: dec.Underlying,
+          strategy: dec.Strategy,
+          direction: dec.Direction,
+          contracts: dec.Contracts,
+          kellyDollar: dec['Kelly $'],
+          popMargin: dec['POP Margin'],
+          setupScore: dec['Setup Score'],
+          setupGrade: dec['Setup Grade'],
+          regime: dec.Regime,
+          notes: dec.Notes,
+          price: dec.Price,
+          vix: dec.VIX
+        },
+        matchedTrade: bestMatch ? {
+          entryDate: bestMatch['Entry Date'],
+          underlying: bestMatch.Underlying,
+          strategy: bestMatch['Strategy (OIC)'],
+          qty: bestMatch.Qty,
+          netCredit: parseFloat(bestMatch['Net Credit ($)']) || 0,
+          totalPnl: parseFloat(bestMatch['Total P&L ($)']) || 0,
+          wl: bestMatch['W / L'],
+          status: bestMatch.Status
+        } : null,
+        matchScore: bestScore,
+        matched: bestScore >= 60
+      };
+    });
+
+    // Summary stats
+    const matched = matches.filter(m => m.matched);
+    const engineWins = matched.filter(m => m.decision.direction === 'Trade' && m.matchedTrade?.wl === 'Win').length;
+    const engineTotal = matched.filter(m => m.decision.direction === 'Trade' && m.matchedTrade?.wl).length;
+    const totalEngPnl = matched.reduce((s, m) => s + (m.matchedTrade?.totalPnl || 0), 0);
+
+    res.json({
+      matches,
+      summary: {
+        totalDecisions: decisions.length,
+        totalMatched: matched.length,
+        engineAccuracy: engineTotal > 0 ? Math.round(engineWins / engineTotal * 100) : 0,
+        enginePnl: Math.round(totalEngPnl * 100) / 100
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
 //  STRATEGY PERFORMANCE (computed from tracker)
 // ================================================================
 app.get('/api/performance', requireAuth, async (req, res) => {
