@@ -608,13 +608,28 @@ export function processCSV(rawRows) {
     const isCashSettled = allLegs.some(l =>
       (l[5] || '').toLowerCase().includes('cash settlement') || (l[5] || '').toLowerCase().includes('removal of option'));
 
+    // Date-based expiry detection: if the expiry date has passed and there are
+    // no close/settlement legs in the CSV, the trade expired but the settlement
+    // rows weren't included in the export. Mark as Expired automatically.
+    // P&L = net credit received (credit trades profit, debit trades lose the debit).
+    const expiryParsed = expiryDate ? parseDate(expiryDate) : null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isDateExpired = expiryParsed && expiryParsed < today && closeLegs.length === 0;
+
     let status;
     if (isAssigned || isExercised) status = 'Assigned';
     else if (isCashSettled) status = 'Cash Settled';
-    else if (isExpired) status = 'Expired';
+    else if (isExpired || isDateExpired) status = 'Expired';
     else if (closeDate) status = 'Closed';
     else status = 'Open';
 
+    // W/L determination:
+    // If the trade was date-expired (no settlement rows) and the total P&L
+    // only reflects the open side, then:
+    //   Credit trade (netCredit > 0): full credit = Win (kept the premium)
+    //   Debit trade (netCredit < 0): full debit = Loss (paid premium, expired worthless)
+    // This is because no close/settlement rows means no further cash flow.
     const wl = totalPnl > 0 ? 'Win' : totalPnl < 0 ? 'Loss' : '';
     const allOids = [oid, ...pos.closeOids].join(', ');
 
