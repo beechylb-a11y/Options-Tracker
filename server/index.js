@@ -191,7 +191,10 @@ app.get('/api/tracker', requireAuth, async (req, res) => {
 // ================================================================
 app.get('/api/stats', requireAuth, async (req, res) => {
   try {
-    const stats = await getBattingAverage();
+    // Calculate stats fresh from TradeTracker data (not BattingAverage sheet)
+    // This ensures accuracy regardless of sheet formula state
+    const trackerRows = await getTradeTracker();
+    const stats = calculateStats(trackerRows);
     const config = await getConfig();
     res.json({ stats, config });
   } catch (err) {

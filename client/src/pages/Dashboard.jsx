@@ -39,12 +39,12 @@ export default function Dashboard({ authenticated }) {
 
   if (loading) return <div className="text-text-muted text-sm">Loading dashboard...</div>;
 
-  const ba = stats?.BattingAverage ?? stats?.battingAvg ?? 0;
-  const totalPnl = stats?.TotalP_L ?? stats?.TotalPnl ?? stats?.totalPnl ?? 0;
-  const avgWin = stats?.AvgWin ?? stats?.avgWin ?? 0;
-  const avgLoss = stats?.AvgLoss ?? stats?.avgLoss ?? 0;
-  const expectancy = stats?.Expectancy ?? stats?.expectancy ?? 0;
-  const totalTrades = stats?.TotalTrades ?? stats?.totalTrades ?? 0;
+  const ba = stats?.battingAvg ?? 0;
+  const totalPnl = stats?.totalPnl ?? 0;
+  const avgWin = stats?.avgWin ?? 0;
+  const avgLoss = stats?.avgLoss ?? 0;
+  const expectancy = stats?.expectancy ?? 0;
+  const totalTrades = stats?.totalTrades ?? 0;
   const bankroll = config?.currentBankroll ?? 0;
   const startBR = config?.startingBankroll ?? 1;
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
@@ -106,7 +106,11 @@ export default function Dashboard({ authenticated }) {
                 <Tooltip
                   contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#8b949e' }}
-                  formatter={(v) => [fmt$(v), 'P&L']}
+                  itemStyle={{ color: '#e6edf3' }}
+                  formatter={(v) => {
+                    const color = v >= 0 ? '#3fb950' : '#f85149';
+                    return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'P&L'];
+                  }}
                 />
                 <Bar dataKey="pnl" radius={[3, 3, 0, 0]}>
                   {pnlByDate.map((d, i) => (

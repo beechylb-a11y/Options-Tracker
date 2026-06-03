@@ -85,7 +85,12 @@ export default function Summary({ authenticated }) {
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={100} />
                 <Tooltip
                   contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                  formatter={(v) => [fmt$(v), 'P&L']}
+                  labelStyle={{ color: '#e6edf3' }}
+                  itemStyle={{ color: '#e6edf3' }}
+                  formatter={(v) => {
+                    const color = v >= 0 ? '#3fb950' : '#f85149';
+                    return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'P&L'];
+                  }}
                 />
                 <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
                   {chartData.map((d, i) => (
