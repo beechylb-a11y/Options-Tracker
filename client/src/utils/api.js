@@ -50,6 +50,12 @@ export const api = {
   // Comparison
   getComparison: () => fetchJSON('/api/comparison'),
 
+  // Uncategorised trades
+  getUncategorised: () => fetchJSON('/api/uncategorised'),
+  categoriseTrade: (rowIndex, strategy, orderId) => fetchJSON(`/api/categorise/${rowIndex}`, {
+    method: 'PUT', body: JSON.stringify({ strategy, orderId })
+  }),
+
   // Journal
   getJournal: () => fetchJSON('/api/journal'),
   addJournalEntry: (entry) => fetchJSON('/api/journal', {

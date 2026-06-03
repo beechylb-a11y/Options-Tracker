@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 
@@ -12,6 +12,9 @@ export default function Trades({ authenticated }) {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [uncategorised, setUncategorised] = useState([]);
+  const [showReview, setShowReview] = useState(false);
+  const [savingRow, setSavingRow] = useState(null);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -22,12 +25,14 @@ export default function Trades({ authenticated }) {
   async function loadData() {
     setLoading(true);
     try {
-      const [t, r] = await Promise.all([
+      const [t, r, u] = await Promise.all([
         api.getTracker().catch(() => []),
-        api.getTrades().catch(() => [])
+        api.getTrades().catch(() => []),
+        api.getUncategorised().catch(() => [])
       ]);
       setTracker(t);
       setRawTrades(r);
+      setUncategorised(u);
     } catch (e) { console.error(e); }
     setLoading(false);
   }
@@ -100,6 +105,118 @@ export default function Trades({ authenticated }) {
             ? <span className="text-red">{uploadResult.error}</span>
             : <span className="text-green">Uploaded: {uploadResult.rawRows} rows parsed, {uploadResult.trackerWritten} positions tracked. BA: {uploadResult.stats?.battingAvg}%</span>
           }
+        </div>
+      )}
+
+      {/* Uncategorised trades review */}
+      {uncategorised.length > 0 && (
+        <div className="mb-4">
+          <button onClick={() => setShowReview(!showReview)}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${
+              showReview ? 'border-amber bg-amber-bg text-amber' : 'border-amber/50 text-amber hover:bg-amber-bg'
+            }`}>
+            <AlertTriangle size={14} />
+            {uncategorised.length} uncategorised trade{uncategorised.length !== 1 ? 's' : ''} — click to review
+          </button>
+        </div>
+      )}
+
+      {showReview && uncategorised.length > 0 && (
+        <div className="card mb-4 fade-in" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-medium text-text">Manual Strategy Assignment</h3>
+              <p className="text-xs text-text-muted mt-0.5">These trades couldn't be auto-classified. Select the correct strategy.</p>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-text-faint text-[10px] uppercase tracking-wider">
+                <th className="text-left py-2 px-2">Date</th>
+                <th className="text-left py-2 px-2">Ticker</th>
+                <th className="text-left py-2 px-2">Current</th>
+                <th className="text-right py-2 px-2">P&L</th>
+                <th className="text-left py-2 px-2">Assign strategy</th>
+                <th className="text-center py-2 px-2">Save</th>
+              </tr>
+            </thead>
+            <tbody>
+              {uncategorised.map((t, i) => {
+                const pnl = parseFloat(t['Total P&L ($)']) || 0;
+                return (
+                  <tr key={i} className="table-row">
+                    <td className="py-2 px-2 text-text-muted mono text-xs">{fmtDate(t['Entry Date'])}</td>
+                    <td className="py-2 px-2 font-medium">{t.Underlying}</td>
+                    <td className="py-2 px-2 text-text-faint text-xs">{t['Strategy (OIC)'] || '(none)'}</td>
+                    <td className="py-2 px-2 text-right mono" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</td>
+                    <td className="py-2 px-2">
+                      <select
+                        id={`strat-${i}`}
+                        defaultValue=""
+                        className="w-full px-2 py-1 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent"
+                      >
+                        <option value="">Select...</option>
+                        <optgroup label="Credit strategies">
+                          <option value="Short Iron Condor">Iron Condor (Short)</option>
+                          <option value="Short Iron Butterfly">Iron Butterfly (Short)</option>
+                          <option value="Bull Put Spread">Bull Put Spread</option>
+                          <option value="Bear Call Spread">Bear Call Spread</option>
+                          <option value="Short Strangle">Short Strangle</option>
+                          <option value="Short Straddle">Short Straddle</option>
+                          <option value="Covered Call">Covered Call</option>
+                          <option value="Cash-Secured Put">Cash-Secured Put</option>
+                          <option value="Naked Put">Naked Put</option>
+                          <option value="Naked Call">Naked Call</option>
+                        </optgroup>
+                        <optgroup label="Debit strategies">
+                          <option value="Long Call Butterfly">Long Call Butterfly</option>
+                          <option value="Long Put Butterfly">Long Put Butterfly</option>
+                          <option value="Long Iron Condor">Long Condor</option>
+                          <option value="Bull Call Spread">Bull Call Spread</option>
+                          <option value="Bear Put Spread">Bear Put Spread</option>
+                          <option value="Long Straddle">Long Straddle</option>
+                          <option value="Long Strangle">Long Strangle</option>
+                          <option value="Long Call">Long Call</option>
+                          <option value="Long Put">Long Put</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                          <option value="Collar">Collar</option>
+                          <option value="Protective Put">Protective Put</option>
+                          <option value="Long Call Calendar Spread">Call Calendar</option>
+                          <option value="Long Put Calendar Spread">Put Calendar</option>
+                          <option value="Long Ratio Call Spread">Ratio Call Spread</option>
+                          <option value="Long Ratio Put Spread">Ratio Put Spread</option>
+                        </optgroup>
+                      </select>
+                    </td>
+                    <td className="py-2 px-2 text-center">
+                      <button
+                        disabled={savingRow === i}
+                        onClick={async () => {
+                          const sel = document.getElementById(`strat-${i}`);
+                          const strategy = sel?.value;
+                          if (!strategy) return;
+                          setSavingRow(i);
+                          try {
+                            await api.categoriseTrade(t._rowIndex, strategy, t['Order #']);
+                            // Remove from list
+                            setUncategorised(prev => prev.filter((_, idx) => idx !== i));
+                            // Refresh tracker
+                            const updated = await api.getTracker();
+                            setTracker(updated);
+                          } catch (e) { console.error(e); }
+                          setSavingRow(null);
+                        }}
+                        className="p-1 rounded hover:bg-bg-hover transition-colors text-green disabled:opacity-50"
+                      >
+                        {savingRow === i ? '...' : <Check size={14} />}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 

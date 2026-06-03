@@ -12,7 +12,8 @@ import {
   logDecision, getDecisions,
   getBattingAverage, updateBattingAverage,
   appendJournalEntry, getJournal,
-  calculateStats
+  calculateStats,
+  updateTrackerStrategy, updateTradesStrategy
 } from './sheets.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
@@ -447,6 +448,55 @@ app.get('/api/performance', requireAuth, async (req, res) => {
 
     const overall = calculateStats(rows);
     res.json({ byStrategy, byUnderlying, overall });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  UNKNOWN TRADE CATEGORISATION
+//  Returns trades with empty or unclassified strategies for manual review.
+//  Allows updating strategy via PUT.
+// ================================================================
+app.get('/api/uncategorised', requireAuth, async (req, res) => {
+  try {
+    const rows = await getTradeTracker();
+    const headers = rows[0] || [];
+    const data = rows.slice(1).map((row, idx) => {
+      const obj = { _rowIndex: idx + 2 }; // 1-based sheet row (header=1, data starts at 2)
+      headers.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    });
+    // Filter to uncategorised: empty strategy, or generic single-leg names
+    const uncategorised = data.filter(t => {
+      const strat = (t['Strategy (OIC)'] || '').trim();
+      return !strat ||
+        strat === 'Long Call' || strat === 'Long Put' ||
+        strat === 'Naked Call' || strat === 'Naked Put' ||
+        strat === 'Short Stock' || strat === 'Long Stock';
+    });
+    res.json(uncategorised);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/categorise/:rowIndex', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    const { strategy, orderId } = req.body;
+    if (!strategy || !rowIndex) return res.status(400).json({ error: 'Missing strategy or rowIndex' });
+
+    // Update TradeTracker sheet
+    await updateTrackerStrategy(rowIndex, strategy);
+
+    // Also update matching rows in raw Trades sheet
+    let tradesUpdated = 0;
+    if (orderId) {
+      tradesUpdated = await updateTradesStrategy(orderId, strategy);
+    }
+
+    res.json({ ok: true, tradesUpdated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

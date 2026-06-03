@@ -315,6 +315,50 @@ export async function getJournal() {
 }
 
 // ================================================================
+//  UPDATE TRACKER STRATEGY -- manual categorisation
+// ================================================================
+export async function updateTrackerStrategy(rowIndex, strategy) {
+  const sheets = getSheets();
+  // Column E = Strategy (OIC) = column 5 (1-based)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID(),
+    range: `TradeTracker!E${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[strategy]] }
+  });
+}
+
+// Also update the raw Trades sheet for matching legs
+export async function updateTradesStrategy(orderId, strategy) {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(),
+    range: 'Trades!A:P'
+  });
+  const rows = res.data.values || [];
+  // Find rows with this order ID (column B = index 1) and update strategy (column C = index 2)
+  const updates = [];
+  rows.forEach((row, i) => {
+    if (i === 0) return; // skip header
+    const oid = (row[1] || '').trim();
+    // Check if any of the order IDs match
+    if (orderId.split(',').some(id => oid.includes(id.trim()))) {
+      updates.push({ range: `Trades!C${i + 1}`, values: [[strategy]] });
+    }
+  });
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SHEET_ID(),
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: updates
+      }
+    });
+  }
+  return updates.length;
+}
+
+// ================================================================
 //  UTILITY -- calculate stats from TradeTracker data
 // ================================================================
 export function calculateStats(trackerRows) {
