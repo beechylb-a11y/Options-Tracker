@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ExternalLink, Zap, FileText, ChevronDown, ChevronUp, GitCompare, TrendingUp, TrendingDown, Check, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ExternalLink, Zap, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 
@@ -8,74 +8,101 @@ const ENGINE_URL = 'https://script.google.com/macros/s/AKfycbyaO8BnJaLjcoiVM5_HE
 export default function DecisionEngine({ authenticated }) {
   const [mode, setMode] = useState('0dte');
   const [decisions, setDecisions] = useState([]);
-  const [showLog, setShowLog] = useState(false);
-  const [showComparison, setShowComparison] = useState(false);
+  const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
   const [comparison, setComparison] = useState(null);
   const [compLoading, setCompLoading] = useState(false);
-  const [expandedDecision, setExpandedDecision] = useState(null);
+  const [expandedIdx, setExpandedIdx] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // Load existing decisions
-  useEffect(() => {
+  // Close ticket state
+  const [closingIdx, setClosingIdx] = useState(null);
+  const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', actualPnl: '' });
+
+  // Notes edit state
+  const [editingNotesIdx, setEditingNotesIdx] = useState(null);
+  const [notesText, setNotesText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  function loadDecisions() {
     if (!authenticated) return;
     api.getDecisions().then(rows => {
       if (rows && rows.length > 1) {
         const headers = rows[0];
-        const data = rows.slice(1).map(row => {
-          const obj = {};
+        const data = rows.slice(1).map((row, idx) => {
+          const obj = { _rowIndex: idx + 2 };
           headers.forEach((h, i) => { obj[h] = row[i] || ''; });
           return obj;
-        }).reverse(); // newest first
+        }).reverse();
         setDecisions(data);
       }
     }).catch(() => {});
-  }, [authenticated]);
+  }
 
-  // Listen for postMessage from the embedded decision engine iframe
+  useEffect(() => { loadDecisions(); }, [authenticated]);
+
+  // Listen for postMessage from iframe
   useEffect(() => {
     function handleMessage(event) {
       if (!event.data || event.data.type !== 'LOG_TRADE') return;
-      const data = event.data.data;
-      if (!data) return;
-
-      // Post to our API
-      api.logDecision(data)
+      api.logDecision(event.data.data)
         .then(result => {
           if (result.ok) {
-            setToast({ msg: 'Trade logged to Options Tracker', type: 'success' });
-            // Refresh decisions list
-            api.getDecisions().then(rows => {
-              if (rows && rows.length > 1) {
-                const headers = rows[0];
-                const d = rows.slice(1).map(row => {
-                  const obj = {};
-                  headers.forEach((h, i) => { obj[h] = row[i] || ''; });
-                  return obj;
-                }).reverse();
-                setDecisions(d);
-              }
-            });
+            showToast('Trade logged to Options Tracker', 'success');
+            loadDecisions();
           }
         })
-        .catch(err => {
-          setToast({ msg: 'Error logging trade: ' + err.message, type: 'error' });
-        });
-
-      setTimeout(() => setToast(null), 3000);
+        .catch(err => showToast('Error: ' + err.message, 'error'));
     }
-
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  function showToast(msg, type) {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  async function handleCloseTicket(dec) {
+    setSaving(true);
+    try {
+      await api.closeTicket(dec._rowIndex, closeForm);
+      showToast('Trade ticket closed', 'success');
+      setClosingIdx(null);
+      setCloseForm({ closeDate: '', closePrice: '', actualPnl: '' });
+      loadDecisions();
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  }
+
+  async function handleSaveNotes(dec) {
+    setSaving(true);
+    try {
+      await api.updateTicketNotes(dec._rowIndex, notesText);
+      showToast('Notes saved', 'success');
+      setEditingNotesIdx(null);
+      loadDecisions();
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    setSaving(false);
+  }
+
+  async function loadComparison() {
+    setCompLoading(true);
+    try { setComparison(await api.getComparison()); } catch (e) { console.error(e); }
+    setCompLoading(false);
+  }
+
+  const openTickets = decisions.filter(d => d.Status !== 'Closed');
+  const closedTickets = decisions.filter(d => d.Status === 'Closed');
+
   return (
     <div className="fade-in">
+      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="font-display text-2xl font-bold">Decision Engine</h2>
-          <p className="text-text-muted text-sm mt-0.5">Pre-trade analysis and strategy selection</p>
+          <p className="text-text-muted text-sm mt-0.5">Pre-trade analysis, trade tickets & performance tracking</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex border border-bg-border rounded-lg overflow-hidden">
             <button onClick={() => setMode('0dte')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${mode === '0dte' ? 'bg-accent text-white' : 'text-text-muted hover:text-text hover:bg-bg-hover'}`}>
@@ -86,101 +113,205 @@ export default function DecisionEngine({ authenticated }) {
               45 DTE
             </button>
           </div>
-          <button onClick={() => { setShowLog(!showLog); setShowComparison(false); }}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${showLog ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <FileText size={14} />
-            Trade Log ({decisions.length})
+          <button onClick={() => { setPanel(panel === 'log' ? null : 'log'); }}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'log' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <FileText size={14} /> Tickets ({decisions.length})
           </button>
-          <button onClick={async () => {
-              setShowComparison(!showComparison);
-              setShowLog(false);
-              if (!comparison && !compLoading) {
-                setCompLoading(true);
-                try {
-                  const data = await api.getComparison();
-                  setComparison(data);
-                } catch(e) { console.error(e); }
-                setCompLoading(false);
-              }
-            }}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${showComparison ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <GitCompare size={14} />
-            Compare
+          <button onClick={() => { setPanel(panel === 'compare' ? null : 'compare'); if (!comparison) loadComparison(); }}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <GitCompare size={14} /> Compare
           </button>
           <a href={ENGINE_URL} target="_blank" rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover transition-colors text-text-muted">
             <ExternalLink size={14} />
-            Open in new tab
           </a>
         </div>
       </div>
 
-      {/* Toast notification */}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-lg text-sm font-medium fade-in ${
-          toast.type === 'success' ? 'bg-green-bg border border-green text-green' : 'bg-red-bg border border-red text-red'
-        }`}>
+          toast.type === 'success' ? 'bg-green-bg border border-green text-green' : 'bg-red-bg border border-red text-red'}`}>
           {toast.msg}
         </div>
       )}
 
-      {/* Decision Log Panel */}
-      {showLog && (
-        <div className="card mb-4 fade-in" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-muted">Decision Log — {decisions.length} entries</h3>
-          </div>
-          {decisions.length > 0 ? (
-            <div className="space-y-1">
-              {decisions.map((d, i) => {
-                const expanded = expandedDecision === i;
+      {/* TRADE TICKETS PANEL */}
+      {panel === 'log' && (
+        <div className="card mb-4 fade-in" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+          {/* Open tickets */}
+          {openTickets.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs text-text-faint uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Clock size={12} /> Open tickets ({openTickets.length})
+              </h3>
+              {openTickets.map((dec, i) => {
+                const globalIdx = decisions.indexOf(dec);
+                const expanded = expandedIdx === globalIdx;
+                const isClosing = closingIdx === globalIdx;
+                const isEditingNotes = editingNotesIdx === globalIdx;
+                const stratParts = (dec.Strategy || '').split(' - ');
+                const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : dec.Strategy;
+
                 return (
-                  <div key={i}>
-                    <div className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-bg-hover cursor-pointer transition-colors"
-                      onClick={() => setExpandedDecision(expanded ? null : i)}>
-                      <span className="text-xs text-text-faint mono w-14">{d.Engine || '0DTE'}</span>
-                      <span className="text-xs text-text-muted mono w-28">
-                        {d.Timestamp ? new Date(d.Timestamp).toLocaleDateString('en-AU', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : ''}
+                  <div key={globalIdx} className="border border-bg-border rounded-lg mb-2 overflow-hidden">
+                    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-bg-hover cursor-pointer transition-colors"
+                      onClick={() => setExpandedIdx(expanded ? null : globalIdx)}>
+                      <div className="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
+                      <span className="mono text-xs text-text-muted w-10">{dec.Engine}</span>
+                      <span className="text-xs text-text-muted mono w-16">
+                        {dec.Timestamp ? new Date(dec.Timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}
                       </span>
-                      <span className="text-sm font-medium flex-1">{d.Strategy || '--'}</span>
-                      <span className={`text-xs font-medium ${
-                        d.Direction === 'Trade' ? 'text-green' : d.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'
-                      }`}>
-                        {d.Direction || '--'}
+                      <span className="text-sm font-medium">{dec.Underlying}</span>
+                      <span className="text-xs text-text-muted flex-1">{stratName}</span>
+                      <span className={`text-xs font-medium ${dec.Direction === 'Trade' ? 'text-green' : dec.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>
+                        {dec.Direction === 'Trade' ? '✓ Go' : dec.Direction === 'Trade with caution' ? '⚠ Caution' : '✗ No'}
                       </span>
-                      <span className="text-xs text-text-muted">{d['Setup Score'] || ''}</span>
+                      <span className="mono text-xs text-text-faint">{dec['Setup Score']}</span>
+                      {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
+                    </div>
+
+                    {expanded && (
+                      <div className="px-3 py-3 bg-bg border-t border-bg-border fade-in">
+                        <div className="grid grid-cols-3 gap-4 text-sm mb-3">
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Entry details</div>
+                            <Row label="Strategy" value={stratName} />
+                            <Row label="Direction" value={dec.Direction} />
+                            <Row label="Contracts" value={dec.Contracts} />
+                            <Row label="Kelly $" value={dec['Kelly $']} />
+                            <Row label="POP Margin" value={dec['POP Margin']} />
+                            <Row label="Price" value={dec.Price ? '$' + dec.Price : '--'} />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Setup quality</div>
+                            <Row label="Score" value={dec['Setup Score']} />
+                            <Row label="Grade" value={dec['Setup Grade']} />
+                            <Row label="Regime" value={dec.Regime} />
+                            <Row label="VIX" value={dec.VIX} />
+                            <Row label="IV" value={dec.IV} />
+                            <Row label="IVR" value={dec.IVR} />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Strikes & behaviour</div>
+                            <Row label="Strikes" value={dec['Wing Strikes']} />
+                            <div className="text-xs text-text-muted italic mt-1">{dec['Market Behaviour']}</div>
+                            {dec['Trade Notes'] && (
+                              <div className="mt-2 p-2 bg-bg-card rounded text-xs text-text-muted">{dec['Trade Notes']}</div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-bg-border">
+                          <button onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' }); }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors">
+                            <DollarSign size={12} /> Close ticket
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); setEditingNotesIdx(isEditingNotes ? null : globalIdx); setNotesText(dec['Trade Notes'] || dec.Notes || ''); }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-bg-border text-text-muted rounded-lg hover:bg-bg-hover transition-colors">
+                            <Edit3 size={12} /> {isEditingNotes ? 'Cancel' : 'Notes'}
+                          </button>
+                        </div>
+
+                        {/* Close ticket form */}
+                        {isClosing && (
+                          <div className="mt-3 p-3 bg-bg-card border border-bg-border rounded-lg fade-in">
+                            <div className="text-xs text-text-faint uppercase tracking-wider mb-2">Close this trade ticket</div>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div>
+                                <label className="text-[10px] text-text-muted block mb-1">Close date</label>
+                                <input type="date" value={closeForm.closeDate} onChange={e => setCloseForm(f => ({ ...f, closeDate: e.target.value }))}
+                                  className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-text-muted block mb-1">Close price ($)</label>
+                                <input type="number" step="0.01" value={closeForm.closePrice} onChange={e => setCloseForm(f => ({ ...f, closePrice: e.target.value }))}
+                                  placeholder="e.g. 0.05" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-text-muted block mb-1">Actual P&L ($)</label>
+                                <input type="number" step="0.01" value={closeForm.actualPnl} onChange={e => setCloseForm(f => ({ ...f, actualPnl: e.target.value }))}
+                                  placeholder="e.g. 65 or -435" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                              </div>
+                            </div>
+                            <button onClick={() => handleCloseTicket(dec)} disabled={saving}
+                              className="mt-2 flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors disabled:opacity-50">
+                              <Check size={12} /> {saving ? 'Saving...' : 'Confirm close'}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Notes editor */}
+                        {isEditingNotes && (
+                          <div className="mt-3 p-3 bg-bg-card border border-bg-border rounded-lg fade-in">
+                            <textarea value={notesText} onChange={e => setNotesText(e.target.value)} rows={3}
+                              placeholder="Entry rationale, adjustments, lessons learned..."
+                              className="w-full px-3 py-2 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent resize-y" />
+                            <button onClick={() => handleSaveNotes(dec)} disabled={saving}
+                              className="mt-2 flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50">
+                              <Save size={12} /> {saving ? 'Saving...' : 'Save notes'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Closed tickets */}
+          {closedTickets.length > 0 && (
+            <div>
+              <h3 className="text-xs text-text-faint uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Check size={12} /> Closed tickets ({closedTickets.length})
+              </h3>
+              {closedTickets.map((dec, i) => {
+                const globalIdx = decisions.indexOf(dec);
+                const expanded = expandedIdx === globalIdx;
+                const pnl = parseFloat(dec['Actual P&L']) || 0;
+                const stratParts = (dec.Strategy || '').split(' - ');
+                const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : dec.Strategy;
+
+                return (
+                  <div key={globalIdx} className="border border-bg-border rounded-lg mb-1 overflow-hidden">
+                    <div className="flex items-center gap-3 px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors"
+                      onClick={() => setExpandedIdx(expanded ? null : globalIdx)}>
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pnl >= 0 ? 'bg-green' : 'bg-red'}`} />
+                      <span className="mono text-xs text-text-muted w-10">{dec.Engine}</span>
+                      <span className="text-xs text-text-muted mono w-16">
+                        {dec.Timestamp ? new Date(dec.Timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}
+                      </span>
+                      <span className="text-sm font-medium">{dec.Underlying}</span>
+                      <span className="text-xs text-text-muted flex-1">{stratName}</span>
+                      <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                      <span className={`badge text-[10px] ${pnl >= 0 ? 'badge-green' : 'badge-red'}`}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
                       {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
                     </div>
                     {expanded && (
-                      <div className="px-3 py-3 bg-bg rounded-lg mb-1 fade-in">
+                      <div className="px-3 py-3 bg-bg border-t border-bg-border fade-in">
                         <div className="grid grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Trade details</div>
-                            <div className="space-y-1">
-                              <Row label="Engine" value={d.Engine} />
-                              <Row label="Underlying" value={d.Underlying} />
-                              <Row label="Strategy" value={d.Strategy} />
-                              <Row label="Direction" value={d.Direction} />
-                              <Row label="Contracts" value={d.Contracts} />
-                            </div>
+                          <div className="space-y-1">
+                            <Row label="Strategy" value={stratName} />
+                            <Row label="Contracts" value={dec.Contracts} />
+                            <Row label="Entry price" value={dec.Price ? '$' + dec.Price : '--'} />
+                            <Row label="Close date" value={fmtDate(dec['Close Date'])} />
+                            <Row label="Close price" value={dec['Close Price'] ? '$' + dec['Close Price'] : '--'} />
                           </div>
-                          <div>
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Sizing & setup</div>
-                            <div className="space-y-1">
-                              <Row label="Kelly $" value={d['Kelly $']} />
-                              <Row label="POP Margin" value={d['POP Margin']} />
-                              <Row label="Setup Score" value={d['Setup Score']} />
-                              <Row label="Setup Grade" value={d['Setup Grade']} />
-                              <Row label="Regime" value={d.Regime} />
-                            </div>
+                          <div className="space-y-1">
+                            <Row label="Setup score" value={dec['Setup Score']} />
+                            <Row label="Setup grade" value={dec['Setup Grade']} />
+                            <Row label="Regime" value={dec.Regime} />
+                            <Row label="Kelly $" value={dec['Kelly $']} />
+                            <Row label="POP Margin" value={dec['POP Margin']} />
                           </div>
-                          <div>
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Strikes & behaviour</div>
-                            <div className="space-y-1">
-                              <Row label="Wing Strikes" value={d['Wing Strikes']} />
-                              <Row label="Behaviour" value={d['Market Behaviour']} />
-                              <Row label="Notes" value={d.Notes} />
-                            </div>
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-text-faint uppercase">Actual P&L</div>
+                            <div className="mono text-xl font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</div>
+                            {dec['Trade Notes'] && (
+                              <div className="mt-2 p-2 bg-bg-card rounded text-xs text-text-muted">{dec['Trade Notes']}</div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -189,16 +320,18 @@ export default function DecisionEngine({ authenticated }) {
                 );
               })}
             </div>
-          ) : (
+          )}
+
+          {decisions.length === 0 && (
             <div className="py-8 text-center text-text-faint text-sm">
-              No decisions logged yet. Use the "Log trade" button in the decision engine to record entries.
+              No trade tickets yet. Click "Log trade" in the decision engine to create one.
             </div>
           )}
         </div>
       )}
 
-      {/* Comparison Panel */}
-      {showComparison && (
+      {/* COMPARISON PANEL */}
+      {panel === 'compare' && (
         <div className="card mb-4 fade-in" style={{ maxHeight: '500px', overflowY: 'auto' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -207,28 +340,16 @@ export default function DecisionEngine({ authenticated }) {
             </div>
             {comparison?.summary && (
               <div className="flex items-center gap-4">
-                <div className="text-center">
-                  <div className="text-[10px] text-text-faint uppercase">Matched</div>
-                  <div className="text-sm font-bold mono">{comparison.summary.totalMatched}/{comparison.summary.totalDecisions}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-[10px] text-text-faint uppercase">Engine accuracy</div>
-                  <div className={`text-sm font-bold mono ${comparison.summary.engineAccuracy >= 60 ? 'text-green' : comparison.summary.engineAccuracy >= 40 ? 'text-amber' : 'text-red'}`}>
-                    {comparison.summary.engineAccuracy}%
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-[10px] text-text-faint uppercase">Engine P&L</div>
-                  <div className={`text-sm font-bold mono ${comparison.summary.enginePnl >= 0 ? 'text-green' : 'text-red'}`}>
-                    {comparison.summary.enginePnl >= 0 ? '$' : '-$'}{Math.abs(comparison.summary.enginePnl).toFixed(0)}
-                  </div>
-                </div>
+                <Stat label="Matched" value={`${comparison.summary.totalMatched}/${comparison.summary.totalDecisions}`} />
+                <Stat label="Accuracy" value={`${comparison.summary.engineAccuracy}%`}
+                  cls={comparison.summary.engineAccuracy >= 60 ? 'text-green' : comparison.summary.engineAccuracy >= 40 ? 'text-amber' : 'text-red'} />
+                <Stat label="Engine P&L" value={fmt$(comparison.summary.enginePnl)}
+                  cls={comparison.summary.enginePnl >= 0 ? 'text-green' : 'text-red'} />
               </div>
             )}
           </div>
-
           {compLoading ? (
-            <div className="py-8 text-center text-text-muted text-sm">Loading comparison data...</div>
+            <div className="py-8 text-center text-text-muted text-sm">Loading...</div>
           ) : comparison?.matches?.length > 0 ? (
             <table className="w-full text-sm">
               <thead>
@@ -237,11 +358,10 @@ export default function DecisionEngine({ authenticated }) {
                   <th className="text-left py-2 px-2">Ticker</th>
                   <th className="text-left py-2 px-2">Engine said</th>
                   <th className="text-center py-2 px-2">Direction</th>
-                  <th className="text-center py-2 px-2">Score</th>
-                  <th className="text-left py-2 px-2">Actual strategy</th>
-                  <th className="text-right py-2 px-2">Actual P&L</th>
+                  <th className="text-left py-2 px-2">Actual</th>
+                  <th className="text-right py-2 px-2">P&L</th>
                   <th className="text-center py-2 px-2">Result</th>
-                  <th className="text-center py-2 px-2">Match</th>
+                  <th className="text-center py-2 px-2">✓</th>
                 </tr>
               </thead>
               <tbody>
@@ -251,35 +371,23 @@ export default function DecisionEngine({ authenticated }) {
                   const engineStrat = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : m.decision.strategy;
                   return (
                     <tr key={i} className="table-row">
-                      <td className="py-2 px-2 text-text-muted mono text-xs">
-                        {m.decision.timestamp ? new Date(m.decision.timestamp).toLocaleDateString('en-AU', {day:'numeric', month:'short'}) : '--'}
-                      </td>
+                      <td className="py-2 px-2 text-text-muted mono text-xs">{m.decision.timestamp ? new Date(m.decision.timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}</td>
                       <td className="py-2 px-2 font-medium">{m.decision.underlying}</td>
                       <td className="py-2 px-2 text-text-muted text-xs">{engineStrat}</td>
                       <td className="py-2 px-2 text-center">
-                        <span className={`text-xs font-medium ${
-                          m.decision.direction === 'Trade' ? 'text-green' : m.decision.direction === 'Trade with caution' ? 'text-amber' : 'text-red'
-                        }`}>
-                          {m.decision.direction === 'Trade' ? '✓ Go' : m.decision.direction === 'Trade with caution' ? '⚠ Caution' : '✗ No'}
+                        <span className={`text-xs font-medium ${m.decision.direction === 'Trade' ? 'text-green' : m.decision.direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>
+                          {m.decision.direction === 'Trade' ? '✓' : m.decision.direction === 'Trade with caution' ? '⚠' : '✗'}
                         </span>
                       </td>
-                      <td className="py-2 px-2 text-center mono text-xs">{m.decision.setupScore || '--'}</td>
-                      <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">No match</span>}</td>
-                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58' }}>
-                        {m.matchedTrade ? `${pnl >= 0 ? '$' : '-$'}${Math.abs(pnl).toFixed(0)}` : '--'}
+                      <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">--</span>}</td>
+                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : '#484f58' }}>
+                        {m.matchedTrade ? fmt$(pnl) : '--'}
                       </td>
                       <td className="py-2 px-2 text-center">
-                        {m.matchedTrade?.wl ? (
-                          <span className={`badge ${m.matchedTrade.wl === 'Win' ? 'badge-green' : 'badge-red'}`}>
-                            {m.matchedTrade.wl}
-                          </span>
-                        ) : <span className="text-text-faint text-xs">--</span>}
+                        {m.matchedTrade?.wl && <span className={`badge text-[10px] ${m.matchedTrade.wl === 'Win' ? 'badge-green' : 'badge-red'}`}>{m.matchedTrade.wl}</span>}
                       </td>
                       <td className="py-2 px-2 text-center">
-                        {m.matched
-                          ? <Check size={14} className="text-green inline" />
-                          : <X size={14} className="text-text-faint inline" />
-                        }
+                        {m.matched ? <Check size={12} className="text-green inline" /> : <X size={12} className="text-text-faint inline" />}
                       </td>
                     </tr>
                   );
@@ -287,15 +395,13 @@ export default function DecisionEngine({ authenticated }) {
               </tbody>
             </table>
           ) : (
-            <div className="py-8 text-center text-text-faint text-sm">
-              No decisions logged yet. Use "Log trade" in the decision engine, then upload a CSV to see the comparison.
-            </div>
+            <div className="py-8 text-center text-text-faint text-sm">Log decisions and upload a CSV to see comparison.</div>
           )}
         </div>
       )}
 
-      {/* Embedded decision engine */}
-      <div className="card p-0 overflow-hidden" style={{ height: (showLog || showComparison) ? 'calc(100vh - 540px)' : 'calc(100vh - 140px)' }}>
+      {/* Embedded engine */}
+      <div className="card p-0 overflow-hidden" style={{ height: panel ? 'calc(100vh - 540px)' : 'calc(100vh - 140px)' }}>
         <iframe
           src={ENGINE_URL + (mode === '45dte' ? '?mode=45' : '')}
           style={{ width: '100%', height: '100%', border: 'none', background: '#0d1117', borderRadius: '12px' }}
@@ -310,8 +416,17 @@ export default function DecisionEngine({ authenticated }) {
 function Row({ label, value }) {
   return (
     <div className="flex justify-between">
-      <span className="text-text-muted">{label}</span>
-      <span className="text-text font-medium text-right max-w-[200px] truncate">{value || '--'}</span>
+      <span className="text-text-muted text-xs">{label}</span>
+      <span className="text-text text-xs font-medium text-right max-w-[180px] truncate">{value || '--'}</span>
+    </div>
+  );
+}
+
+function Stat({ label, value, cls }) {
+  return (
+    <div className="text-center">
+      <div className="text-[10px] text-text-faint uppercase">{label}</div>
+      <div className={`text-sm font-bold mono ${cls || ''}`}>{value}</div>
     </div>
   );
 }

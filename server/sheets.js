@@ -71,7 +71,8 @@ const REQUIRED_TABS = {
   Decisions: [['Timestamp', 'Engine', 'Underlying', 'Strategy', 'Direction', 'Contracts',
     'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
     'Wing Strikes', 'Market Behaviour', 'Notes',
-    'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade']],
+    'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade',
+    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -228,7 +229,12 @@ export async function logDecision(decision) {
     decision.iv || '',
     decision.ivr || '',
     decision.em || '',
-    ''  // Matched Trade -- filled during CSV comparison
+    '',  // Matched Trade -- filled during CSV comparison
+    'Open',  // Status
+    '',  // Close Date
+    '',  // Close Price
+    '',  // Actual P&L
+    ''   // Trade Notes
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -243,7 +249,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:U'
+    range: 'Decisions!A:Z'
   });
   return res.data.values || [];
 }
@@ -312,6 +318,47 @@ export async function getJournal() {
     range: 'Journal!A:G'
   });
   return res.data.values || [];
+}
+
+// ================================================================
+//  TRADE TICKET LIFECYCLE
+// ================================================================
+export async function closeTradeTicket(rowIndex, closeData) {
+  const sheets = getSheets();
+  // Columns: V=Status(22), W=Close Date(23), X=Close Price(24), Y=Actual P&L(25)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID(),
+    range: `Decisions!V${rowIndex}:Y${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[
+      'Closed',
+      closeData.closeDate || new Date().toISOString().split('T')[0],
+      closeData.closePrice || '',
+      closeData.actualPnl || 0
+    ]] }
+  });
+}
+
+export async function updateTradeNotes(rowIndex, notes) {
+  const sheets = getSheets();
+  // Column Z = Trade Notes (26)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID(),
+    range: `Decisions!Z${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[notes]] }
+  });
+}
+
+export async function updateTradeStatus(rowIndex, status) {
+  const sheets = getSheets();
+  // Column V = Status (22)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID(),
+    range: `Decisions!V${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[status]] }
+  });
 }
 
 // ================================================================

@@ -56,6 +56,17 @@ export const api = {
     method: 'PUT', body: JSON.stringify({ strategy, orderId })
   }),
 
+  // Trade ticket lifecycle
+  closeTicket: (rowIndex, data) => fetchJSON(`/api/decisions/${rowIndex}/close`, {
+    method: 'PUT', body: JSON.stringify(data)
+  }),
+  updateTicketNotes: (rowIndex, notes) => fetchJSON(`/api/decisions/${rowIndex}/notes`, {
+    method: 'PUT', body: JSON.stringify({ notes })
+  }),
+  updateTicketStatus: (rowIndex, status) => fetchJSON(`/api/decisions/${rowIndex}/status`, {
+    method: 'PUT', body: JSON.stringify({ status })
+  }),
+
   // Journal
   getJournal: () => fetchJSON('/api/journal'),
   addJournalEntry: (entry) => fetchJSON('/api/journal', {

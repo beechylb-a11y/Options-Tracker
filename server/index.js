@@ -13,7 +13,8 @@ import {
   getBattingAverage, updateBattingAverage,
   appendJournalEntry, getJournal,
   calculateStats,
-  updateTrackerStrategy, updateTradesStrategy
+  updateTrackerStrategy, updateTradesStrategy,
+  closeTradeTicket, updateTradeNotes, updateTradeStatus
 } from './sheets.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
@@ -448,6 +449,42 @@ app.get('/api/performance', requireAuth, async (req, res) => {
 
     const overall = calculateStats(rows);
     res.json({ byStrategy, byUnderlying, overall });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  TRADE TICKET LIFECYCLE
+// ================================================================
+app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    const { closeDate, closePrice, actualPnl } = req.body;
+    await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/decisions/:rowIndex/notes', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    const { notes } = req.body;
+    await updateTradeNotes(rowIndex, notes);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/decisions/:rowIndex/status', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    const { status } = req.body;
+    await updateTradeStatus(rowIndex, status);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
