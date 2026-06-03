@@ -70,7 +70,8 @@ const REQUIRED_TABS = {
     'Cumul BA (%)', 'Status']],
   Decisions: [['Timestamp', 'Engine', 'Underlying', 'Strategy', 'Direction', 'Contracts',
     'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
-    'Wing Strikes', 'Market Behaviour', 'Notes']],
+    'Wing Strikes', 'Market Behaviour', 'Notes',
+    'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -207,20 +208,27 @@ export async function getTradeTracker() {
 export async function logDecision(decision) {
   const sheets = getSheets();
   const row = [
-    new Date().toISOString(),
+    decision.timestamp || new Date().toISOString(),
     decision.engine || '0DTE',
     decision.underlying || '',
     decision.strategy || '',
     decision.direction || '',
     decision.contracts || 0,
-    decision.kellyDollar || 0,
-    decision.popMargin || 0,
-    decision.setupScore || 0,
+    decision.kellyDollar || '',
+    decision.popMargin || '',
+    decision.setupScore || '',
     decision.setupGrade || '',
     decision.regime || '',
     decision.wingStrikes || '',
     decision.marketBehaviour || '',
-    decision.notes || ''
+    decision.notes || '',
+    decision.price || '',
+    decision.vix || '',
+    decision.vix1d || '',
+    decision.iv || '',
+    decision.ivr || '',
+    decision.em || '',
+    ''  // Matched Trade -- filled during CSV comparison
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -235,7 +243,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:N'
+    range: 'Decisions!A:U'
   });
   return res.data.values || [];
 }
