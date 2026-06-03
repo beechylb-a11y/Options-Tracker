@@ -23,6 +23,14 @@ export default function DecisionEngine({ authenticated }) {
   const [notesText, setNotesText] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Manual ticket state
+  const [showManual, setShowManual] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    underlying: '', strategy: '', expiry: '', entryDate: new Date().toISOString().split('T')[0],
+    winAmount: '', riskPerContract: '', contracts: '1', notes: ''
+  });
+  const [manualSaving, setManualSaving] = useState(false);
+
   function loadDecisions() {
     if (!authenticated) return;
     api.getDecisions().then(rows => {
@@ -91,6 +99,47 @@ export default function DecisionEngine({ authenticated }) {
     setCompLoading(false);
   }
 
+  async function handleManualTicket() {
+    setManualSaving(true);
+    try {
+      const f = manualForm;
+      await api.logDecision({
+        engine: 'Manual',
+        underlying: f.underlying,
+        strategy: f.underlying + ' - ' + f.strategy + ' - ' + f.contracts + (f.contracts === '1' ? ' contract' : ' contracts'),
+        direction: 'Trade',
+        contracts: parseInt(f.contracts) || 1,
+        kellyDollar: '',
+        popMargin: '',
+        setupScore: '',
+        setupGrade: 'Manual entry',
+        regime: '',
+        wingStrikes: '',
+        marketBehaviour: '',
+        notes: f.notes,
+        price: '',
+        vix: '',
+        vix1d: '',
+        iv: '',
+        ivr: '',
+        em: '',
+        timestamp: new Date(f.entryDate + 'T12:00:00').toISOString(),
+        // Extra fields for the ticket
+        expiry: f.expiry,
+        winAmount: f.winAmount,
+        riskPerContract: f.riskPerContract
+      });
+      showToast('Manual trade ticket created', 'success');
+      setShowManual(false);
+      setManualForm({
+        underlying: '', strategy: '', expiry: '', entryDate: new Date().toISOString().split('T')[0],
+        winAmount: '', riskPerContract: '', contracts: '1', notes: ''
+      });
+      loadDecisions();
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+    setManualSaving(false);
+  }
+
   const openTickets = decisions.filter(d => d.Status !== 'Closed');
   const closedTickets = decisions.filter(d => d.Status === 'Closed');
 
@@ -117,6 +166,10 @@ export default function DecisionEngine({ authenticated }) {
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'log' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <FileText size={14} /> Tickets ({decisions.length})
           </button>
+          <button onClick={() => setShowManual(!showManual)}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${showManual ? 'border-green bg-green/10 text-green' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            + Manual
+          </button>
           <button onClick={() => { setPanel(panel === 'compare' ? null : 'compare'); if (!comparison) loadComparison(); }}
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <GitCompare size={14} /> Compare
@@ -132,6 +185,115 @@ export default function DecisionEngine({ authenticated }) {
         <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-lg text-sm font-medium fade-in ${
           toast.type === 'success' ? 'bg-green-bg border border-green text-green' : 'bg-red-bg border border-red text-red'}`}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* MANUAL TRADE TICKET */}
+      {showManual && (
+        <div className="card mb-4 fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-text">Create manual trade ticket</h3>
+            <button onClick={() => setShowManual(false)} className="text-text-faint hover:text-text">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Entry date</label>
+              <input type="date" value={manualForm.entryDate}
+                onChange={e => setManualForm(f => ({ ...f, entryDate: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Underlying</label>
+              <select value={manualForm.underlying}
+                onChange={e => setManualForm(f => ({ ...f, underlying: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
+                <option value="">Select...</option>
+                {['SPY','QQQ','SPX','NVDA','TSLA','AAPL','IWM','VIX','AMZN','MSFT','AMD','META','INTC','GOOGL','SLV','GLD','HYG','TLT','MSTR','PLTR'].map(t =>
+                  <option key={t} value={t}>{t}</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Strategy</label>
+              <select value={manualForm.strategy}
+                onChange={e => setManualForm(f => ({ ...f, strategy: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
+                <option value="">Select...</option>
+                <optgroup label="Credit strategies">
+                  <option>Iron Condor - Normal</option>
+                  <option>Iron Butterfly</option>
+                  <option>Chicken Condor</option>
+                  <option>Bull Put Spread</option>
+                  <option>Bear Call Spread</option>
+                  <option>Jade Lizard</option>
+                  <option>Short Strangle</option>
+                  <option>Short Straddle</option>
+                  <option>Covered Call</option>
+                  <option>Naked Put</option>
+                  <option>Naked Call</option>
+                </optgroup>
+                <optgroup label="Debit strategies">
+                  <option>Long Condor - Reversed</option>
+                  <option>Standard Butterfly</option>
+                  <option>Broken Wing Butterfly</option>
+                  <option>Asymmetric Butterfly</option>
+                  <option>Bull Call Spread</option>
+                  <option>Bear Put Spread</option>
+                  <option>Long Straddle</option>
+                  <option>Long Strangle</option>
+                  <option>Long Call</option>
+                  <option>Long Put</option>
+                </optgroup>
+                <optgroup label="45 DTE">
+                  <option>Credit Spread</option>
+                  <option>Calendar Spread</option>
+                  <option>Diagonal Spread</option>
+                  <option>Ratio Spread</option>
+                </optgroup>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Expiry date</label>
+              <input type="date" value={manualForm.expiry}
+                onChange={e => setManualForm(f => ({ ...f, expiry: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Win amount ($)</label>
+              <input type="number" step="0.01" value={manualForm.winAmount}
+                onChange={e => setManualForm(f => ({ ...f, winAmount: e.target.value }))}
+                placeholder="e.g. 65"
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Risk per contract ($)</label>
+              <input type="number" step="0.01" value={manualForm.riskPerContract}
+                onChange={e => setManualForm(f => ({ ...f, riskPerContract: e.target.value }))}
+                placeholder="e.g. 435"
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Contracts</label>
+              <input type="number" min="1" value={manualForm.contracts}
+                onChange={e => setManualForm(f => ({ ...f, contracts: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+            </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Notes (optional)</label>
+              <input type="text" value={manualForm.notes}
+                onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
+                placeholder="Entry rationale..."
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent" />
+            </div>
+          </div>
+          <button onClick={handleManualTicket} disabled={manualSaving || !manualForm.underlying || !manualForm.strategy}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors disabled:opacity-50">
+            <Check size={14} /> {manualSaving ? 'Creating...' : 'Create ticket'}
+          </button>
         </div>
       )}
 
