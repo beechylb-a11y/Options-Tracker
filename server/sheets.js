@@ -97,13 +97,14 @@ export async function ensureSheetStructure() {
           requests: [{ addSheet: { properties: { title: tabName } } }]
         }
       });
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID(),
-        range: `${tabName}!A1`,
-        valueInputOption: 'RAW',
-        requestBody: { values: headerData }
-      });
     }
+    // Always update headers to ensure schema matches (handles upgrades)
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(),
+      range: `${tabName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: headerData }
+    });
   }
 }
 
@@ -210,6 +211,63 @@ export async function appendTradeTrackerRow(row) {
     range: 'TradeTracker!A1',
     valueInputOption: 'RAW',
     requestBody: { values: [row] }
+  });
+}
+
+export async function updateTradeTrackerRow(rowIndex, updates) {
+  const sheets = getSheets();
+  // Read current row
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(),
+    range: `TradeTracker!A${rowIndex}:L${rowIndex}`
+  });
+  const current = res.data.values?.[0] || [];
+  // Headers: Order#(0), EntryDate(1), ExpiryDate(2), CloseDate(3), Strategy(4),
+  //          Underlying(5), Qty(6), NetCredit(7), TotalP&L(8), W/L(9), CumulBA(10), Status(11)
+  const row = [...current];
+  while (row.length < 12) row.push('');
+  if (updates.entryDate !== undefined) row[1] = updates.entryDate;
+  if (updates.expiryDate !== undefined) row[2] = updates.expiryDate;
+  if (updates.closeDate !== undefined) row[3] = updates.closeDate;
+  if (updates.strategy !== undefined) row[4] = updates.strategy;
+  if (updates.underlying !== undefined) row[5] = updates.underlying;
+  if (updates.qty !== undefined) row[6] = updates.qty;
+  if (updates.netCredit !== undefined) row[7] = updates.netCredit;
+  if (updates.totalPnl !== undefined) {
+    row[8] = updates.totalPnl;
+    row[9] = parseFloat(updates.totalPnl) >= 0 ? 'Win' : 'Loss';
+  }
+  if (updates.status !== undefined) row[11] = updates.status;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID(),
+    range: `TradeTracker!A${rowIndex}:L${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [row] }
+  });
+}
+
+export async function deleteTradeTrackerRow(rowIndex) {
+  const sheets = getSheets();
+  // Get the sheet ID for TradeTracker tab
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID() });
+  const tab = spreadsheet.data.sheets.find(s => s.properties.title === 'TradeTracker');
+  if (!tab) throw new Error('TradeTracker tab not found');
+  const sheetId = tab.properties.sheetId;
+  // Delete the row (rowIndex is 1-based)
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID(),
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: rowIndex - 1, // 0-based
+            endIndex: rowIndex        // exclusive
+          }
+        }
+      }]
+    }
   });
 }
 

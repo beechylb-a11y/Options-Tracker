@@ -9,6 +9,7 @@ import {
   ensureSheetStructure, getConfig, updateConfig,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
+  updateTradeTrackerRow, deleteTradeTrackerRow,
   logDecision, getDecisions,
   getBattingAverage, updateBattingAverage,
   appendJournalEntry, getJournal,
@@ -177,12 +178,37 @@ app.get('/api/tracker', requireAuth, async (req, res) => {
     const rows = await getTradeTracker();
     // Parse into objects for frontend
     const headers = rows[0] || [];
-    const data = rows.slice(1).map(row => {
-      const obj = {};
+    const data = rows.slice(1).map((row, idx) => {
+      const obj = { _rowIndex: idx + 2 };
       headers.forEach((h, i) => { obj[h] = row[i] || ''; });
       return obj;
     });
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  TRADE EDIT / DELETE
+// ================================================================
+app.put('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
+    await updateTradeTrackerRow(rowIndex, req.body);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
+    await deleteTradeTrackerRow(rowIndex);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -519,8 +545,10 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
       notes: `Closed ticket: ${underlying} ${stratName} — ${isWin ? 'Win' : 'Loss'} $${Math.abs(pnl).toFixed(0)}`
     });
 
-    res.json({ ok: true });
+    console.log(`[CLOSE TICKET] rowIndex=${rowIndex}, statusAfterClose=${dec.Status}, rowLen=${row?.length}, headerLen=${headers.length}, statusIdx=${headers.indexOf('Status')}`);
+    res.json({ ok: true, debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });
   } catch (err) {
+    console.error('[CLOSE TICKET ERROR]', err);
     res.status(500).json({ error: err.message });
   }
 });

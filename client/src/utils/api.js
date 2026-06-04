@@ -36,6 +36,12 @@ export const api = {
   // Trades
   getTrades: () => fetchJSON('/api/trades'),
   getTracker: () => fetchJSON('/api/tracker'),
+  updateTrade: (rowIndex, updates) => fetchJSON(`/api/tracker/${rowIndex}`, {
+    method: 'PUT', body: JSON.stringify(updates)
+  }),
+  deleteTrade: (rowIndex) => fetchJSON(`/api/tracker/${rowIndex}`, {
+    method: 'DELETE'
+  }),
 
   // Stats
   getStats: () => fetchJSON('/api/stats'),

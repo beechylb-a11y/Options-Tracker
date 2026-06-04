@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check } from 'lucide-react';
+import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 
@@ -15,6 +15,10 @@ export default function Trades({ authenticated }) {
   const [uncategorised, setUncategorised] = useState([]);
   const [showReview, setShowReview] = useState(false);
   const [savingRow, setSavingRow] = useState(null);
+  const [editingRow, setEditingRow] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [deleting, setDeleting] = useState(null);
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -296,7 +300,62 @@ export default function Trades({ authenticated }) {
                     {expanded && (
                       <tr>
                         <td colSpan="10" className="bg-bg p-4">
-                          <TradeTicket trade={t} legs={getLegsForTrade(t)} />
+                          {deleting === i ? (
+                            <div className="fade-in text-center py-4">
+                              <p className="text-sm text-text mb-2">Delete this trade?</p>
+                              <p className="text-xs text-text-muted mb-3">{t.Underlying} — {t['Strategy (OIC)']} — {fmt$(parseFloat(t['Total P&L ($)']) || 0)}</p>
+                              <div className="flex gap-2 justify-center">
+                                <button onClick={() => setDeleting(null)}
+                                  className="px-4 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted">Cancel</button>
+                                <button onClick={async () => {
+                                  setSaving(true);
+                                  try {
+                                    await api.deleteTrade(t._rowIndex);
+                                    setDeleting(null);
+                                    setExpandedRow(null);
+                                    await loadData();
+                                  } catch (e) { console.error(e); }
+                                  setSaving(false);
+                                }} disabled={saving}
+                                  className="px-4 py-1.5 text-xs bg-red-dim hover:bg-red text-white rounded-lg disabled:opacity-50">
+                                  {saving ? 'Deleting...' : 'Confirm delete'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <TradeTicket trade={t} legs={getLegsForTrade(t)} tradeIdx={i}
+                              editingRow={editingRow} editForm={editForm} setEditForm={setEditForm} saving={saving}
+                              onEdit={(action, idx) => {
+                                if (action === null) { setEditingRow(null); return; }
+                                if (action === 'save') {
+                                  (async () => {
+                                    setSaving(true);
+                                    try {
+                                      await api.updateTrade(t._rowIndex, editForm);
+                                      setEditingRow(null);
+                                      await loadData();
+                                    } catch (e) { console.error(e); }
+                                    setSaving(false);
+                                  })();
+                                  return;
+                                }
+                                // Start editing
+                                setEditForm({
+                                  underlying: action.Underlying || '',
+                                  strategy: action['Strategy (OIC)'] || '',
+                                  entryDate: (action['Entry Date'] || '').split('T')[0],
+                                  closeDate: (action['Close Date'] || '').split('T')[0],
+                                  expiryDate: (action['Expiry Date'] || '').split('T')[0],
+                                  totalPnl: action['Total P&L ($)'] || '',
+                                  netCredit: action['Net Credit ($)'] || '',
+                                  qty: action.Qty || '',
+                                  status: action.Status || 'Open'
+                                });
+                                setEditingRow(idx);
+                              }}
+                              onDelete={(trade, idx) => setDeleting(idx)}
+                            />
+                          )}
                         </td>
                       </tr>
                     )}
@@ -316,39 +375,100 @@ export default function Trades({ authenticated }) {
   );
 }
 
-function TradeTicket({ trade, legs }) {
+function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setEditForm, saving, tradeIdx }) {
   const pnl = parseFloat(trade['Total P&L ($)']) || 0;
+  const isEditing = editingRow === tradeIdx;
+
   return (
-    <div className="grid grid-cols-2 gap-4 fade-in">
-      <div>
-        <h4 className="text-xs text-text-faint uppercase tracking-wider mb-2">Trade Details</h4>
-        <div className="grid grid-cols-2 gap-y-1.5 text-sm">
-          <span className="text-text-muted">Entry</span><span className="mono">{fmtDate(trade['Entry Date'])}</span>
-          <span className="text-text-muted">Expiry</span><span className="mono">{fmtDate(trade['Expiry Date'])}</span>
-          <span className="text-text-muted">Close</span><span className="mono">{fmtDate(trade['Close Date'])}</span>
-          <span className="text-text-muted">Strategy</span><span>{trade['Strategy (OIC)']}</span>
-          <span className="text-text-muted">Underlying</span><span className="font-medium">{trade.Underlying}</span>
-          <span className="text-text-muted">Status</span><span>{trade.Status}</span>
-          <span className="text-text-muted">Net credit</span><span className="mono" style={{ color: pnlColor(parseFloat(trade['Net Credit ($)'])) }}>{fmt$(parseFloat(trade['Net Credit ($)']))}</span>
-          <span className="text-text-muted">Total P&L</span><span className="mono font-bold text-base" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
-        </div>
-      </div>
-      <div>
-        <h4 className="text-xs text-text-faint uppercase tracking-wider mb-2">Individual Legs</h4>
-        {legs.length > 0 ? (
-          <div className="space-y-1">
-            {legs.map((leg, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-bg-border last:border-0">
-                <span className="text-text-faint w-16">{(leg[0] || '').split(' ')[0]}</span>
-                <span className="text-text-muted flex-1">{leg[5]}</span>
-                <span className="mono" style={{ color: pnlColor(parseFloat(leg[14])) }}>{fmt$(parseFloat(leg[14]))}</span>
-              </div>
-            ))}
+    <div className="fade-in">
+      {!isEditing ? (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <h4 className="text-xs text-text-faint uppercase tracking-wider mb-2">Trade Details</h4>
+            <div className="grid grid-cols-2 gap-y-1.5 text-sm">
+              <span className="text-text-muted">Entry</span><span className="mono">{fmtDate(trade['Entry Date'])}</span>
+              <span className="text-text-muted">Expiry</span><span className="mono">{fmtDate(trade['Expiry Date'])}</span>
+              <span className="text-text-muted">Close</span><span className="mono">{fmtDate(trade['Close Date'])}</span>
+              <span className="text-text-muted">Strategy</span><span>{trade['Strategy (OIC)']}</span>
+              <span className="text-text-muted">Underlying</span><span className="font-medium">{trade.Underlying}</span>
+              <span className="text-text-muted">Status</span><span>{trade.Status}</span>
+              <span className="text-text-muted">Net credit</span><span className="mono" style={{ color: pnlColor(parseFloat(trade['Net Credit ($)'])) }}>{fmt$(parseFloat(trade['Net Credit ($)']))}</span>
+              <span className="text-text-muted">Total P&L</span><span className="mono font-bold text-base" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => onEdit(trade, tradeIdx)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted transition-colors">
+                <Edit3 size={12} /> Edit
+              </button>
+              <button onClick={() => onDelete(trade, tradeIdx)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-red/30 rounded-lg hover:bg-red/10 text-red transition-colors">
+                <Trash2 size={12} /> Delete
+              </button>
+            </div>
           </div>
-        ) : (
-          <p className="text-text-faint text-xs">No leg detail available</p>
-        )}
-      </div>
+          <div>
+            <h4 className="text-xs text-text-faint uppercase tracking-wider mb-2">Individual Legs</h4>
+            {legs.length > 0 ? (
+              <div className="space-y-1">
+                {legs.map((leg, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-bg-border last:border-0">
+                    <span className="text-text-faint w-16">{(leg[0] || '').split(' ')[0]}</span>
+                    <span className="text-text-muted flex-1">{leg[5]}</span>
+                    <span className="mono" style={{ color: pnlColor(parseFloat(leg[14])) }}>{fmt$(parseFloat(leg[14]))}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-text-faint text-xs">No leg detail available</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="fade-in">
+          <h4 className="text-xs text-text-faint uppercase tracking-wider mb-3">Edit Trade</h4>
+          <div className="grid grid-cols-4 gap-3">
+            <EditField label="Underlying" value={editForm.underlying} onChange={v => setEditForm(f => ({ ...f, underlying: v }))} />
+            <EditField label="Strategy" value={editForm.strategy} onChange={v => setEditForm(f => ({ ...f, strategy: v }))} />
+            <EditField label="Entry Date" value={editForm.entryDate} onChange={v => setEditForm(f => ({ ...f, entryDate: v }))} type="date" />
+            <EditField label="Close Date" value={editForm.closeDate} onChange={v => setEditForm(f => ({ ...f, closeDate: v }))} type="date" />
+            <EditField label="Expiry Date" value={editForm.expiryDate} onChange={v => setEditForm(f => ({ ...f, expiryDate: v }))} type="date" />
+            <EditField label="Total P&L ($)" value={editForm.totalPnl} onChange={v => setEditForm(f => ({ ...f, totalPnl: v }))} type="number" />
+            <EditField label="Net Credit ($)" value={editForm.netCredit} onChange={v => setEditForm(f => ({ ...f, netCredit: v }))} type="number" />
+            <EditField label="Qty" value={editForm.qty} onChange={v => setEditForm(f => ({ ...f, qty: v }))} type="number" />
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Status</label>
+              <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
+                <option value="Open">Open</option>
+                <option value="Closed">Closed</option>
+                <option value="Expired">Expired</option>
+                <option value="Assigned">Assigned</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => onEdit(null, null)} disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted transition-colors">
+              <X size={12} /> Cancel
+            </button>
+            <button onClick={() => onEdit('save', tradeIdx)} disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50">
+              <Save size={12} /> {saving ? 'Saving...' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditField({ label, value, onChange, type = 'text' }) {
+  return (
+    <div>
+      <label className="text-[10px] text-text-muted block mb-1">{label}</label>
+      <input type={type} step={type === 'number' ? '0.01' : undefined} value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
     </div>
   );
 }
