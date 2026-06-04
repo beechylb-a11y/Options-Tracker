@@ -203,6 +203,16 @@ export async function getTradeTracker() {
   return res.data.values || [];
 }
 
+export async function appendTradeTrackerRow(row) {
+  const sheets = getSheets();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID(),
+    range: 'TradeTracker!A1',
+    valueInputOption: 'RAW',
+    requestBody: { values: [row] }
+  });
+}
+
 // ================================================================
 //  DECISIONS (logged from decision engine)
 // ================================================================

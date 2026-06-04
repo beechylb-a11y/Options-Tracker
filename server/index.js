@@ -8,7 +8,7 @@ import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
   ensureSheetStructure, getConfig, updateConfig,
   appendTrades, getTrades, clearTrades,
-  writeTradeTracker, getTradeTracker,
+  writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
   logDecision, getDecisions,
   getBattingAverage, updateBattingAverage,
   appendJournalEntry, getJournal,
@@ -461,7 +461,54 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
   try {
     const rowIndex = parseInt(req.params.rowIndex);
     const { closeDate, closePrice, actualPnl } = req.body;
+
+    // 1. Update the Decisions sheet
     await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl });
+
+    // 2. Get the decision row to extract details for TradeTracker + Journal
+    const decRows = await getDecisions();
+    const headers = decRows[0] || [];
+    const row = decRows[rowIndex - 1]; // rowIndex is 1-based in sheet, but rows[0] is headers
+    const dec = {};
+    if (row) headers.forEach((h, i) => { dec[h] = row[i] || ''; });
+
+    const pnl = parseFloat(actualPnl) || 0;
+    const isWin = pnl >= 0;
+    const cDate = closeDate || new Date().toISOString().split('T')[0];
+    const underlying = dec.Underlying || '';
+    const strategy = dec.Strategy || '';
+    // Extract strategy name from "SPX - Iron Condor - Normal - 1 contract"
+    const stratParts = strategy.split(' - ');
+    const stratName = stratParts.length > 2 ? stratParts.slice(1, -1).join(' - ') : strategy;
+    const contracts = parseInt(dec.Contracts) || 1;
+
+    // 3. Append to TradeTracker so it shows in Dashboard/Summary/Analytics
+    const trackerRow = [
+      `TICKET-${rowIndex}`,       // Order #
+      dec.Timestamp ? dec.Timestamp.split('T')[0] : cDate, // Entry Date
+      '',                          // Expiry Date
+      cDate,                       // Close Date
+      stratName,                   // Strategy (OIC)
+      underlying,                  // Underlying
+      contracts,                   // Qty
+      '',                          // Net Credit ($)
+      pnl,                         // Total P&L ($)
+      isWin ? 'Win' : 'Loss',     // W / L
+      '',                          // Cumul BA (%)
+      'Closed'                     // Status
+    ];
+    await appendTradeTrackerRow(trackerRow);
+
+    // 4. Update/append Journal entry for the close date
+    await appendJournalEntry({
+      date: cDate,
+      dayPnl: pnl,
+      tradesCount: 1,
+      winCount: isWin ? 1 : 0,
+      lossCount: isWin ? 0 : 1,
+      notes: `Closed ticket: ${underlying} ${stratName} — ${isWin ? 'Win' : 'Loss'} $${Math.abs(pnl).toFixed(0)}`
+    });
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
