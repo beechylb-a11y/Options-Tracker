@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
-import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar, Award, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar, Award } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor } from '../utils/format';
 
