@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ExternalLink, Zap, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
+import { Zap, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
-
-const ENGINE_URL = 'https://script.google.com/macros/s/AKfycbyaO8BnJaLjcoiVM5_HEr6XW6d4X-PzglitQOe_HmoiFQrpqCatllID6bajXnmj-6Co/exec';
+import EnginePanel from '../components/EnginePanel';
 
 export default function DecisionEngine({ authenticated }) {
   const [mode, setMode] = useState('0dte');
@@ -48,22 +47,17 @@ export default function DecisionEngine({ authenticated }) {
 
   useEffect(() => { loadDecisions(); }, [authenticated]);
 
-  // Listen for postMessage from iframe
-  useEffect(() => {
-    function handleMessage(event) {
-      if (!event.data || event.data.type !== 'LOG_TRADE') return;
-      api.logDecision(event.data.data)
-        .then(result => {
-          if (result.ok) {
-            showToast('Trade logged to Options Tracker', 'success');
-            loadDecisions();
-          }
-        })
-        .catch(err => showToast('Error: ' + err.message, 'error'));
-    }
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  // Handle native engine log trade
+  function handleEngineLog(data) {
+    api.logDecision(data)
+      .then(result => {
+        if (result.ok) {
+          showToast('Trade logged to Options Tracker', 'success');
+          loadDecisions();
+        }
+      })
+      .catch(err => showToast('Error: ' + err.message, 'error'));
+  }
 
   function showToast(msg, type) {
     setToast({ msg, type });
@@ -174,10 +168,6 @@ export default function DecisionEngine({ authenticated }) {
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <GitCompare size={14} /> Compare
           </button>
-          <a href={ENGINE_URL} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover transition-colors text-text-muted">
-            <ExternalLink size={14} />
-          </a>
         </div>
       </div>
 
@@ -562,15 +552,8 @@ export default function DecisionEngine({ authenticated }) {
         </div>
       )}
 
-      {/* Embedded engine */}
-      <div className="card p-0 overflow-hidden" style={{ height: panel ? 'calc(100vh - 540px)' : 'calc(100vh - 140px)' }}>
-        <iframe
-          src={ENGINE_URL + (mode === '45dte' ? '?mode=45' : '')}
-          style={{ width: '100%', height: '100%', border: 'none', background: '#0d1117', borderRadius: '12px' }}
-          title="Decision Engine"
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-        />
-      </div>
+      {/* Native Decision Engine */}
+      <EnginePanel mode={mode} onLogTrade={handleEngineLog} />
     </div>
   );
 }
