@@ -72,8 +72,7 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
-  // Show VWAP scaling notice
-  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap5') > 0 && fv(i0,'vwap5') < fv(i0,'price') * 0.3;
+  // Show VWAP scaling notice (vwapScaled defined above)
 
   function handleLog() {
     if (!onLogTrade) return;
