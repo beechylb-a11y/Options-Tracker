@@ -25,6 +25,7 @@ export function getAuthUrl() {
     scope: [
       'https://www.googleapis.com/auth/spreadsheets',
       'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
     prompt: 'consent'
@@ -595,4 +596,230 @@ export async function getDocumentUrl(fileId) {
     fields: 'webViewLink,webContentLink'
   });
   return file.data;
+}
+
+// ================================================================
+//  GMAIL — TASTYTRADE EMAIL SCANNING
+// ================================================================
+function getGmail() {
+  return google.gmail({ version: 'v1', auth: authClient });
+}
+
+export async function scanTastyTradeEmails(maxResults = 50, afterDate = null) {
+  const gmail = getGmail();
+  
+  // Build search query for TastyTrade emails
+  let query = 'from:tastytrade.com subject:(order OR confirmation OR assigned OR exercised)';
+  if (afterDate) query += ` after:${afterDate}`;
+  
+  const res = await gmail.users.messages.list({
+    userId: 'me',
+    q: query,
+    maxResults
+  });
+
+  const messages = res.data.messages || [];
+  const parsed = [];
+
+  for (const msg of messages) {
+    const full = await gmail.users.messages.get({
+      userId: 'me',
+      id: msg.id,
+      format: 'full'
+    });
+
+    const headers = full.data.payload.headers;
+    const subject = headers.find(h => h.name === 'Subject')?.value || '';
+    const from = headers.find(h => h.name === 'From')?.value || '';
+    const date = headers.find(h => h.name === 'Date')?.value || '';
+    
+    // Get body text
+    let body = '';
+    if (full.data.payload.body?.data) {
+      body = Buffer.from(full.data.payload.body.data, 'base64').toString('utf-8');
+    } else if (full.data.payload.parts) {
+      const textPart = full.data.payload.parts.find(p => p.mimeType === 'text/plain');
+      if (textPart?.body?.data) {
+        body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
+      } else {
+        // Try HTML part and strip tags
+        const htmlPart = full.data.payload.parts.find(p => p.mimeType === 'text/html');
+        if (htmlPart?.body?.data) {
+          body = Buffer.from(htmlPart.body.data, 'base64').toString('utf-8')
+            .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+        }
+      }
+    }
+
+    const result = parseTastyTradeEmail(subject, body, date, msg.id);
+    if (result) parsed.push(result);
+  }
+
+  return parsed;
+}
+
+function parseTastyTradeEmail(subject, body, date, messageId) {
+  const emailDate = new Date(date).toISOString();
+
+  // Type 1: Order fill confirmation
+  if (body.includes('Your order #') && body.includes('Fill Details')) {
+    return parseOrderFill(body, emailDate, messageId);
+  }
+
+  // Type 2: Assignment/Exercise
+  if (body.includes('exercised and/or been assigned') || body.includes('Assigned') || body.includes('Exercised')) {
+    return parseAssignment(body, emailDate, messageId);
+  }
+
+  // Type 3: Daily confirmation (future — return null for now)
+  return null;
+}
+
+function parseOrderFill(body, emailDate, messageId) {
+  const result = {
+    type: 'order_fill',
+    messageId,
+    emailDate,
+    orderId: '',
+    symbol: '',
+    orderType: '',
+    creditDebit: '',
+    amount: 0,
+    legs: [],
+    fillDate: ''
+  };
+
+  // Extract order number
+  const orderMatch = body.match(/order #(\d+)/i);
+  if (orderMatch) result.orderId = orderMatch[1];
+
+  // Extract symbol
+  const symbolMatch = body.match(/Symbol\s+(\w+)/);
+  if (symbolMatch) result.symbol = symbolMatch[1];
+
+  // Extract order type (Limit @ X.XX Credit/Debit)
+  const orderTypeMatch = body.match(/Order Type\s+(.*?)(?:\n|Fill)/s);
+  if (orderTypeMatch) {
+    result.orderType = orderTypeMatch[1].trim();
+    const amountMatch = result.orderType.match(/([\d.]+)\s+(Credit|Debit)/i);
+    if (amountMatch) {
+      result.amount = parseFloat(amountMatch[1]);
+      result.creditDebit = amountMatch[2].toLowerCase();
+    }
+  }
+
+  // Parse fill legs: "Sold/Bought QTY SYMBOL DATE Call/Put STRIKE @ PRICE"
+  const legPattern = /(Sold|Bought)\s+(\d+)\s+(\w+)\s+(\d{2}\/\d{2}\/\d{2})\s+(Call|Put)\s+([\d.]+)\s+@\s+([\d.]+)/gi;
+  let match;
+  const legMap = {};
+  while ((match = legPattern.exec(body)) !== null) {
+    const key = `${match[1]}_${match[3]}_${match[4]}_${match[5]}_${match[6]}`;
+    if (!legMap[key]) {
+      legMap[key] = {
+        action: match[1], // Sold or Bought
+        qty: parseInt(match[2]),
+        symbol: match[3],
+        expiry: match[4],
+        type: match[5], // Call or Put
+        strike: parseFloat(match[6]),
+        price: parseFloat(match[7])
+      };
+    }
+    // Duplicate fills (same leg listed twice) — keep first occurrence
+  }
+  result.legs = Object.values(legMap);
+
+  // Extract fill date from first leg
+  const fillDateMatch = body.match(/Filled at:\s+(.+?)(?:\n|$)/);
+  if (fillDateMatch) {
+    try { result.fillDate = new Date(fillDateMatch[1].trim()).toISOString(); } catch (e) {}
+  }
+
+  // Detect strategy from legs
+  result.strategy = detectStrategy(result.legs);
+
+  return result;
+}
+
+function parseAssignment(body, emailDate, messageId) {
+  const result = {
+    type: 'assignment',
+    messageId,
+    emailDate,
+    legs: [],
+    symbol: '',
+    strategy: 'Assignment/Exercise'
+  };
+
+  // Parse: "Assigned/Exercised QTY SYMBOL DATE STRIKE Calls/Puts"
+  const legPattern = /(Assigned|Exercised)\s+(\d+)\s+(\w+)\s+([\d-]+)\s+([\d.]+)\s+(Calls?|Puts?)/gi;
+  let match;
+  while ((match = legPattern.exec(body)) !== null) {
+    result.legs.push({
+      action: match[1],
+      qty: parseInt(match[2]),
+      symbol: match[3],
+      expiry: match[4],
+      strike: parseFloat(match[5]),
+      type: match[6].replace(/s$/, '') // "Calls" -> "Call"
+    });
+    if (!result.symbol) result.symbol = match[3];
+  }
+
+  return result;
+}
+
+function detectStrategy(legs) {
+  if (legs.length === 0) return 'Unknown';
+  
+  const sold = legs.filter(l => l.action === 'Sold');
+  const bought = legs.filter(l => l.action === 'Bought');
+  const allCalls = legs.every(l => l.type === 'Call');
+  const allPuts = legs.every(l => l.type === 'Put');
+  const hasCalls = legs.some(l => l.type === 'Call');
+  const hasPuts = legs.some(l => l.type === 'Put');
+  
+  // 2-leg structures
+  if (legs.length === 2) {
+    if (sold.length === 1 && bought.length === 1) {
+      if (allCalls) {
+        return sold[0].strike > bought[0].strike ? 'Bear Call Spread' : 'Bull Call Spread';
+      }
+      if (allPuts) {
+        return sold[0].strike < bought[0].strike ? 'Bull Put Spread' : 'Bear Put Spread';
+      }
+    }
+  }
+  
+  // 3-leg structures (butterfly family)
+  if (legs.length === 3 && (allCalls || allPuts)) {
+    const sortedStrikes = legs.map(l => l.strike).sort((a, b) => a - b);
+    const soldQty = sold.reduce((s, l) => s + l.qty, 0);
+    const boughtQty = bought.reduce((s, l) => s + l.qty, 0);
+    
+    if (soldQty === 2 && boughtQty === 2) {
+      // Check wing widths
+      const lowerWidth = sortedStrikes[1] - sortedStrikes[0];
+      const upperWidth = sortedStrikes[2] - sortedStrikes[1];
+      if (Math.abs(lowerWidth - upperWidth) < 0.5) return 'Standard Butterfly';
+      return 'Broken Wing Butterfly';
+    }
+  }
+  
+  // 4-leg structures
+  if (legs.length === 4 && hasCalls && hasPuts) {
+    const callLegs = legs.filter(l => l.type === 'Call');
+    const putLegs = legs.filter(l => l.type === 'Put');
+    if (callLegs.length === 2 && putLegs.length === 2) {
+      // Iron condor or iron butterfly
+      const callStrikes = callLegs.map(l => l.strike).sort((a, b) => a - b);
+      const putStrikes = putLegs.map(l => l.strike).sort((a, b) => a - b);
+      if (callStrikes[0] === putStrikes[1]) return 'Iron Butterfly';
+      return 'Iron Condor - Normal';
+    }
+  }
+  
+  // Fallback
+  if (legs.length === 4 && (allCalls || allPuts)) return 'Long Condor - Reversed';
+  return `${legs.length}-leg ${allCalls ? 'Call' : allPuts ? 'Put' : 'Mixed'} structure`;
 }

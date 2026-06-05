@@ -97,5 +97,8 @@ export const api = {
   },
   getDocuments: () => fetchJSON('/api/documents'),
   deleteDocument: (fileId) => fetchJSON(`/api/documents/${fileId}`, { method: 'DELETE' }),
-  getDocumentUrl: (fileId) => fetchJSON(`/api/documents/${fileId}/url`)
+  getDocumentUrl: (fileId) => fetchJSON(`/api/documents/${fileId}/url`),
+
+  // Gmail
+  scanEmails: (max, after) => fetchJSON(`/api/gmail/scan?max=${max || 50}${after ? '&after=' + after : ''}`)
 };

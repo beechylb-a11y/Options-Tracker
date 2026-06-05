@@ -16,7 +16,8 @@ import {
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
   closeTradeTicket, updateTradeNotes, updateTradeStatus,
-  uploadDocument, listDocuments, deleteDocument, getDocumentUrl
+  uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
+  scanTastyTradeEmails
 } from './sheets.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
@@ -734,6 +735,21 @@ app.get('/api/documents/:fileId/url', requireAuth, async (req, res) => {
     const urls = await getDocumentUrl(req.params.fileId);
     res.json(urls);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  GMAIL — TASTYTRADE EMAIL SCAN
+// ================================================================
+app.get('/api/gmail/scan', requireAuth, async (req, res) => {
+  try {
+    const maxResults = parseInt(req.query.max) || 50;
+    const afterDate = req.query.after || null;
+    const emails = await scanTastyTradeEmails(maxResults, afterDate);
+    res.json({ emails, count: emails.length });
+  } catch (err) {
+    console.error('Gmail scan error:', err);
     res.status(500).json({ error: err.message });
   }
 });
