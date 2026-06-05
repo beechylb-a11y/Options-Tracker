@@ -10,7 +10,7 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const is0 = mode === '0dte';
 
   const [i0, setI0] = useState({
-    underlying:'SPX', price:'', high:'', low:'', vwap:'', vwap30:'', vwapConfirm:'confirms',
+    underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
     win:'', risk:'', pop:'', hours:'6.5',
@@ -29,23 +29,21 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const set45 = (k,v) => setI45(p => ({...p,[k]:v}));
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
-  // SPX VWAP fix: if underlying is SPX and VWAP looks like SPY value, scale x10
-  function getAdjustedVWAP() {
+  // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
+  function scaleVWAP(val) {
     const price = fv(i0, 'price');
-    let vwap = fv(i0, 'vwap');
-    if (i0.underlying === 'SPX' && price > 1000 && vwap > 0 && vwap < price * 0.3) {
-      vwap = vwap * 10;
-    }
-    return vwap;
+    const v = parseFloat(val) || 0;
+    if (i0.underlying === 'SPX' && price > 1000 && v > 0 && v < price * 0.3) return v * 10;
+    return v;
   }
+  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap5') > 0 && fv(i0,'vwap5') < fv(i0,'price') * 0.3;
 
   const r = useMemo(() => {
     if (is0) {
-      const adjVWAP = getAdjustedVWAP();
       return calc0DTE({
-        price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'), vwap:adjVWAP,
-        vwap30:fv(i0,'vwap30') * (i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap30') > 0 && fv(i0,'vwap30') < fv(i0,'price') * 0.3 ? 10 : 1),
-        vwapConfirm:i0.vwapConfirm,
+        price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
+        vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
+        vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
         atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
         gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
         bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
@@ -75,7 +73,7 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
   // Show VWAP scaling notice
-  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap') > 0 && fv(i0,'vwap') < fv(i0,'price') * 0.3;
+  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap5') > 0 && fv(i0,'vwap5') < fv(i0,'price') * 0.3;
 
   function handleLog() {
     if (!onLogTrade) return;
@@ -131,11 +129,12 @@ export default function EnginePanel({ mode, onLogTrade }) {
             {is0 ? <>
               <Inp label="Day high" value={i0.high} onChange={v=>set0('high',v)}/>
               <Inp label="Day low" value={i0.low} onChange={v=>set0('low',v)}/>
-              <Inp label={`VWAP${vwapScaled ? ' (SPY → x10)' : ''}`} value={i0.vwap} onChange={v=>set0('vwap',v)}/>
-              <Inp label="VWAP 30m ago" value={i0.vwap30} onChange={v=>set0('vwap30',v)}/>
-              <Sel label="15m confirms" value={i0.vwapConfirm} onChange={v=>set0('vwapConfirm',v)} options={['confirms','diverges','flat']}/>
+              <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
+              <Inp label="VWAP 5 -30min" value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
+              <Inp label="VWAP 15" value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
+              <Inp label="VWAP 15 -30min" value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
               <Inp label="EM" value={i0.em} onChange={v=>set0('em',v)}/>
-              <Inp label="ATR" value={i0.atr} onChange={v=>set0('atr',v)}/>
+              <Inp label="ATR 1 Day" value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>
               <Inp label="ATR 2h" value={i0.atr2h} onChange={v=>set0('atr2h',v)}/>
               <Inp label="VIX" value={i0.vix} onChange={v=>set0('vix',v)}/>
@@ -250,8 +249,9 @@ export default function EnginePanel({ mode, onLogTrade }) {
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
                 <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
-                <KV label="VWAP slope" value={`${r.slope} ${r.slopeDirection !== 'unknown' ? `(${r.slopeDirection})` : ''}`} cls={r.slopeDirection==='rising'?'text-green':r.slopeDirection==='falling'?'text-red':''}/>
-                <KV label="15m confirm" value={r.confirmed?'Confirms ✓':r.diverges?'Diverges ✗':'Flat'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
+                <KV label="VWAP 5 slope" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
+                <KV label="VWAP 15 slope" value={`${r.slope15?.strength||'--'} (${r.slope15?.direction||'--'})`} cls={r.slope15?.direction==='rising'?'text-green':r.slope15?.direction==='falling'?'text-red':''}/>
+                <KV label="15m confirms" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
                 <KV label="VWAP distance" value={r.vwapDistPctEM>0?`${(r.vwapDistPctEM*100).toFixed(0)}% EM`:'--'} cls={r.vwapOverextended?'text-amber':''}/>
                 <KV label="RM ratio" value={r.rmRatio?`${(r.rmRatio*100).toFixed(0)}% EM`:'--'}/>
                 <KV label="Compression" value={r.comp!==null?r.comp.toFixed(2):'--'}/>

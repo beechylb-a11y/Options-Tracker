@@ -57,7 +57,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
 }
 
 export function calc0DTE(inputs) {
-  const { price, high, low, vwap, vwap30, vwapConfirm, atr, em, atr5, atr2h, gamStrike,
+  const { price, high, low, vwap5, vwap5_30, vwap15, vwap15_30, atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop,
     theta, delta, gamma, hours, underlying } = inputs;
 
@@ -66,6 +66,9 @@ export function calc0DTE(inputs) {
   const hasGam = gamStrike > 0 && atr > 0;
   const hasGreeks = theta > 0 && delta > 0;
   const popFrac = pop / 100;
+
+  // Use VWAP 5 as the primary VWAP for position/direction
+  const vwap = vwap5;
 
   // Derived
   const rm = high - low;
@@ -79,23 +82,29 @@ export function calc0DTE(inputs) {
   const vwapDistPctEM = (em > 0 && vwap > 0) ? Math.abs(price - vwap) / em : 0;
   const vwapOverextended = vwapDistPctEM > 0.75;
 
-  // Auto-calculate slope from VWAP now vs 30min ago
-  let slope;
-  if (vwap > 0 && vwap30 > 0) {
-    const slopeChange = ((vwap - vwap30) / vwap30) * 100;
-    if (Math.abs(slopeChange) < 0.02) slope = 'flat';
-    else if (Math.abs(slopeChange) < 0.08) slope = 'mild';
-    else slope = 'strong';
-    // Make slope directional (negative = downward)
-    if (slopeChange < -0.02) slope = (Math.abs(slopeChange) >= 0.08) ? 'strong' : 'mild';
-  } else {
-    slope = 'flat'; // default when no 30m VWAP entered
+  // Auto-calculate 5m slope from VWAP 5 now vs 30min ago
+  function calcSlope(now, ago) {
+    if (now > 0 && ago > 0) {
+      const pctChange = ((now - ago) / ago) * 100;
+      const absChange = Math.abs(pctChange);
+      const strength = absChange < 0.02 ? 'flat' : absChange < 0.08 ? 'mild' : 'strong';
+      const direction = pctChange > 0.02 ? 'rising' : pctChange < -0.02 ? 'falling' : 'flat';
+      return { strength, direction, pctChange };
+    }
+    return { strength: 'flat', direction: 'unknown', pctChange: 0 };
   }
-  const slopeDirection = (vwap > 0 && vwap30 > 0) ? (vwap > vwap30 ? 'rising' : vwap < vwap30 ? 'falling' : 'flat') : 'unknown';
 
-  // 15m confirmation factor
-  const confirmed = vwapConfirm === 'confirms';
-  const diverges = vwapConfirm === 'diverges';
+  const slope5 = calcSlope(vwap5, vwap5_30);
+  const slope15 = calcSlope(vwap15, vwap15_30);
+  const slope = slope5.strength;
+  const slopeDirection = slope5.direction;
+
+  // Auto-confirm: 15m confirms if both slopes point the same direction
+  const confirmed = slope5.direction !== 'flat' && slope5.direction !== 'unknown'
+    && slope15.direction === slope5.direction;
+  const diverges = slope5.direction !== 'flat' && slope5.direction !== 'unknown'
+    && slope15.direction !== 'unknown' && slope15.direction !== 'flat'
+    && slope15.direction !== slope5.direction;
   const vixGap = vix > 0 ? (vix1d - vix) / vix : 0;
   const gapBandIdx = vixGap < -0.10 ? 0 : vixGap <= 0.10 ? 1 : vixGap <= 0.25 ? 2 : 3;
   const vixHigh = vix > 25;
@@ -200,29 +209,29 @@ export function calc0DTE(inputs) {
   }
   const wingTxt = D > 0 ? `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})` : '';
 
-  // Scoring (100 pts)
+  // Scoring (100 pts max: 25+20+20+15+10+10)
   let setupScore = 0;
   const criteria = [];
 
-  // 1. RM band (30)
+  // 1. RM band (25)
   let rmPts;
-  if (!hasPrice || em === 0) rmPts = 10;
-  else if (rmRatio < 0.25) rmPts = bestRating==='EXCELLENT'?30:bestRating==='GOOD'?22:12;
-  else if (rmRatio < 0.50) rmPts = bestRating==='EXCELLENT'?30:bestRating==='GOOD'?22:12;
-  else if (rmRatio < 0.75) rmPts = bestRating==='EXCELLENT'?28:bestRating==='GOOD'?20:10;
-  else if (rmRatio < 1.00) rmPts = bestRating==='EXCELLENT'?30:bestRating==='GOOD'?20:8;
-  else rmPts = isCompressing ? (bestRating==='EXCELLENT'?25:15) : 5;
+  if (!hasPrice || em === 0) rmPts = 8;
+  else if (rmRatio < 0.25) rmPts = bestRating==='EXCELLENT'?25:bestRating==='GOOD'?18:10;
+  else if (rmRatio < 0.50) rmPts = bestRating==='EXCELLENT'?25:bestRating==='GOOD'?18:10;
+  else if (rmRatio < 0.75) rmPts = bestRating==='EXCELLENT'?23:bestRating==='GOOD'?16:8;
+  else if (rmRatio < 1.00) rmPts = bestRating==='EXCELLENT'?25:bestRating==='GOOD'?16:6;
+  else rmPts = isCompressing ? (bestRating==='EXCELLENT'?20:12) : 4;
   setupScore += rmPts;
-  criteria.push({ label: `Realised move ${hasPrice&&em>0?(rmRatio*100).toFixed(0)+'% EM':'--'}`, pts: rmPts, max: 30 });
+  criteria.push({ label: `Realised move ${hasPrice&&em>0?(rmRatio*100).toFixed(0)+'% EM':'--'}`, pts: rmPts, max: 25 });
 
-  // 2. ATR compression (25)
+  // 2. ATR compression (20)
   let compPts;
-  if (!hasComp) compPts = 8;
-  else if (rmRatio < 0.50) compPts = comp>=0.50&&comp<=0.80?25:comp>0.80?18:12;
-  else if (rmRatio < 0.75) compPts = comp<0.50?25:comp<0.80?18:10;
-  else compPts = comp<0.35?25:comp<0.50?20:comp<0.80?10:3;
+  if (!hasComp) compPts = 6;
+  else if (rmRatio < 0.50) compPts = comp>=0.50&&comp<=0.80?20:comp>0.80?14:10;
+  else if (rmRatio < 0.75) compPts = comp<0.50?20:comp<0.80?14:8;
+  else compPts = comp<0.35?20:comp<0.50?16:comp<0.80?8:2;
   setupScore += compPts;
-  criteria.push({ label: `ATR compression ${hasComp?comp.toFixed(2):'--'}`, pts: compPts, max: 25 });
+  criteria.push({ label: `ATR compression ${hasComp?comp.toFixed(2):'--'}`, pts: compPts, max: 20 });
 
   // 3. Gamma distance (20)
   let gamPts;
@@ -237,12 +246,12 @@ export function calc0DTE(inputs) {
   setupScore += stratFit;
   criteria.push({ label: `Strategy fit (${bestRating})`, pts: stratFit, max: 15 });
 
-  // 5. VIX gap (15)
-  const vixGapRatings = VIX_GAP_RATINGS[bestStrat] || [5,5,5,5];
-  let vixPts = vixGap===0&&vix===0 ? 7 : vixGapRatings[gapBandIdx];
+  // 5. VIX gap (10)
+  const vixGapRatings = VIX_GAP_RATINGS[bestStrat] || [3,5,7,10];
+  let vixPts = vixGap===0&&vix===0 ? 5 : vixGapRatings[gapBandIdx];
   if (vixHigh) vixPts = Math.floor(vixPts * 0.5);
   setupScore += vixPts;
-  criteria.push({ label: `VIX1D/VIX gap for ${bestStrat}`, pts: vixPts, max: 15 });
+  criteria.push({ label: `VIX1D/VIX gap for ${bestStrat}`, pts: vixPts, max: 10 });
 
   // 6. VWAP slope + confirmation (10)
   const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(bestStrat);
@@ -321,7 +330,7 @@ export function calc0DTE(inputs) {
     // Signals
     vixGap, vixGrade, vixImplic, emVIX, emV1D, gapBandIdx,
     dirScore, dirLabel, aboveVWAP, vwapDiff,
-    slope, slopeDirection, vwapDistPctEM, vwapOverextended, confirmed, diverges,
+    slope, slopeDirection, slope5, slope15, vwapDistPctEM, vwapOverextended, confirmed, diverges,
     rm, rmRatio, comp, isCompressing,
     gamDist, regime,
     regimeConds: REGIME_CONDS[regime], regimeCommentary: REGIME_COMMENTARY[regime],
