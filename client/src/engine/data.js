@@ -66,17 +66,17 @@ export const MARKET_BEHAVIOUR_45DTE = {
 };
 
 export const VIX_GAP_RATINGS = {
-  'Chicken condor':         [  5, 10, 15, 15 ],
-  'Broken wing butterfly':  [ 15, 15, 10,  5 ],
-  'Asymmetric butterfly':   [ 15, 15, 10,  5 ],
-  'Standard butterfly':     [ 15, 10,  5,  0 ],
-  'Iron Condor - Normal':   [  0,  5, 10, 15 ],
-  'Long Condor - Reversed': [ 15, 10,  5,  0 ],
-  'Iron butterfly':         [  0,  5, 15, 15 ],
-  'Bull put spread':        [  5, 10, 15, 15 ],
-  'Bear call spread':       [  5, 10, 15, 15 ],
-  'Bull call spread':       [ 15, 10,  5,  0 ],
-  'Bear put spread':        [ 15, 10,  5,  0 ]
+  'Chicken condor':         [  3,  7, 10, 10 ],
+  'Broken wing butterfly':  [ 10, 10,  7,  3 ],
+  'Asymmetric butterfly':   [ 10, 10,  7,  3 ],
+  'Standard butterfly':     [ 10,  7,  3,  0 ],
+  'Iron Condor - Normal':   [  0,  3,  7, 10 ],
+  'Long Condor - Reversed': [ 10,  7,  3,  0 ],
+  'Iron butterfly':         [  0,  3, 10, 10 ],
+  'Bull put spread':        [  3,  7, 10, 10 ],
+  'Bear call spread':       [  3,  7, 10, 10 ],
+  'Bull call spread':       [ 10,  7,  3,  0 ],
+  'Bear put spread':        [ 10,  7,  3,  0 ]
 };
 
 export const REGIME_RATINGS45 = {
