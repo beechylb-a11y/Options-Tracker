@@ -19,6 +19,10 @@ export default function Trades({ authenticated }) {
   const [editForm, setEditForm] = useState({});
   const [deleting, setDeleting] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [compareResult, setCompareResult] = useState(null);
+  const [compareFilter, setCompareFilter] = useState('all');
+  const compareRef = useRef();
   const fileRef = useRef();
 
   useEffect(() => {
@@ -99,6 +103,21 @@ export default function Trades({ authenticated }) {
             {uploading ? 'Uploading...' : 'Upload CSV'}
             <input ref={fileRef} type="file" accept=".csv" onChange={handleUpload} className="hidden" disabled={uploading} />
           </label>
+          <label className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover cursor-pointer transition-colors text-text-muted">
+            {comparing ? 'Comparing...' : 'Compare CSV'}
+            <input ref={compareRef} type="file" accept=".csv" className="hidden" disabled={comparing}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setComparing(true);
+                try {
+                  const result = await api.compareCSV(file);
+                  setCompareResult(result);
+                } catch (err) { setCompareResult({ error: err.message }); }
+                setComparing(false);
+                if (compareRef.current) compareRef.current.value = '';
+              }} />
+          </label>
         </div>
       </div>
 
@@ -110,6 +129,90 @@ export default function Trades({ authenticated }) {
             : <span className="text-green">Uploaded: {uploadResult.rawRows} rows parsed, {uploadResult.trackerWritten} positions tracked. BA: {uploadResult.stats?.battingAvg}%</span>
           }
         </div>
+      )}
+
+      {/* CSV Compare Results */}
+      {compareResult && !compareResult.error && (
+        <div className="card mb-4 fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-text flex items-center gap-2">
+              CSV Comparison Results
+            </h3>
+            <button onClick={() => setCompareResult(null)} className="text-text-faint hover:text-text"><X size={14} /></button>
+          </div>
+          {/* Summary KPIs */}
+          <div className="grid grid-cols-5 gap-2 mb-3">
+            <div className="text-center p-2 rounded-lg border border-bg-border">
+              <div className="text-lg font-bold mono text-text">{compareResult.summary.total}</div>
+              <div className="text-[10px] text-text-faint">Total</div>
+            </div>
+            <div className="text-center p-2 rounded-lg border border-green/30 bg-green/5">
+              <div className="text-lg font-bold mono text-green">{compareResult.summary.matched}</div>
+              <div className="text-[10px] text-text-faint">Matched</div>
+            </div>
+            <div className="text-center p-2 rounded-lg border border-amber/30 bg-amber/5">
+              <div className="text-lg font-bold mono text-amber">{compareResult.summary.mismatched}</div>
+              <div className="text-[10px] text-text-faint">Mismatched</div>
+            </div>
+            <div className="text-center p-2 rounded-lg border border-accent/30 bg-accent/5">
+              <div className="text-lg font-bold mono text-accent">{compareResult.summary.csvOnly}</div>
+              <div className="text-[10px] text-text-faint">CSV only</div>
+            </div>
+            <div className="text-center p-2 rounded-lg border border-red/30 bg-red/5">
+              <div className="text-lg font-bold mono text-red">{compareResult.summary.trackerOnly}</div>
+              <div className="text-[10px] text-text-faint">Tracker only</div>
+            </div>
+          </div>
+          {compareResult.summary.totalPnlDiff !== 0 && (
+            <div className="text-xs text-text-muted mb-3">Total P&L difference: <span className="mono font-bold" style={{ color: pnlColor(compareResult.summary.totalPnlDiff) }}>{fmt$(compareResult.summary.totalPnlDiff)}</span></div>
+          )}
+          {/* Filter */}
+          <div className="flex gap-1.5 mb-3">
+            {[['all','All'],['mismatch','Mismatched'],['csv_only','CSV only'],['tracker_only','Tracker only'],['match','Matched']].map(([v,l]) => (
+              <button key={v} onClick={() => setCompareFilter(v)}
+                className={`px-2.5 py-1 text-[10px] rounded-lg border transition-colors ${compareFilter === v ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-faint hover:bg-bg-hover'}`}>{l}</button>
+            ))}
+          </div>
+          {/* Results table */}
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-bg-card">
+                <tr className="text-text-faint text-[9px] uppercase tracking-wider">
+                  <th className="text-left py-1.5 pr-2">Status</th>
+                  <th className="text-left py-1.5 pr-2">Date</th>
+                  <th className="text-left py-1.5 pr-2">Ticker</th>
+                  <th className="text-left py-1.5 pr-2">Strategy</th>
+                  <th className="text-right py-1.5 pr-2">CSV P&L</th>
+                  <th className="text-right py-1.5 pr-2">Tracker P&L</th>
+                  <th className="text-right py-1.5">Diff</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareResult.results
+                  .filter(r => compareFilter === 'all' || r.status === compareFilter)
+                  .map((r, i) => {
+                    const badgeCls = r.status === 'match' ? 'badge-green' : r.status === 'mismatch' ? 'badge-amber' : r.status === 'csv_only' ? 'badge-blue' : 'badge-red';
+                    const csv = r.csv;
+                    const ex = r.existing;
+                    return (
+                      <tr key={i} className="border-b border-bg-border last:border-0">
+                        <td className="py-1.5 pr-2"><span className={`badge text-[8px] ${badgeCls}`}>{r.status.replace('_', ' ')}</span></td>
+                        <td className="py-1.5 pr-2 mono text-text-muted">{csv?.entryDate || (ex?.['Entry Date'] || '').split('T')[0]}</td>
+                        <td className="py-1.5 pr-2 font-medium">{csv?.underlying || ex?.Underlying}</td>
+                        <td className="py-1.5 pr-2 text-text-muted">{r.diffs?.strategy ? <><span className="text-amber">{r.diffs.strategy.csv}</span> / <span className="text-text-faint">{r.diffs.strategy.existing}</span></> : (csv?.strategy || ex?.['Strategy (OIC)'])}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: csv ? pnlColor(csv.totalPnl) : '#484f58' }}>{csv ? fmt$(csv.totalPnl) : '--'}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: ex ? pnlColor(parseFloat(ex['Total P&L ($)']) || 0) : '#484f58' }}>{ex ? fmt$(parseFloat(ex['Total P&L ($)']) || 0) : '--'}</td>
+                        <td className="py-1.5 text-right mono font-medium" style={{ color: Math.abs(r.pnlDiff) >= 1 ? pnlColor(r.pnlDiff) : '#484f58' }}>{Math.abs(r.pnlDiff) >= 1 ? fmt$(r.pnlDiff) : '—'}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {compareResult?.error && (
+        <div className="card mb-4 text-sm border-red"><span className="text-red">{compareResult.error}</span></div>
       )}
 
       {/* Uncategorised trades review */}

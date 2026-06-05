@@ -32,6 +32,13 @@ export const api = {
       method: 'POST', credentials: 'include', body: form
     }).then(r => r.json());
   },
+  compareCSV: (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch(`${BASE}/api/compare-csv`, {
+      method: 'POST', credentials: 'include', body: form
+    }).then(r => r.json());
+  },
 
   // Trades
   getTrades: () => fetchJSON('/api/trades'),

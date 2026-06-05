@@ -119,31 +119,8 @@ app.post('/api/upload-csv', requireAuth, upload.single('file'), async (req, res)
     const stats = calculateStats([['header'], ...trackerRows]);
     await updateBattingAverage(stats);
 
-    // Update journal entries
-    const dateMap = {};
-    trackerRows.forEach(row => {
-      const date = row[1]; // entry date
-      if (!date) return;
-      const d = date.split('T')[0];
-      if (!dateMap[d]) dateMap[d] = { pnl: 0, count: 0, wins: 0, losses: 0 };
-      dateMap[d].pnl += parseFloat(row[8]) || 0;
-      dateMap[d].count++;
-      if (row[9] === 'Win') dateMap[d].wins++;
-      if (row[9] === 'Loss') dateMap[d].losses++;
-    });
-
-    for (const [date, data] of Object.entries(dateMap)) {
-      const d = new Date(date);
-      const weekNum = Math.ceil((d.getDate()) / 7);
-      await appendJournalEntry({
-        date,
-        dayPnl: Math.round(data.pnl * 100) / 100,
-        tradesCount: data.count,
-        winCount: data.wins,
-        lossCount: data.losses,
-        weekNumber: `W${weekNum}`
-      });
-    }
+    // Journal no longer populated from CSV — all P&L data is derived from TradeTracker
+    // Journal sheet is now only for user-written daily review notes
 
     res.json({
       ok: true,
@@ -154,6 +131,102 @@ app.post('/api/upload-csv', requireAuth, upload.single('file'), async (req, res)
     });
   } catch (err) {
     console.error('Upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  CSV COMPARE — compare fresh TastyTrade CSV against TradeTracker
+// ================================================================
+app.post('/api/compare-csv', requireAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const text = req.file.buffer.toString('utf-8');
+    const rawRows = parseCSV(text);
+    const { trackerRows } = processCSV(rawRows);
+
+    // Get existing TradeTracker data
+    const existing = await getTradeTracker();
+    const headers = existing[0] || [];
+    const existingTrades = existing.slice(1).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    });
+
+    // Compare: match CSV trades to existing by underlying + close date + strategy
+    const csvTrades = trackerRows.map(row => ({
+      orderId: row[0], entryDate: (row[1] || '').split('T')[0],
+      expiryDate: (row[2] || '').split('T')[0], closeDate: (row[3] || '').split('T')[0],
+      strategy: row[4], underlying: row[5], qty: parseInt(row[6]) || 0,
+      netCredit: parseFloat(row[7]) || 0, totalPnl: parseFloat(row[8]) || 0,
+      wl: row[9], status: row[11]
+    }));
+
+    const results = [];
+    const matchedExisting = new Set();
+
+    csvTrades.forEach(csv => {
+      // Find best match in existing
+      let bestMatch = null, bestScore = 0;
+      existingTrades.forEach((ex, idx) => {
+        if (matchedExisting.has(idx)) return;
+        let score = 0;
+        if (ex.Underlying === csv.underlying) score += 3;
+        const exEntry = (ex['Entry Date'] || '').split('T')[0];
+        const exClose = (ex['Close Date'] || '').split('T')[0];
+        if (exEntry === csv.entryDate) score += 2;
+        if (exClose === csv.closeDate) score += 2;
+        if (ex['Strategy (OIC)'] === csv.strategy) score += 2;
+        const exPnl = parseFloat(ex['Total P&L ($)']) || 0;
+        if (Math.abs(exPnl - csv.totalPnl) < 1) score += 3;
+        else if (Math.abs(exPnl - csv.totalPnl) < 10) score += 1;
+        if (score >= 5 && score > bestScore) { bestMatch = { ...ex, _idx: idx }; bestScore = score; }
+      });
+
+      if (bestMatch) {
+        matchedExisting.add(bestMatch._idx);
+        const exPnl = parseFloat(bestMatch['Total P&L ($)']) || 0;
+        const pnlDiff = csv.totalPnl - exPnl;
+        const hasDiff = Math.abs(pnlDiff) >= 1 || bestMatch['Strategy (OIC)'] !== csv.strategy || bestMatch.Status !== csv.status;
+        results.push({
+          status: hasDiff ? 'mismatch' : 'match',
+          csv, existing: bestMatch, pnlDiff: Math.round(pnlDiff * 100) / 100,
+          diffs: hasDiff ? {
+            pnl: Math.abs(pnlDiff) >= 1 ? { csv: csv.totalPnl, existing: exPnl } : null,
+            strategy: bestMatch['Strategy (OIC)'] !== csv.strategy ? { csv: csv.strategy, existing: bestMatch['Strategy (OIC)'] } : null,
+            status: bestMatch.Status !== csv.status ? { csv: csv.status, existing: bestMatch.Status } : null
+          } : null
+        });
+      } else {
+        results.push({ status: 'csv_only', csv, existing: null, pnlDiff: 0, diffs: null });
+      }
+    });
+
+    // Find tracker-only trades (in existing but not in CSV)
+    existingTrades.forEach((ex, idx) => {
+      if (!matchedExisting.has(idx)) {
+        results.push({
+          status: 'tracker_only',
+          csv: null,
+          existing: ex,
+          pnlDiff: 0, diffs: null
+        });
+      }
+    });
+
+    const summary = {
+      total: results.length,
+      matched: results.filter(r => r.status === 'match').length,
+      mismatched: results.filter(r => r.status === 'mismatch').length,
+      csvOnly: results.filter(r => r.status === 'csv_only').length,
+      trackerOnly: results.filter(r => r.status === 'tracker_only').length,
+      totalPnlDiff: Math.round(results.reduce((s, r) => s + (r.pnlDiff || 0), 0) * 100) / 100
+    };
+
+    res.json({ results, summary });
+  } catch (err) {
+    console.error('Compare error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -535,15 +608,7 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     ];
     await appendTradeTrackerRow(trackerRow);
 
-    // 4. Update/append Journal entry for the close date
-    await appendJournalEntry({
-      date: cDate,
-      dayPnl: pnl,
-      tradesCount: 1,
-      winCount: isWin ? 1 : 0,
-      lossCount: isWin ? 0 : 1,
-      notes: `Closed ticket: ${underlying} ${stratName} — ${isWin ? 'Win' : 'Loss'} $${Math.abs(pnl).toFixed(0)}`
-    });
+    // Journal no longer populated from close ticket — P&L derived from TradeTracker
 
     console.log(`[CLOSE TICKET] rowIndex=${rowIndex}, statusAfterClose=${dec.Status}, rowLen=${row?.length}, headerLen=${headers.length}, statusIdx=${headers.indexOf('Status')}`);
     res.json({ ok: true, debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });

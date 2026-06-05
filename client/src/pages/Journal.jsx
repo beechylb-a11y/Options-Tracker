@@ -25,7 +25,6 @@ export default function Journal({ authenticated }) {
     ]).then(([j, t, d]) => {
       setJournal(j);
       setTracker(t);
-      // Parse decisions
       if (d && d.length > 1) {
         const headers = d[0];
         setDecisions(d.slice(1).map(row => {
@@ -45,18 +44,48 @@ export default function Journal({ authenticated }) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
 
-  // Index journal entries by date
-  const journalMap = {};
-  journal.forEach(j => {
-    if (j.Date) {
-      const d = j.Date.split('T')[0];
-      if (!journalMap[d]) journalMap[d] = { pnl: 0, count: 0, wins: 0, losses: 0, notes: '' };
-      journalMap[d].pnl += parseFloat(j['Day P&L']) || 0;
-      journalMap[d].count += parseInt(j['Trades Count']) || 0;
-      journalMap[d].wins += parseInt(j['Win Count']) || 0;
-      journalMap[d].losses += parseInt(j['Loss Count']) || 0;
-      if (j.Notes) journalMap[d].notes += (journalMap[d].notes ? '\n' : '') + j.Notes;
+  // ── Build daily stats directly from TradeTracker (single source of truth) ──
+  const dayStats = {};
+  tracker.forEach(t => {
+    // Use close date for P&L attribution (when the money was realised)
+    // Fall back to entry date if no close date
+    const closeDate = (t['Close Date'] || '').split('T')[0];
+    const entryDate = (t['Entry Date'] || '').split('T')[0];
+    const d = closeDate || entryDate;
+    if (!d) return;
+    const pnl = parseFloat(t['Total P&L ($)']) || 0;
+    const wl = t['W / L'];
+    if (!dayStats[d]) dayStats[d] = { pnl: 0, count: 0, wins: 0, losses: 0 };
+    // Only count closed trades for P&L
+    if (t.Status !== 'Open') {
+      dayStats[d].pnl += pnl;
+      dayStats[d].count++;
+      if (wl === 'Win') dayStats[d].wins++;
+      if (wl === 'Loss') dayStats[d].losses++;
     }
+  });
+
+  // ── Notes from Journal sheet (user-written only) ──
+  const notesByDate = {};
+  journal.forEach(j => {
+    if (j.Notes && j.Date) {
+      const d = j.Date.split('T')[0];
+      if (!notesByDate[d]) notesByDate[d] = '';
+      notesByDate[d] += (notesByDate[d] ? '\n' : '') + j.Notes;
+    }
+  });
+
+  // ── Merge stats + notes into calendar data ──
+  const calendarData = {};
+  const allDates = new Set([...Object.keys(dayStats), ...Object.keys(notesByDate)]);
+  allDates.forEach(d => {
+    calendarData[d] = {
+      pnl: dayStats[d]?.pnl || 0,
+      count: dayStats[d]?.count || 0,
+      wins: dayStats[d]?.wins || 0,
+      losses: dayStats[d]?.losses || 0,
+      notes: notesByDate[d] || ''
+    };
   });
 
   // Get trades for a specific date
@@ -77,11 +106,11 @@ export default function Journal({ authenticated }) {
     });
   }
 
-  // Weekly summary
+  // Weekly summary (from tracker data)
   const weeks = {};
-  Object.entries(journalMap).forEach(([date, data]) => {
+  Object.entries(calendarData).forEach(([date, data]) => {
     const d = new Date(date);
-    if (d.getMonth() === month && d.getFullYear() === year) {
+    if (d.getMonth() === month && d.getFullYear() === year && data.count > 0) {
       const weekNum = Math.ceil(d.getDate() / 7);
       const key = `W${weekNum}`;
       if (!weeks[key]) weeks[key] = { pnl: 0, trades: 0, wins: 0, losses: 0 };
@@ -120,6 +149,7 @@ export default function Journal({ authenticated }) {
       await api.addJournalEntry({ date: selectedDay, notes: reviewText, dayPnl: 0, tradesCount: 0, winCount: 0, lossCount: 0 });
       const updated = await api.getJournal();
       setJournal(updated);
+      setReviewText('');
     } catch (e) { console.error(e); }
     setSavingReview(false);
   }
@@ -138,7 +168,7 @@ export default function Journal({ authenticated }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   // Selected day data
-  const selDayData = selectedDay ? journalMap[selectedDay] : null;
+  const selData = selectedDay ? calendarData[selectedDay] : null;
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
   const selDayDecisions = selectedDay ? getDecisionsForDate(selectedDay) : [];
 
@@ -190,12 +220,12 @@ export default function Journal({ authenticated }) {
               {cells.map((day, i) => {
                 if (day === null) return <div key={i} className="aspect-square" />;
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const data = journalMap[dateStr];
+                const data = calendarData[dateStr];
                 const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
                 const isSelected = selectedDay === dateStr;
 
                 let bgColor = 'border-bg-border';
-                if (data) {
+                if (data && data.count > 0) {
                   if (data.pnl > 0) bgColor = 'border-green/40 bg-green/5';
                   else if (data.pnl < 0) bgColor = 'border-red/40 bg-red/5';
                   else bgColor = 'border-bg-border bg-bg-hover';
@@ -209,14 +239,12 @@ export default function Journal({ authenticated }) {
                     <span className={`text-xs ${isToday ? 'bg-accent text-white w-5 h-5 rounded-full flex items-center justify-center' : 'text-text-muted'}`}>
                       {day}
                     </span>
-                    {data && (
+                    {data && data.count > 0 && (
                       <div className="absolute bottom-1 left-1 right-1">
                         <div className="mono text-[10px] font-bold" style={{ color: pnlColor(data.pnl) }}>
                           {fmt$(data.pnl)}
                         </div>
-                        {data.count > 0 && (
-                          <div className="text-[9px] text-text-faint">{data.count}t {data.wins}w {data.losses}l</div>
-                        )}
+                        <div className="text-[9px] text-text-faint">{data.count}t {data.wins}w {data.losses}l</div>
                       </div>
                     )}
                     {data?.notes && (
@@ -238,12 +266,12 @@ export default function Journal({ authenticated }) {
                   <h3 className="text-sm font-medium text-text">
                     {new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                   </h3>
-                  {selDayData && (
+                  {selData && selData.count > 0 && (
                     <div className="flex items-center gap-4 mt-1">
-                      <span className="mono text-lg font-bold" style={{ color: pnlColor(selDayData.pnl) }}>{fmt$(selDayData.pnl)}</span>
-                      <span className="text-xs text-text-muted">{selDayData.count} trades</span>
-                      <span className="text-xs text-green">{selDayData.wins}W</span>
-                      <span className="text-xs text-red">{selDayData.losses}L</span>
+                      <span className="mono text-lg font-bold" style={{ color: pnlColor(selData.pnl) }}>{fmt$(selData.pnl)}</span>
+                      <span className="text-xs text-text-muted">{selData.count} trades</span>
+                      <span className="text-xs text-green">{selData.wins}W</span>
+                      <span className="text-xs text-red">{selData.losses}L</span>
                     </div>
                   )}
                 </div>
@@ -259,19 +287,24 @@ export default function Journal({ authenticated }) {
                   <div className="space-y-1">
                     {selDayTrades.map((t, i) => {
                       const pnl = parseFloat(t['Total P&L ($)']) || 0;
-                      const isEntry = (t['Entry Date'] || '').split('T')[0] === selectedDay;
+                      const entryDate = (t['Entry Date'] || '').split('T')[0];
+                      const closeDate = (t['Close Date'] || '').split('T')[0];
+                      const isEntry = entryDate === selectedDay;
+                      const isClose = closeDate === selectedDay;
                       return (
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${isEntry ? 'bg-accent/10 text-accent' : 'bg-bg-hover text-text-muted'}`}>
-                            {isEntry ? 'ENTRY' : 'CLOSE'}
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${isEntry && isClose ? 'bg-amber-bg text-amber' : isEntry ? 'bg-accent/10 text-accent' : 'bg-bg-hover text-text-muted'}`}>
+                            {isEntry && isClose ? 'SAME DAY' : isEntry ? 'ENTRY' : 'CLOSE'}
                           </span>
                           <span className="text-sm font-medium">{t.Underlying}</span>
                           <span className="text-xs text-text-muted flex-1">{t['Strategy (OIC)']}</span>
-                          <span className="mono text-sm font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                          {t.Status !== 'Open' && (
+                            <span className="mono text-sm font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                          )}
                           {t['W / L'] && (
                             <span className={`badge text-[10px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>
                           )}
-                          <span className={`badge text-[10px] ${t.Status === 'Open' ? 'badge-blue' : 'badge-green'}`}>{t.Status}</span>
+                          <span className={`badge text-[10px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
                         </div>
                       );
                     })}
@@ -312,8 +345,8 @@ export default function Journal({ authenticated }) {
                 <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
                   <Edit3 size={10} /> Daily review notes
                 </h4>
-                {selDayData?.notes && (
-                  <div className="text-sm text-text-muted mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selDayData.notes}</div>
+                {selData?.notes && (
+                  <div className="text-sm text-text-muted mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>
                 )}
                 <textarea
                   value={reviewText}
@@ -329,7 +362,7 @@ export default function Journal({ authenticated }) {
               </div>
 
               {/* No data message */}
-              {!selDayData && selDayTrades.length === 0 && selDayDecisions.length === 0 && (
+              {(!selData || selData.count === 0) && selDayTrades.length === 0 && selDayDecisions.length === 0 && !selData?.notes && (
                 <div className="py-4 text-center text-text-faint text-sm">No trading activity on this day</div>
               )}
             </div>
