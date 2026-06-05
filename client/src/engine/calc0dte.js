@@ -172,7 +172,20 @@ export function calc0DTE(inputs) {
   let legs = [];
   if (price > 0 && D > 0) {
     const p = price;
-    const gs = (hasGam && gamStrike > 0) ? gamStrike : p;
+    // Gamma strike body position: cap max move from price to lesser of
+    // actual gamma strike distance and D*0.8 (wing-based limit)
+    let gs = p;
+    if (hasGam && gamStrike > 0) {
+      const gamDelta = gamStrike - p; // signed distance
+      const maxMove = D * 0.8;
+      if (Math.abs(gamDelta) <= maxMove) {
+        gs = gamStrike; // gamma strike is close enough, use it
+      } else {
+        // Cap at maxMove in the direction of gamma strike
+        gs = p + Math.sign(gamDelta) * maxMove;
+      }
+      gs = R(gs); // round to strike increment
+    }
     if (bestStrat === 'Iron butterfly') {
       legs = [leg('Long put (wing)', p-D), leg('Short put (body)', p), leg('Short call (body)', p), leg('Long call (wing)', p+D)];
     } else if (bestStrat === 'Standard butterfly') {
