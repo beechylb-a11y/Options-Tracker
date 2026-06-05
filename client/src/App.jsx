@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, BarChart3, TrendingUp, Shield, Library, Settings, LogIn } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, BarChart3, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn } from 'lucide-react';
 import { api } from './utils/api';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
@@ -9,6 +9,7 @@ import Summary from './pages/Summary';
 import Analytics from './pages/Analytics';
 import PortfolioRisk from './pages/PortfolioRisk';
 import Knowledgebase from './pages/Knowledgebase';
+import Documents from './pages/Documents';
 import SettingsPage from './pages/Settings';
 
 const TABS = [
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   { id: 'risk', label: 'Portfolio Risk', icon: Shield },
   { id: 'knowledge', label: 'Knowledgebase', icon: Library },
+  { id: 'documents', label: 'Documents', icon: FolderOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -113,6 +115,7 @@ export default function App() {
           {tab === 'analytics' && <Analytics authenticated={authenticated} />}
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} />}
           {tab === 'knowledge' && <Knowledgebase />}
+          {tab === 'documents' && <Documents authenticated={authenticated} />}
           {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} />}
         </div>
       </main>

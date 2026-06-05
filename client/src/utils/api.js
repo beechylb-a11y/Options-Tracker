@@ -84,5 +84,18 @@ export const api = {
   getJournal: () => fetchJSON('/api/journal'),
   addJournalEntry: (entry) => fetchJSON('/api/journal', {
     method: 'POST', body: JSON.stringify(entry)
-  })
+  }),
+
+  // Documents
+  uploadDocument: (file, metadata) => {
+    const form = new FormData();
+    form.append('file', file);
+    Object.entries(metadata || {}).forEach(([k, v]) => form.append(k, v));
+    return fetch(`${BASE}/api/documents`, {
+      method: 'POST', credentials: 'include', body: form
+    }).then(r => r.json());
+  },
+  getDocuments: () => fetchJSON('/api/documents'),
+  deleteDocument: (fileId) => fetchJSON(`/api/documents/${fileId}`, { method: 'DELETE' }),
+  getDocumentUrl: (fileId) => fetchJSON(`/api/documents/${fileId}/url`)
 };

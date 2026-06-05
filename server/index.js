@@ -15,7 +15,8 @@ import {
   appendJournalEntry, getJournal,
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
-  closeTradeTicket, updateTradeNotes, updateTradeStatus
+  closeTradeTicket, updateTradeNotes, updateTradeStatus,
+  uploadDocument, listDocuments, deleteDocument, getDocumentUrl
 } from './sheets.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
@@ -684,6 +685,54 @@ app.put('/api/categorise/:rowIndex', requireAuth, async (req, res) => {
     }
 
     res.json({ ok: true, tradesUpdated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  DOCUMENTS
+// ================================================================
+app.post('/api/documents', requireAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const meta = {
+      type: req.body.type || 'other',
+      tradeDate: req.body.tradeDate || '',
+      underlying: req.body.underlying || '',
+      notes: req.body.notes || '',
+      uploadedAt: new Date().toISOString()
+    };
+    const result = await uploadDocument(req.file.buffer, req.file.originalname, req.file.mimetype, meta);
+    res.json({ ok: true, file: result });
+  } catch (err) {
+    console.error('Document upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/documents', requireAuth, async (req, res) => {
+  try {
+    const docs = await listDocuments();
+    res.json(docs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/documents/:fileId', requireAuth, async (req, res) => {
+  try {
+    await deleteDocument(req.params.fileId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/documents/:fileId/url', requireAuth, async (req, res) => {
+  try {
+    const urls = await getDocumentUrl(req.params.fileId);
+    res.json(urls);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

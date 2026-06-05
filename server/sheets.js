@@ -503,3 +503,96 @@ export function calculateStats(trackerRows) {
     totalPnl: Math.round(totalPnl * 100) / 100
   };
 }
+
+// ================================================================
+//  GOOGLE DRIVE — DOCUMENT MANAGEMENT
+// ================================================================
+const DOC_FOLDER_NAME = 'Options Tracker Docs';
+let docFolderId = null;
+
+function getDrive() {
+  return google.drive({ version: 'v3', auth: authClient });
+}
+
+async function ensureDocFolder() {
+  if (docFolderId) return docFolderId;
+  const drive = getDrive();
+  // Check if folder already exists
+  const res = await drive.files.list({
+    q: `name='${DOC_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id,name)',
+    spaces: 'drive'
+  });
+  if (res.data.files.length > 0) {
+    docFolderId = res.data.files[0].id;
+    return docFolderId;
+  }
+  // Create folder
+  const folder = await drive.files.create({
+    requestBody: {
+      name: DOC_FOLDER_NAME,
+      mimeType: 'application/vnd.google-apps.folder'
+    },
+    fields: 'id'
+  });
+  docFolderId = folder.data.id;
+  return docFolderId;
+}
+
+export async function uploadDocument(fileBuffer, filename, mimeType, metadata) {
+  const drive = getDrive();
+  const folderId = await ensureDocFolder();
+  const { Readable } = await import('stream');
+  const stream = new Readable();
+  stream.push(fileBuffer);
+  stream.push(null);
+
+  const file = await drive.files.create({
+    requestBody: {
+      name: filename,
+      parents: [folderId],
+      description: JSON.stringify(metadata || {})
+    },
+    media: {
+      mimeType,
+      body: stream
+    },
+    fields: 'id,name,mimeType,size,createdTime,webViewLink'
+  });
+  return file.data;
+}
+
+export async function listDocuments() {
+  const drive = getDrive();
+  const folderId = await ensureDocFolder();
+  const res = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false`,
+    fields: 'files(id,name,mimeType,size,createdTime,webViewLink,description)',
+    orderBy: 'createdTime desc',
+    pageSize: 100
+  });
+  return res.data.files.map(f => {
+    let meta = {};
+    try { meta = JSON.parse(f.description || '{}'); } catch (e) {}
+    return { ...f, meta };
+  });
+}
+
+export async function deleteDocument(fileId) {
+  const drive = getDrive();
+  await drive.files.delete({ fileId });
+}
+
+export async function getDocumentUrl(fileId) {
+  const drive = getDrive();
+  // Make the file viewable by anyone with the link
+  await drive.permissions.create({
+    fileId,
+    requestBody: { role: 'reader', type: 'anyone' }
+  });
+  const file = await drive.files.get({
+    fileId,
+    fields: 'webViewLink,webContentLink'
+  });
+  return file.data;
+}
