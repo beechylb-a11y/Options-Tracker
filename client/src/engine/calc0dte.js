@@ -118,11 +118,13 @@ export function calc0DTE(inputs) {
   const bestRating = best ? best.rating : 'NO TRADE';
 
   // Strike engine
-  const baseDistance = price > 0 ? Math.max(emVIX / 2, emV1D) : 0;
+  const baseDistance = price > 0 ? Math.max(emVIX / 2, emV1D, em * 0.5) : 0;
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
-  const D = baseDistance * distMult;
-  const roundTo = (underlying === 'SPX' || underlying === 'SPY') ? 5 : (underlying === 'QQQ' || underlying === 'IWM') ? 1 : 0.5;
+  let D = baseDistance * distMult;
+  const roundTo = underlying === 'SPX' ? 5 : (underlying === 'QQQ' || underlying === 'IWM') ? 1 : (underlying === 'SPY') ? 1 : 0.5;
+  // Minimum D: at least 2x roundTo so strikes don't collapse
+  if (D > 0 && D < roundTo * 2) D = roundTo * 2;
   const R = n => roundTo > 0 ? Math.round(n / roundTo) * roundTo : Math.round(n * 2) / 2;
   const leg = (label, strike) => ({ label, strike: R(strike) });
 
