@@ -57,7 +57,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
 }
 
 export function calc0DTE(inputs) {
-  const { price, high, low, vwap, atr, em, atr5, atr2h, gamStrike, slope,
+  const { price, high, low, vwap, vwap30, vwapConfirm, atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop,
     theta, delta, gamma, hours, underlying } = inputs;
 
@@ -72,8 +72,30 @@ export function calc0DTE(inputs) {
   const rmRatio = em > 0 ? rm / em : 0;
   const comp = hasComp ? atr5 / atr2h : null;
   const gamDist = hasGam ? Math.abs(price - gamStrike) / atr : null;
-  const aboveVWAP = hasPrice && price >= vwap;
-  const vwapDiff = price - vwap;
+  const aboveVWAP = hasPrice && vwap > 0 && price >= vwap;
+  const vwapDiff = vwap > 0 ? price - vwap : 0;
+
+  // VWAP distance as % of EM (overextension detection)
+  const vwapDistPctEM = (em > 0 && vwap > 0) ? Math.abs(price - vwap) / em : 0;
+  const vwapOverextended = vwapDistPctEM > 0.75;
+
+  // Auto-calculate slope from VWAP now vs 30min ago
+  let slope;
+  if (vwap > 0 && vwap30 > 0) {
+    const slopeChange = ((vwap - vwap30) / vwap30) * 100;
+    if (Math.abs(slopeChange) < 0.02) slope = 'flat';
+    else if (Math.abs(slopeChange) < 0.08) slope = 'mild';
+    else slope = 'strong';
+    // Make slope directional (negative = downward)
+    if (slopeChange < -0.02) slope = (Math.abs(slopeChange) >= 0.08) ? 'strong' : 'mild';
+  } else {
+    slope = 'flat'; // default when no 30m VWAP entered
+  }
+  const slopeDirection = (vwap > 0 && vwap30 > 0) ? (vwap > vwap30 ? 'rising' : vwap < vwap30 ? 'falling' : 'flat') : 'unknown';
+
+  // 15m confirmation factor
+  const confirmed = vwapConfirm === 'confirms';
+  const diverges = vwapConfirm === 'diverges';
   const vixGap = vix > 0 ? (vix1d - vix) / vix : 0;
   const gapBandIdx = vixGap < -0.10 ? 0 : vixGap <= 0.10 ? 1 : vixGap <= 0.25 ? 2 : 3;
   const vixHigh = vix > 25;
@@ -84,14 +106,24 @@ export function calc0DTE(inputs) {
   const vixGrade = vixGap<-0.10?'Cheap short-term vol':vixGap<=0.10?'Neutral':vixGap<=0.25?'Rich short-term vol':'Extremely rich short-term vol';
   const vixImplic = vixGap<-0.10?'BWB, Asymmetric, Long Condor':vixGap<=0.10?'BWB, Asymmetric, Chicken Condor':vixGap<=0.25?'Iron Condor, Iron Butterfly, Chicken Condor':'Iron Condor, Iron Butterfly (check event risk)';
 
-  // Direction
+  // Direction score — uses VWAP position + auto-calculated slope + 15m confirmation
   let dirScore;
-  if (!hasPrice) dirScore = 0;
+  if (!hasPrice || vwap <= 0) dirScore = 0;
   else if (aboveVWAP && slope === 'strong') dirScore = 2;
   else if (aboveVWAP && slope === 'mild') dirScore = 1;
   else if (!aboveVWAP && slope === 'strong') dirScore = -2;
   else if (!aboveVWAP && slope === 'mild') dirScore = -1;
   else dirScore = aboveVWAP ? 1 : (hasPrice ? -1 : 0);
+
+  // 15m confirmation adjusts conviction
+  if (diverges && Math.abs(dirScore) >= 2) {
+    dirScore = dirScore > 0 ? 1 : -1; // downgrade strong to mild when 15m diverges
+  } else if (confirmed && Math.abs(dirScore) === 1) {
+    dirScore = dirScore > 0 ? 2 : -2; // upgrade mild to strong when 15m confirms
+  }
+
+  // Overextension caution — don't chase when price is far from VWAP
+  const overextendedWarning = vwapOverextended && Math.abs(dirScore) >= 2;
 
   const dirLabel = dirScore>=2?'Strong bullish':dirScore===1?'Mild bullish':dirScore===0?'Neutral':dirScore===-1?'Mild bearish':'Strong bearish';
 
@@ -212,15 +244,22 @@ export function calc0DTE(inputs) {
   setupScore += vixPts;
   criteria.push({ label: `VIX1D/VIX gap for ${bestStrat}`, pts: vixPts, max: 15 });
 
-  // 6. VWAP slope (10)
+  // 6. VWAP slope + confirmation (10)
   const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(bestStrat);
   const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
   let slopePts;
   if (slope === 'flat') slopePts = isCentred?10:isDirectional?5:7;
   else if (slope === 'mild') slopePts = isDirectional?10:isCentred?5:7;
   else slopePts = isDirectional?8:isCentred?2:5;
+  // 15m confirmation bonus/penalty
+  if (confirmed && isDirectional) slopePts = Math.min(10, slopePts + 2);
+  if (diverges && isDirectional) slopePts = Math.max(0, slopePts - 3);
+  if (diverges && isCentred) slopePts = Math.min(10, slopePts + 1); // divergence favours neutral
+  // Overextension penalty for directional
+  if (vwapOverextended && isDirectional) slopePts = Math.max(0, slopePts - 2);
   setupScore += slopePts;
-  criteria.push({ label: `VWAP slope (${slope})`, pts: slopePts, max: 10 });
+  const slopeLabel = `VWAP ${slope}${slopeDirection !== 'unknown' ? ` (${slopeDirection})` : ''}${confirmed ? ' ✓15m' : diverges ? ' ✗15m' : ''}`;
+  criteria.push({ label: slopeLabel, pts: slopePts, max: 10 });
 
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
 
@@ -267,6 +306,9 @@ export function calc0DTE(inputs) {
   if (rmRatio >= 0.75 && rmRatio < 1.00) warnings.push('Butterfly zone (>75% EM)');
   if (rmRatio >= 1.00 && !isCompressing) warnings.push('EM exceeded without compression');
   if (rmRatio >= 1.00 && isCompressing) warnings.push('EM exceeded + compression — butterfly/BWB');
+  if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — overextended, pullback risk`);
+  if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
+  if (overextendedWarning) warnings.push('Strong direction + overextended — consider waiting for pullback');
 
   // Decision
   let decision, decisionClass;
@@ -279,6 +321,7 @@ export function calc0DTE(inputs) {
     // Signals
     vixGap, vixGrade, vixImplic, emVIX, emV1D, gapBandIdx,
     dirScore, dirLabel, aboveVWAP, vwapDiff,
+    slope, slopeDirection, vwapDistPctEM, vwapOverextended, confirmed, diverges,
     rm, rmRatio, comp, isCompressing,
     gamDist, regime,
     regimeConds: REGIME_CONDS[regime], regimeCommentary: REGIME_COMMENTARY[regime],

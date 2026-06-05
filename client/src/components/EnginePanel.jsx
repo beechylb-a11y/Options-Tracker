@@ -3,7 +3,6 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST } from '../engine/data';
 
-const SLOPES = ['flat', 'mild', 'strong'];
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
@@ -11,7 +10,7 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const is0 = mode === '0dte';
 
   const [i0, setI0] = useState({
-    underlying:'SPX', price:'', high:'', low:'', vwap:'', slope:'flat',
+    underlying:'SPX', price:'', high:'', low:'', vwap:'', vwap30:'', vwapConfirm:'confirms',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
     win:'', risk:'', pop:'', hours:'6.5',
@@ -45,13 +44,15 @@ export default function EnginePanel({ mode, onLogTrade }) {
       const adjVWAP = getAdjustedVWAP();
       return calc0DTE({
         price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'), vwap:adjVWAP,
+        vwap30:fv(i0,'vwap30') * (i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap30') > 0 && fv(i0,'vwap30') < fv(i0,'price') * 0.3 ? 10 : 1),
+        vwapConfirm:i0.vwapConfirm,
         atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
         gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
         bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
         risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
         delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
-        underlying:i0.underlying, slope:i0.slope
+        underlying:i0.underlying
       });
     } else {
       return calc45DTE({
@@ -131,7 +132,8 @@ export default function EnginePanel({ mode, onLogTrade }) {
               <Inp label="Day high" value={i0.high} onChange={v=>set0('high',v)}/>
               <Inp label="Day low" value={i0.low} onChange={v=>set0('low',v)}/>
               <Inp label={`VWAP${vwapScaled ? ' (SPY → x10)' : ''}`} value={i0.vwap} onChange={v=>set0('vwap',v)}/>
-              <Sel label="VWAP slope (5m)" value={i0.slope} onChange={v=>set0('slope',v)} options={SLOPES}/>
+              <Inp label="VWAP 30m ago" value={i0.vwap30} onChange={v=>set0('vwap30',v)}/>
+              <Sel label="15m confirms" value={i0.vwapConfirm} onChange={v=>set0('vwapConfirm',v)} options={['confirms','diverges','flat']}/>
               <Inp label="EM" value={i0.em} onChange={v=>set0('em',v)}/>
               <Inp label="ATR" value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>
@@ -248,6 +250,9 @@ export default function EnginePanel({ mode, onLogTrade }) {
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
                 <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
+                <KV label="VWAP slope" value={`${r.slope} ${r.slopeDirection !== 'unknown' ? `(${r.slopeDirection})` : ''}`} cls={r.slopeDirection==='rising'?'text-green':r.slopeDirection==='falling'?'text-red':''}/>
+                <KV label="15m confirm" value={r.confirmed?'Confirms ✓':r.diverges?'Diverges ✗':'Flat'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
+                <KV label="VWAP distance" value={r.vwapDistPctEM>0?`${(r.vwapDistPctEM*100).toFixed(0)}% EM`:'--'} cls={r.vwapOverextended?'text-amber':''}/>
                 <KV label="RM ratio" value={r.rmRatio?`${(r.rmRatio*100).toFixed(0)}% EM`:'--'}/>
                 <KV label="Compression" value={r.comp!==null?r.comp.toFixed(2):'--'}/>
                 <KV label="Gamma dist" value={r.gamDist!==null?`${r.gamDist.toFixed(2)}x ATR`:'--'}/>
