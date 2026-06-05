@@ -11,23 +11,60 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const is0 = mode === '0dte';
 
   const [i0, setI0] = useState({
-    underlying:'SPX',price:0,high:0,low:0,vwap:0,atr:0,em:0,atr5:0,atr2h:0,
-    gamStrike:0,slope:'flat',vix:0,vix1d:0,bankroll:3000,startBR:3000,
-    risk:435,maxLoss:300,win:65,maxOpen:450,pop:0,theta:0,delta:0,gamma:0,hours:6.5
+    underlying:'SPX', price:'', high:'', low:'', vwap:'', slope:'flat',
+    em:'', atr5:'', atr2h:'', atr:'',
+    vix:'', vix1d:'',
+    win:'', risk:'', pop:'', hours:'6.5',
+    theta:'', delta:'', gamma:'', gamStrike:'',
+    bankroll:3000, startBR:3000, maxLoss:300, maxOpen:450
   });
   const [i45, setI45] = useState({
-    underlying:'SPX',price:0,ivr:0,iv:0,hv:0,vix:0,ivFront:0,ivBack:0,skew:0,
-    termBias:'contango',dte:45,outlook:'neutral',pop:0,win:65,risk:435,
-    bankroll:3000,startBR:3000,maxLoss:300,maxOpen:450,bpr:0,theta:0,vega:0,delta:0
+    underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
+    ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
+    outlook:'neutral', pop:'', win:'', risk:'',
+    bankroll:3000, startBR:3000, maxLoss:300, maxOpen:450,
+    bpr:'', theta:'', vega:'', delta:''
   });
 
   const set0 = (k,v) => setI0(p => ({...p,[k]:v}));
   const set45 = (k,v) => setI45(p => ({...p,[k]:v}));
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
+  // SPX VWAP fix: if underlying is SPX and VWAP looks like SPY value, scale x10
+  function getAdjustedVWAP() {
+    const price = fv(i0, 'price');
+    let vwap = fv(i0, 'vwap');
+    if (i0.underlying === 'SPX' && price > 1000 && vwap > 0 && vwap < price * 0.3) {
+      vwap = vwap * 10;
+    }
+    return vwap;
+  }
+
   const r = useMemo(() => {
-    if (is0) return calc0DTE({...i0,price:fv(i0,'price'),high:fv(i0,'high'),low:fv(i0,'low'),vwap:fv(i0,'vwap'),atr:fv(i0,'atr'),em:fv(i0,'em'),atr5:fv(i0,'atr5'),atr2h:fv(i0,'atr2h'),gamStrike:fv(i0,'gamStrike'),vix:fv(i0,'vix'),vix1d:fv(i0,'vix1d'),bankroll:fv(i0,'bankroll'),startBR:fv(i0,'startBR'),risk:fv(i0,'risk'),maxLoss:fv(i0,'maxLoss'),win:fv(i0,'win'),maxOpen:fv(i0,'maxOpen'),pop:fv(i0,'pop'),theta:fv(i0,'theta'),delta:fv(i0,'delta'),gamma:fv(i0,'gamma'),hours:fv(i0,'hours'),underlying:i0.underlying,slope:i0.slope});
-    else return calc45DTE({...i45,price:fv(i45,'price'),ivr:fv(i45,'ivr'),iv:fv(i45,'iv'),hv:fv(i45,'hv'),vix:fv(i45,'vix'),ivFront:fv(i45,'ivFront'),ivBack:fv(i45,'ivBack'),skew:fv(i45,'skew'),dte:fv(i45,'dte')||45,pop:fv(i45,'pop'),win:fv(i45,'win'),risk:fv(i45,'risk'),bankroll:fv(i45,'bankroll'),startBR:fv(i45,'startBR'),maxLoss:fv(i45,'maxLoss'),maxOpen:fv(i45,'maxOpen'),bpr:fv(i45,'bpr'),theta:fv(i45,'theta'),vega:fv(i45,'vega'),delta:fv(i45,'delta'),underlying:i45.underlying,termBias:i45.termBias,outlook:i45.outlook});
+    if (is0) {
+      const adjVWAP = getAdjustedVWAP();
+      return calc0DTE({
+        price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'), vwap:adjVWAP,
+        atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
+        gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
+        bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
+        risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
+        maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
+        delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
+        underlying:i0.underlying, slope:i0.slope
+      });
+    } else {
+      return calc45DTE({
+        price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
+        hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
+        ivBack:fv(i45,'ivBack'), skew:fv(i45,'skew'), dte:fv(i45,'dte')||45,
+        pop:fv(i45,'pop'), win:fv(i45,'win'), risk:fv(i45,'risk'),
+        bankroll:fv(i45,'bankroll'), startBR:fv(i45,'startBR'),
+        maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
+        theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
+        underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook
+      });
+    }
   }, [is0, i0, i45]);
 
   const dcBg = r.decisionClass==='go'?'#0d1f0d':r.decisionClass==='warn'?'#1f1a0d':'#1f0d0d';
@@ -35,6 +72,9 @@ export default function EnginePanel({ mode, onLogTrade }) {
   const dcColor = r.decisionClass==='go'?'#3fb950':r.decisionClass==='warn'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
+
+  // Show VWAP scaling notice
+  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap') > 0 && fv(i0,'vwap') < fv(i0,'price') * 0.3;
 
   function handleLog() {
     if (!onLogTrade) return;
@@ -50,51 +90,52 @@ export default function EnginePanel({ mode, onLogTrade }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* Decision Block */}
-      <div style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:10,padding:'12px 16px'}}>
-        <div style={{fontSize:10,fontWeight:600,color:dcColor,textTransform:'uppercase',letterSpacing:'0.05em'}}>{r.decision}</div>
-        <div style={{fontSize:16,fontWeight:500,color:'#e6edf3',marginTop:2}}>
-          {r.hardBlocker || `${is0?i0.underlying:i45.underlying} - ${r.bestStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`}
+      <div style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
+        <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{r.decision}</div>
+        <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
+          {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${r.bestStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
         </div>
         {r.legs.length > 0 && (
-          <div style={{display:'flex',flexWrap:'wrap',gap:'6px 8px',marginTop:8}}>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'8px',marginTop:10}}>
             {r.legs.map((l,i) => {
               const isShort = l.label.toLowerCase().includes('short');
-              return (<div key={i} style={{padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:600,background:isShort?'#238636':'#0d1a2e',color:isShort?'#e6edf3':'#2f81f7',fontFamily:'JetBrains Mono,monospace'}}>
-                {l.strike} <span style={{fontSize:9,fontWeight:400,opacity:0.7}}>{l.label}</span>
+              return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
               </div>);
             })}
-            {r.wingTxt && <span style={{fontSize:10,color:'#484f58',alignSelf:'center'}}>{r.wingTxt || r.strikeLine}</span>}
+            {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e',alignSelf:'center'}}>{r.wingTxt || r.strikeLine}</span>}
           </div>
         )}
-        <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>
+        <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
           {!r.hardBlocker && `${is0?r.dirLabel:r.outlook||''} — max loss $${r.maxRisk?.toFixed(0)||0}`}
           {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
         </div>
-        {r.behaviour && <div style={{fontSize:11,color:'#8b949e',marginTop:4,paddingTop:4,borderTop:'0.5px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
+        {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
         {!r.hardBlocker && r.decision !== 'Enter sizing' && (
-          <button onClick={handleLog} style={{marginTop:8,padding:'4px 12px',borderRadius:6,border:'0.5px solid #238636',background:'#238636',color:'#fff',fontSize:11,fontWeight:500,cursor:'pointer'}}>Log trade</button>
+          <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {/* Inputs */}
-        <div className="card" style={{maxHeight:'calc(100vh - 340px)',overflowY:'auto'}}>
-          <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Market inputs</div>
-          <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-4">
+        {/* ── INPUTS PANEL ── */}
+        <div className="card" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
+
+          {/* Market Data */}
+          <SectionLabel>Market data</SectionLabel>
+          <div className="grid grid-cols-2 gap-2.5">
             <Sel label="Underlying" value={is0?i0.underlying:i45.underlying} onChange={v=>is0?set0('underlying',v):set45('underlying',v)} options={UNDERLYING_LIST}/>
             <Inp label="Price" value={is0?i0.price:i45.price} onChange={v=>is0?set0('price',v):set45('price',v)}/>
             {is0 ? <>
               <Inp label="Day high" value={i0.high} onChange={v=>set0('high',v)}/>
               <Inp label="Day low" value={i0.low} onChange={v=>set0('low',v)}/>
-              <Inp label="VWAP" value={i0.vwap} onChange={v=>set0('vwap',v)}/>
-              <Inp label="ATR" value={i0.atr} onChange={v=>set0('atr',v)}/>
+              <Inp label={`VWAP${vwapScaled ? ' (SPY → x10)' : ''}`} value={i0.vwap} onChange={v=>set0('vwap',v)}/>
+              <Sel label="VWAP slope (5m)" value={i0.slope} onChange={v=>set0('slope',v)} options={SLOPES}/>
               <Inp label="EM" value={i0.em} onChange={v=>set0('em',v)}/>
+              <Inp label="ATR" value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>
               <Inp label="ATR 2h" value={i0.atr2h} onChange={v=>set0('atr2h',v)}/>
-              <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
-              <Sel label="VWAP Slope (5 min)" value={i0.slope} onChange={v=>set0('slope',v)} options={SLOPES}/>
               <Inp label="VIX" value={i0.vix} onChange={v=>set0('vix',v)}/>
               <Inp label="VIX1D" value={i0.vix1d} onChange={v=>set0('vix1d',v)}/>
             </> : <>
@@ -110,70 +151,79 @@ export default function EnginePanel({ mode, onLogTrade }) {
               <Sel label="Outlook" value={i45.outlook} onChange={v=>set45('outlook',v)} options={OUTLOOKS}/>
             </>}
           </div>
-          <div className="text-[10px] text-text-faint uppercase tracking-wider mt-3 mb-2">Sizing</div>
-          <div className="grid grid-cols-2 gap-2">
-            <Inp label="Bankroll ($)" value={is0?i0.bankroll:i45.bankroll} onChange={v=>is0?set0('bankroll',v):set45('bankroll',v)}/>
-            <Inp label="Risk/contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
+
+          {/* Sizing — simplified */}
+          <SectionLabel>Trade sizing</SectionLabel>
+          <div className="grid grid-cols-3 gap-2.5">
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+            <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
             <Inp label="POP (%)" value={is0?i0.pop:i45.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}/>
-            <Inp label="Max daily loss ($)" value={is0?i0.maxLoss:i45.maxLoss} onChange={v=>is0?set0('maxLoss',v):set45('maxLoss',v)}/>
-            <Inp label="Max open risk ($)" value={is0?i0.maxOpen:i45.maxOpen} onChange={v=>is0?set0('maxOpen',v):set45('maxOpen',v)}/>
-            {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
           </div>
-          <div className="text-[10px] text-text-faint uppercase tracking-wider mt-3 mb-2">Greeks (optional)</div>
-          <div className="grid grid-cols-2 gap-2">
+          {is0 && (
+            <div className="grid grid-cols-3 gap-2.5 mt-2">
+              <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>
+            </div>
+          )}
+
+          {/* Greeks */}
+          <SectionLabel>Greeks (optional)</SectionLabel>
+          <div className="grid grid-cols-2 gap-2.5">
             {is0 ? <>
               <Inp label="Theta ($)" value={i0.theta} onChange={v=>set0('theta',v)}/>
               <Inp label="Delta" value={i0.delta} onChange={v=>set0('delta',v)}/>
               <Inp label="Gamma" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
-              <Inp label="Hours left" value={i0.hours} onChange={v=>set0('hours',v)}/>
+              <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
             </> : <>
               <Inp label="Theta ($)" value={i45.theta} onChange={v=>set45('theta',v)}/>
               <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
               <Inp label="Delta" value={i45.delta} onChange={v=>set45('delta',v)}/>
+              {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
             </>}
           </div>
         </div>
 
-        {/* Results */}
-        <div className="space-y-3" style={{maxHeight:'calc(100vh - 340px)',overflowY:'auto'}}>
+        {/* ── RESULTS PANEL ── */}
+        <div className="space-y-4" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
+          {/* Setup quality */}
           <div className="card">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] text-text-faint uppercase tracking-wider">Setup quality</span>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold text-white uppercase tracking-wider">Setup quality</span>
               <div className="flex items-center gap-2">
-                <span style={{background:sBg,color:sClr,padding:'2px 8px',borderRadius:20,fontSize:11,fontWeight:600}}>{r.setup}</span>
-                <span className="mono" style={{background:sBg,color:sClr,padding:'2px 6px',borderRadius:4,fontSize:10}}>{r.setupScore}/100</span>
+                <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
+                <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{r.setupScore}/100</span>
               </div>
             </div>
             {r.criteria.map((cr,i) => {
               const pct = cr.max>0?Math.round(cr.pts/cr.max*100):0;
               const bc = pct>=80?'#3fb950':pct>=50?'#2f81f7':pct>=30?'#d29922':'#f85149';
-              return (<div key={i} className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-[9px] text-text-muted truncate" style={{flex:'0 0 140px'}}>{cr.label}</span>
-                <div className="flex-1 h-1 rounded-full overflow-hidden" style={{background:'#21262d'}}>
-                  <div style={{width:`${pct}%`,height:'100%',background:bc,borderRadius:3,transition:'width 0.3s'}}/>
+              return (<div key={i} className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-white truncate" style={{flex:'0 0 160px'}}>{cr.label}</span>
+                <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{background:'#21262d'}}>
+                  <div style={{width:`${pct}%`,height:'100%',background:bc,borderRadius:4,transition:'width 0.3s'}}/>
                 </div>
-                <span className="text-[9px] text-text-muted mono" style={{flex:'0 0 30px',textAlign:'right'}}>{cr.pts}/{cr.max}</span>
+                <span className="text-xs text-white mono" style={{flex:'0 0 36px',textAlign:'right'}}>{cr.pts}/{cr.max}</span>
               </div>);
             })}
           </div>
 
+          {/* Strategy ratings */}
           <div className="card">
-            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Strategy ratings — {r.regime}</div>
+            <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
             <div className="space-y-0.5">
               {r.ratings.map((s,i) => {
                 const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
-                return (<div key={i} className="flex items-center justify-between py-1">
-                  <span className="text-xs text-text">{s.name}</span>
-                  <span className={`badge text-[9px] ${cls}`}>{s.rating}</span>
+                return (<div key={i} className="flex items-center justify-between py-1.5">
+                  <span className="text-sm text-white">{s.name}</span>
+                  <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
                 </div>);
               })}
             </div>
           </div>
 
+          {/* Kelly sizing */}
           <div className="card">
-            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Kelly sizing</div>
-            <div className="grid grid-cols-2 gap-1 text-xs">
+            <SectionLabel white>Kelly sizing</SectionLabel>
+            <div className="grid grid-cols-2 gap-1.5">
               <KV label="Contracts" value={r.contracts}/>
               <KV label="Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
               <KV label="POP margin" value={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'} cls={r.popMargin>=1.5?'text-green':r.popMargin>=1.0?'text-amber':'text-red'}/>
@@ -183,15 +233,17 @@ export default function EnginePanel({ mode, onLogTrade }) {
             </div>
           </div>
 
+          {/* Regime */}
           <div className="card">
-            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Regime</div>
-            <div className="text-sm font-medium text-text">{is0 ? r.regime : `${r.regime} — ${r.outlook||''}`}</div>
-            <div className="text-[10px] text-text-muted mt-1">{is0 ? `${r.regimeConds||''} — ${r.regimeCommentary||''}` : r.regimeCommentary||''}</div>
+            <SectionLabel white>Regime</SectionLabel>
+            <div className="text-sm font-semibold text-white">{is0 ? r.regime : `${r.regime} — ${r.outlook||''}`}</div>
+            <div className="text-xs text-[#c9d1d9] mt-1.5 leading-relaxed">{is0 ? `${r.regimeConds||''} — ${r.regimeCommentary||''}` : r.regimeCommentary||''}</div>
           </div>
 
+          {/* Signals */}
           <div className="card">
-            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-2">Signals</div>
-            <div className="grid grid-cols-2 gap-1 text-xs">
+            <SectionLabel white>Signals</SectionLabel>
+            <div className="grid grid-cols-2 gap-1.5">
               {is0 ? <>
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
                 <KV label="VIX grade" value={r.vixGrade}/>
@@ -215,19 +267,23 @@ export default function EnginePanel({ mode, onLogTrade }) {
   );
 }
 
-function Inp({label,value,onChange}) {
-  return (<div><label className="text-[9px] text-text-muted block mb-0.5">{label}</label>
-    <input type="number" step="any" value={value||''} onChange={e=>onChange(e.target.value)}
-      className="w-full px-2 py-1 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent"/></div>);
+function SectionLabel({ children, white }) {
+  return <div className={`text-xs font-semibold uppercase tracking-wider mt-4 mb-2 first:mt-0 ${white ? 'text-white' : 'text-[#c9d1d9]'}`}>{children}</div>;
+}
+
+function Inp({label,value,onChange,type}) {
+  return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
+    <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—"
+      className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7]"/></div>);
 }
 function Sel({label,value,onChange,options}) {
-  return (<div><label className="text-[9px] text-text-muted block mb-0.5">{label}</label>
+  return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
     <select value={value} onChange={e=>onChange(e.target.value)}
-      className="w-full px-2 py-1 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
+      className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
       {options.map(o=><option key={o} value={o}>{o}</option>)}</select></div>);
 }
 function KV({label,value,cls}) {
-  return (<div className="flex justify-between py-0.5 border-b border-bg-border last:border-0">
-    <span className="text-text-muted">{label}</span>
-    <span className={`font-medium mono ${cls||'text-text'}`}>{value}</span></div>);
+  return (<div className="flex justify-between py-1 border-b border-[#21262d] last:border-0">
+    <span className="text-sm text-[#c9d1d9]">{label}</span>
+    <span className={`text-sm font-semibold mono ${cls||'text-white'}`}>{value}</span></div>);
 }
