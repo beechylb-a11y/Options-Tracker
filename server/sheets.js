@@ -92,7 +92,8 @@ export async function ensureSheetStructure() {
   const existingTabs = spreadsheet.data.sheets.map(s => s.properties.title);
 
   for (const [tabName, headerData] of Object.entries(REQUIRED_TABS)) {
-    if (!existingTabs.includes(tabName)) {
+    const isNew = !existingTabs.includes(tabName);
+    if (isNew) {
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: SHEET_ID(),
         requestBody: {
@@ -100,13 +101,27 @@ export async function ensureSheetStructure() {
         }
       });
     }
-    // Always update headers to ensure schema matches (handles upgrades)
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `${tabName}!A1`,
-      valueInputOption: 'RAW',
-      requestBody: { values: headerData }
-    });
+
+    if (tabName === 'Config') {
+      if (isNew) {
+        // Only write full Config (headers + defaults) for brand new tabs
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SHEET_ID(),
+          range: `${tabName}!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: headerData }
+        });
+      }
+      // For existing Config, never overwrite — data rows contain user settings
+    } else {
+      // For all other tabs, update header row only (row 1)
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID(),
+        range: `${tabName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headerData[0]] }
+      });
+    }
   }
 }
 
