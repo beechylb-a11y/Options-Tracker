@@ -119,14 +119,41 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
           {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
         </div>
         {r.legs.length > 0 && (
-          <div style={{display:'flex',flexWrap:'wrap',gap:'8px',marginTop:10}}>
-            {r.legs.map((l,i) => {
-              const isShort = l.label.toLowerCase().includes('short');
-              return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
-                {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
-              </div>);
-            })}
-            {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e',alignSelf:'center'}}>{r.wingTxt || r.strikeLine}</span>}
+          <div style={{marginTop:10}}>
+            {r.legs.length === 4 && r.legs[0]?.label?.includes('VIX') ? (
+              // Dual EM suggestions for spreads
+              <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(VIX):</span>
+                  {r.legs.slice(0,2).map((l,i) => {
+                    const isShort = l.label.toLowerCase().includes('short');
+                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                      {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX)','')}</span>
+                    </div>);
+                  })}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(1D):</span>
+                  {r.legs.slice(2,4).map((l,i) => {
+                    const isShort = l.label.toLowerCase().includes('short');
+                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                      {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX1D)','')}</span>
+                    </div>);
+                  })}
+                </div>
+              </div>
+            ) : (
+              // Standard leg display
+              <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+                {r.legs.map((l,i) => {
+                  const isShort = l.label.toLowerCase().includes('short');
+                  return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                    {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
+                  </div>);
+                })}
+              </div>
+            )}
+            {(r.wingTxt || r.strikeLine) && <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{r.wingTxt || r.strikeLine}</div>}
           </div>
         )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
@@ -155,9 +182,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
               <Inp label="Day high" value={i0.high} onChange={v=>set0('high',v)}/>
               <Inp label="Day low" value={i0.low} onChange={v=>set0('low',v)}/>
               <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
-              <Inp label="VWAP 5 -30min" value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
-              <Inp label="VWAP 15" value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
-              <Inp label="VWAP 15 -30min" value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
+              <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
+              <Inp label={`VWAP 15${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
+              <Inp label={`VWAP 15 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
               <Inp label="EM" value={i0.em} onChange={v=>set0('em',v)}/>
               <Inp label="ATR 1 Day" value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>

@@ -257,16 +257,42 @@ export function calc0DTE(inputs) {
         ? [leg('Long put', p-wideW-D), leg('Short put', p-wideW), leg('Short call', p+tightW), leg('Long call', p+tightW+D)]
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
     } else if (bestStrat === 'Bull put spread') {
-      legs = [leg('Short put', p-D), leg('Long put', p-2*D)];
+      // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based
+      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
+      legs = [
+        leg('Short put (VIX)', p - dVix), leg('Long put (VIX)', p - dVix * 2),
+        leg('Short put (VIX1D)', p - dV1d), leg('Long put (VIX1D)', p - dV1d * 2)
+      ];
     } else if (bestStrat === 'Bear call spread') {
-      legs = [leg('Short call', p+D), leg('Long call', p+2*D)];
+      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
+      legs = [
+        leg('Short call (VIX)', p + dVix), leg('Long call (VIX)', p + dVix * 2),
+        leg('Short call (VIX1D)', p + dV1d), leg('Long call (VIX1D)', p + dV1d * 2)
+      ];
     } else if (bestStrat === 'Bull call spread') {
-      legs = [leg('Long call', p), leg('Short call', p+D*0.5)];
+      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
+      legs = [
+        leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVix * 0.5),
+        leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1d * 0.5)
+      ];
     } else if (bestStrat === 'Bear put spread') {
-      legs = [leg('Long put', p), leg('Short put', p-D*0.5)];
+      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
+      legs = [
+        leg('Long put (VIX)', p), leg('Short put (VIX)', p - dVix * 0.5),
+        leg('Long put (VIX1D)', p), leg('Short put (VIX1D)', p - dV1d * 0.5)
+      ];
     }
   }
-  const wingTxt = D > 0 ? `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})` : '';
+  const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
+  const wingTxt = D > 0
+    ? isSpread
+      ? `EM(VIX)/2=${emVIX>0?(emVIX/2).toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
+      : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
+    : '';
 
   // ═══════════════════════════════════════
   //  MERGED SCORING (100 pts)
