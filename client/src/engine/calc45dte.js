@@ -62,6 +62,10 @@ export function calc45DTE(inputs) {
   const bestStrat = best ? best.name : 'No suitable structure';
   const bestRating = best ? best.rating : 'NO TRADE';
 
+  // Override: if caller specifies a strategy, use that for legs
+  const overrideStrategy = inputs.overrideStrategy || null;
+  const legStrat = overrideStrategy || bestStrat;
+
   // Strike engine
   let legs = [], strikeLine = '';
   if (hasPrice && em45 > 0) {
@@ -70,30 +74,30 @@ export function calc45DTE(inputs) {
     const leg = (label, strike) => ({label, strike: R(strike)});
     const sdFull = em45, sd80 = em45*0.80, sd50 = em45*0.50, sd25 = em45*0.25;
 
-    if (bestStrat === 'Iron Condor - Normal') {
+    if (legStrat === 'Iron Condor - Normal') {
       legs = [leg('Long put',p-sdFull),leg('Short put',p-sd80),leg('Short call',p+sd80),leg('Long call',p+sdFull)];
-    } else if (bestStrat === 'Iron butterfly') {
+    } else if (legStrat === 'Iron butterfly') {
       legs = [leg('Long put (wing)',p-sd80),leg('Short put (body)',p),leg('Short call (body)',p),leg('Long call (wing)',p+sd80)];
-    } else if (bestStrat === 'Credit spread') {
+    } else if (legStrat === 'Credit spread') {
       legs = isBull||!isBear ? [leg('Short put',p-sd50),leg('Long put',p-sd80)] : [leg('Short call',p+sd50),leg('Long call',p+sd80)];
-    } else if (bestStrat === 'Bull call spread') {
+    } else if (legStrat === 'Bull call spread') {
       legs = [leg('Long call',p),leg('Short call',p+sd50)];
-    } else if (bestStrat === 'Bear put spread') {
+    } else if (legStrat === 'Bear put spread') {
       legs = [leg('Long put',p),leg('Short put',p-sd50)];
-    } else if (bestStrat === 'Broken wing butterfly') {
+    } else if (legStrat === 'Broken wing butterfly') {
       const nearW = Math.max(10, R(sd25)), farW = Math.max(17.5, R(sd50*0.6));
       if (isBull) { const body = R(p+sd50*0.3); legs = [leg('Long call (lower)',body-nearW),leg('Short call x2',body),leg(`Long call (broken ${farW.toFixed(1)}pt)`,body+farW)]; }
       else { const body = R(p-sd50*0.3); legs = [leg('Long put (upper)',body+nearW),leg('Short put x2',body),leg(`Long put (broken ${farW.toFixed(1)}pt)`,body-farW)]; }
-    } else if (bestStrat === 'Jade lizard') {
+    } else if (legStrat === 'Jade lizard') {
       legs = [leg('Short put',p-sd50),leg('Long put',p-sd80),leg('Short call',p+sd80),leg('Long call',p+sdFull)];
-    } else if (bestStrat === 'Calendar spread') {
+    } else if (legStrat === 'Calendar spread') {
       const cs = isBull?R(p+sd25):isBear?R(p-sd25):R(p);
       legs = [leg('Long back-month',cs),leg('Short front-month',cs)];
-    } else if (bestStrat === 'Diagonal spread') {
+    } else if (legStrat === 'Diagonal spread') {
       legs = [leg('Long 60-90d call',R(p)),leg('Short 20-30d call',R(p+sd50*(isBull?1:-1)))];
-    } else if (bestStrat === 'Ratio spread') {
+    } else if (legStrat === 'Ratio spread') {
       legs = [leg('Long call',p),leg('Short call x2',p+sd50)];
-    } else if (bestStrat === 'Standard butterfly') {
+    } else if (legStrat === 'Standard butterfly') {
       legs = [leg('Long put',p-sd50),leg('Short put',p),leg('Short call',p),leg('Long call',p+sd50)];
     }
     strikeLine = `1 SD=${em45.toFixed(1)} pts | 0.5 SD=${sd50.toFixed(1)} pts | ${dte}d @ IV ${iv.toFixed(1)}%`;
@@ -165,14 +169,14 @@ export function calc45DTE(inputs) {
     em45, ivhvRatio, ivhvLabel, ivrBand, ivrStructures,
     termDiff, termLabel, skew,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
-    ratings: sorted, bestStrat, bestRating,
+    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     legs, strikeLine,
     setupScore, setup, criteria,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
     fullC, halfC, contracts, maxRisk, tEff,
     greeks, sdRange, deltaGuide: DELTA_GUIDE,
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
-    behaviour: MARKET_BEHAVIOUR_45DTE[bestStrat] || '',
+    behaviour: MARKET_BEHAVIOUR_45DTE[legStrat] || '',
     outlook
   };
 }

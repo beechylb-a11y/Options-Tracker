@@ -70,7 +70,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         bankroll:fv(i45,'bankroll'), startBR:fv(i45,'startBR'),
         maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
         theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
-        underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook
+        underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
+        overrideStrategy: overrideStrat
       });
     }
   }, [is0, i0, i45, overrideStrat]);
