@@ -29,12 +29,20 @@ export default function App() {
   const [tab, setTab] = useState('dashboard');
   const [authenticated, setAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccount, setSelectedAccount] = useState('all');
 
   useEffect(() => {
     api.authStatus()
       .then(d => { setAuthenticated(d.authenticated); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (authenticated) {
+      api.getAccounts().then(a => setAccounts(a || [])).catch(() => {});
+    }
+  }, [authenticated]);
 
   const handleLogin = async () => {
     try {
@@ -87,6 +95,16 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-bg-border">
+          {authenticated && accounts.length > 0 && (
+            <div className="mb-3">
+              <label className="text-[10px] text-text-faint uppercase tracking-wider block mb-1">Account</label>
+              <select value={selectedAccount} onChange={e => setSelectedAccount(e.target.value)}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded-lg text-xs text-text outline-none focus:border-accent">
+                <option value="all">All accounts</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+          )}
           {authenticated ? (
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-green" />
@@ -107,16 +125,16 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 ml-[220px] min-h-screen">
         <div className="max-w-[1400px] mx-auto p-6">
-          {tab === 'dashboard' && <Dashboard authenticated={authenticated} />}
-          {tab === 'trades' && <Trades authenticated={authenticated} />}
-          {tab === 'decision' && <DecisionEngine authenticated={authenticated} />}
-          {tab === 'journal' && <Journal authenticated={authenticated} />}
-          {tab === 'summary' && <Summary authenticated={authenticated} />}
-          {tab === 'analytics' && <Analytics authenticated={authenticated} />}
-          {tab === 'risk' && <PortfolioRisk authenticated={authenticated} />}
+          {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+          {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+          {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'summary' && <Summary authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}
-          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} />}
+          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} accounts={accounts} onAccountsChange={setAccounts} />}
         </div>
       </main>
     </div>

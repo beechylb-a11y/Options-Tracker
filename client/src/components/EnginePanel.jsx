@@ -6,8 +6,12 @@ import { UNDERLYING_LIST } from '../engine/data';
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
-export default function EnginePanel({ mode, onLogTrade }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   const is0 = mode === '0dte';
+  const acfg = accountConfig || {};
+  const defBankroll = acfg.bankroll || 3000;
+  const defMaxLoss = acfg.maxDailyLoss || 300;
+  const defMaxOpen = acfg.maxOpenRisk || 450;
 
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
@@ -16,13 +20,13 @@ export default function EnginePanel({ mode, onLogTrade }) {
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'',
     win:'', risk:'', pop:'', hours:'6.5',
     theta:'', delta:'', gamma:'', gamStrike:'',
-    bankroll:3000, startBR:3000, maxLoss:300, maxOpen:450
+    bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
   const [i45, setI45] = useState({
     underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
     outlook:'neutral', pop:'', win:'', risk:'',
-    bankroll:3000, startBR:3000, maxLoss:300, maxOpen:450,
+    bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
     bpr:'', theta:'', vega:'', delta:''
   });
 

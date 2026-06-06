@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine } from 'recharts';
 import { Shield, AlertTriangle, Edit3, Save, RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor } from '../utils/format';
+import { fmt$, pnlColor, filterByAccount } from '../utils/format';
 
 // Sector mapping for common underlyings
 const SECTORS = {
@@ -23,7 +23,7 @@ function getSector(underlying) {
   return SECTORS[underlying] || 'Other';
 }
 
-export default function PortfolioRisk({ authenticated }) {
+export default function PortfolioRisk({ authenticated, account }) {
   const [tracker, setTracker] = useState([]);
   const [loading, setLoading] = useState(true);
   const [greeks, setGreeks] = useState({}); // { underlying: { delta, gamma, theta, vega, iv } }
@@ -45,7 +45,7 @@ export default function PortfolioRisk({ authenticated }) {
 
   // Open positions
   const openPositions = useMemo(() =>
-    tracker.filter(t => t.Status === 'Open').map(t => {
+    filterByAccount(tracker, account).filter(t => t.Status === 'Open').map(t => {
       const underlying = t.Underlying || '';
       const qty = parseInt(t.Qty) || 1;
       const g = greeks[underlying] || {};

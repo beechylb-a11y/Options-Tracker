@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, fmtDate, pnlColor } from '../utils/format';
+import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Trades({ authenticated }) {
+export default function Trades({ authenticated, account, accounts }) {
   const [tracker, setTracker] = useState([]);
   const [rawTrades, setRawTrades] = useState([]);
   const [filter, setFilter] = useState('All');
@@ -11,6 +11,7 @@ export default function Trades({ authenticated }) {
   const [expandedRow, setExpandedRow] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
+  const [uploadAccount, setUploadAccount] = useState('');
   const [loading, setLoading] = useState(true);
   const [uncategorised, setUncategorised] = useState([]);
   const [showReview, setShowReview] = useState(false);
@@ -51,7 +52,7 @@ export default function Trades({ authenticated }) {
     setUploading(true);
     setUploadResult(null);
     try {
-      const result = await api.uploadCSV(file);
+      const result = await api.uploadCSV(file, uploadAccount);
       setUploadResult(result);
       await loadData();
     } catch (err) {
@@ -62,7 +63,8 @@ export default function Trades({ authenticated }) {
   }
 
   const filters = ['All', 'Open', 'Closed', 'Expired', 'Assigned', 'Cash Settled'];
-  const filtered = tracker.filter(t => {
+  const accountFiltered = filterByAccount(tracker, account);
+  const filtered = accountFiltered.filter(t => {
     if (filter !== 'All' && t.Status !== filter) return false;
     if (tickerFilter && !t.Underlying?.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
     return true;
@@ -98,6 +100,13 @@ export default function Trades({ authenticated }) {
             <RefreshCw size={14} />
             Refresh
           </button>
+          {accounts && accounts.length > 0 && (
+            <select value={uploadAccount} onChange={e => setUploadAccount(e.target.value)}
+              className="px-2 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white outline-none">
+              <option value="">No account</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          )}
           <label className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">
             <Upload size={14} />
             {uploading ? 'Uploading...' : 'Upload CSV'}

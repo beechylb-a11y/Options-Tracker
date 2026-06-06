@@ -32,3 +32,8 @@ export function pnlColor(n) {
   if (n < 0) return '#f85149';
   return '#8b949e';
 }
+
+export function filterByAccount(trades, account) {
+  if (!account || account === 'all') return trades;
+  return trades.filter(t => (t.Account || t['Account'] || '') === account);
+}

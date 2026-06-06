@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3 } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, fmtDate, pnlColor } from '../utils/format';
+import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Journal({ authenticated }) {
+export default function Journal({ authenticated, account }) {
   const [journal, setJournal] = useState([]);
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
@@ -45,8 +45,9 @@ export default function Journal({ authenticated }) {
   const today = new Date();
 
   // ── Build daily stats directly from TradeTracker (single source of truth) ──
+  const filteredTracker = filterByAccount(tracker, account);
   const dayStats = {};
-  tracker.forEach(t => {
+  filteredTracker.forEach(t => {
     // Use close date for P&L attribution (when the money was realised)
     // Fall back to entry date if no close date
     const closeDate = (t['Close Date'] || '').split('T')[0];
@@ -90,7 +91,7 @@ export default function Journal({ authenticated }) {
 
   // Get trades for a specific date
   function getTradesForDate(dateStr) {
-    return tracker.filter(t => {
+    return filteredTracker.filter(t => {
       const entryDate = (t['Entry Date'] || '').split('T')[0];
       const closeDate = (t['Close Date'] || '').split('T')[0];
       return entryDate === dateStr || closeDate === dateStr;

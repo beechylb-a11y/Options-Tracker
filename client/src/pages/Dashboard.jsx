@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar, Award } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor } from '../utils/format';
+import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Dashboard({ authenticated }) {
+export default function Dashboard({ authenticated, account }) {
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
   const [tracker, setTracker] = useState([]);
@@ -14,14 +14,14 @@ export default function Dashboard({ authenticated }) {
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
     Promise.all([
-      api.getStats().catch(() => ({ stats: {}, config: {} })),
+      api.getStats(account).catch(() => ({ stats: {}, config: {} })),
       api.getTracker().catch(() => []),
       api.getJournal().catch(() => [])
     ]).then(([s, t, j]) => {
       setStats(s.stats); setConfig(s.config); setTracker(t); setJournal(j);
       setLoading(false);
     });
-  }, [authenticated]);
+  }, [authenticated, account]);
 
   if (!authenticated) {
     return (
@@ -50,7 +50,9 @@ export default function Dashboard({ authenticated }) {
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
 
   // ── Closed trades sorted by date ──
-  const closedTrades = tracker
+  const allTracker = tracker;
+  const filteredTracker = filterByAccount(allTracker, account);
+  const closedTrades = filteredTracker
     .filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
     .sort((a, b) => new Date(a['Entry Date'] || 0) - new Date(b['Entry Date'] || 0));
 
@@ -131,7 +133,7 @@ export default function Dashboard({ authenticated }) {
   const lossDays = dayPnls.filter(d => d.pnl < 0).length;
 
   // ── Upcoming expiries ──
-  const openTrades = tracker.filter(t => t.Status === 'Open');
+  const openTrades = filteredTracker.filter(t => t.Status === 'Open');
   const upcoming = openTrades
     .filter(t => t['Expiry Date'])
     .sort((a, b) => new Date(a['Expiry Date']) - new Date(b['Expiry Date']))

@@ -61,14 +61,15 @@ const REQUIRED_TABS = {
     ['maxDailyLoss', '300'],
     ['maxOpenRisk', '450'],
     ['riskPerContract', '435'],
-    ['winAmount', '65']
+    ['winAmount', '65'],
+    ['accounts', '[]']
   ],
   Trades: [['Date/Time', 'Order #', 'Strategy (OIC)', 'Underlying', 'Instrument Type',
     'Description', 'Subcode', 'Symbol', 'Expiry', 'Strike', 'Call/Put',
     'Quantity', 'Avg Price', 'Fees', 'Net Value', 'Currency']],
   TradeTracker: [['Order #', 'Entry Date', 'Expiry Date', 'Close Date', 'Strategy (OIC)',
     'Underlying', 'Qty', 'Net Credit ($)', 'Total P&L ($)', 'W / L',
-    'Cumul BA (%)', 'Status']],
+    'Cumul BA (%)', 'Status', 'Account']],
   Decisions: [['Timestamp', 'Engine', 'Underlying', 'Strategy', 'Direction', 'Contracts',
     'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
     'Wing Strikes', 'Market Behaviour', 'Notes',
@@ -141,7 +142,27 @@ export async function updateConfig(key, value) {
       valueInputOption: 'RAW',
       requestBody: { values: [[value]] }
     });
+  } else {
+    // Key doesn't exist, append it
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID(),
+      range: 'Config!A1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [[key, value]] }
+    });
   }
+}
+
+// Account format: [{ id, name, bankroll, startingBankroll, maxDailyLoss, maxOpenRisk }]
+export async function getAccounts() {
+  const config = await getConfig();
+  try {
+    return JSON.parse(config.accounts || '[]');
+  } catch (e) { return []; }
+}
+
+export async function saveAccounts(accounts) {
+  await updateConfig('accounts', JSON.stringify(accounts));
 }
 
 // ================================================================
@@ -183,7 +204,7 @@ export async function writeTradeTracker(rows) {
   // Clear existing data (keep header)
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID(),
-    range: 'TradeTracker!A2:L'
+    range: 'TradeTracker!A2:M'
   });
   if (rows.length > 0) {
     await sheets.spreadsheets.values.update({
@@ -200,7 +221,7 @@ export async function getTradeTracker() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'TradeTracker!A:L'
+    range: 'TradeTracker!A:M'
   });
   return res.data.values || [];
 }
@@ -220,13 +241,13 @@ export async function updateTradeTrackerRow(rowIndex, updates) {
   // Read current row
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: `TradeTracker!A${rowIndex}:L${rowIndex}`
+    range: `TradeTracker!A${rowIndex}:M${rowIndex}`
   });
   const current = res.data.values?.[0] || [];
   // Headers: Order#(0), EntryDate(1), ExpiryDate(2), CloseDate(3), Strategy(4),
-  //          Underlying(5), Qty(6), NetCredit(7), TotalP&L(8), W/L(9), CumulBA(10), Status(11)
+  //          Underlying(5), Qty(6), NetCredit(7), TotalP&L(8), W/L(9), CumulBA(10), Status(11), Account(12)
   const row = [...current];
-  while (row.length < 12) row.push('');
+  while (row.length < 13) row.push('');
   if (updates.entryDate !== undefined) row[1] = updates.entryDate;
   if (updates.expiryDate !== undefined) row[2] = updates.expiryDate;
   if (updates.closeDate !== undefined) row[3] = updates.closeDate;
@@ -239,9 +260,10 @@ export async function updateTradeTrackerRow(rowIndex, updates) {
     row[9] = parseFloat(updates.totalPnl) >= 0 ? 'Win' : 'Loss';
   }
   if (updates.status !== undefined) row[11] = updates.status;
+  if (updates.account !== undefined) row[12] = updates.account;
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID(),
-    range: `TradeTracker!A${rowIndex}:L${rowIndex}`,
+    range: `TradeTracker!A${rowIndex}:M${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: { values: [row] }
   });

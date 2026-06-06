@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
-  ensureSheetStructure, getConfig, updateConfig,
+  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
@@ -98,11 +98,33 @@ app.put('/api/config/:key', requireAuth, async (req, res) => {
 });
 
 // ================================================================
+//  ACCOUNTS
+// ================================================================
+app.get('/api/accounts', requireAuth, async (req, res) => {
+  try {
+    const accounts = await getAccounts();
+    res.json(accounts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/accounts', requireAuth, async (req, res) => {
+  try {
+    await saveAccounts(req.body.accounts);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
 //  CSV UPLOAD + PROCESSING
 // ================================================================
 app.post('/api/upload-csv', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const account = req.body?.account || '';
 
     const text = req.file.buffer.toString('utf-8');
     const rawRows = parseCSV(text);
@@ -112,10 +134,18 @@ app.post('/api/upload-csv', requireAuth, upload.single('file'), async (req, res)
     // Process into cleaned trades + trade tracker
     const { outputRows, trackerRows } = processCSV(rawRows);
 
+    // Tag each tracker row with account
+    const taggedRows = trackerRows.map(row => {
+      const r = [...row];
+      while (r.length < 13) r.push('');
+      r[12] = account;
+      return r;
+    });
+
     // Write to Google Sheet
     await clearTrades();
     const tradesWritten = await appendTrades(outputRows);
-    const trackerWritten = await writeTradeTracker(trackerRows);
+    const trackerWritten = await writeTradeTracker(taggedRows);
 
     // Calculate and update stats
     const stats = calculateStats([['header'], ...trackerRows]);
@@ -294,11 +324,24 @@ app.delete('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
 // ================================================================
 app.get('/api/stats', requireAuth, async (req, res) => {
   try {
-    // Calculate stats fresh from TradeTracker data (not BattingAverage sheet)
-    // This ensures accuracy regardless of sheet formula state
     const trackerRows = await getTradeTracker();
-    const stats = calculateStats(trackerRows);
+    const account = req.query.account;
+    let filtered = trackerRows;
+    if (account && account !== 'all') {
+      const headers = trackerRows[0] || [];
+      filtered = [headers, ...trackerRows.slice(1).filter(row => (row[12] || '') === account)];
+    }
+    const stats = calculateStats(filtered);
     const config = await getConfig();
+    // If account selected, merge account-specific config
+    const accounts = await getAccounts();
+    const acct = accounts.find(a => a.id === account);
+    if (acct) {
+      config.currentBankroll = acct.bankroll;
+      config.startingBankroll = acct.startingBankroll;
+      config.maxDailyLoss = acct.maxDailyLoss;
+      config.maxOpenRisk = acct.maxOpenRisk;
+    }
     res.json({ stats, config });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -507,7 +550,11 @@ app.get('/api/comparison', requireAuth, async (req, res) => {
 app.get('/api/performance', requireAuth, async (req, res) => {
   try {
     const rows = await getTradeTracker();
-    const data = rows.slice(1);
+    const account = req.query.account;
+    let data = rows.slice(1);
+    if (account && account !== 'all') {
+      data = data.filter(row => (row[12] || '') === account);
+    }
     if (!data.length) return res.json({ byStrategy: {}, byUnderlying: {}, overall: {} });
 
     const byStrategy = {};
@@ -606,7 +653,8 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
       pnl,                         // Total P&L ($)
       isWin ? 'Win' : 'Loss',     // W / L
       '',                          // Cumul BA (%)
-      'Closed'                     // Status
+      'Closed',                    // Status
+      req.body.account || ''       // Account
     ];
     await appendTradeTrackerRow(trackerRow);
 

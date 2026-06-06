@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { api } from '../utils/api';
-import { fmt$, pnlColor } from '../utils/format';
+import { fmt$, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Summary({ authenticated }) {
+export default function Summary({ authenticated, account }) {
   const [perf, setPerf] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('strategy');
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
-    api.getPerformance().then(setPerf).catch(() => {}).finally(() => setLoading(false));
-  }, [authenticated]);
+    api.getPerformance(account).then(setPerf).catch(() => {}).finally(() => setLoading(false));
+  }, [authenticated, account]);
 
   if (!authenticated) {
     return (

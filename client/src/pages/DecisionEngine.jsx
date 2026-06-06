@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
 
-export default function DecisionEngine({ authenticated }) {
+export default function DecisionEngine({ authenticated, account, accounts }) {
   const [mode, setMode] = useState('0dte');
   const [decisions, setDecisions] = useState([]);
   const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
@@ -31,12 +31,12 @@ export default function DecisionEngine({ authenticated }) {
   const [manualSaving, setManualSaving] = useState(false);
 
   function loadDecisions() {
-    if (!authenticated) return;
-    api.getDecisions().then(rows => {
+    if (!authenticated) return Promise.resolve();
+    return api.getDecisions().then(rows => {
       if (rows && rows.length > 1) {
         const headers = rows[0];
         const data = rows.slice(1).map((row, idx) => {
-          const obj = { _rowIndex: idx + 2 };
+          const obj = { _rowIndex: idx + 2, _raw: row };
           headers.forEach((h, i) => { obj[h] = row[i] || ''; });
           return obj;
         }).reverse();
@@ -67,11 +67,14 @@ export default function DecisionEngine({ authenticated }) {
   async function handleCloseTicket(dec) {
     setSaving(true);
     try {
-      await api.closeTicket(dec._rowIndex, closeForm);
+      const result = await api.closeTicket(dec._rowIndex, closeForm);
+      console.log('[CLOSE TICKET RESULT]', result);
       showToast('Trade ticket closed', 'success');
       setClosingIdx(null);
       setCloseForm({ closeDate: '', closePrice: '', actualPnl: '' });
-      loadDecisions();
+      // Small delay to let Google Sheets propagate the write
+      await new Promise(r => setTimeout(r, 500));
+      await loadDecisions();
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
     setSaving(false);
   }
@@ -134,8 +137,8 @@ export default function DecisionEngine({ authenticated }) {
     setManualSaving(false);
   }
 
-  const openTickets = decisions.filter(d => d.Status !== 'Closed');
-  const closedTickets = decisions.filter(d => d.Status === 'Closed');
+  const openTickets = decisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
+  const closedTickets = decisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
 
   return (
     <div className="fade-in">
@@ -553,7 +556,8 @@ export default function DecisionEngine({ authenticated }) {
       )}
 
       {/* Native Decision Engine */}
-      <EnginePanel mode={mode} onLogTrade={handleEngineLog} />
+      <EnginePanel mode={mode} onLogTrade={handleEngineLog}
+        accountConfig={accounts?.find(a => a.id === account) || {}} />
     </div>
   );
 }

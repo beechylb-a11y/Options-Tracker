@@ -2,9 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis } from 'recharts';
 import { TrendingUp, Calendar, Clock, Layers, Activity } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor } from '../utils/format';
+import { fmt$, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Analytics({ authenticated }) {
+export default function Analytics({ authenticated, account }) {
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +30,7 @@ export default function Analytics({ authenticated }) {
   }, [authenticated]);
 
   const closed = useMemo(() =>
-    tracker.filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
+    filterByAccount(tracker, account).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
       .map(t => ({
         ...t,
         pnl: parseFloat(t['Total P&L ($)']) || 0,

@@ -23,11 +23,16 @@ export const api = {
   updateConfig: (key, value) => fetchJSON(`/api/config/${key}`, {
     method: 'PUT', body: JSON.stringify({ value })
   }),
+  getAccounts: () => fetchJSON('/api/accounts'),
+  saveAccounts: (accounts) => fetchJSON('/api/accounts', {
+    method: 'PUT', body: JSON.stringify({ accounts })
+  }),
 
   // CSV upload
-  uploadCSV: (file) => {
+  uploadCSV: (file, account) => {
     const form = new FormData();
     form.append('file', file);
+    if (account) form.append('account', account);
     return fetch(`${BASE}/api/upload-csv`, {
       method: 'POST', credentials: 'include', body: form
     }).then(r => r.json());
@@ -51,8 +56,8 @@ export const api = {
   }),
 
   // Stats
-  getStats: () => fetchJSON('/api/stats'),
-  getPerformance: () => fetchJSON('/api/performance'),
+  getStats: (account) => fetchJSON(`/api/stats${account && account !== 'all' ? '?account=' + account : ''}`),
+  getPerformance: (account) => fetchJSON(`/api/performance${account && account !== 'all' ? '?account=' + account : ''}`),
 
   // Decisions
   logDecision: (data) => fetchJSON('/api/decisions', {
