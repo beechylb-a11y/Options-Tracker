@@ -58,7 +58,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
         delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
-        underlying:i0.underlying
+        underlying:i0.underlying,
+        overrideStrategy: overrideStrat
       });
     } else {
       return calc45DTE({
@@ -72,11 +73,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook
       });
     }
-  }, [is0, i0, i45]);
+  }, [is0, i0, i45, overrideStrat]);
 
-  // Override: if user clicks a MARGINAL or better strategy, use that instead
+  // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
-  const effectiveStrat = isOverride ? overrideStrat : r.bestStrat;
+  const effectiveStrat = r.legStrat || r.bestStrat;
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
   const effectiveDecision = r.setup === 'No setup' ? 'No trade'
     : isOverride ? 'Trade with caution'

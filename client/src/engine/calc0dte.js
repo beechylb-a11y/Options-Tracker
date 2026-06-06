@@ -203,6 +203,10 @@ export function calc0DTE(inputs) {
   const bestStrat = best ? best.name : 'No suitable structure';
   const bestRating = best ? best.rating : 'NO TRADE';
 
+  // Override: if caller specifies a strategy, use that for legs
+  const overrideStrategy = inputs.overrideStrategy || null;
+  const legStrat = overrideStrategy || bestStrat;
+
   // ── Strike engine (with directional gamma) ──
   const baseDistance = price > 0 ? Math.max(emVIX / 2, emV1D, em * 0.5) : 0;
   let distMult = 1.0;
@@ -232,31 +236,31 @@ export function calc0DTE(inputs) {
   let legs = [];
   if (price > 0 && D > 0) {
     const p = price;
-    if (bestStrat === 'Iron butterfly') {
+    if (legStrat === 'Iron butterfly') {
       legs = [leg('Long put (wing)', p-D), leg('Short put (body)', p), leg('Short call (body)', p), leg('Long call (wing)', p+D)];
-    } else if (bestStrat === 'Standard butterfly') {
+    } else if (legStrat === 'Standard butterfly') {
       legs = dirScore >= 0
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (mid)', gs), leg('Long call (upper)', gs+D)]
         : [leg('Long put (upper)', gs+D), leg('Short put x2 (mid)', gs), leg('Long put (lower)', gs-D)];
-    } else if (bestStrat === 'Broken wing butterfly') {
+    } else if (legStrat === 'Broken wing butterfly') {
       const nearW = D, farW = Math.round(D * 1.75 / roundTo) * roundTo;
       legs = dirScore >= 0
         ? [leg('Long call (lower)', gs-nearW), leg('Short call x2 (body)', gs), leg(`Long call (broken ${farW.toFixed(0)}pt)`, gs+farW)]
         : [leg('Long put (upper)', gs+nearW), leg('Short put x2 (body)', gs), leg(`Long put (broken ${farW.toFixed(0)}pt)`, gs-farW)];
-    } else if (bestStrat === 'Asymmetric butterfly') {
+    } else if (legStrat === 'Asymmetric butterfly') {
       legs = dirScore >= 0
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (body)', gs), leg('Long call (1.5x upper)', gs+D*1.5)]
         : [leg('Long put (upper)', gs+D), leg('Short put x2 (body)', gs), leg('Long put (1.5x lower)', gs-D*1.5)];
-    } else if (bestStrat === 'Iron Condor - Normal') {
+    } else if (legStrat === 'Iron Condor - Normal') {
       legs = [leg('Long put', p-2*D), leg('Short put', p-D), leg('Short call', p+D), leg('Long call', p+2*D)];
-    } else if (bestStrat === 'Long Condor - Reversed') {
+    } else if (legStrat === 'Long Condor - Reversed') {
       legs = [leg('Long put', p-2*D), leg('Short put', p-D), leg('Short call', p+D), leg('Long call', p+2*D)];
-    } else if (bestStrat === 'Chicken condor') {
+    } else if (legStrat === 'Chicken condor') {
       const tightW = D, wideW = D * 1.5;
       legs = dirScore >= 0
         ? [leg('Long put', p-wideW-D), leg('Short put', p-wideW), leg('Short call', p+tightW), leg('Long call', p+tightW+D)]
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
-    } else if (bestStrat === 'Bull put spread') {
+    } else if (legStrat === 'Bull put spread') {
       // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based
       const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
@@ -264,21 +268,21 @@ export function calc0DTE(inputs) {
         leg('Short put (VIX)', p - dVix), leg('Long put (VIX)', p - dVix * 2),
         leg('Short put (VIX1D)', p - dV1d), leg('Long put (VIX1D)', p - dV1d * 2)
       ];
-    } else if (bestStrat === 'Bear call spread') {
+    } else if (legStrat === 'Bear call spread') {
       const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Short call (VIX)', p + dVix), leg('Long call (VIX)', p + dVix * 2),
         leg('Short call (VIX1D)', p + dV1d), leg('Long call (VIX1D)', p + dV1d * 2)
       ];
-    } else if (bestStrat === 'Bull call spread') {
+    } else if (legStrat === 'Bull call spread') {
       const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVix * 0.5),
         leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1d * 0.5)
       ];
-    } else if (bestStrat === 'Bear put spread') {
+    } else if (legStrat === 'Bear put spread') {
       const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
@@ -287,7 +291,7 @@ export function calc0DTE(inputs) {
       ];
     }
   }
-  const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
+  const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(legStrat);
   const wingTxt = D > 0
     ? isSpread
       ? `EM(VIX)/2=${emVIX>0?(emVIX/2).toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
@@ -459,7 +463,7 @@ export function calc0DTE(inputs) {
     overnightMove, overnightRange, overnightDir, overnightRangePct, overnightMovePct,
     moveConsumed, volRemaining,
     // Strategy
-    ratings: sorted, bestStrat, bestRating,
+    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     // Strikes
     legs, wingTxt, D, baseDistance, distMult,
     // Scoring
@@ -471,6 +475,6 @@ export function calc0DTE(inputs) {
     greeks,
     // Decision
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
-    behaviour: MARKET_BEHAVIOUR_0DTE[bestStrat] || ''
+    behaviour: MARKET_BEHAVIOUR_0DTE[legStrat] || ''
   };
 }
