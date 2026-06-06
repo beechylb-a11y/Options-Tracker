@@ -13,6 +13,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   const [editingAccount, setEditingAccount] = useState(null);
   const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '300', maxOpenRisk: '450' });
   const [savingAccounts, setSavingAccounts] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -191,6 +193,18 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                     </div>
                     <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk }); setShowAddAccount(false); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
+                    <button onClick={async () => {
+                      setBackfilling(true); setBackfillResult(null);
+                      try {
+                        const r = await api.backfillAccount(a.id);
+                        setBackfillResult(`Tagged ${r.updated} untagged trades to "${a.name}"`);
+                      } catch (e) { setBackfillResult('Error: ' + e.message); }
+                      setBackfilling(false);
+                    }} disabled={backfilling}
+                      className="text-[10px] px-2 py-1 border border-bg-border rounded text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                      title="Tag all untagged trades to this account">
+                      {backfilling ? '...' : 'Backfill'}
+                    </button>
                     <button onClick={() => handleDeleteAccount(a.id)}
                       className="text-text-faint hover:text-red p-1"><Trash2 size={14} /></button>
                   </>
@@ -200,6 +214,10 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
           </div>
         ) : (
           <p className="text-sm text-text-muted mb-4">No accounts configured. Add an account to track trades across multiple TastyTrade accounts.</p>
+        )}
+
+        {backfillResult && (
+          <div className="text-xs text-green mb-3 p-2 rounded bg-green/10 border border-green/20">{backfillResult}</div>
         )}
 
         {/* Add account form */}

@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
-  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts,
+  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
@@ -114,6 +114,18 @@ app.put('/api/accounts', requireAuth, async (req, res) => {
     await saveAccounts(req.body.accounts);
     res.json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/accounts/backfill', requireAuth, async (req, res) => {
+  try {
+    const accountId = req.body.accountId;
+    if (!accountId) return res.status(400).json({ error: 'No accountId provided' });
+    const updated = await backfillAccountColumn(accountId);
+    res.json({ ok: true, updated });
+  } catch (err) {
+    console.error('Backfill error:', err);
     res.status(500).json({ error: err.message });
   }
 });
