@@ -12,6 +12,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   const defBankroll = acfg.bankroll || 3000;
   const defMaxLoss = acfg.maxDailyLoss || 300;
   const defMaxOpen = acfg.maxOpenRisk || 450;
+  const [overrideStrat, setOverrideStrat] = useState(null);
 
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
@@ -73,9 +74,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     }
   }, [is0, i0, i45]);
 
-  const dcBg = r.decisionClass==='go'?'#0d1f0d':r.decisionClass==='warn'?'#1f1a0d':'#1f0d0d';
-  const dcBorder = r.decisionClass==='go'?'#238636':r.decisionClass==='warn'?'#9e6a03':'#da3633';
-  const dcColor = r.decisionClass==='go'?'#3fb950':r.decisionClass==='warn'?'#d29922':'#f85149';
+  // Override: if user clicks a MARGINAL or better strategy, use that instead
+  const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
+  const effectiveStrat = isOverride ? overrideStrat : r.bestStrat;
+  const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
+  const effectiveDecision = r.setup === 'No setup' ? 'No trade'
+    : isOverride ? 'Trade with caution'
+    : r.decision;
+  const effectiveDecisionClass = r.setup === 'No setup' ? 'nogo'
+    : isOverride ? 'warn'
+    : r.decisionClass;
+
+  const dcBg = effectiveDecisionClass==='go'?'#0d1f0d':effectiveDecisionClass==='warn'?'#1f1a0d':'#1f0d0d';
+  const dcBorder = effectiveDecisionClass==='go'?'#238636':effectiveDecisionClass==='warn'?'#9e6a03':'#da3633';
+  const dcColor = effectiveDecisionClass==='go'?'#3fb950':effectiveDecisionClass==='warn'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
@@ -85,11 +97,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     if (!onLogTrade) return;
     const inp = is0 ? i0 : i45;
     onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
-      strategy:`${inp.underlying} - ${r.bestStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
-      direction:r.decision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
+      strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
+      direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
       setupGrade:r.setup, regime:r.regime, wingStrikes:r.legs.map(l=>l.strike).join(' / '),
-      marketBehaviour:r.behaviour, notes:'', price:fv(inp,'price'), vix:fv(inp,'vix'),
+      marketBehaviour:r.behaviour, notes:isOverride ? `Manual override: engine recommended ${r.bestStrat}, user selected ${effectiveStrat}` : '',
+      price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
       em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString() });
   }
@@ -98,9 +111,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     <div className="space-y-4">
       {/* Decision Block */}
       <div style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
-        <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{r.decision}</div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</div>
+          {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+        </div>
         <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
-          {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${r.bestStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
+          {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
         </div>
         {r.legs.length > 0 && (
           <div style={{display:'flex',flexWrap:'wrap',gap:'8px',marginTop:10}}>
@@ -118,8 +134,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
           {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
-        {!r.hardBlocker && r.decision !== 'Enter sizing' && (
+        {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
+        )}
+        {isOverride && (
+          <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
         )}
       </div>
 
@@ -229,13 +248,23 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
 
           {/* Strategy ratings */}
           <div className="card">
-            <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
+            <div className="flex items-center justify-between mb-1">
+              <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
+              {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
+            </div>
             <div className="space-y-0.5">
               {r.ratings.map((s,i) => {
                 const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
-                return (<div key={i} className="flex items-center justify-between py-1.5">
+                const clickable = s.rating !== 'NO TRADE';
+                const isSelected = overrideStrat === s.name;
+                return (<div key={i}
+                  onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
+                  className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
                   <span className="text-sm text-white">{s.name}</span>
-                  <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
+                  <div className="flex items-center gap-2">
+                    {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
+                    <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
+                  </div>
                 </div>);
               })}
             </div>

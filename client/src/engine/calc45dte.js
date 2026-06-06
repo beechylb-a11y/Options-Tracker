@@ -153,6 +153,7 @@ export function calc45DTE(inputs) {
 
   let decision, decisionClass;
   if (hardBlocker) { decision='No trade'; decisionClass='nogo'; }
+  else if (setup === 'No setup') { decision='No trade'; decisionClass='nogo'; }
   else if (missingSize||bestRating==='NO TRADE'||blockers.length) { decision=missingSize?'Enter sizing':'Review signals'; decisionClass='nogo'; }
   else if (warnings.length) { decision='Trade with caution'; decisionClass='warn'; }
   else { decision='Trade'; decisionClass='go'; }
