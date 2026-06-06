@@ -13,6 +13,7 @@ export default function EnginePanel({ mode, onLogTrade }) {
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
+    esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'',
     win:'', risk:'', pop:'', hours:'6.5',
     theta:'', delta:'', gamma:'', gamStrike:'',
     bankroll:3000, startBR:3000, maxLoss:300, maxOpen:450
@@ -46,6 +47,8 @@ export default function EnginePanel({ mode, onLogTrade }) {
         vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
         atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
         gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
+        esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
+        esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'),
         bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
         risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
@@ -152,6 +155,20 @@ export default function EnginePanel({ mode, onLogTrade }) {
             </>}
           </div>
 
+          {/* ES Overnight (0DTE only) */}
+          {is0 && (
+            <>
+              <SectionLabel>ES Overnight</SectionLabel>
+              <div className="grid grid-cols-2 gap-2.5">
+                <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)}/>
+                <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
+                <Inp label="ES Close (pre-open)" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
+                <Inp label="Prior Day Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label="Cash Open" value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
+              </div>
+            </>
+          )}
+
           {/* Sizing — simplified */}
           <SectionLabel>Trade sizing</SectionLabel>
           <div className="grid grid-cols-3 gap-2.5">
@@ -245,15 +262,19 @@ export default function EnginePanel({ mode, onLogTrade }) {
             <SectionLabel white>Signals</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5">
               {is0 ? <>
-                <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
-                <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
+                <KV label="Move consumed" value={r.moveConsumed!==undefined?`${(r.moveConsumed*100).toFixed(0)}%`:'--'} cls={r.moveConsumed>0.80?'text-green':r.moveConsumed>0.60?'text-amber':r.moveConsumed<0.30?'text-green':''}/>
+                <KV label="Vol remaining" value={r.volRemaining!==undefined?`${(r.volRemaining*100).toFixed(0)}%`:'--'} cls={r.volRemaining<0.30?'text-amber':''}/>
                 <KV label="VWAP 5 slope" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
                 <KV label="VWAP 15 slope" value={`${r.slope15?.strength||'--'} (${r.slope15?.direction||'--'})`} cls={r.slope15?.direction==='rising'?'text-green':r.slope15?.direction==='falling'?'text-red':''}/>
                 <KV label="15m confirms" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
-                <KV label="VWAP distance" value={r.vwapDistPctEM>0?`${(r.vwapDistPctEM*100).toFixed(0)}% EM`:'--'} cls={r.vwapOverextended?'text-amber':''}/>
+                <KV label="ES overnight" value={r.overnightDir||'--'} cls={r.overnightDir==='bullish'?'text-green':r.overnightDir==='bearish'?'text-red':''}/>
+                <KV label="Overnight range" value={r.overnightRangePct>0?`${(r.overnightRangePct*100).toFixed(0)}% EM`:'--'}/>
+                <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
+                <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="RM ratio" value={r.rmRatio?`${(r.rmRatio*100).toFixed(0)}% EM`:'--'}/>
                 <KV label="Compression" value={r.comp!==null?r.comp.toFixed(2):'--'}/>
+                <KV label="VWAP distance" value={r.vwapDistPctEM>0?`${(r.vwapDistPctEM*100).toFixed(0)}% EM`:'--'} cls={r.vwapOverextended?'text-amber':''}/>
                 <KV label="Gamma dist" value={r.gamDist!==null?`${r.gamDist.toFixed(2)}x ATR`:'--'}/>
                 <KV label="EM(VIX)" value={`${r.emVIX} pts`}/>
                 <KV label="EM(VIX1D)" value={`${r.emV1D} pts`}/>
