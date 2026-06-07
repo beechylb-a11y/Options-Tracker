@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
 
@@ -44,23 +44,44 @@ export default function Journal({ authenticated, account }) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
 
-  // ── Build daily stats from TradeTracker ──
+  // ── Build daily stats from BOTH TradeTracker AND closed Decision tickets ──
   const filteredTracker = filterByAccount(tracker, account);
   const dayStats = {};
+
+  // 1. CSV / TradeTracker trades
   filteredTracker.forEach(t => {
-    if (t.Status === 'Open') return; // skip open trades
+    if (t.Status === 'Open') return;
     const pnl = parseFloat(t['Total P&L ($)']) || 0;
     const wl = t['W / L'];
-    // Attribute P&L to close date (when realised), or entry date if no close
     const closeDate = (t['Close Date'] || '').split('T')[0];
     const entryDate = (t['Entry Date'] || '').split('T')[0];
     const d = closeDate || entryDate;
     if (!d) return;
-    if (!dayStats[d]) dayStats[d] = { pnl: 0, count: 0, wins: 0, losses: 0 };
+    // Skip TICKET rows (they duplicate decision engine data)
+    if ((t['Order #'] || '').startsWith('TICKET-')) return;
+    if (!dayStats[d]) dayStats[d] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0 };
     dayStats[d].pnl += pnl;
     dayStats[d].count++;
+    dayStats[d].csvCount++;
     if (wl === 'Win') dayStats[d].wins++;
     if (wl === 'Loss') dayStats[d].losses++;
+  });
+
+  // 2. Closed decision engine tickets
+  const closedDecisions = decisions.filter(d => d.Status === 'Closed' && d['Actual P&L']);
+  closedDecisions.forEach(d => {
+    const closeDate = (d['Close Date'] || '').split('T')[0];
+    const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+    const dt = closeDate || entryDate;
+    if (!dt) return;
+    const pnl = parseFloat(d['Actual P&L']) || 0;
+    const isWin = pnl >= 0;
+    if (!dayStats[dt]) dayStats[dt] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0 };
+    dayStats[dt].pnl += pnl;
+    dayStats[dt].count++;
+    dayStats[dt].ticketCount++;
+    if (isWin) dayStats[dt].wins++;
+    else dayStats[dt].losses++;
   });
 
   // ── Notes from Journal sheet ──
@@ -82,20 +103,32 @@ export default function Journal({ authenticated, account }) {
       count: dayStats[d]?.count || 0,
       wins: dayStats[d]?.wins || 0,
       losses: dayStats[d]?.losses || 0,
+      csvCount: dayStats[d]?.csvCount || 0,
+      ticketCount: dayStats[d]?.ticketCount || 0,
       notes: notesByDate[d] || ''
     };
   });
 
   function getTradesForDate(dateStr) {
     return filteredTracker.filter(t => {
+      if ((t['Order #'] || '').startsWith('TICKET-')) return false;
       const entryDate = (t['Entry Date'] || '').split('T')[0];
       const closeDate = (t['Close Date'] || '').split('T')[0];
       return entryDate === dateStr || closeDate === dateStr;
     });
   }
 
-  function getDecisionsForDate(dateStr) {
+  function getTicketsForDate(dateStr) {
+    return closedDecisions.filter(d => {
+      const closeDate = (d['Close Date'] || '').split('T')[0];
+      const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+      return closeDate === dateStr || entryDate === dateStr;
+    });
+  }
+
+  function getOpenDecisionsForDate(dateStr) {
     return decisions.filter(d => {
+      if (d.Status === 'Closed') return false;
       if (!d.Timestamp) return false;
       try { return new Date(d.Timestamp).toISOString().split('T')[0] === dateStr; }
       catch (e) { return false; }
@@ -157,12 +190,12 @@ export default function Journal({ authenticated, account }) {
 
   const selData = selectedDay ? calendarData[selectedDay] || null : null;
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
-  const selDayDecisions = selectedDay ? getDecisionsForDate(selectedDay) : [];
-  // Calculate day P&L from visible trades (in case calendarData misses some)
-  const selDayPnl = selDayTrades.filter(t => t.Status !== 'Open').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
-  const selDayWins = selDayTrades.filter(t => t['W / L'] === 'Win').length;
-  const selDayLosses = selDayTrades.filter(t => t['W / L'] === 'Loss').length;
-  const selDayClosed = selDayTrades.filter(t => t.Status !== 'Open').length;
+  const selDayTickets = selectedDay ? getTicketsForDate(selectedDay) : [];
+  const selDayOpenDec = selectedDay ? getOpenDecisionsForDate(selectedDay) : [];
+  const allClosedOnDay = [...selDayTrades.filter(t => t.Status !== 'Open'), ...selDayTickets];
+  const selDayPnl = allClosedOnDay.reduce((s, t) => s + (parseFloat(t['Total P&L ($)'] || t['Actual P&L']) || 0), 0);
+  const selDayWins = allClosedOnDay.filter(t => (t['W / L'] === 'Win') || (parseFloat(t['Actual P&L']) >= 0 && t['Actual P&L'])).length;
+  const selDayLosses = allClosedOnDay.filter(t => (t['W / L'] === 'Loss') || (parseFloat(t['Actual P&L']) < 0)).length;
 
   return (
     <div className="fade-in">
@@ -203,7 +236,6 @@ export default function Journal({ authenticated, account }) {
               </div>
               <h3 className="font-display text-lg font-semibold">{monthName}</h3>
             </div>
-
             <div className="grid grid-cols-7 gap-1">
               {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
                 <div key={d} className="text-center text-[10px] text-text-faint uppercase tracking-wider py-2">{d}</div>
@@ -228,7 +260,10 @@ export default function Journal({ authenticated, account }) {
                     {data && data.count > 0 && (
                       <div className="absolute bottom-1 left-1 right-1">
                         <div className="mono text-[10px] font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</div>
-                        <div className="text-[9px] text-text-faint">{data.count}t {data.wins}w {data.losses}l</div>
+                        <div className="text-[9px] text-text-faint">
+                          {data.count}t {data.wins}w {data.losses}l
+                          {data.ticketCount > 0 && <span className="text-amber"> ⚡{data.ticketCount}</span>}
+                        </div>
                       </div>
                     )}
                     {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
@@ -246,10 +281,10 @@ export default function Journal({ authenticated, account }) {
                   <h3 className="text-sm font-medium text-white">
                     {new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                   </h3>
-                  {selDayClosed > 0 && (
+                  {allClosedOnDay.length > 0 && (
                     <div className="flex items-center gap-4 mt-1">
                       <span className="mono text-xl font-bold" style={{ color: pnlColor(selDayPnl) }}>{fmt$(selDayPnl)}</span>
-                      <span className="text-sm text-[#c9d1d9]">{selDayClosed} closed</span>
+                      <span className="text-sm text-[#c9d1d9]">{allClosedOnDay.length} closed</span>
                       <span className="text-sm font-medium text-green">{selDayWins}W</span>
                       <span className="text-sm font-medium text-red">{selDayLosses}L</span>
                     </div>
@@ -258,10 +293,11 @@ export default function Journal({ authenticated, account }) {
                 <button onClick={() => setSelectedDay(null)} className="text-text-faint hover:text-text"><X size={16} /></button>
               </div>
 
+              {/* CSV trades */}
               {selDayTrades.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <FileText size={10} /> Trades ({selDayTrades.length})
+                    <FileText size={10} /> CSV trades ({selDayTrades.length})
                   </h4>
                   <div className="space-y-1">
                     {selDayTrades.map((t, i) => {
@@ -277,12 +313,8 @@ export default function Journal({ authenticated, account }) {
                           </span>
                           <span className="text-sm font-medium text-white">{t.Underlying}</span>
                           <span className="text-xs text-[#c9d1d9] flex-1">{t['Strategy (OIC)']}</span>
-                          {t.Status !== 'Open' && (
-                            <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
-                          )}
-                          {t['W / L'] && (
-                            <span className={`badge text-[10px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>
-                          )}
+                          {t.Status !== 'Open' && <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>}
+                          {t['W / L'] && <span className={`badge text-[10px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
                           <span className={`badge text-[10px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
                         </div>
                       );
@@ -291,18 +323,46 @@ export default function Journal({ authenticated, account }) {
                 </div>
               )}
 
-              {selDayDecisions.length > 0 && (
+              {/* Decision engine closed tickets */}
+              {selDayTickets.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Camera size={10} /> Decision engine ({selDayDecisions.length})
+                    <Zap size={10} className="text-amber" /> Engine tickets — closed ({selDayTickets.length})
                   </h4>
                   <div className="space-y-1">
-                    {selDayDecisions.map((d, i) => {
+                    {selDayTickets.map((d, i) => {
+                      const pnl = parseFloat(d['Actual P&L']) || 0;
+                      const isWin = pnl >= 0;
+                      const stratParts = (d.Strategy || '').split(' - ');
+                      const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : d.Strategy;
+                      return (
+                        <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-amber/20 bg-amber/5">
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
+                          <span className="text-sm font-medium text-white">{d.Underlying}</span>
+                          <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
+                          <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                          <span className={`badge text-[10px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
+                          <span className="badge text-[10px] badge-amber">Ticket</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Open decision entries (not yet closed) */}
+              {selDayOpenDec.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <Camera size={10} /> Engine entries — open ({selDayOpenDec.length})
+                  </h4>
+                  <div className="space-y-1">
+                    {selDayOpenDec.map((d, i) => {
                       const stratParts = (d.Strategy || '').split(' - ');
                       const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : d.Strategy;
                       return (
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || '0DTE'}</span>
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent">{d.Engine || '0DTE'}</span>
                           <span className="text-sm font-medium text-white">{d.Underlying}</span>
                           <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
                           <span className={`text-xs font-medium ${d.Direction === 'Trade' ? 'text-green' : d.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>{d.Direction}</span>
@@ -314,13 +374,12 @@ export default function Journal({ authenticated, account }) {
                 </div>
               )}
 
+              {/* Notes */}
               <div>
-                <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Edit3 size={10} /> Daily review
-                </h4>
+                <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5"><Edit3 size={10} /> Daily review</h4>
                 {selData?.notes && <div className="text-sm text-[#c9d1d9] mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>}
                 <textarea value={reviewText} onChange={e => setReviewText(e.target.value)} rows={3}
-                  placeholder="What went well? What would you do differently? Market observations, emotional state, lessons..."
+                  placeholder="What went well? What would you do differently?..."
                   className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text placeholder-text-faint outline-none focus:border-accent resize-y" />
                 <button onClick={handleSaveReview} disabled={savingReview || !reviewText.trim()}
                   className="mt-2 flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50">
@@ -328,7 +387,7 @@ export default function Journal({ authenticated, account }) {
                 </button>
               </div>
 
-              {selDayClosed === 0 && selDayTrades.length === 0 && selDayDecisions.length === 0 && !selData?.notes && (
+              {allClosedOnDay.length === 0 && selDayTrades.length === 0 && selDayOpenDec.length === 0 && !selData?.notes && (
                 <div className="py-4 text-center text-text-faint text-sm">No trading activity on this day</div>
               )}
             </div>
@@ -337,7 +396,6 @@ export default function Journal({ authenticated, account }) {
 
         {/* Right column */}
         <div>
-          {/* Month summary */}
           <div className="card mb-4">
             <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Month Summary</h3>
             <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
@@ -355,7 +413,6 @@ export default function Journal({ authenticated, account }) {
             )}
           </div>
 
-          {/* Weekly results */}
           <div className="card">
             <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Weekly Results</h3>
             {Object.entries(weeks).length > 0 ? (
@@ -369,7 +426,7 @@ export default function Journal({ authenticated, account }) {
                         <span className="mono text-sm font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</span>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-[#8b949e]">
-                        <span>{data.trades} trades</span>
+                        <span>{data.trades}t</span>
                         <span className="text-green">{data.wins}W</span>
                         <span className="text-red">{data.losses}L</span>
                         <span>BA: {ba}%</span>
