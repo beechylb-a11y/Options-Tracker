@@ -44,29 +44,26 @@ export default function Journal({ authenticated, account }) {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date();
 
-  // ── Build daily stats directly from TradeTracker (single source of truth) ──
+  // ── Build daily stats from TradeTracker ──
   const filteredTracker = filterByAccount(tracker, account);
   const dayStats = {};
   filteredTracker.forEach(t => {
-    // Use close date for P&L attribution (when the money was realised)
-    // Fall back to entry date if no close date
+    if (t.Status === 'Open') return; // skip open trades
+    const pnl = parseFloat(t['Total P&L ($)']) || 0;
+    const wl = t['W / L'];
+    // Attribute P&L to close date (when realised), or entry date if no close
     const closeDate = (t['Close Date'] || '').split('T')[0];
     const entryDate = (t['Entry Date'] || '').split('T')[0];
     const d = closeDate || entryDate;
     if (!d) return;
-    const pnl = parseFloat(t['Total P&L ($)']) || 0;
-    const wl = t['W / L'];
     if (!dayStats[d]) dayStats[d] = { pnl: 0, count: 0, wins: 0, losses: 0 };
-    // Only count closed trades for P&L
-    if (t.Status !== 'Open') {
-      dayStats[d].pnl += pnl;
-      dayStats[d].count++;
-      if (wl === 'Win') dayStats[d].wins++;
-      if (wl === 'Loss') dayStats[d].losses++;
-    }
+    dayStats[d].pnl += pnl;
+    dayStats[d].count++;
+    if (wl === 'Win') dayStats[d].wins++;
+    if (wl === 'Loss') dayStats[d].losses++;
   });
 
-  // ── Notes from Journal sheet (user-written only) ──
+  // ── Notes from Journal sheet ──
   const notesByDate = {};
   journal.forEach(j => {
     if (j.Notes && j.Date) {
@@ -76,7 +73,7 @@ export default function Journal({ authenticated, account }) {
     }
   });
 
-  // ── Merge stats + notes into calendar data ──
+  // ── Merge ──
   const calendarData = {};
   const allDates = new Set([...Object.keys(dayStats), ...Object.keys(notesByDate)]);
   allDates.forEach(d => {
@@ -89,7 +86,6 @@ export default function Journal({ authenticated, account }) {
     };
   });
 
-  // Get trades for a specific date
   function getTradesForDate(dateStr) {
     return filteredTracker.filter(t => {
       const entryDate = (t['Entry Date'] || '').split('T')[0];
@@ -98,20 +94,19 @@ export default function Journal({ authenticated, account }) {
     });
   }
 
-  // Get decision engine entries for a specific date
   function getDecisionsForDate(dateStr) {
     return decisions.filter(d => {
       if (!d.Timestamp) return false;
-      const decDate = new Date(d.Timestamp).toISOString().split('T')[0];
-      return decDate === dateStr;
+      try { return new Date(d.Timestamp).toISOString().split('T')[0] === dateStr; }
+      catch (e) { return false; }
     });
   }
 
-  // Weekly summary (from tracker data)
+  // ── Weekly + monthly summaries ──
   const weeks = {};
-  Object.entries(calendarData).forEach(([date, data]) => {
-    const d = new Date(date);
-    if (d.getMonth() === month && d.getFullYear() === year && data.count > 0) {
+  Object.entries(dayStats).forEach(([date, data]) => {
+    const d = new Date(date + 'T12:00:00');
+    if (d.getMonth() === month && d.getFullYear() === year) {
       const weekNum = Math.ceil(d.getDate() / 7);
       const key = `W${weekNum}`;
       if (!weeks[key]) weeks[key] = { pnl: 0, trades: 0, wins: 0, losses: 0 };
@@ -122,7 +117,6 @@ export default function Journal({ authenticated, account }) {
     }
   });
 
-  // Month totals
   const monthPnl = Object.values(weeks).reduce((s, w) => s + w.pnl, 0);
   const monthTrades = Object.values(weeks).reduce((s, w) => s + w.trades, 0);
   const monthWins = Object.values(weeks).reduce((s, w) => s + w.wins, 0);
@@ -155,23 +149,20 @@ export default function Journal({ authenticated, account }) {
     setSavingReview(false);
   }
 
-  if (!authenticated) {
-    return (
-      <div className="fade-in">
-        <h2 className="font-display text-2xl font-bold mb-2">Journal</h2>
-        <p className="text-text-muted">Connect Google to view your trading journal.</p>
-      </div>
-    );
-  }
+  if (!authenticated) return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Journal</h2><p className="text-text-muted">Connect Google to view journal.</p></div>);
 
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  // Selected day data
-  const selData = selectedDay ? calendarData[selectedDay] : null;
+  const selData = selectedDay ? calendarData[selectedDay] || null : null;
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
   const selDayDecisions = selectedDay ? getDecisionsForDate(selectedDay) : [];
+  // Calculate day P&L from visible trades (in case calendarData misses some)
+  const selDayPnl = selDayTrades.filter(t => t.Status !== 'Open').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+  const selDayWins = selDayTrades.filter(t => t['W / L'] === 'Win').length;
+  const selDayLosses = selDayTrades.filter(t => t['W / L'] === 'Loss').length;
+  const selDayClosed = selDayTrades.filter(t => t.Status !== 'Open').length;
 
   return (
     <div className="fade-in">
@@ -202,7 +193,6 @@ export default function Journal({ authenticated, account }) {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        {/* Calendar */}
         <div className="col-span-2">
           <div className="card mb-4">
             <div className="flex items-center justify-between mb-4">
@@ -224,7 +214,6 @@ export default function Journal({ authenticated, account }) {
                 const data = calendarData[dateStr];
                 const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
                 const isSelected = selectedDay === dateStr;
-
                 let bgColor = 'border-bg-border';
                 if (data && data.count > 0) {
                   if (data.pnl > 0) bgColor = 'border-green/40 bg-green/5';
@@ -232,58 +221,47 @@ export default function Journal({ authenticated, account }) {
                   else bgColor = 'border-bg-border bg-bg-hover';
                 }
                 if (isSelected) bgColor += ' ring-2 ring-accent';
-
                 return (
-                  <div key={i}
-                    onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                  <div key={i} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
                     className={`aspect-square p-1.5 border rounded-lg relative transition-all cursor-pointer hover:border-accent/50 ${bgColor}`}>
-                    <span className={`text-xs ${isToday ? 'bg-accent text-white w-5 h-5 rounded-full flex items-center justify-center' : 'text-text-muted'}`}>
-                      {day}
-                    </span>
+                    <span className={`text-xs ${isToday ? 'bg-accent text-white w-5 h-5 rounded-full flex items-center justify-center' : 'text-text-muted'}`}>{day}</span>
                     {data && data.count > 0 && (
                       <div className="absolute bottom-1 left-1 right-1">
-                        <div className="mono text-[10px] font-bold" style={{ color: pnlColor(data.pnl) }}>
-                          {fmt$(data.pnl)}
-                        </div>
+                        <div className="mono text-[10px] font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</div>
                         <div className="text-[9px] text-text-faint">{data.count}t {data.wins}w {data.losses}l</div>
                       </div>
                     )}
-                    {data?.notes && (
-                      <div className="absolute top-1 right-1">
-                        <Edit3 size={8} className="text-accent" />
-                      </div>
-                    )}
+                    {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Day Detail Panel */}
+          {/* Day Detail */}
           {selectedDay && (
             <div className="card fade-in">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-sm font-medium text-text">
+                  <h3 className="text-sm font-medium text-white">
                     {new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                   </h3>
-                  {selData && selData.count > 0 && (
+                  {selDayClosed > 0 && (
                     <div className="flex items-center gap-4 mt-1">
-                      <span className="mono text-lg font-bold" style={{ color: pnlColor(selData.pnl) }}>{fmt$(selData.pnl)}</span>
-                      <span className="text-xs text-text-muted">{selData.count} trades</span>
-                      <span className="text-xs text-green">{selData.wins}W</span>
-                      <span className="text-xs text-red">{selData.losses}L</span>
+                      <span className="mono text-xl font-bold" style={{ color: pnlColor(selDayPnl) }}>{fmt$(selDayPnl)}</span>
+                      <span className="text-sm text-[#c9d1d9]">{selDayClosed} closed</span>
+                      <span className="text-sm font-medium text-green">{selDayWins}W</span>
+                      <span className="text-sm font-medium text-red">{selDayLosses}L</span>
                     </div>
                   )}
                 </div>
                 <button onClick={() => setSelectedDay(null)} className="text-text-faint hover:text-text"><X size={16} /></button>
               </div>
 
-              {/* Trades on this day */}
               {selDayTrades.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <FileText size={10} /> Trades on this day ({selDayTrades.length})
+                    <FileText size={10} /> Trades ({selDayTrades.length})
                   </h4>
                   <div className="space-y-1">
                     {selDayTrades.map((t, i) => {
@@ -297,10 +275,10 @@ export default function Journal({ authenticated, account }) {
                           <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${isEntry && isClose ? 'bg-amber-bg text-amber' : isEntry ? 'bg-accent/10 text-accent' : 'bg-bg-hover text-text-muted'}`}>
                             {isEntry && isClose ? 'SAME DAY' : isEntry ? 'ENTRY' : 'CLOSE'}
                           </span>
-                          <span className="text-sm font-medium">{t.Underlying}</span>
-                          <span className="text-xs text-text-muted flex-1">{t['Strategy (OIC)']}</span>
+                          <span className="text-sm font-medium text-white">{t.Underlying}</span>
+                          <span className="text-xs text-[#c9d1d9] flex-1">{t['Strategy (OIC)']}</span>
                           {t.Status !== 'Open' && (
-                            <span className="mono text-sm font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                            <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
                           )}
                           {t['W / L'] && (
                             <span className={`badge text-[10px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>
@@ -313,11 +291,10 @@ export default function Journal({ authenticated, account }) {
                 </div>
               )}
 
-              {/* Decision engine entries on this day */}
               {selDayDecisions.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Camera size={10} /> Decision engine entries ({selDayDecisions.length})
+                    <Camera size={10} /> Decision engine ({selDayDecisions.length})
                   </h4>
                   <div className="space-y-1">
                     {selDayDecisions.map((d, i) => {
@@ -326,13 +303,9 @@ export default function Journal({ authenticated, account }) {
                       return (
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
                           <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || '0DTE'}</span>
-                          <span className="text-sm font-medium">{d.Underlying}</span>
-                          <span className="text-xs text-text-muted flex-1">{stratName}</span>
-                          <span className={`text-xs font-medium ${
-                            d.Direction === 'Trade' ? 'text-green' : d.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'
-                          }`}>
-                            {d.Direction}
-                          </span>
+                          <span className="text-sm font-medium text-white">{d.Underlying}</span>
+                          <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
+                          <span className={`text-xs font-medium ${d.Direction === 'Trade' ? 'text-green' : d.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>{d.Direction}</span>
                           <span className="text-xs text-text-faint mono">{d['Setup Score']}</span>
                         </div>
                       );
@@ -341,49 +314,41 @@ export default function Journal({ authenticated, account }) {
                 </div>
               )}
 
-              {/* Daily review notes */}
               <div>
                 <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <Edit3 size={10} /> Daily review notes
+                  <Edit3 size={10} /> Daily review
                 </h4>
-                {selData?.notes && (
-                  <div className="text-sm text-text-muted mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>
-                )}
-                <textarea
-                  value={reviewText}
-                  onChange={e => setReviewText(e.target.value)}
-                  rows={3}
+                {selData?.notes && <div className="text-sm text-[#c9d1d9] mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>}
+                <textarea value={reviewText} onChange={e => setReviewText(e.target.value)} rows={3}
                   placeholder="What went well? What would you do differently? Market observations, emotional state, lessons..."
-                  className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text placeholder-text-faint outline-none focus:border-accent resize-y"
-                />
+                  className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text placeholder-text-faint outline-none focus:border-accent resize-y" />
                 <button onClick={handleSaveReview} disabled={savingReview || !reviewText.trim()}
                   className="mt-2 flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50">
                   <Save size={12} /> {savingReview ? 'Saving...' : 'Save review'}
                 </button>
               </div>
 
-              {/* No data message */}
-              {(!selData || selData.count === 0) && selDayTrades.length === 0 && selDayDecisions.length === 0 && !selData?.notes && (
+              {selDayClosed === 0 && selDayTrades.length === 0 && selDayDecisions.length === 0 && !selData?.notes && (
                 <div className="py-4 text-center text-text-faint text-sm">No trading activity on this day</div>
               )}
             </div>
           )}
         </div>
 
-        {/* Right column: Weekly results + Month summary */}
+        {/* Right column */}
         <div>
-          {/* Month summary card */}
+          {/* Month summary */}
           <div className="card mb-4">
-            <h3 className="text-sm font-medium text-text-muted mb-3">Month Summary</h3>
-            <div className="mono text-2xl font-bold mb-2" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex justify-between"><span className="text-text-muted">Trades</span><span className="mono">{monthTrades}</span></div>
-              <div className="flex justify-between"><span className="text-text-muted">BA</span><span className="mono">{monthTrades > 0 ? Math.round(monthWins / (monthWins + monthLosses) * 100) : 0}%</span></div>
-              <div className="flex justify-between"><span className="text-green">Wins</span><span className="mono">{monthWins}</span></div>
-              <div className="flex justify-between"><span className="text-red">Losses</span><span className="mono">{monthLosses}</span></div>
+            <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Month Summary</h3>
+            <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="flex justify-between"><span className="text-[#8b949e]">Trades</span><span className="mono text-white">{monthTrades}</span></div>
+              <div className="flex justify-between"><span className="text-[#8b949e]">BA</span><span className="mono text-white">{monthTrades > 0 ? Math.round(monthWins / (monthWins + monthLosses) * 100) : 0}%</span></div>
+              <div className="flex justify-between"><span className="text-green">Wins</span><span className="mono text-white">{monthWins}</span></div>
+              <div className="flex justify-between"><span className="text-red">Losses</span><span className="mono text-white">{monthLosses}</span></div>
             </div>
             {monthTrades > 0 && (
-              <div className="mt-3 h-2 rounded-full bg-bg-border overflow-hidden flex">
+              <div className="mt-3 h-2.5 rounded-full bg-bg-border overflow-hidden flex">
                 <div className="bg-green h-full" style={{ width: `${(monthWins / (monthWins + monthLosses)) * 100}%` }} />
                 <div className="bg-red h-full" style={{ width: `${(monthLosses / (monthWins + monthLosses)) * 100}%` }} />
               </div>
@@ -392,7 +357,7 @@ export default function Journal({ authenticated, account }) {
 
           {/* Weekly results */}
           <div className="card">
-            <h3 className="text-sm font-medium text-text-muted mb-3">Weekly Results</h3>
+            <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Weekly Results</h3>
             {Object.entries(weeks).length > 0 ? (
               <div className="space-y-3">
                 {Object.entries(weeks).sort().map(([week, data]) => {
@@ -400,22 +365,20 @@ export default function Journal({ authenticated, account }) {
                   return (
                     <div key={week} className="p-3 rounded-lg border border-bg-border">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium">{week}</span>
+                        <span className="text-sm font-medium text-white">{week}</span>
                         <span className="mono text-sm font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</span>
                       </div>
-                      <div className="flex items-center gap-3 text-[11px] text-text-muted">
+                      <div className="flex items-center gap-3 text-xs text-[#8b949e]">
                         <span>{data.trades} trades</span>
                         <span className="text-green">{data.wins}W</span>
                         <span className="text-red">{data.losses}L</span>
                         <span>BA: {ba}%</span>
                       </div>
                       <div className="mt-2 h-1.5 rounded-full bg-bg-border overflow-hidden flex">
-                        {data.trades > 0 && (
-                          <>
-                            <div className="bg-green h-full" style={{ width: `${(data.wins / data.trades) * 100}%` }} />
-                            <div className="bg-red h-full" style={{ width: `${(data.losses / data.trades) * 100}%` }} />
-                          </>
-                        )}
+                        {data.trades > 0 && (<>
+                          <div className="bg-green h-full" style={{ width: `${(data.wins / data.trades) * 100}%` }} />
+                          <div className="bg-red h-full" style={{ width: `${(data.losses / data.trades) * 100}%` }} />
+                        </>)}
                       </div>
                     </div>
                   );
