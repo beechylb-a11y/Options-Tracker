@@ -246,10 +246,10 @@ ${warnings ? `<div class="section"><div class="section-title">Warnings</div>${(r
           {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
-        {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
+        {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (<>
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
           <button onClick={handlePrint} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
-        )}
+        </>)}
         {isOverride && (
           <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
         )}
