@@ -96,86 +96,95 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   // Show VWAP scaling notice (vwapScaled defined above)
 
   function handlePrint() {
-    const inp = is0 ? i0 : i45;
     const g = r.greeks;
-    const legs = r.legs.map(l => `${l.strike} ${l.label}`).join('\n    ');
-    const warnings = (r.warnings || []).join('\n    ');
-    const criteria = r.criteria.map(c => `${c.label}: ${c.pts}/${c.max}`).join('\n    ');
-    const html = `<!DOCTYPE html><html><head><title>Trade Summary — ${effectiveStrat}</title>
-<style>
-  body { font-family: -apple-system, sans-serif; max-width: 700px; margin: 40px auto; color: #e6edf3; background: #0d1117; padding: 20px; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  h2 { font-size: 14px; color: #8b949e; font-weight: 400; margin-top: 0; }
-  .decision { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: ${dcColor}; margin-bottom: 4px; }
-  .override { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #9e6a03; color: #fff; margin-left: 8px; }
-  .section { margin-top: 20px; padding-top: 12px; border-top: 1px solid #21262d; }
-  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #8b949e; margin-bottom: 8px; }
-  .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
-  .row .label { color: #8b949e; }
-  .row .value { font-weight: 600; font-family: 'JetBrains Mono', monospace; }
-  .green { color: #3fb950; } .red { color: #f85149; } .amber { color: #d29922; } .white { color: #e6edf3; }
-  .leg { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; font-family: 'JetBrains Mono', monospace; margin: 2px 4px 2px 0; }
-  .leg-short { background: #238636; color: #fff; } .leg-long { background: #0d1a2e; color: #58a6ff; }
-  .score-bar { height: 6px; border-radius: 3px; background: #21262d; margin-top: 2px; }
-  .score-fill { height: 100%; border-radius: 3px; }
-  .warn { font-size: 12px; color: #d29922; margin: 2px 0; }
-  .timestamp { font-size: 11px; color: #484f58; margin-top: 24px; }
-  @media print { body { background: #fff; color: #1a1a1a; } .decision { color: ${r.decisionClass==='go'?'#16a34a':r.decisionClass==='warn'?'#ca8a04':'#dc2626'}; } }
-</style></head><body>
-<div class="decision">${effectiveDecision}${isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : ''}</div>
-<h1>${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}</h1>
-<h2>${is0?r.dirLabel:r.outlook||''} — max loss $${r.maxRisk?.toFixed(0)||0} — ${r.setup} (${r.setupScore}/100)</h2>
+    const underlying = is0 ? i0.underlying : i45.underlying;
 
-<div style="margin-top:12px">${r.legs.map(l => {
-  const isShort = l.label.toLowerCase().includes('short');
-  return `<span class="leg ${isShort?'leg-short':'leg-long'}">${l.strike} <span style="font-size:10px;font-weight:400;opacity:0.8">${l.label}</span></span>`;
-}).join('')}</div>
-${r.wingTxt ? `<div style="font-size:11px;color:#8b949e;margin-top:4px">${r.wingTxt}</div>` : ''}
-${r.behaviour ? `<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ${r.behaviour}</div>` : ''}
+    const legsHtml = r.legs.map(function(l) {
+      var isShort = l.label.toLowerCase().includes('short');
+      var cls = isShort ? 'leg-short' : 'leg-long';
+      return '<span class="leg ' + cls + '">' + l.strike + ' <span style="font-size:10px;font-weight:400;opacity:0.8">' + l.label + '</span></span>';
+    }).join('');
 
-<div class="section"><div class="section-title">Setup Quality</div>
-${r.criteria.map(c => {
-  const pct = c.max > 0 ? Math.round(c.pts / c.max * 100) : 0;
-  const col = pct>=80?'#3fb950':pct>=50?'#2f81f7':pct>=30?'#d29922':'#f85149';
-  return `<div class="row"><span class="label">${c.label}</span><span class="value" style="color:${col}">${c.pts}/${c.max}</span></div>`;
-}).join('')}
-</div>
+    const criteriaHtml = r.criteria.map(function(c) {
+      var pct = c.max > 0 ? Math.round(c.pts / c.max * 100) : 0;
+      var col = pct >= 80 ? '#3fb950' : pct >= 50 ? '#2f81f7' : pct >= 30 ? '#d29922' : '#f85149';
+      return '<div class="row"><span class="label">' + c.label + '</span><span class="value" style="color:' + col + '">' + c.pts + '/' + c.max + '</span></div>';
+    }).join('');
 
-<div class="section"><div class="section-title">Kelly Sizing</div>
-<div class="row"><span class="label">Contracts</span><span class="value white">${r.contracts}</span></div>
-<div class="row"><span class="label">Kelly $</span><span class="value ${r.kellyOverRisk?'red':'green'}">$${r.kellyDollar?.toFixed(0)||0}</span></div>
-<div class="row"><span class="label">POP margin</span><span class="value ${r.popMargin>=1.5?'green':r.popMargin>=1.0?'amber':'red'}">${r.popMargin?.toFixed(2)||'--'}x</span></div>
-<div class="row"><span class="label">W/L ratio</span><span class="value white">${r.wlRatio?.toFixed(2)||'--'}</span></div>
-</div>
+    const warningsHtml = (r.warnings || []).map(function(w) {
+      return '<div class="warn">\u26A0 ' + w + '</div>';
+    }).join('');
 
-${g ? `<div class="section"><div class="section-title">Trade Survivability</div>
-<div class="row"><span class="label">Theta Edge</span><span class="value ${g.tEdge>=0.15?'green':g.tEdge>=0.05?'amber':'red'}">${g.tEdge.toFixed(3)} — ${g.tEdgeSignal}</span></div>
-<div class="row"><span class="label">Gamma Risk</span><span class="value ${g.gRisk<0.30?'green':g.gRisk<0.70?'amber':'red'}">${g.gRisk.toFixed(3)} — ${g.gRiskSignal}</span></div>
-<div class="row"><span class="label">Max tolerable move</span><span class="value ${g.dsATR>0.50?'green':g.dsATR>0.25?'amber':'red'}">${g.dsMax.toFixed(1)} pts (${(g.dsATR*100).toFixed(0)}% ATR) — ${g.dsSignal}</span></div>
-${g.sweetSpot ? '<div style="margin-top:6px;font-size:11px;color:#3fb950;font-weight:600">🎯 SWEET SPOT — Theta Edge + Gamma Risk in optimal range</div>' : ''}
-</div>` : ''}
+    var greeksHtml = '';
+    if (g) {
+      var teCol = g.tEdge >= 0.15 ? 'green' : g.tEdge >= 0.05 ? 'amber' : 'red';
+      var grCol = g.gRisk < 0.30 ? 'green' : g.gRisk < 0.70 ? 'amber' : 'red';
+      var dsCol = g.dsATR > 0.50 ? 'green' : g.dsATR > 0.25 ? 'amber' : 'red';
+      greeksHtml = '<div class="section"><div class="section-title">Trade Survivability</div>' +
+        '<div class="row"><span class="label">Theta Edge</span><span class="value ' + teCol + '">' + g.tEdge.toFixed(3) + ' \u2014 ' + g.tEdgeSignal + '</span></div>' +
+        '<div class="row"><span class="label">Gamma Risk</span><span class="value ' + grCol + '">' + g.gRisk.toFixed(3) + ' \u2014 ' + g.gRiskSignal + '</span></div>' +
+        '<div class="row"><span class="label">Max tolerable move</span><span class="value ' + dsCol + '">' + g.dsMax.toFixed(1) + ' pts (' + (g.dsATR * 100).toFixed(0) + '% ATR) \u2014 ' + g.dsSignal + '</span></div>' +
+        (g.sweetSpot ? '<div style="margin-top:6px;font-size:11px;color:#3fb950;font-weight:600">\uD83C\uDFAF SWEET SPOT</div>' : '') +
+        '</div>';
+    }
 
-<div class="section"><div class="section-title">Signals</div>
-${is0 ? `<div class="row"><span class="label">Direction</span><span class="value ${r.dirScore>0?'green':r.dirScore<0?'red':'white'}">${r.dirLabel}</span></div>
-<div class="row"><span class="label">Move consumed</span><span class="value white">${r.moveConsumed!==undefined?(r.moveConsumed*100).toFixed(0)+'%':'--'}</span></div>
-<div class="row"><span class="label">Regime</span><span class="value white">${r.regime}</span></div>
-<div class="row"><span class="label">VIX1D/VIX gap</span><span class="value white">${(r.vixGap*100).toFixed(1)}% — ${r.vixGrade}</span></div>
-<div class="row"><span class="label">Compression</span><span class="value white">${r.comp!==null?r.comp.toFixed(2):'--'}</span></div>` : `
-<div class="row"><span class="label">IVR</span><span class="value white">${r.ivrBand}</span></div>
-<div class="row"><span class="label">IV/HV</span><span class="value white">${r.ivhvRatio?.toFixed(2)||'--'}</span></div>
-<div class="row"><span class="label">Regime</span><span class="value white">${r.regime}</span></div>`}
-</div>
+    var signalsHtml = '';
+    if (is0) {
+      signalsHtml = '<div class="row"><span class="label">Direction</span><span class="value ' + (r.dirScore > 0 ? 'green' : r.dirScore < 0 ? 'red' : 'white') + '">' + r.dirLabel + '</span></div>' +
+        '<div class="row"><span class="label">Move consumed</span><span class="value white">' + (r.moveConsumed !== undefined ? (r.moveConsumed * 100).toFixed(0) + '%' : '--') + '</span></div>' +
+        '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regime + '</span></div>' +
+        '<div class="row"><span class="label">VIX gap</span><span class="value white">' + (r.vixGap * 100).toFixed(1) + '% \u2014 ' + r.vixGrade + '</span></div>' +
+        '<div class="row"><span class="label">Compression</span><span class="value white">' + (r.comp !== null ? r.comp.toFixed(2) : '--') + '</span></div>';
+    } else {
+      signalsHtml = '<div class="row"><span class="label">IVR</span><span class="value white">' + (r.ivrBand || '--') + '</span></div>' +
+        '<div class="row"><span class="label">IV/HV</span><span class="value white">' + (r.ivhvRatio ? r.ivhvRatio.toFixed(2) : '--') + '</span></div>' +
+        '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regime + '</span></div>';
+    }
 
-${warnings ? `<div class="section"><div class="section-title">Warnings</div>${(r.warnings||[]).map(w => `<div class="warn">⚠ ${w}</div>`).join('')}</div>` : ''}
+    var html = '<!DOCTYPE html><html><head><title>Trade Summary</title>' +
+      '<style>' +
+      'body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#e6edf3;background:#0d1117;padding:20px}' +
+      'h1{font-size:22px;margin-bottom:4px}' +
+      'h2{font-size:14px;color:#8b949e;font-weight:400;margin-top:0}' +
+      '.decision{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:' + dcColor + ';margin-bottom:4px}' +
+      '.override{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:#9e6a03;color:#fff;margin-left:8px}' +
+      '.section{margin-top:20px;padding-top:12px;border-top:1px solid #21262d}' +
+      '.section-title{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8b949e;margin-bottom:8px}' +
+      '.row{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}' +
+      '.row .label{color:#8b949e}.row .value{font-weight:600;font-family:monospace}' +
+      '.green{color:#3fb950}.red{color:#f85149}.amber{color:#d29922}.white{color:#e6edf3}' +
+      '.leg{display:inline-block;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;font-family:monospace;margin:2px 4px 2px 0}' +
+      '.leg-short{background:#238636;color:#fff}.leg-long{background:#0d1a2e;color:#58a6ff}' +
+      '.warn{font-size:12px;color:#d29922;margin:2px 0}' +
+      '.timestamp{font-size:11px;color:#484f58;margin-top:24px}' +
+      '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#0d1a2e}}' +
+      '</style></head><body>' +
+      '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
+      '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
+      '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + ' \u2014 ' + r.setup + ' (' + r.setupScore + '/100)</h2>' +
+      '<div style="margin-top:12px">' + legsHtml + '</div>' +
+      (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
+      (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
+      '<div class="section"><div class="section-title">Setup Quality</div>' + criteriaHtml + '</div>' +
+      '<div class="section"><div class="section-title">Kelly Sizing</div>' +
+      '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
+      '<div class="row"><span class="label">Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
+      '<div class="row"><span class="label">POP margin</span><span class="value ' + (r.popMargin >= 1.5 ? 'green' : r.popMargin >= 1.0 ? 'amber' : 'red') + '">' + (r.popMargin ? r.popMargin.toFixed(2) : '--') + 'x</span></div>' +
+      '<div class="row"><span class="label">W/L ratio</span><span class="value white">' + (r.wlRatio ? r.wlRatio.toFixed(2) : '--') + '</span></div>' +
+      '</div>' +
+      greeksHtml +
+      '<div class="section"><div class="section-title">Signals</div>' + signalsHtml + '</div>' +
+      (warningsHtml ? '<div class="section"><div class="section-title">Warnings</div>' + warningsHtml + '</div>' : '') +
+      '<div class="timestamp">Generated ' + new Date().toLocaleString('en-AU') + ' \u2014 Options Tracker Decision Engine</div>' +
+      '</body></html>';
 
-<div class="timestamp">Generated ${new Date().toLocaleString('en-AU')} — Options Tracker Decision Engine</div>
-</body></html>`;
-
-    const win = window.open('', '_blank');
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => win.print(), 500);
+    var win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(function() { win.print(); }, 500);
+    }
   }
 
   function handleLog() {
