@@ -299,7 +299,7 @@ ${warnings ? `<div class="section"><div class="section-title">Warnings</div>${(r
                 <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)}/>
                 <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
                 <Inp label="ES Close (pre-open)" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
-                <Inp label="Prior Day Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
                 <Inp label="Cash Open" value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
             </>
