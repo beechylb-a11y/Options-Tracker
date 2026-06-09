@@ -81,8 +81,8 @@ export function calc0DTE(inputs) {
   const { price, high, low, vwap5, vwap5_30, vwap15, vwap15_30, atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop,
     theta, delta, gamma, hours, underlying,
-    // New overnight inputs
-    esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen } = inputs;
+    // Overnight inputs
+    esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM } = inputs;
 
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
@@ -91,6 +91,7 @@ export function calc0DTE(inputs) {
   const popFrac = pop / 100;
   const hasOvernight = esOvernightHigh > 0 && esOvernightLow > 0 && priorDayClose > 0;
   const hasCashOpen = cashOpen > 0;
+  const hasESEM = esEM > 0;
 
   // Use VWAP 5 as primary
   const vwap = vwap5;
@@ -114,20 +115,68 @@ export function calc0DTE(inputs) {
   const isCompressing = hasComp && comp < 0.50;
   const isExpanding = hasComp && comp > 0.80;
 
-  // ── Overnight metrics ──
-  const overnightMove = hasOvernight ? Math.abs(esClose - priorDayClose) : 0;
-  const overnightRange = hasOvernight ? esOvernightHigh - esOvernightLow : 0;
-  const overnightDir = hasOvernight ? (esClose > priorDayClose ? 'bullish' : esClose < priorDayClose ? 'bearish' : 'flat') : 'unknown';
-  const overnightAboveVWAP = hasOvernight && esClose > (esOvernightHigh + esOvernightLow) / 2;
-  const overnightAbovePrior = hasOvernight && esClose > priorDayClose;
-  const overnightRangePct = em > 0 ? overnightRange / em : 0;
-  const overnightMovePct = em > 0 ? overnightMove / em : 0;
+  // ═══════════════════════════════════════
+  //  OVERNIGHT + MOVE CONSUMED (full model)
+  // ═══════════════════════════════════════
 
-  // ── Move consumed (overnight + cash session) ──
-  const cashMove = rm;
-  const totalMoveConsumed = em > 0 ? (overnightMove + cashMove) / em : (em > 0 ? rmRatio : 0);
-  const moveConsumed = Math.min(totalMoveConsumed, 1.5); // cap at 150%
+  // Overnight directional move (signed)
+  const overnightDirMove = hasOvernight ? esClose - priorDayClose : 0;
+  const overnightMove = Math.abs(overnightDirMove);
+  const overnightRange = hasOvernight ? esOvernightHigh - esOvernightLow : 0;
+  const overnightDir = hasOvernight ? (overnightDirMove > 0 ? 'bullish' : overnightDirMove < 0 ? 'bearish' : 'flat') : 'unknown';
+
+  // Overnight range consumed (vs ES EM if available, else vs cash EM)
+  const overnightRangeEM = hasESEM ? esEM : em;
+  const overnightRangePct = overnightRangeEM > 0 ? overnightRange / overnightRangeEM : 0;
+  const overnightMovePct = overnightRangeEM > 0 ? overnightMove / overnightRangeEM : 0;
+
+  // Cash session directional move (signed: price - open)
+  const cashDirMove = (hasPrice && hasCashOpen) ? price - cashOpen : 0;
+  const cashMove = Math.abs(cashDirMove);
+  const cashRange = rm; // high - low
+
+  // Gap: difference between cash open and ES pre-open (any slippage at open)
+  const gapAtOpen = (hasCashOpen && esClose > 0) ? cashOpen - esClose : 0;
+
+  // Total directional consumed: net move from ES prior close to current price
+  const totalDirMove = hasOvernight && hasPrice ? price - (priorDayClose || cashOpen) : cashDirMove;
+  const totalDirConsumed = em > 0 ? Math.abs(totalDirMove) / em : 0;
+
+  // Total range consumed: overnight range + cash range vs combined EM
+  const combinedEM = (hasESEM ? esEM : 0) + (em > 0 ? em : 0);
+  const totalRangeConsumed = combinedEM > 0 ? (overnightRange + cashRange) / combinedEM : (em > 0 ? rmRatio : 0);
+
+  // Primary move consumed metric: use directional for spreads, range for butterflies (blended)
+  const moveConsumedDir = em > 0 ? totalDirConsumed : 0;
+  const moveConsumedRange = Math.min(totalRangeConsumed, 1.5);
+  // Blended: 60% range + 40% directional — range matters more for premium sellers
+  const moveConsumed = Math.min((moveConsumedRange * 0.6 + moveConsumedDir * 0.4), 1.5);
   const volRemaining = Math.max(0, 1 - moveConsumed);
+
+  // ── Continuation vs Reversal detection ──
+  // Continuation: overnight and cash session move in same direction
+  // Reversal: overnight and cash session move in opposite directions
+  const cashDir = cashDirMove > 0 ? 'bullish' : cashDirMove < 0 ? 'bearish' : 'flat';
+  let trendPattern = 'unknown';
+  if (overnightDir !== 'unknown' && overnightDir !== 'flat' && cashDir !== 'flat') {
+    if (overnightDir === cashDir) {
+      trendPattern = 'continuation'; // same direction — trend day likely
+    } else {
+      trendPattern = 'reversal'; // opposite — mean reversion / failed gap
+    }
+  } else if (overnightDir === 'flat' && cashDir === 'flat') {
+    trendPattern = 'range'; // neither moved — range day
+  } else if (overnightDir !== 'unknown' && cashDir === 'flat') {
+    trendPattern = 'gap-and-hold'; // overnight moved, cash hasn't yet
+  }
+
+  // Trend strength score (0-10) for strategy selection
+  let trendStrength = 0;
+  if (trendPattern === 'continuation') {
+    trendStrength = Math.min(10, Math.round(totalDirConsumed * 10));
+  } else if (trendPattern === 'reversal') {
+    trendStrength = -Math.min(5, Math.round(moveConsumedDir * 5)); // negative = reversal
+  }
 
   // ── VWAP slopes ──
   function calcSlope(now, ago) {
@@ -469,6 +518,8 @@ export function calc0DTE(inputs) {
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
   if (overextendedWarning) warnings.push('Strong direction + overextended — consider pullback');
   if (hasOvernight && overnightMovePct > 0.60 && isDirectional) warnings.push(`Overnight consumed ${(overnightMovePct*100).toFixed(0)}% EM — limited room`);
+  if (trendPattern === 'continuation' && totalDirConsumed > 0.80) warnings.push('Continuation trend — ' + (totalDirConsumed*100).toFixed(0) + '% consumed directionally — avoid chasing');
+  if (trendPattern === 'reversal' && moveConsumedDir > 0.30) warnings.push('Reversal detected — overnight ' + overnightDir + ' but cash ' + cashDir + ' — confirm before directional');
 
   // ── Decision ──
   let decision, decisionClass;
@@ -486,8 +537,11 @@ export function calc0DTE(inputs) {
     rm, rmRatio, comp, isCompressing,
     gamDist, regime, regimeConds, regimeCommentary,
     // Overnight
-    overnightMove, overnightRange, overnightDir, overnightRangePct, overnightMovePct,
-    moveConsumed, volRemaining,
+    overnightMove, overnightDirMove, overnightRange, overnightDir, overnightRangePct, overnightMovePct,
+    cashMove, cashDirMove, cashDir, gapAtOpen,
+    moveConsumed, moveConsumedDir, moveConsumedRange, volRemaining,
+    totalDirMove, totalDirConsumed, totalRangeConsumed,
+    trendPattern, trendStrength,
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     // Strikes

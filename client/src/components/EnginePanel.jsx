@@ -18,7 +18,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
-    esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'',
+    esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
     win:'', risk:'', pop:'', hours:'6.5',
     theta:'', delta:'', gamma:'', gamStrike:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
@@ -53,7 +53,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
         gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
         esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
-        esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'),
+        esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'), esEM:fv(i0,'esEM'),
         bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
         risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
@@ -305,10 +305,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
             <>
               <SectionLabel>ES Overnight</SectionLabel>
               <div className="grid grid-cols-2 gap-2.5">
+                <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label="ES Pre-open" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
                 <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)}/>
                 <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
-                <Inp label="ES Close (pre-open)" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
-                <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label="ES EM" value={i0.esEM} onChange={v=>set0('esEM',v)}/>
                 <Inp label={i0.underlying + ' Open'} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
             </>
@@ -468,13 +469,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
             <div className="grid grid-cols-2 gap-1.5">
               {is0 ? <>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
-                <KV label="Move consumed" value={r.moveConsumed!==undefined?`${(r.moveConsumed*100).toFixed(0)}%`:'--'} cls={r.moveConsumed>0.80?'text-green':r.moveConsumed>0.60?'text-amber':r.moveConsumed<0.30?'text-green':''}/>
+                <KV label="Move consumed" value={r.moveConsumed!==undefined?`${(r.moveConsumed*100).toFixed(0)}% (dir ${(r.moveConsumedDir*100).toFixed(0)}% / range ${(r.moveConsumedRange*100).toFixed(0)}%)`:'--'} cls={r.moveConsumed>0.80?'text-amber':r.moveConsumed>0.60?'text-amber':''}/>
                 <KV label="Vol remaining" value={r.volRemaining!==undefined?`${(r.volRemaining*100).toFixed(0)}%`:'--'} cls={r.volRemaining<0.30?'text-amber':''}/>
+                <KV label="Trend pattern" value={r.trendPattern||'--'} cls={r.trendPattern==='continuation'?'text-green':r.trendPattern==='reversal'?'text-amber':''}/>
+                <KV label="ES overnight" value={r.overnightDir!=='unknown'?`${r.overnightDir} (${r.overnightDirMove>0?'+':''}${r.overnightDirMove?.toFixed(1)||0} pts)`:'--'} cls={r.overnightDir==='bullish'?'text-green':r.overnightDir==='bearish'?'text-red':''}/>
+                <KV label="Cash move" value={r.cashDirMove!==undefined?`${r.cashDirMove>0?'+':''}${r.cashDirMove?.toFixed(1)||0} pts (${r.cashDir})`:'--'} cls={r.cashDir==='bullish'?'text-green':r.cashDir==='bearish'?'text-red':''}/>
+                <KV label="Overnight range" value={r.overnightRangePct>0?`${(r.overnightRangePct*100).toFixed(0)}% EM`:'--'}/>
                 <KV label="VWAP 5 slope" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
                 <KV label="VWAP 15 slope" value={`${r.slope15?.strength||'--'} (${r.slope15?.direction||'--'})`} cls={r.slope15?.direction==='rising'?'text-green':r.slope15?.direction==='falling'?'text-red':''}/>
                 <KV label="15m confirms" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
-                <KV label="ES overnight" value={r.overnightDir||'--'} cls={r.overnightDir==='bullish'?'text-green':r.overnightDir==='bearish'?'text-red':''}/>
-                <KV label="Overnight range" value={r.overnightRangePct>0?`${(r.overnightRangePct*100).toFixed(0)}% EM`:'--'}/>
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
                 <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="RM ratio" value={r.rmRatio?`${(r.rmRatio*100).toFixed(0)}% EM`:'--'}/>
