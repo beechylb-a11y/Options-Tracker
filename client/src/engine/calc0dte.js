@@ -413,14 +413,40 @@ export function calc0DTE(inputs) {
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
 
-  // ── Greeks ──
+  // ── Greeks analysis ──
   let greeks = null;
   if (hasGreeks && atr > 0) {
     const tEdge = delta * atr > 0 ? theta / (delta * atr) : 0;
     const gRisk = theta > 0 ? (gamma * atr) / theta : 0;
     const dsMax = delta > 0 ? theta * (hours / 6.5) / delta : 0;
     const dsATR = atr > 0 ? dsMax / atr : 0;
-    greeks = { tEdge, gRisk, dsMax, dsATR };
+
+    // Theta edge interpretation
+    const tEdgeSignal = tEdge < 0.05 ? 'weak' : tEdge < 0.15 ? 'marginal' : tEdge < 0.30 ? 'solid' : tEdge < 0.50 ? 'strong' : 'pinning';
+    const tEdgeAction = tEdge < 0.05 ? 'Do not trade — one candle erases hours of theta'
+      : tEdge < 0.15 ? 'Use only on A+ setup with low realised vol'
+      : tEdge < 0.30 ? 'Preferred zone — good reward-to-gamma-risk'
+      : tEdge < 0.50 ? 'Excellent if Gamma Risk < 0.7'
+      : 'Check Gamma Risk — looks great until it explodes';
+
+    // Gamma risk interpretation
+    const gRiskSignal = gRisk < 0.30 ? 'low' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'elevated' : 'high';
+    const gRiskAction = gRisk < 0.30 ? 'Safe to hold — minimal whipsaw risk'
+      : gRisk < 0.70 ? 'Acceptable — watch if IV spikes'
+      : gRisk < 1.20 ? 'Reduce size or tighten profit target'
+      : 'Avoid or exit — gamma cliff risk';
+
+    // Max tolerable move interpretation
+    const dsSignal = dsATR > 1.0 ? 'strong' : dsATR > 0.50 ? 'good' : dsATR > 0.25 ? 'marginal' : 'thin';
+    const dsAction = dsATR > 1.0 ? 'Theta dominates under normal movement'
+      : dsATR > 0.50 ? 'Theta holds unless vol expands significantly'
+      : dsATR > 0.25 ? 'A+ setup only, low realised vol, tighten target'
+      : 'Avoid or cut size sharply — theta cannot compensate';
+
+    // Sweet spot check
+    const sweetSpot = tEdge >= 0.15 && tEdge <= 0.40 && gRisk < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
+
+    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot };
   }
 
   // ── Warnings ──

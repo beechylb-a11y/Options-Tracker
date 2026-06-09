@@ -312,6 +312,56 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
             </div>
           </div>
 
+          {/* Greeks Analysis — Theta Edge, Gamma Risk, Max Move */}
+          {is0 && r.greeks && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-2">
+                <SectionLabel white>Trade survivability</SectionLabel>
+                {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
+              </div>
+              <div className="space-y-3">
+                {/* Theta Edge */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[#c9d1d9]">Theta Edge (Θ ÷ |Δ| × ATR)</span>
+                    <span className={`mono text-sm font-bold ${r.greeks.tEdge>=0.15?'text-green':r.greeks.tEdge>=0.05?'text-amber':'text-red'}`}>{r.greeks.tEdge.toFixed(3)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.tEdgeSignal==='weak'?'bg-red/10 text-red':r.greeks.tEdgeSignal==='marginal'?'bg-amber/10 text-amber':'bg-green/10 text-green'}`}>{r.greeks.tEdgeSignal}</span>
+                    <span className="text-[10px] text-[#8b949e]">{r.greeks.tEdgeAction}</span>
+                  </div>
+                </div>
+
+                {/* Gamma Risk */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[#c9d1d9]">Gamma Risk (Γ × ATR ÷ Θ)</span>
+                    <span className={`mono text-sm font-bold ${r.greeks.gRisk<0.30?'text-green':r.greeks.gRisk<0.70?'text-amber':r.greeks.gRisk<1.20?'text-amber':'text-red'}`}>{r.greeks.gRisk.toFixed(3)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.gRiskSignal==='low'?'bg-green/10 text-green':r.greeks.gRiskSignal==='moderate'?'bg-amber/10 text-amber':'bg-red/10 text-red'}`}>{r.greeks.gRiskSignal}</span>
+                    <span className="text-[10px] text-[#8b949e]">{r.greeks.gRiskAction}</span>
+                  </div>
+                </div>
+
+                {/* Max Tolerable Move */}
+                <div style={{borderTop:'1px solid #21262d', paddingTop:8}}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[#c9d1d9]">Max tolerable move (ΔS_max)</span>
+                    <div className="flex items-center gap-2">
+                      <span className="mono text-sm font-bold text-white">{r.greeks.dsMax.toFixed(1)} pts</span>
+                      <span className={`mono text-xs font-semibold ${r.greeks.dsATR>0.50?'text-green':r.greeks.dsATR>0.25?'text-amber':'text-red'}`}>{(r.greeks.dsATR*100).toFixed(0)}% ATR</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.dsSignal==='strong'||r.greeks.dsSignal==='good'?'bg-green/10 text-green':r.greeks.dsSignal==='marginal'?'bg-amber/10 text-amber':'bg-red/10 text-red'}`}>{r.greeks.dsSignal}</span>
+                    <span className="text-[10px] text-[#8b949e]">{r.greeks.dsAction}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Regime */}
           <div className="card">
             <SectionLabel white>Regime</SectionLabel>
