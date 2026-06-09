@@ -309,7 +309,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
                 <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
                 <Inp label="ES Close (pre-open)" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
                 <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
-                <Inp label="Cash Open" value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
+                <Inp label={i0.underlying + ' Open'} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
             </>
           )}
