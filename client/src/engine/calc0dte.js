@@ -13,30 +13,74 @@ function degrade(rating, levels) {
 export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed) {
   const isBull = dirScore > 0, isBear = dirScore < 0, isNeutral = dirScore === 0;
   const isStrong = Math.abs(dirScore) >= 2;
+  const isMild = Math.abs(dirScore) === 1;
   const butterflyZone = moveConsumed > 0.60 && isCompressing;
   const spreadZone = moveConsumed < 0.60 && !isCompressing;
 
+  // Base ratings: [Chicken, BWB, Asymmetric, Standard, IronCondor, LongCondor, IronButterfly]
   let base;
   if (butterflyZone) {
     // High move consumed + compression: butterfly structures dominate
-    base = ['MARGINAL','EXCELLENT','EXCELLENT','EXCELLENT','MARGINAL','EXCELLENT','GOOD'];
+    // Direction determines which butterfly type leads
+    if (isStrong) {
+      // Strong direction: BWB leads (max asymmetry), Asymmetric good, Standard poor
+      base = ['MARGINAL','EXCELLENT','GOOD','MARGINAL','MARGINAL','GOOD','MARGINAL'];
+    } else if (isMild) {
+      // Mild direction: Asymmetric leads (moderate asymmetry), BWB good, Standard marginal
+      base = ['MARGINAL','GOOD','EXCELLENT','MARGINAL','MARGINAL','EXCELLENT','GOOD'];
+    } else {
+      // Neutral: Standard/Iron butterfly lead (symmetric), BWB/Asymmetric marginal
+      base = ['MARGINAL','MARGINAL','MARGINAL','EXCELLENT','MARGINAL','GOOD','EXCELLENT'];
+    }
   } else if (rmRatio < 0.25) {
     base = ['GOOD','MARGINAL','GOOD','NO TRADE','EXCELLENT','NO TRADE','MARGINAL'];
   } else if (rmRatio < 0.50) {
-    base = ['EXCELLENT','MARGINAL','MARGINAL','NO TRADE','EXCELLENT','GOOD','MARGINAL'];
+    if (isStrong) {
+      base = ['EXCELLENT','MARGINAL','MARGINAL','NO TRADE','GOOD','NO TRADE','MARGINAL'];
+    } else {
+      base = ['EXCELLENT','MARGINAL','MARGINAL','NO TRADE','EXCELLENT','GOOD','MARGINAL'];
+    }
   } else if (rmRatio < 0.75) {
-    base = ['GOOD','EXCELLENT','MARGINAL','MARGINAL','GOOD','EXCELLENT','MARGINAL'];
+    if (isStrong) {
+      // Strong direction + transition zone: BWB preferred over Asymmetric
+      base = ['GOOD','EXCELLENT','GOOD','MARGINAL','GOOD','GOOD','MARGINAL'];
+    } else if (isMild) {
+      // Mild direction: Asymmetric slightly preferred
+      base = ['GOOD','GOOD','EXCELLENT','MARGINAL','GOOD','EXCELLENT','MARGINAL'];
+    } else {
+      // Neutral: Long Condor preferred
+      base = ['MARGINAL','MARGINAL','MARGINAL','GOOD','GOOD','EXCELLENT','GOOD'];
+    }
   } else if (rmRatio < 1.00) {
-    base = ['MARGINAL','EXCELLENT','EXCELLENT','EXCELLENT','MARGINAL','GOOD','GOOD'];
+    if (isStrong) {
+      base = ['MARGINAL','EXCELLENT','GOOD','MARGINAL','MARGINAL','MARGINAL','MARGINAL'];
+    } else if (isMild) {
+      base = ['MARGINAL','GOOD','EXCELLENT','GOOD','MARGINAL','GOOD','GOOD'];
+    } else {
+      // Neutral: Standard butterfly and Iron butterfly lead
+      base = ['MARGINAL','MARGINAL','MARGINAL','EXCELLENT','MARGINAL','GOOD','EXCELLENT'];
+    }
   } else if (isCompressing) {
-    base = ['MARGINAL','EXCELLENT','MARGINAL','EXCELLENT','MARGINAL','GOOD','GOOD'];
+    if (isStrong) {
+      base = ['MARGINAL','EXCELLENT','GOOD','MARGINAL','MARGINAL','MARGINAL','MARGINAL'];
+    } else if (isMild) {
+      base = ['MARGINAL','GOOD','EXCELLENT','GOOD','MARGINAL','GOOD','GOOD'];
+    } else {
+      base = ['MARGINAL','MARGINAL','MARGINAL','EXCELLENT','MARGINAL','GOOD','EXCELLENT'];
+    }
   } else {
-    base = ['GOOD','GOOD','MARGINAL','NO TRADE','NO TRADE','NO TRADE','NO TRADE'];
+    // RM >100% expanding — dangerous, only directional structures
+    if (isStrong) {
+      base = ['GOOD','GOOD','MARGINAL','NO TRADE','NO TRADE','NO TRADE','NO TRADE'];
+    } else {
+      base = ['GOOD','MARGINAL','MARGINAL','NO TRADE','NO TRADE','NO TRADE','NO TRADE'];
+    }
   }
 
   const ratings = base.slice();
+  // Strong direction still downgrades centred structures
   if (isStrong) {
-    [3,4,5,6].forEach(i => { ratings[i] = degrade(ratings[i], 1); });
+    [3,4,5,6].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
   }
 
   // Spreads: enhanced logic using move consumed and direction
