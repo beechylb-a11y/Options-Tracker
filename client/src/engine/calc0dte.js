@@ -138,16 +138,21 @@ export function calc0DTE(inputs) {
   // Gap: difference between cash open and ES pre-open (any slippage at open)
   const gapAtOpen = (hasCashOpen && esClose > 0) ? cashOpen - esClose : 0;
 
-  // Total directional consumed: net move from ES prior close to current price
-  const totalDirMove = hasOvernight && hasPrice ? price - (priorDayClose || cashOpen) : cashDirMove;
-  const totalDirConsumed = em > 0 ? Math.abs(totalDirMove) / em : 0;
+  // Total directional consumed: combine overnight and cash as % of their respective EMs
+  // NOT cross-instrument (ES prior close vs SPX current price would be nonsensical)
+  const overnightDirPct = overnightRangeEM > 0 ? overnightMove / overnightRangeEM : 0;
+  const cashDirPct = em > 0 ? cashMove / em : 0;
+  // Weighted blend: overnight dir + cash dir
+  const totalDirConsumed = hasOvernight
+    ? (overnightDirPct * 0.4 + cashDirPct * 0.6)  // cash session weighted more
+    : cashDirPct;
 
   // Total range consumed: overnight range + cash range vs combined EM
-  const combinedEM = (hasESEM ? esEM : 0) + (em > 0 ? em : 0);
+  const combinedEM = (hasESEM ? esEM : em) + (em > 0 ? em : 0);
   const totalRangeConsumed = combinedEM > 0 ? (overnightRange + cashRange) / combinedEM : (em > 0 ? rmRatio : 0);
 
-  // Primary move consumed metric: use directional for spreads, range for butterflies (blended)
-  const moveConsumedDir = em > 0 ? totalDirConsumed : 0;
+  // Primary move consumed metric
+  const moveConsumedDir = Math.min(totalDirConsumed, 1.5);
   const moveConsumedRange = Math.min(totalRangeConsumed, 1.5);
   // Blended: 60% range + 40% directional — range matters more for premium sellers
   const moveConsumed = Math.min((moveConsumedRange * 0.6 + moveConsumedDir * 0.4), 1.5);
@@ -540,7 +545,7 @@ export function calc0DTE(inputs) {
     overnightMove, overnightDirMove, overnightRange, overnightDir, overnightRangePct, overnightMovePct,
     cashMove, cashDirMove, cashDir, gapAtOpen,
     moveConsumed, moveConsumedDir, moveConsumedRange, volRemaining,
-    totalDirMove, totalDirConsumed, totalRangeConsumed,
+    totalDirConsumed, totalRangeConsumed,
     trendPattern, trendStrength,
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
