@@ -146,12 +146,12 @@ export function calc45DTE(inputs) {
   const missingSize = win<=0||risk<=0||popFrac<=0;
   let hardBlocker = '';
   if (!hasVol) hardBlocker = 'Enter IV, IVR and HV';
-  else if (!missingSize && kelly <= 0) hardBlocker = 'Kelly negative — edge insufficient';
   else if (termBias === 'backwardation') hardBlocker = 'Backwardation — avoid naked short premium';
 
   if (hasGreeks && tEff > 0 && tEff < 0.005) blockers.push('Theta efficiency too low');
   if (vix > 25) warnings.push('VIX >25 — reduce size');
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
+  if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');
   if (greeks && greeks.tvRatio > 4) warnings.push('Vega/theta elevated — vol expansion risk');
 

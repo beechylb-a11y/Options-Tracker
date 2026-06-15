@@ -499,22 +499,24 @@ export function calc0DTE(inputs) {
   //  PAYOFF & EV CALCULATIONS
   // ═══════════════════════════════════════
   let payoff = null;
-  if (price > 0 && D > 0 && legs.length > 0) {
-    // Calculate max profit, max loss, breakevens from leg structure
+  if (price > 0 && legs.length >= 2) {
     const strikes = legs.map(l => l.strike);
     const minStrike = Math.min(...strikes);
     const maxStrike = Math.max(...strikes);
-    const range = maxStrike - minStrike;
-    const plotMin = Math.round(minStrike - range * 0.5);
-    const plotMax = Math.round(maxStrike + range * 0.5);
+    const range = maxStrike - minStrike || 10;
+    const plotMin = Math.round(minStrike - range * 0.8);
+    const plotMax = Math.round(maxStrike + range * 0.8);
     const step = roundTo || 1;
 
-    // Build payoff curve points
+    // For spreads with dual EM suggestions (4 legs = 2 sets), use first 2 legs
+    const payoffLegs = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
+
+    // Build payoff curve: intrinsic value at expiry for each price point
     const points = [];
     for (let px = plotMin; px <= plotMax; px += step) {
       let pnl = 0;
-      legs.forEach(l => {
-        const isShort = l.label.toLowerCase().includes('short');
+      payoffLegs.forEach(l => {
+        const isShort = l.label.toLowerCase().includes('short') || l.label.toLowerCase().includes('sell');
         const isCall = l.label.toLowerCase().includes('call');
         const isPut = l.label.toLowerCase().includes('put');
         const qty = l.label.includes('x2') ? 2 : 1;
@@ -527,33 +529,46 @@ export function calc0DTE(inputs) {
       points.push({ price: px, pnl });
     }
 
-    // Estimate credit received from win amount (net credit = win for credit spreads/butterflies)
-    const creditEstimate = win > 0 ? win : 0;
-    const adjustedPoints = points.map(p => ({ price: p.price, pnl: (p.pnl + creditEstimate) * 100 }));
+    // Find the structure's net credit/debit from the payoff shape
+    // For a credit structure: the flat region at high prices (calls) or low prices (puts) = credit received
+    // We normalize so the max of the flat tails = net credit
+    const firstPnl = points[0].pnl;
+    const lastPnl = points[points.length - 1].pnl;
+    const tailPnl = Math.max(firstPnl, lastPnl); // this is the credit received (or 0 for debit)
 
-    // Find max profit, max loss, breakevens
-    const pnls = adjustedPoints.map(p => p.pnl);
+    // Scale to dollars (multiply by multiplier: 100 for options)
+    const multiplier = (underlying === 'SPX' || underlying === 'SPXW') ? 100 : 100;
+    const scaledPoints = points.map(p => ({
+      price: p.price,
+      pnl: p.pnl * multiplier
+    }));
+
+    const pnls = scaledPoints.map(p => p.pnl);
     const maxProfit = Math.max(...pnls);
     const maxLossCalc = Math.min(...pnls);
+
+    // Find breakevens (where P&L crosses zero)
     const breakevens = [];
-    for (let i = 1; i < adjustedPoints.length; i++) {
-      const prev = adjustedPoints[i - 1];
-      const curr = adjustedPoints[i];
-      if ((prev.pnl <= 0 && curr.pnl > 0) || (prev.pnl >= 0 && curr.pnl < 0)) {
-        // Linear interpolation for breakeven
+    for (let i = 1; i < scaledPoints.length; i++) {
+      const prev = scaledPoints[i - 1];
+      const curr = scaledPoints[i];
+      if ((prev.pnl <= 0 && curr.pnl > 0) || (prev.pnl > 0 && curr.pnl <= 0)) {
         const be = prev.price + (0 - prev.pnl) / (curr.pnl - prev.pnl) * (curr.price - prev.price);
-        breakevens.push(Math.round(be * 100) / 100);
+        breakevens.push(Math.round(be * 10) / 10);
       }
     }
 
-    // Profit band (range where P&L > 0)
-    const profitPrices = adjustedPoints.filter(p => p.pnl > 0).map(p => p.price);
+    // Profit band
+    const profitPrices = scaledPoints.filter(p => p.pnl > 0).map(p => p.price);
     const profitBandLow = profitPrices.length > 0 ? Math.min(...profitPrices) : 0;
     const profitBandHigh = profitPrices.length > 0 ? Math.max(...profitPrices) : 0;
     const profitBandWidth = profitBandHigh - profitBandLow;
 
-    payoff = { points: adjustedPoints, maxProfit, maxLoss: maxLossCalc, breakevens,
-      profitBandLow, profitBandHigh, profitBandWidth, creditEstimate, plotMin, plotMax };
+    payoff = {
+      points: scaledPoints, maxProfit, maxLoss: maxLossCalc, breakevens,
+      profitBandLow, profitBandHigh, profitBandWidth,
+      plotMin, plotMax, tailPnl
+    };
   }
 
   // ── EV calculation ──
@@ -651,7 +666,6 @@ export function calc0DTE(inputs) {
   const missingSize = win <= 0 || risk <= 0 || popFrac <= 0;
   let hardBlocker = '';
   if (!hasPrice) hardBlocker = 'Enter underlying price to generate a decision';
-  else if (!missingSize && kelly <= 0) hardBlocker = 'Kelly negative — edge insufficient';
 
   if (greeks && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
   if (greeks && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
@@ -659,6 +673,7 @@ export function calc0DTE(inputs) {
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
   if (vixHigh) warnings.push('VIX >25 — half-size override');
   if (setup === 'B Setup') warnings.push('B setup — half Kelly');
+  if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (moveConsumed > 0.90 && isDirectional) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);

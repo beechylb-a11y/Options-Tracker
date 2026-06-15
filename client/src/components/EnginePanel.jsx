@@ -42,7 +42,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     if (i0.underlying === 'SPX' && price > 1000 && v > 0 && v < price * 0.3) return v * 10;
     return v;
   }
-  const vwapScaled = is0 && i0.underlying === 'SPX' && fv(i0,'price') > 1000 && fv(i0,'vwap5') > 0 && fv(i0,'vwap5') < fv(i0,'price') * 0.3;
+  const vwapScaled = is0 && i0.underlying === 'SPX';
 
   const r = useMemo(() => {
     if (is0) {
@@ -166,6 +166,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
       (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
       (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
       '<div class="section"><div class="section-title">Setup Quality</div>' + criteriaHtml + '</div>' +
+      (r.payoff ? '<div class="section"><div class="section-title">Payoff at Expiry</div>' +
+      '<div class="row"><span class="label">Max profit</span><span class="value green">$' + r.payoff.maxProfit.toFixed(0) + '</span></div>' +
+      '<div class="row"><span class="label">Max loss</span><span class="value red">$' + r.payoff.maxLoss.toFixed(0) + '</span></div>' +
+      '<div class="row"><span class="label">Breakeven(s)</span><span class="value white">' + (r.payoff.breakevens.length > 0 ? r.payoff.breakevens.map(function(b){return b.toFixed(1)}).join(', ') : '--') + '</span></div>' +
+      '<div class="row"><span class="label">Profit band</span><span class="value white">' + (r.payoff.profitBandWidth > 0 ? r.payoff.profitBandLow.toFixed(0) + '\u2013' + r.payoff.profitBandHigh.toFixed(0) + ' (' + r.payoff.profitBandWidth.toFixed(0) + ' pts)' : '--') + '</span></div>' +
+      '</div>' : '') +
       '<div class="section"><div class="section-title">Sizing (Sharpe-Adjusted Kelly)</div>' +
       '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
       '<div class="row"><span class="label">Adj Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
@@ -396,6 +402,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
             </div>
           </div>
 
+          {/* Payoff diagram — right after strategy ratings */}
+          {r.payoff && r.payoff.points.length > 0 && (
+            <div className="card">
+              <SectionLabel white>Payoff at expiry</SectionLabel>
+              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
+              <div className="grid grid-cols-2 gap-1.5 mt-3">
+                <KV label="Max profit" value={`$${r.payoff.maxProfit?.toFixed(0)||0}`} cls="text-green"/>
+                <KV label="Max loss" value={`$${r.payoff.maxLoss?.toFixed(0)||0}`} cls="text-red"/>
+                <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
+                <KV label="Profit band" value={r.payoff.profitBandWidth>0?`${r.payoff.profitBandLow.toFixed(0)}\u2013${r.payoff.profitBandHigh.toFixed(0)} (${r.payoff.profitBandWidth.toFixed(0)} pts)`:'--'}/>
+              </div>
+            </div>
+          )}
+
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
             <SectionLabel white>Sizing (Sharpe-adjusted Kelly)</SectionLabel>
@@ -412,20 +432,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
               <KV label="BE POP" value={r.bePop?`${(r.bePop*100).toFixed(1)}%`:'--'}/>
             </div>
           </div>
-
-          {/* Payoff diagram */}
-          {is0 && r.payoff && r.payoff.points.length > 0 && (
-            <div className="card">
-              <SectionLabel white>Payoff at expiry</SectionLabel>
-              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
-              <div className="grid grid-cols-2 gap-1.5 mt-3">
-                <KV label="Max profit" value={`$${r.payoff.maxProfit?.toFixed(0)||0}`} cls="text-green"/>
-                <KV label="Max loss" value={`$${r.payoff.maxLoss?.toFixed(0)||0}`} cls="text-red"/>
-                <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
-                <KV label="Profit band" value={r.payoff.profitBandWidth>0?`${r.payoff.profitBandLow.toFixed(0)}–${r.payoff.profitBandHigh.toFixed(0)} (${r.payoff.profitBandWidth.toFixed(0)} pts)`:'--'}/>
-              </div>
-            </div>
-          )}
 
           {/* Greeks Analysis — Theta Edge, Gamma Risk, Max Move */}
           {is0 && r.greeks && (
