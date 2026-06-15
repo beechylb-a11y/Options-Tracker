@@ -166,11 +166,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
       (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
       (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
       '<div class="section"><div class="section-title">Setup Quality</div>' + criteriaHtml + '</div>' +
-      '<div class="section"><div class="section-title">Kelly Sizing</div>' +
+      '<div class="section"><div class="section-title">Sizing (Sharpe-Adjusted Kelly)</div>' +
       '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
-      '<div class="row"><span class="label">Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
+      '<div class="row"><span class="label">Adj Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
+      '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%</span></div>' +
+      '<div class="row"><span class="label">Vol factor</span><span class="value white">' + (r.volFactor ? r.volFactor.toFixed(2) : '--') + '</span></div>' +
+      '<div class="row"><span class="label">Sharpe factor</span><span class="value white">' + (r.sharpeFactor ? r.sharpeFactor.toFixed(2) : '--') + '</span></div>' +
+      '<div class="row"><span class="label">EV / trade</span><span class="value ' + (r.ev > 0 ? 'green' : 'red') + '">$' + (r.ev ? r.ev.toFixed(0) : '0') + '</span></div>' +
       '<div class="row"><span class="label">POP margin</span><span class="value ' + (r.popMargin >= 1.5 ? 'green' : r.popMargin >= 1.0 ? 'amber' : 'red') + '">' + (r.popMargin ? r.popMargin.toFixed(2) : '--') + 'x</span></div>' +
-      '<div class="row"><span class="label">W/L ratio</span><span class="value white">' + (r.wlRatio ? r.wlRatio.toFixed(2) : '--') + '</span></div>' +
       '</div>' +
       greeksHtml +
       '<div class="section"><div class="section-title">Signals</div>' + signalsHtml + '</div>' +
@@ -393,18 +396,36 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
             </div>
           </div>
 
-          {/* Kelly sizing */}
+          {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
-            <SectionLabel white>Kelly sizing</SectionLabel>
+            <SectionLabel white>Sizing (Sharpe-adjusted Kelly)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5">
               <KV label="Contracts" value={r.contracts}/>
-              <KV label="Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
+              <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
+              <KV label="Raw Kelly" value={`${(r.rawKelly*100).toFixed(1)}%`}/>
+              <KV label="Adjusted Kelly" value={`${(r.adjustedKelly*100).toFixed(1)}%`} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
+              <KV label="Vol factor" value={`${r.volFactor?.toFixed(2)||'--'}`} cls={r.volFactor<0.5?'text-amber':r.volFactor<1?'':'text-green'}/>
+              <KV label="Sharpe factor" value={`${r.sharpeFactor?.toFixed(2)||'--'}`} cls={r.sharpeFactor<0.5?'text-amber':r.sharpeFactor<1?'':'text-green'}/>
               <KV label="POP margin" value={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'} cls={r.popMargin>=1.5?'text-green':r.popMargin>=1.0?'text-amber':'text-red'}/>
               <KV label="W/L ratio" value={r.wlRatio?.toFixed(2)||'--'}/>
-              <KV label="Full Kelly" value={`${(r.kelly*100).toFixed(1)}%`}/>
+              <KV label="EV / trade" value={r.ev?`$${r.ev.toFixed(0)}`:'--'} cls={r.ev>0?'text-green':r.ev<0?'text-red':''}/>
               <KV label="BE POP" value={r.bePop?`${(r.bePop*100).toFixed(1)}%`:'--'}/>
             </div>
           </div>
+
+          {/* Payoff diagram */}
+          {is0 && r.payoff && r.payoff.points.length > 0 && (
+            <div className="card">
+              <SectionLabel white>Payoff at expiry</SectionLabel>
+              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
+              <div className="grid grid-cols-2 gap-1.5 mt-3">
+                <KV label="Max profit" value={`$${r.payoff.maxProfit?.toFixed(0)||0}`} cls="text-green"/>
+                <KV label="Max loss" value={`$${r.payoff.maxLoss?.toFixed(0)||0}`} cls="text-red"/>
+                <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
+                <KV label="Profit band" value={r.payoff.profitBandWidth>0?`${r.payoff.profitBandLow.toFixed(0)}–${r.payoff.profitBandHigh.toFixed(0)} (${r.payoff.profitBandWidth.toFixed(0)} pts)`:'--'}/>
+              </div>
+            </div>
+          )}
 
           {/* Greeks Analysis — Theta Edge, Gamma Risk, Max Move */}
           {is0 && r.greeks && (
@@ -497,6 +518,91 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function PayoffDiagram({ payoff, currentPrice }) {
+  if (!payoff || !payoff.points || payoff.points.length < 2) return null;
+  const W = 500, H = 180, PAD = { top: 10, right: 15, bottom: 25, left: 50 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const pts = payoff.points;
+  const prices = pts.map(p => p.price);
+  const pnls = pts.map(p => p.pnl);
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const minPnl = Math.min(...pnls, 0);
+  const maxPnl = Math.max(...pnls, 0);
+  const pnlRange = maxPnl - minPnl || 1;
+  const x = p => PAD.left + (p - minP) / (maxP - minP) * cW;
+  const y = pnl => PAD.top + cH - ((pnl - minPnl) / pnlRange) * cH;
+  const zeroY = y(0);
+
+  // Build path + fill areas
+  let pathD = '';
+  let fillGreen = `M ${x(pts[0].price)} ${zeroY} `;
+  let fillRed = `M ${x(pts[0].price)} ${zeroY} `;
+  pts.forEach((p, i) => {
+    const px = x(p.price), py = y(p.pnl);
+    pathD += (i === 0 ? 'M' : 'L') + ` ${px} ${py} `;
+    fillGreen += `L ${px} ${p.pnl > 0 ? py : zeroY} `;
+    fillRed += `L ${px} ${p.pnl < 0 ? py : zeroY} `;
+  });
+  fillGreen += `L ${x(pts[pts.length-1].price)} ${zeroY} Z`;
+  fillRed += `L ${x(pts[pts.length-1].price)} ${zeroY} Z`;
+
+  // Price axis labels (5 ticks)
+  const priceTicks = [];
+  for (let i = 0; i <= 4; i++) {
+    const p = minP + (maxP - minP) * (i / 4);
+    priceTicks.push({ x: x(p), label: Math.round(p) });
+  }
+  // P&L axis labels
+  const pnlTicks = [maxPnl, 0, minPnl].filter((v, i, a) => a.indexOf(v) === i);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',overflow:'visible'}}>
+      {/* Grid */}
+      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#30363d" strokeWidth="1" strokeDasharray="3,3"/>
+      {/* Fill areas */}
+      <path d={fillGreen} fill="#3fb950" fillOpacity="0.12" />
+      <path d={fillRed} fill="#f85149" fillOpacity="0.12" />
+      {/* P&L line */}
+      <path d={pathD} fill="none" stroke="#c9d1d9" strokeWidth="1.5" />
+      {/* Current price line */}
+      {currentPrice > 0 && currentPrice >= minP && currentPrice <= maxP && (
+        <>
+          <line x1={x(currentPrice)} y1={PAD.top} x2={x(currentPrice)} y2={H-PAD.bottom} stroke="#2f81f7" strokeWidth="1" strokeDasharray="4,2"/>
+          <text x={x(currentPrice)} y={PAD.top-2} textAnchor="middle" fill="#2f81f7" fontSize="8" fontWeight="600">
+            {Math.round(currentPrice)}
+          </text>
+        </>
+      )}
+      {/* Breakevens */}
+      {payoff.breakevens?.map((be, i) => be >= minP && be <= maxP && (
+        <g key={i}>
+          <circle cx={x(be)} cy={zeroY} r="3" fill="#d29922" />
+          <text x={x(be)} y={zeroY+12} textAnchor="middle" fill="#d29922" fontSize="7" fontWeight="600">{be.toFixed(0)}</text>
+        </g>
+      ))}
+      {/* Max profit marker */}
+      {payoff.maxProfit > 0 && (() => {
+        const maxPt = pts.reduce((best, p) => p.pnl > best.pnl ? p : best, pts[0]);
+        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-4} textAnchor="middle" fill="#3fb950" fontSize="7" fontWeight="600">+${payoff.maxProfit.toFixed(0)}</text>;
+      })()}
+      {/* Max loss marker */}
+      {payoff.maxLoss < 0 && (() => {
+        const minPt = pts.reduce((worst, p) => p.pnl < worst.pnl ? p : worst, pts[0]);
+        return <text x={x(minPt.price)} y={y(minPt.pnl)+10} textAnchor="middle" fill="#f85149" fontSize="7" fontWeight="600">${payoff.maxLoss.toFixed(0)}</text>;
+      })()}
+      {/* Axes */}
+      {priceTicks.map((t, i) => (
+        <text key={i} x={t.x} y={H-5} textAnchor="middle" fill="#484f58" fontSize="7">{t.label}</text>
+      ))}
+      {pnlTicks.map((pnl, i) => (
+        <text key={i} x={PAD.left-4} y={y(pnl)+3} textAnchor="end" fill="#484f58" fontSize="7">${pnl.toFixed(0)}</text>
+      ))}
+    </svg>
   );
 }
 

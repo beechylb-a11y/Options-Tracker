@@ -495,13 +495,111 @@ export function calc0DTE(inputs) {
 
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
 
-  // ── Kelly sizing ──
+  // ═══════════════════════════════════════
+  //  PAYOFF & EV CALCULATIONS
+  // ═══════════════════════════════════════
+  let payoff = null;
+  if (price > 0 && D > 0 && legs.length > 0) {
+    // Calculate max profit, max loss, breakevens from leg structure
+    const strikes = legs.map(l => l.strike);
+    const minStrike = Math.min(...strikes);
+    const maxStrike = Math.max(...strikes);
+    const range = maxStrike - minStrike;
+    const plotMin = Math.round(minStrike - range * 0.5);
+    const plotMax = Math.round(maxStrike + range * 0.5);
+    const step = roundTo || 1;
+
+    // Build payoff curve points
+    const points = [];
+    for (let px = plotMin; px <= plotMax; px += step) {
+      let pnl = 0;
+      legs.forEach(l => {
+        const isShort = l.label.toLowerCase().includes('short');
+        const isCall = l.label.toLowerCase().includes('call');
+        const isPut = l.label.toLowerCase().includes('put');
+        const qty = l.label.includes('x2') ? 2 : 1;
+        const sign = isShort ? -1 : 1;
+        let intrinsic = 0;
+        if (isCall) intrinsic = Math.max(0, px - l.strike);
+        else if (isPut) intrinsic = Math.max(0, l.strike - px);
+        pnl += sign * qty * intrinsic;
+      });
+      points.push({ price: px, pnl });
+    }
+
+    // Estimate credit received from win amount (net credit = win for credit spreads/butterflies)
+    const creditEstimate = win > 0 ? win : 0;
+    const adjustedPoints = points.map(p => ({ price: p.price, pnl: (p.pnl + creditEstimate) * 100 }));
+
+    // Find max profit, max loss, breakevens
+    const pnls = adjustedPoints.map(p => p.pnl);
+    const maxProfit = Math.max(...pnls);
+    const maxLossCalc = Math.min(...pnls);
+    const breakevens = [];
+    for (let i = 1; i < adjustedPoints.length; i++) {
+      const prev = adjustedPoints[i - 1];
+      const curr = adjustedPoints[i];
+      if ((prev.pnl <= 0 && curr.pnl > 0) || (prev.pnl >= 0 && curr.pnl < 0)) {
+        // Linear interpolation for breakeven
+        const be = prev.price + (0 - prev.pnl) / (curr.pnl - prev.pnl) * (curr.price - prev.price);
+        breakevens.push(Math.round(be * 100) / 100);
+      }
+    }
+
+    // Profit band (range where P&L > 0)
+    const profitPrices = adjustedPoints.filter(p => p.pnl > 0).map(p => p.price);
+    const profitBandLow = profitPrices.length > 0 ? Math.min(...profitPrices) : 0;
+    const profitBandHigh = profitPrices.length > 0 ? Math.max(...profitPrices) : 0;
+    const profitBandWidth = profitBandHigh - profitBandLow;
+
+    payoff = { points: adjustedPoints, maxProfit, maxLoss: maxLossCalc, breakevens,
+      profitBandLow, profitBandHigh, profitBandWidth, creditEstimate, plotMin, plotMax };
+  }
+
+  // ── EV calculation ──
+  const ev = (win > 0 && risk > 0 && popFrac > 0)
+    ? (popFrac * win * 100) - ((1 - popFrac) * risk * 100)
+    : 0;
+  // Estimated std dev from VIX-implied expected move
+  const evStdDev = em > 0 && risk > 0 ? risk * 100 * (em / price) * Math.sqrt(1 / 252) : 0;
+
+  // ═══════════════════════════════════════
+  //  SHARPE-ADJUSTED KELLY SIZING
+  // ═══════════════════════════════════════
   const halfRisk = risk / 2;
   const wlRatio = halfRisk > 0 ? win / halfRisk : 0;
-  const kelly = wlRatio > 0 ? Math.max(0, popFrac - (1 - popFrac) / wlRatio) : 0;
+  const rawKelly = wlRatio > 0 ? Math.max(0, popFrac - (1 - popFrac) / wlRatio) : 0;
   const bePop = halfRisk > 0 ? halfRisk / (win + halfRisk) : 0;
-  const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
   const popMargin = bePop > 0 && popFrac > 0 ? popFrac / bePop : 0;
+
+  // Volatility factor (from VIX1D)
+  let volFactor = 1.0;
+  if (vix1d > 0) {
+    if (vix1d < 12) volFactor = 1.0;
+    else if (vix1d < 18) volFactor = 0.75;
+    else if (vix1d < 25) volFactor = 0.50;
+    else volFactor = 0.25;
+  } else if (vix > 0) {
+    if (vix < 15) volFactor = 1.0;
+    else if (vix < 20) volFactor = 0.75;
+    else if (vix < 25) volFactor = 0.50;
+    else volFactor = 0.25;
+  }
+
+  // Sharpe factor — estimated from EV and risk
+  // Sharpe = mean return / std dev of returns
+  // For a single trade: approx EV / max_loss as a proxy
+  const sharpeSingle = (ev !== 0 && risk > 0) ? Math.abs(ev) / (risk * 100) : 0;
+  let sharpeFactor = 1.0;
+  if (sharpeSingle > 1.5) sharpeFactor = 1.0;
+  else if (sharpeSingle > 1.0) sharpeFactor = 0.75;
+  else if (sharpeSingle > 0.5) sharpeFactor = 0.50;
+  else sharpeFactor = 0.25;
+
+  // Adjusted Kelly = raw Kelly × vol factor × Sharpe factor
+  const adjustedKelly = rawKelly * volFactor * sharpeFactor;
+  const kelly = adjustedKelly; // use adjusted for all downstream
+  const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
   const kellyRisk = kelly * bankroll;
   const riskCap = maxOpen > 0 ? Math.min(kellyRisk, maxLoss, maxOpen) : Math.min(kellyRisk, maxLoss);
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
@@ -597,9 +695,12 @@ export function calc0DTE(inputs) {
     legs, wingTxt, D, baseDistance, distMult,
     // Scoring
     setupScore, setup, criteria,
-    // Kelly
-    kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    // Kelly (Sharpe-adjusted)
+    kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    volFactor, sharpeFactor, sharpeSingle,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
+    // EV & Payoff
+    ev, evStdDev, payoff,
     // Greeks
     greeks,
     // Decision
