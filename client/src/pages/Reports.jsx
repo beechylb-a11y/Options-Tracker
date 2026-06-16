@@ -9,7 +9,7 @@ export default function Reports({ authenticated, account }) {
 
   useEffect(() => {
     if (!authenticated) return;
-    api.tracker().then(d => { setTrades(d || []); setLoading(false); }).catch(() => setLoading(false));
+    api.getTracker().then(d => { setTrades(d || []); setLoading(false); }).catch(() => setLoading(false));
   }, [authenticated]);
 
   // Parse date helper (handles AU and US formats)
