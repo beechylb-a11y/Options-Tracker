@@ -264,6 +264,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
           {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
+        {/* Mini payoff in decision banner */}
+        {r.payoff && r.payoff.points.length > 0 && (
+          <div style={{marginTop:8,maxWidth:400}}>
+            <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
+          </div>
+        )}
         {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
@@ -425,7 +431,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
               <KV label="Raw Kelly" value={`${(r.rawKelly*100).toFixed(1)}%`}/>
               <KV label="Adjusted Kelly" value={`${(r.adjustedKelly*100).toFixed(1)}%`} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
               <KV label="Vol factor" value={`${r.volFactor?.toFixed(2)||'--'}`} cls={r.volFactor<0.5?'text-amber':r.volFactor<1?'':'text-green'}/>
-              <KV label="Sharpe factor" value={`${r.sharpeFactor?.toFixed(2)||'--'}`} cls={r.sharpeFactor<0.5?'text-amber':r.sharpeFactor<1?'':'text-green'}/>
+              <KV label="Sharpe factor" value={`${r.sharpeFactor?.toFixed(2)||'--'} (${r.sharpeProxy?.toFixed(2)||'--'})`} cls={r.sharpeFactor<0.5?'text-amber':r.sharpeFactor<1?'':'text-green'}/>
               <KV label="POP margin" value={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'} cls={r.popMargin>=1.5?'text-green':r.popMargin>=1.0?'text-amber':'text-red'}/>
               <KV label="W/L ratio" value={r.wlRatio?.toFixed(2)||'--'}/>
               <KV label="EV / trade" value={r.ev?`$${r.ev.toFixed(0)}`:'--'} cls={r.ev>0?'text-green':r.ev<0?'text-red':''}/>
@@ -527,9 +533,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   );
 }
 
-function PayoffDiagram({ payoff, currentPrice }) {
+function PayoffDiagram({ payoff, currentPrice, mini }) {
   if (!payoff || !payoff.points || payoff.points.length < 2) return null;
-  const W = 500, H = 180, PAD = { top: 10, right: 15, bottom: 25, left: 50 };
+  const W = mini ? 380 : 500;
+  const H = mini ? 100 : 180;
+  const PAD = mini ? { top: 6, right: 10, bottom: 18, left: 40 } : { top: 10, right: 15, bottom: 25, left: 50 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const pts = payoff.points;
@@ -543,70 +551,75 @@ function PayoffDiagram({ payoff, currentPrice }) {
   const x = p => PAD.left + (p - minP) / (maxP - minP) * cW;
   const y = pnl => PAD.top + cH - ((pnl - minPnl) / pnlRange) * cH;
   const zeroY = y(0);
+  const fs = mini ? 6 : 7;
 
-  // Build path + fill areas
-  let pathD = '';
-  let fillGreen = `M ${x(pts[0].price)} ${zeroY} `;
-  let fillRed = `M ${x(pts[0].price)} ${zeroY} `;
+  // Build green/red fill paths
+  let greenPath = '';
+  let redPath = '';
+  let linePath = '';
+  let prevAbove = null;
   pts.forEach((p, i) => {
     const px = x(p.price), py = y(p.pnl);
-    pathD += (i === 0 ? 'M' : 'L') + ` ${px} ${py} `;
-    fillGreen += `L ${px} ${p.pnl > 0 ? py : zeroY} `;
-    fillRed += `L ${px} ${p.pnl < 0 ? py : zeroY} `;
+    linePath += (i === 0 ? 'M' : 'L') + px + ' ' + py + ' ';
   });
-  fillGreen += `L ${x(pts[pts.length-1].price)} ${zeroY} Z`;
-  fillRed += `L ${x(pts[pts.length-1].price)} ${zeroY} Z`;
 
-  // Price axis labels (5 ticks)
+  // Simple fill: area between line and zero
+  let fillAbove = 'M' + x(pts[0].price) + ' ' + zeroY + ' ';
+  let fillBelow = 'M' + x(pts[0].price) + ' ' + zeroY + ' ';
+  pts.forEach(p => {
+    const px = x(p.price), py = y(p.pnl);
+    fillAbove += 'L' + px + ' ' + (p.pnl > 0 ? py : zeroY) + ' ';
+    fillBelow += 'L' + px + ' ' + (p.pnl < 0 ? py : zeroY) + ' ';
+  });
+  fillAbove += 'L' + x(pts[pts.length-1].price) + ' ' + zeroY + ' Z';
+  fillBelow += 'L' + x(pts[pts.length-1].price) + ' ' + zeroY + ' Z';
+
+  // Price axis labels
   const priceTicks = [];
   for (let i = 0; i <= 4; i++) {
     const p = minP + (maxP - minP) * (i / 4);
     priceTicks.push({ x: x(p), label: Math.round(p) });
   }
-  // P&L axis labels
-  const pnlTicks = [maxPnl, 0, minPnl].filter((v, i, a) => a.indexOf(v) === i);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',overflow:'visible'}}>
-      {/* Grid */}
-      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#30363d" strokeWidth="1" strokeDasharray="3,3"/>
+    <svg viewBox={'0 0 ' + W + ' ' + H} style={{width:'100%',height:'auto',overflow:'visible'}}>
+      {/* Zero line */}
+      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#484f58" strokeWidth="0.5" strokeDasharray="3,3"/>
       {/* Fill areas */}
-      <path d={fillGreen} fill="#3fb950" fillOpacity="0.12" />
-      <path d={fillRed} fill="#f85149" fillOpacity="0.12" />
+      <path d={fillAbove} fill="#3fb950" fillOpacity="0.15" />
+      <path d={fillBelow} fill="#f85149" fillOpacity="0.12" />
       {/* P&L line */}
-      <path d={pathD} fill="none" stroke="#c9d1d9" strokeWidth="1.5" />
+      <path d={linePath} fill="none" stroke="#c9d1d9" strokeWidth={mini ? 1.5 : 2} strokeLinejoin="round" />
       {/* Current price line */}
       {currentPrice > 0 && currentPrice >= minP && currentPrice <= maxP && (
         <>
-          <line x1={x(currentPrice)} y1={PAD.top} x2={x(currentPrice)} y2={H-PAD.bottom} stroke="#2f81f7" strokeWidth="1" strokeDasharray="4,2"/>
-          <text x={x(currentPrice)} y={PAD.top-2} textAnchor="middle" fill="#2f81f7" fontSize="8" fontWeight="600">
-            {Math.round(currentPrice)}
-          </text>
+          <line x1={x(currentPrice)} y1={PAD.top} x2={x(currentPrice)} y2={H-PAD.bottom} stroke="#2f81f7" strokeWidth="1" strokeDasharray="3,2"/>
+          <text x={x(currentPrice)} y={PAD.top-1} textAnchor="middle" fill="#2f81f7" fontSize={fs} fontWeight="600">{Math.round(currentPrice)}</text>
         </>
       )}
       {/* Breakevens */}
       {payoff.breakevens?.map((be, i) => be >= minP && be <= maxP && (
         <g key={i}>
-          <circle cx={x(be)} cy={zeroY} r="3" fill="#d29922" />
-          <text x={x(be)} y={zeroY+12} textAnchor="middle" fill="#d29922" fontSize="7" fontWeight="600">{be.toFixed(0)}</text>
+          <circle cx={x(be)} cy={zeroY} r={mini ? 2 : 3} fill="#d29922" />
+          {!mini && <text x={x(be)} y={zeroY+10} textAnchor="middle" fill="#d29922" fontSize={fs} fontWeight="600">{be.toFixed(0)}</text>}
         </g>
       ))}
-      {/* Max profit marker */}
-      {payoff.maxProfit > 0 && (() => {
+      {/* Max profit label */}
+      {maxPnl > 0 && (() => {
         const maxPt = pts.reduce((best, p) => p.pnl > best.pnl ? p : best, pts[0]);
-        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-4} textAnchor="middle" fill="#3fb950" fontSize="7" fontWeight="600">+${payoff.maxProfit.toFixed(0)}</text>;
+        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-(mini?2:4)} textAnchor="middle" fill="#3fb950" fontSize={fs} fontWeight="600">+${maxPnl.toFixed(0)}</text>;
       })()}
-      {/* Max loss marker */}
-      {payoff.maxLoss < 0 && (() => {
+      {/* Max loss label */}
+      {minPnl < 0 && (() => {
         const minPt = pts.reduce((worst, p) => p.pnl < worst.pnl ? p : worst, pts[0]);
-        return <text x={x(minPt.price)} y={y(minPt.pnl)+10} textAnchor="middle" fill="#f85149" fontSize="7" fontWeight="600">${payoff.maxLoss.toFixed(0)}</text>;
+        return <text x={x(minPt.price)} y={y(minPt.pnl)+(mini?8:10)} textAnchor="middle" fill="#f85149" fontSize={fs} fontWeight="600">${minPnl.toFixed(0)}</text>;
       })()}
       {/* Axes */}
+      <text x={PAD.left-3} y={zeroY+3} textAnchor="end" fill="#484f58" fontSize={fs}>$0</text>
+      {!mini && maxPnl > 0 && <text x={PAD.left-3} y={y(maxPnl)+3} textAnchor="end" fill="#484f58" fontSize={fs}>${maxPnl.toFixed(0)}</text>}
+      {!mini && minPnl < 0 && <text x={PAD.left-3} y={y(minPnl)+3} textAnchor="end" fill="#484f58" fontSize={fs}>${minPnl.toFixed(0)}</text>}
       {priceTicks.map((t, i) => (
-        <text key={i} x={t.x} y={H-5} textAnchor="middle" fill="#484f58" fontSize="7">{t.label}</text>
-      ))}
-      {pnlTicks.map((pnl, i) => (
-        <text key={i} x={PAD.left-4} y={y(pnl)+3} textAnchor="end" fill="#484f58" fontSize="7">${pnl.toFixed(0)}</text>
+        <text key={i} x={t.x} y={H-(mini?4:5)} textAnchor="middle" fill="#484f58" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
   );
