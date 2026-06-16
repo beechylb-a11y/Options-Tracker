@@ -261,6 +261,33 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         )}
       </div>
 
+      {/* IBKR Bridge */}
+      <div className="card mb-6">
+        <h3 className="font-display font-semibold mb-3">IBKR Bridge</h3>
+        <p className="text-xs text-text-muted mb-3">Connect to your local TWS bridge for auto-fill market data. Run the bridge on your machine and expose via ngrok.</p>
+        <div>
+          <label className="text-xs text-text-muted block mb-1">Bridge URL (ngrok)</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              defaultValue={typeof window !== 'undefined' ? localStorage.getItem('bridgeUrl') || '' : ''}
+              placeholder="https://abc123.ngrok-free.app"
+              onChange={e => localStorage.setItem('bridgeUrl', e.target.value.replace(/\/+$/, ''))}
+              className="flex-1 px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text mono placeholder-text-faint outline-none focus:border-accent"
+            />
+            <button onClick={async () => {
+              const url = localStorage.getItem('bridgeUrl');
+              if (!url) return;
+              try {
+                const r = await fetch(url + '/api/health');
+                const d = await r.json();
+                alert(d.ok ? 'Bridge connected! TWS: ' + (d.connected ? 'connected' : 'disconnected') : 'Bridge error');
+              } catch (e) { alert('Cannot reach bridge: ' + e.message); }
+            }} className="px-3 py-2 text-xs border border-bg-border rounded-lg text-text-muted hover:bg-bg-hover">Test</button>
+          </div>
+        </div>
+      </div>
+
       {/* Global Config (defaults) */}
       <div className="card mb-6">
         <h3 className="font-display font-semibold mb-4">Default Risk Configuration</h3>
