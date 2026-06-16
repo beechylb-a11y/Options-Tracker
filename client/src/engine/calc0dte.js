@@ -511,8 +511,10 @@ export function calc0DTE(inputs) {
     // For spreads with dual EM suggestions (4 legs = 2 sets), use first 2 legs
     const payoffLegs = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
 
-    // Build payoff curve: intrinsic value at expiry for each price point
-    const points = [];
+    // Build payoff curve: intrinsic value at expiry
+    // We calculate raw intrinsic, then calibrate so the curve matches
+    // the user's win (max profit) and risk (max loss) amounts
+    const rawPoints = [];
     for (let px = plotMin; px <= plotMax; px += step) {
       let pnl = 0;
       payoffLegs.forEach(l => {
@@ -526,32 +528,40 @@ export function calc0DTE(inputs) {
         else if (isPut) intrinsic = Math.max(0, l.strike - px);
         pnl += sign * qty * intrinsic;
       });
-      points.push({ price: px, pnl });
+      rawPoints.push({ price: px, pnl });
     }
 
-    // Find the structure's net credit/debit from the payoff shape
-    // For a credit structure: the flat region at high prices (calls) or low prices (puts) = credit received
-    // We normalize so the max of the flat tails = net credit
-    const firstPnl = points[0].pnl;
-    const lastPnl = points[points.length - 1].pnl;
-    const tailPnl = Math.max(firstPnl, lastPnl); // this is the credit received (or 0 for debit)
+    // Find raw max and min to calibrate against win/risk
+    const rawPnls = rawPoints.map(p => p.pnl);
+    const rawMax = Math.max(...rawPnls);
+    const rawMin = Math.min(...rawPnls);
 
-    // Scale to dollars (multiply by multiplier: 100 for options)
-    const multiplier = (underlying === 'SPX' || underlying === 'SPXW') ? 100 : 100;
-    const scaledPoints = points.map(p => ({
+    // Calibrate: shift the curve so that
+    //   max profit = win × 100 (in dollars)
+    //   max loss = -risk × 100 (in dollars)
+    // The shift = difference between raw max and user's win
+    let shift = 0;
+    if (win > 0 && rawMax !== rawMin) {
+      // For credit trades: raw curve has max at some positive value, we shift to match win
+      // For debit trades: raw curve has max at some positive value, we shift to match win
+      // In both cases: shift so rawMax + shift = win (per share)
+      shift = win - rawMax;
+    }
+
+    const points = rawPoints.map(p => ({
       price: p.price,
-      pnl: p.pnl * multiplier
+      pnl: (p.pnl + shift) * 100 // convert to dollars
     }));
 
-    const pnls = scaledPoints.map(p => p.pnl);
+    const pnls = points.map(p => p.pnl);
     const maxProfit = Math.max(...pnls);
     const maxLossCalc = Math.min(...pnls);
 
-    // Find breakevens (where P&L crosses zero)
+    // Find breakevens
     const breakevens = [];
-    for (let i = 1; i < scaledPoints.length; i++) {
-      const prev = scaledPoints[i - 1];
-      const curr = scaledPoints[i];
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const curr = points[i];
       if ((prev.pnl <= 0 && curr.pnl > 0) || (prev.pnl > 0 && curr.pnl <= 0)) {
         const be = prev.price + (0 - prev.pnl) / (curr.pnl - prev.pnl) * (curr.price - prev.price);
         breakevens.push(Math.round(be * 10) / 10);
@@ -559,24 +569,23 @@ export function calc0DTE(inputs) {
     }
 
     // Profit band
-    const profitPrices = scaledPoints.filter(p => p.pnl > 0).map(p => p.price);
+    const profitPrices = points.filter(p => p.pnl > 0).map(p => p.price);
     const profitBandLow = profitPrices.length > 0 ? Math.min(...profitPrices) : 0;
     const profitBandHigh = profitPrices.length > 0 ? Math.max(...profitPrices) : 0;
     const profitBandWidth = profitBandHigh - profitBandLow;
 
     payoff = {
-      points: scaledPoints, maxProfit, maxLoss: maxLossCalc, breakevens,
+      points, maxProfit, maxLoss: maxLossCalc, breakevens,
       profitBandLow, profitBandHigh, profitBandWidth,
-      plotMin, plotMax, tailPnl
+      plotMin, plotMax, shift
     };
   }
 
   // ── EV calculation ──
+  // EV = (POP × win) - ((1-POP) × risk) — already in dollars per contract
   const ev = (win > 0 && risk > 0 && popFrac > 0)
-    ? (popFrac * win * 100) - ((1 - popFrac) * risk * 100)
+    ? (popFrac * win) - ((1 - popFrac) * risk)
     : 0;
-  // Estimated std dev from VIX-implied expected move
-  const evStdDev = em > 0 && risk > 0 ? risk * 100 * (em / price) * Math.sqrt(1 / 252) : 0;
 
   // ═══════════════════════════════════════
   //  SHARPE-ADJUSTED KELLY SIZING
@@ -601,15 +610,15 @@ export function calc0DTE(inputs) {
     else volFactor = 0.25;
   }
 
-  // Sharpe factor — estimated from EV and risk
-  // Sharpe = mean return / std dev of returns
-  // For a single trade: approx EV / max_loss as a proxy
-  const sharpeSingle = (ev !== 0 && risk > 0) ? Math.abs(ev) / (risk * 100) : 0;
+  // Sharpe factor — EV per dollar risked
+  // Sharpe proxy = EV / risk (positive = edge, negative = no edge)
+  const sharpeProxy = risk > 0 ? ev / risk : 0;
   let sharpeFactor = 1.0;
-  if (sharpeSingle > 1.5) sharpeFactor = 1.0;
-  else if (sharpeSingle > 1.0) sharpeFactor = 0.75;
-  else if (sharpeSingle > 0.5) sharpeFactor = 0.50;
-  else sharpeFactor = 0.25;
+  if (sharpeProxy > 0.30) sharpeFactor = 1.0;       // strong edge
+  else if (sharpeProxy > 0.15) sharpeFactor = 0.75;  // decent edge
+  else if (sharpeProxy > 0.05) sharpeFactor = 0.50;  // marginal edge
+  else if (sharpeProxy > 0) sharpeFactor = 0.35;     // weak edge
+  else sharpeFactor = 0.25;                           // negative EV
 
   // Adjusted Kelly = raw Kelly × vol factor × Sharpe factor
   const adjustedKelly = rawKelly * volFactor * sharpeFactor;
@@ -712,7 +721,7 @@ export function calc0DTE(inputs) {
     setupScore, setup, criteria,
     // Kelly (Sharpe-adjusted)
     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
-    volFactor, sharpeFactor, sharpeSingle,
+    volFactor, sharpeFactor, sharpeProxy,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
     ev, evStdDev, payoff,
