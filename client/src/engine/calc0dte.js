@@ -724,7 +724,7 @@ export function calc0DTE(inputs) {
     volFactor, sharpeFactor, sharpeProxy,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
-    ev, evStdDev, payoff,
+    ev, payoff,
     // Greeks
     greeks,
     // Decision

@@ -13,6 +13,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   const defMaxLoss = acfg.maxDailyLoss || 300;
   const defMaxOpen = acfg.maxOpenRisk || 450;
   const [overrideStrat, setOverrideStrat] = useState(null);
+  const [autoFilling, setAutoFilling] = useState(false);
 
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
@@ -45,34 +46,48 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   const vwapScaled = is0 && i0.underlying === 'SPX';
 
   const r = useMemo(() => {
-    if (is0) {
-      return calc0DTE({
-        price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
-        vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
-        vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
-        atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
-        gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
-        esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
-        esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'), esEM:fv(i0,'esEM'),
-        bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
-        risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
-        maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
-        delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
-        underlying:i0.underlying,
-        overrideStrategy: overrideStrat
-      });
-    } else {
-      return calc45DTE({
-        price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
-        hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
-        ivBack:fv(i45,'ivBack'), skew:fv(i45,'skew'), dte:fv(i45,'dte')||45,
-        pop:fv(i45,'pop'), win:fv(i45,'win'), risk:fv(i45,'risk'),
-        bankroll:fv(i45,'bankroll'), startBR:fv(i45,'startBR'),
-        maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
-        theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
-        underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
-        overrideStrategy: overrideStrat
-      });
+    try {
+      if (is0) {
+        return calc0DTE({
+          price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
+          vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
+          vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
+          atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
+          gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
+          esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
+          esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'), esEM:fv(i0,'esEM'),
+          bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
+          risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
+          maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
+          delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
+          underlying:i0.underlying,
+          overrideStrategy: overrideStrat
+        });
+      } else {
+        return calc45DTE({
+          price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
+          hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
+          ivBack:fv(i45,'ivBack'), skew:fv(i45,'skew'), dte:fv(i45,'dte')||45,
+          pop:fv(i45,'pop'), win:fv(i45,'win'), risk:fv(i45,'risk'),
+          bankroll:fv(i45,'bankroll'), startBR:fv(i45,'startBR'),
+          maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
+          theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
+          underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
+          overrideStrategy: overrideStrat
+        });
+      }
+    } catch (e) {
+      console.error('Calc engine error:', e);
+      return { decision:'Error', decisionClass:'nogo', hardBlocker:'Calculation error: ' + e.message,
+        setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], warnings:[], blockers:[],
+        bestStrat:'', bestRating:'NO TRADE', legStrat:'', kelly:0, rawKelly:0, adjustedKelly:0,
+        kellyDollar:0, contracts:1, maxRisk:0, popMargin:0, bePop:0, wlRatio:0, ev:0,
+        volFactor:1, sharpeFactor:1, sharpeProxy:0, kellyOverRisk:false, missingSize:true,
+        vixGap:0, vixGrade:'', dirScore:0, dirLabel:'', regime:'', behaviour:'',
+        comp:null, rmRatio:0, moveConsumed:0, volRemaining:1, payoff:null, greeks:null,
+        vwapDistPctEM:0, vwapOverextended:false, confirmed:false, diverges:false,
+        slope5:{}, slope15:{}, slope:'flat', slopeDirection:'unknown',
+        overnightDir:'unknown', trendPattern:'unknown', wingTxt:'' };
     }
   }, [is0, i0, i45, overrideStrat]);
 
@@ -94,6 +109,45 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
   // Show VWAP scaling notice (vwapScaled defined above)
+
+  async function handleAutoFill() {
+    setAutoFilling(true);
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setAutoFilling(false); return; }
+      const underlying = is0 ? i0.underlying : i45.underlying;
+      const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying);
+      const d = await resp.json();
+      if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
+      if (is0) {
+        setI0(prev => ({
+          ...prev,
+          price: d.price || prev.price,
+          high: d.high || prev.high,
+          low: d.low || prev.low,
+          vwap5: d.vwap5 || prev.vwap5,
+          vwap5_30: d.vwap5_30 || prev.vwap5_30,
+          vwap15: d.vwap15 || prev.vwap15,
+          vwap15_30: d.vwap15_30 || prev.vwap15_30,
+          em: d.em || prev.em,
+          atr: d.atr || prev.atr,
+          atr5: d.atr5 || prev.atr5,
+          atr2h: d.atr2h || prev.atr2h,
+          vix: d.vix || prev.vix,
+          vix1d: d.vix1d || prev.vix1d,
+          esOvernightHigh: d.esOvernightHigh || prev.esOvernightHigh,
+          esOvernightLow: d.esOvernightLow || prev.esOvernightLow,
+          esClose: d.esClose || prev.esClose,
+          priorDayClose: d.priorDayClose || prev.priorDayClose,
+          cashOpen: d.cashOpen || prev.cashOpen,
+          esEM: d.esEM || prev.esEM
+        }));
+      }
+    } catch (e) {
+      alert('Auto-fill failed: ' + e.message);
+    }
+    setAutoFilling(false);
+  }
 
   function handlePrint() {
     const g = r.greeks;
@@ -284,7 +338,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
         <div className="card" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
 
           {/* Market Data */}
-          <SectionLabel>Market data</SectionLabel>
+          <div className="flex items-center justify-between">
+            <SectionLabel>Market data</SectionLabel>
+            {is0 && (
+              <button onClick={handleAutoFill} disabled={autoFilling}
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-2.5">
             <Sel label="Underlying" value={is0?i0.underlying:i45.underlying} onChange={v=>is0?set0('underlying',v):set45('underlying',v)} options={UNDERLYING_LIST}/>
             <Inp label="Price" value={is0?i0.price:i45.price} onChange={v=>is0?set0('price',v):set45('price',v)}/>
@@ -607,12 +669,12 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
       {/* Max profit label */}
       {maxPnl > 0 && (() => {
         const maxPt = pts.reduce((best, p) => p.pnl > best.pnl ? p : best, pts[0]);
-        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-(mini?2:4)} textAnchor="middle" fill="#3fb950" fontSize={fs} fontWeight="600">+${maxPnl.toFixed(0)}</text>;
+        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-(mini?2:4)} textAnchor="middle" fill="#3fb950" fontSize={fs} fontWeight="600">{'+$' + maxPnl.toFixed(0)}</text>;
       })()}
       {/* Max loss label */}
       {minPnl < 0 && (() => {
         const minPt = pts.reduce((worst, p) => p.pnl < worst.pnl ? p : worst, pts[0]);
-        return <text x={x(minPt.price)} y={y(minPt.pnl)+(mini?8:10)} textAnchor="middle" fill="#f85149" fontSize={fs} fontWeight="600">${minPnl.toFixed(0)}</text>;
+        return <text x={x(minPt.price)} y={y(minPt.pnl)+(mini?8:10)} textAnchor="middle" fill="#f85149" fontSize={fs} fontWeight="600">{'$' + minPnl.toFixed(0)}</text>;
       })()}
       {/* Axes */}
       <text x={PAD.left-3} y={zeroY+3} textAnchor="end" fill="#484f58" fontSize={fs}>$0</text>
