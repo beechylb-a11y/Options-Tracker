@@ -119,9 +119,10 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
     const bars = [];
     let resolved = false;
 
-    const onBar = (id, bar) => {
+    const onBar = (id, date, open, high, low, close, volume, count, WAP) => {
       if (id !== reqId) return;
-      bars.push(bar);
+      if (bars.length === 0) console.log('[BRIDGE] BAR DATA: date=' + date + ' o=' + open + ' h=' + high + ' l=' + low + ' c=' + close + ' v=' + volume);
+      bars.push({ date, open, high, low, close, volume: volume || 0, count, WAP });
     };
 
     const onEnd = (id) => {
@@ -194,7 +195,13 @@ function calcATR(bars, period) {
   if (!bars || bars.length < 2) return 0;
   const trs = [];
   for (let i = 1; i < bars.length; i++) {
-    const h = bars[i].high, l = bars[i].low, pc = bars[i - 1].close;
+    const b = bars[i];
+    const prev = bars[i - 1];
+    // @stoqey/ib returns bars as array-like objects with numeric keys
+    // Format: {0: date, 1: open, 2: high, 3: low, 4: close, 5: volume, 6: WAP, 7: count}
+    const h = b.high ?? b[2] ?? 0;
+    const l = b.low ?? b[3] ?? 0;
+    const pc = prev.close ?? prev[4] ?? 0;
     if (h > 0 && l > 0 && pc > 0) {
       trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
     }
@@ -204,15 +211,19 @@ function calcATR(bars, period) {
   return trs.slice(-n).reduce((s, v) => s + v, 0) / n;
 }
 
-// ── Calculate VWAP from bars (bars must have volume) ──
+// ── Calculate VWAP from bars ──
 function calcVWAP(bars) {
   let cumVP = 0, cumV = 0;
   const vwaps = [];
   bars.forEach(b => {
-    const typical = (b.high + b.low + b.close) / 3;
-    cumVP += typical * (b.volume || 0);
-    cumV += (b.volume || 0);
-    vwaps.push(cumV > 0 ? cumVP / cumV : b.close);
+    const h = b.high ?? b[2] ?? 0;
+    const l = b.low ?? b[3] ?? 0;
+    const c = b.close ?? b[4] ?? 0;
+    const vol = b.volume ?? b[5] ?? 0;
+    const typical = (h + l + c) / 3;
+    cumVP += typical * vol;
+    cumV += vol;
+    vwaps.push(cumV > 0 ? cumVP / cumV : c);
   });
   return vwaps;
 }
@@ -240,10 +251,10 @@ app.get('/api/market-data', async (req, res) => {
       getSnapshot(esContract)
     ]);
 
-    const price = mainSnap.mid || mainSnap.last || 0;
-    const high = mainSnap.high || 0;
-    const low = mainSnap.low || 0;
-    const cashOpen = mainSnap.open || 0;
+    const price = (mainSnap.mid && mainSnap.mid > 0) ? mainSnap.mid : (mainSnap.last > 0 ? mainSnap.last : 0);
+    const high = mainSnap.high > 0 ? mainSnap.high : 0;
+    const low = mainSnap.low > 0 ? mainSnap.low : 0;
+    const cashOpen = mainSnap.open > 0 ? mainSnap.open : 0;
     const vix = vixSnap.mid || vixSnap.last || 0;
     const vix1d = vix1dSnap.mid || vix1dSnap.last || 0;
 
@@ -258,47 +269,103 @@ app.get('/api/market-data', async (req, res) => {
     const esEM = esClose > 0 && vix > 0 ? Math.round(esClose * (vix / 100) / SQRT252 * 10) / 10 : 0;
 
     // 3. Get historical bars for ATR calculations
-    // For SPX (index), use SPY for historical bars (SPX has no trade data)
+    // SPX index has no MIDPOINT historical data — use SPY bars and scale ×10
     const histContract = (underlying === 'SPX') ? contracts.SPY : mainContract;
+    const histWhat = (histContract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
+    const atrScale = (underlying === 'SPX') ? 10 : 1;
+    console.log('[BRIDGE] Requesting historical bars for', underlying, 'using', histContract.symbol, 'scale:', atrScale);
     const [bars1D, bars5m, bars2h] = await Promise.all([
-      getHistoricalBars(histContract, '20 D', BarSizeSetting.DAYS_ONE).catch(e => { console.log('[BRIDGE] bars1D error:', e.message); return []; }),
-      getHistoricalBars(histContract, '1 D', BarSizeSetting.MINUTES_FIVE).catch(e => { console.log('[BRIDGE] bars5m error:', e.message); return []; }),
-      getHistoricalBars(histContract, '5 D', BarSizeSetting.HOURS_TWO).catch(e => { console.log('[BRIDGE] bars2h error:', e.message); return []; })
+      getHistoricalBars(histContract, '20 D', BarSizeSetting.DAYS_ONE, histWhat).catch(e => { console.log('[BRIDGE] bars1D error:', e.message); return []; }),
+      getHistoricalBars(histContract, '1 D', BarSizeSetting.MINUTES_FIVE, histWhat).catch(e => { console.log('[BRIDGE] bars5m error:', e.message); return []; }),
+      getHistoricalBars(histContract, '5 D', BarSizeSetting.HOURS_TWO, histWhat).catch(e => { console.log('[BRIDGE] bars2h error:', e.message); return []; })
     ]);
+    console.log('[BRIDGE] Bars received: 1D=' + bars1D.length + ' 5m=' + bars5m.length + ' 2h=' + bars2h.length);
+    if (bars1D.length > 0) {
+      const b = bars1D[0];
+      console.log('[BRIDGE] Bar sample: date=' + (b[0]||b.date) + ' open=' + (b[1]||b.open) + ' high=' + (b[2]||b.high) + ' low=' + (b[3]||b.low) + ' close=' + (b[4]||b.close));
+    }
 
-    const atr1d = calcATR(bars1D, 14);
-    const atr5m = calcATR(bars5m, 14);
-    const atr2h = calcATR(bars2h, 14);
+    const atr1d = calcATR(bars1D, 14) * atrScale;
+    const atr5m = calcATR(bars5m, 14) * atrScale;
+    const atr2h = calcATR(bars2h, 14) * atrScale;
+    console.log('[BRIDGE] ATR calculated: 1d=' + atr1d.toFixed(2) + ' 5m=' + atr5m.toFixed(4) + ' 2h=' + atr2h.toFixed(2));
 
-    // 4. VWAP from 5-min bars (use SPY for SPX)
+    // Derive Open from first 5m bar if not available from snapshot
+    let derivedOpen = cashOpen;
+    if (!derivedOpen && bars5m.length > 0) {
+      derivedOpen = (bars5m[0].open || 0) * atrScale;
+    }
+
+    // 4. Fallback prices — start with snapshot, override later if needed
+    let finalPrice = price;
+    let finalHigh = high;
+    let finalLow = low;
+
+    // Derive from ATR bars if snapshot was 0
+    if (!finalPrice && bars5m.length > 0) {
+      const lastBar = bars5m[bars5m.length - 1];
+      const barClose = (lastBar.close || 0) * atrScale;
+      if (barClose > 0) {
+        finalPrice = barClose;
+        console.log('[BRIDGE] Price derived from last 5m bar:', finalPrice);
+      }
+    }
+    if (!finalHigh && bars1D.length > 0) {
+      const barHigh = (bars1D[bars1D.length - 1].high || 0) * atrScale;
+      if (barHigh > 0) finalHigh = barHigh;
+    }
+    if (!finalLow && bars1D.length > 0) {
+      const barLow = (bars1D[bars1D.length - 1].low || 0) * atrScale;
+      if (barLow > 0) finalLow = barLow;
+    }
+
+    // 5. VWAP from 5-min bars
+    // Indices need SPY/QQQ for volume. If unavailable, skip VWAP.
     let vwap5 = 0, vwap5_30 = 0, vwap15 = 0, vwap15_30 = 0;
     try {
-      const vwapBars = await getHistoricalBars(vwapContract, '1 D', BarSizeSetting.MINUTES_FIVE, WhatToShow.TRADES);
+      // For VWAP we need volume data — use stocks directly, skip for indices if subscription missing
+      const vwapContract = usesSPYVwap ? contracts.SPY : mainContract;
+      const vwapWhat = (vwapContract.secType === SecType.IND) ? WhatToShow.BID_ASK : WhatToShow.TRADES;
+      const vwapBars = await getHistoricalBars(vwapContract, '1 D', BarSizeSetting.MINUTES_FIVE, vwapWhat);
       if (vwapBars.length > 0) {
-        // Filter to today's session only (after 9:30 ET)
-        const todayBars = vwapBars; // IBKR returns current session
+        const todayBars = vwapBars;
         const vwaps = calcVWAP(todayBars);
 
-        // Current VWAP = last value
         vwap5 = vwaps.length > 0 ? vwaps[vwaps.length - 1] : 0;
-        // VWAP 30 min ago = 6 bars back on 5-min chart
         vwap5_30 = vwaps.length > 6 ? vwaps[vwaps.length - 7] : vwap5;
-
-        // 15-min VWAP: take every 3rd bar's VWAP value
-        vwap15 = vwap5; // current is same
+        vwap15 = vwap5;
         vwap15_30 = vwaps.length > 6 ? vwaps[vwaps.length - 7] : vwap5;
+
+        // Derive price from last VWAP bar close if snapshot failed
+        if (!finalPrice || finalPrice <= 0) {
+          const lastVwapBar = todayBars[todayBars.length - 1];
+          const vwapClose = lastVwapBar.close || 0;
+          if (vwapClose > 0) {
+            finalPrice = vwapClose;
+            console.log('[BRIDGE] Price derived from VWAP bar close:', finalPrice);
+          }
+        }
+        // Derive high/low from today's VWAP bars
+        if (!finalHigh || finalHigh <= 0) {
+          const highs = todayBars.map(b => b.high || 0).filter(v => v > 0);
+          if (highs.length > 0) finalHigh = Math.max(...highs);
+        }
+        if (!finalLow || finalLow <= 0) {
+          const lows = todayBars.map(b => b.low || 0).filter(v => v > 0);
+          if (lows.length > 0) finalLow = Math.min(...lows);
+        }
       }
     } catch (e) {
       console.error('[BRIDGE] VWAP calc error:', e.message);
     }
 
-    // 5. Return all data
+    // 6. Return all data
     const result = {
       underlying,
-      price: Math.round(price * 100) / 100,
-      high: Math.round(high * 100) / 100,
-      low: Math.round(low * 100) / 100,
-      cashOpen: Math.round(cashOpen * 100) / 100,
+      price: Math.round(finalPrice * 100) / 100,
+      high: Math.round(finalHigh * 100) / 100,
+      low: Math.round(finalLow * 100) / 100,
+      cashOpen: Math.round((derivedOpen || cashOpen) * 100) / 100,
       vix: Math.round(vix * 100) / 100,
       vix1d: Math.round(vix1d * 100) / 100,
       em: Math.round(em * 10) / 10,

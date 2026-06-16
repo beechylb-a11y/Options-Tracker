@@ -75,6 +75,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     return v;
   }
   const vwapScaled = is0 && i0.underlying === 'SPX';
+  const vwapFromIWM = is0 && i0.underlying === 'RUT';
 
   const r = useMemo(() => {
     try {
@@ -479,43 +480,43 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             })}
           </div>
 
-          {/* Strategy ratings */}
-          <div className="card">
-            <div className="flex items-center justify-between mb-1">
-              <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
-              {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
-            </div>
-            <div className="space-y-0.5">
-              {r.ratings.map((s,i) => {
-                const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
-                const clickable = s.rating !== 'NO TRADE';
-                const isSelected = overrideStrat === s.name;
-                return (<div key={i}
-                  onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
-                  className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
-                  <span className="text-sm text-white">{s.name}</span>
-                  <div className="flex items-center gap-2">
-                    {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
-                    <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
-                  </div>
-                </div>);
-              })}
-            </div>
-          </div>
-
-          {/* Payoff diagram — right after strategy ratings */}
-          {r.payoff && r.payoff.points.length > 0 && (
-            <div className="card">
-              <SectionLabel white>Payoff at expiry</SectionLabel>
-              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
-              <div className="grid grid-cols-2 gap-1.5 mt-3">
-                <KV label="Max profit" value={`$${r.payoff.maxProfit?.toFixed(0)||0}`} cls="text-green"/>
-                <KV label="Max loss" value={`$${r.payoff.maxLoss?.toFixed(0)||0}`} cls="text-red"/>
-                <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
-                <KV label="Profit band" value={r.payoff.profitBandWidth>0?`${r.payoff.profitBandLow.toFixed(0)}\u2013${r.payoff.profitBandHigh.toFixed(0)} (${r.payoff.profitBandWidth.toFixed(0)} pts)`:'--'}/>
+          {/* Strategy ratings + Payoff side by side */}
+          <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+            <div className="card" style={{flex:'1 1 50%',minWidth:0}}>
+              <div className="flex items-center justify-between mb-1">
+                <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
+                {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
+              </div>
+              <div className="space-y-0.5">
+                {r.ratings.map((s,i) => {
+                  const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
+                  const clickable = s.rating !== 'NO TRADE';
+                  const isSelected = overrideStrat === s.name;
+                  return (<div key={i}
+                    onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
+                    className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
+                    <span className="text-sm text-white">{s.name}</span>
+                    <div className="flex items-center gap-2">
+                      {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
+                      <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
+                    </div>
+                  </div>);
+                })}
               </div>
             </div>
-          )}
+            {r.payoff && r.payoff.points.length > 0 && (
+              <div className="card" style={{flex:'1 1 50%',minWidth:0}}>
+                <SectionLabel white>Payoff at expiry</SectionLabel>
+                <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
+                <div className="grid grid-cols-2 gap-1.5 mt-3">
+                  <KV label="Max profit" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
+                  <KV label="Max loss" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
+                  <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
+                  <KV label="Profit band" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
@@ -630,9 +631,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
 function PayoffDiagram({ payoff, currentPrice, mini }) {
   if (!payoff || !payoff.points || payoff.points.length < 2) return null;
-  const W = mini ? 380 : 500;
-  const H = mini ? 100 : 180;
-  const PAD = mini ? { top: 6, right: 10, bottom: 18, left: 40 } : { top: 10, right: 15, bottom: 25, left: 50 };
+  const W = mini ? 380 : 460;
+  const H = mini ? 100 : 210;
+  const PAD = mini ? { top: 6, right: 10, bottom: 18, left: 40 } : { top: 14, right: 15, bottom: 28, left: 55 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const pts = payoff.points;
@@ -646,7 +647,7 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   const x = p => PAD.left + (p - minP) / (maxP - minP) * cW;
   const y = pnl => PAD.top + cH - ((pnl - minPnl) / pnlRange) * cH;
   const zeroY = y(0);
-  const fs = mini ? 6 : 7;
+  const fs = mini ? 7 : 10;
 
   // Build green/red fill paths
   let greenPath = '';
