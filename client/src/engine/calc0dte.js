@@ -310,7 +310,7 @@ export function calc0DTE(inputs) {
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
-  const roundTo = underlying === 'SPX' ? 5 : (underlying === 'SPY' || underlying === 'QQQ' || underlying === 'IWM') ? 1 : 0.5;
+  const roundTo = (underlying === 'SPX' || underlying === 'RUT') ? 5 : (underlying === 'SPY' || underlying === 'QQQ' || underlying === 'IWM') ? 1 : 0.5;
   if (D > 0 && D < roundTo * 2) D = roundTo * 2;
   const R = n => roundTo > 0 ? Math.round(n / roundTo) * roundTo : Math.round(n * 2) / 2;
   const leg = (label, strike) => ({ label, strike: R(strike) });
@@ -494,6 +494,43 @@ export function calc0DTE(inputs) {
   criteria.push({ label: `Gamma distance ${hasGam?gamDist.toFixed(2)+'x ATR':'--'}`, pts: gamPts, max: 5 });
 
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
+
+  // ── Target credit/debit based on strategy type and wing width ──
+  let targetCredit = null;
+  let targetLabel = '';
+  if (D > 0) {
+    const width = D; // wing width in points
+    if (legStrat.includes('Iron Condor') || legStrat === 'Chicken condor') {
+      targetCredit = Math.round(width * 0.33 * 100) / 100; // 1/3 of wing width
+      targetLabel = `Target credit: $${targetCredit.toFixed(2)} (1/3 of ${width}pt wing)`;
+    } else if (legStrat === 'Iron butterfly') {
+      const lo = width * 0.25, hi = width * 0.30;
+      targetCredit = Math.round((lo + hi) / 2 * 100) / 100;
+      targetLabel = `Target credit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (25-30% of ${width}pt wing)`;
+    } else if (legStrat === 'Standard butterfly') {
+      const lo = width * 0.10, hi = width * 0.20;
+      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
+      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (10-20% of ${width}pt wing)`;
+    } else if (legStrat === 'Broken wing butterfly') {
+      targetCredit = 0;
+      targetLabel = 'Target: even to small credit';
+    } else if (legStrat === 'Asymmetric butterfly') {
+      const lo = width * 0.05, hi = width * 0.15;
+      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
+      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (5-15% of ${width}pt wing)`;
+    } else if (legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat.includes('Credit')) {
+      targetCredit = Math.round(width * 0.33 * 100) / 100;
+      targetLabel = `Target credit: $${targetCredit.toFixed(2)} (1/3 of ${width}pt width)`;
+    } else if (legStrat.includes('Bull call') || legStrat.includes('Bear put') || legStrat.includes('Debit')) {
+      const debit = Math.round(width * 0.67 * 100) / 100;
+      targetCredit = -debit;
+      targetLabel = `Target debit: $${debit.toFixed(2)} (2/3 of ${width}pt width)`;
+    } else if (legStrat === 'Long Condor') {
+      const lo = width * 0.10, hi = width * 0.20;
+      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
+      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (10-20% of ${width}pt wing)`;
+    }
+  }
 
   // ═══════════════════════════════════════
   //  PAYOFF DIAGRAM — Generic engine
@@ -720,7 +757,7 @@ export function calc0DTE(inputs) {
     volFactor, sharpeFactor, sharpeProxy,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
-    ev, payoff,
+    ev, payoff, targetCredit, targetLabel,
     // Greeks
     greeks,
     // Decision

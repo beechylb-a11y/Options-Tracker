@@ -438,6 +438,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
           </div>
+          {r.targetLabel && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
               <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>

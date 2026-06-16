@@ -120,6 +120,25 @@ export function calc45DTE(inputs) {
 
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
 
+  // ── Target credit/debit for 45DTE strategies ──
+  let targetCredit = null;
+  let targetLabel = '';
+  // 45DTE typically uses 1-SD strike selection, wider spreads
+  const typicalWidth45 = price > 0 && vix > 0 ? Math.round(price * (vix/100) * Math.sqrt(45/365)) : 0;
+  if (typicalWidth45 > 0 && legStrat) {
+    if (legStrat.includes('Iron Condor') || legStrat.includes('Strangle')) {
+      const cr = Math.round(typicalWidth45 * 0.33 * 100) / 100;
+      targetLabel = `Target credit: ~$${cr.toFixed(2)} (1/3 of ${typicalWidth45}pt width at 1-SD)`;
+    } else if (legStrat.includes('Iron butterfly')) {
+      const lo = typicalWidth45 * 0.25, hi = typicalWidth45 * 0.30;
+      targetLabel = `Target credit: $${lo.toFixed(2)}\u2013$${hi.toFixed(2)} (25-30% of ${typicalWidth45}pt)`;
+    } else if (legStrat.includes('Put spread') || legStrat.includes('Call spread')) {
+      targetLabel = `Target credit: 1/3 of spread width`;
+    } else if (legStrat.includes('Calendar') || legStrat.includes('Diagonal')) {
+      targetLabel = `Target debit: minimize — aim for low net cost`;
+    }
+  }
+
   // Kelly
   const halfRisk = risk/2;
   const wlRatio = halfRisk>0?win/halfRisk:0;
@@ -173,6 +192,7 @@ export function calc45DTE(inputs) {
     legs, strikeLine,
     setupScore, setup, criteria,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    targetCredit, targetLabel,
     fullC, halfC, contracts, maxRisk, tEff,
     greeks, sdRange, deltaGuide: DELTA_GUIDE,
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
