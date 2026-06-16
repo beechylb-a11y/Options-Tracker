@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, BarChart3, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, BarChart3, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn, FileBarChart } from 'lucide-react';
 import { api } from './utils/api';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
@@ -7,6 +7,7 @@ import DecisionEngine from './pages/DecisionEngine';
 import Journal from './pages/Journal';
 import Summary from './pages/Summary';
 import Analytics from './pages/Analytics';
+import Reports from './pages/Reports';
 import PortfolioRisk from './pages/PortfolioRisk';
 import Knowledgebase from './pages/Knowledgebase';
 import Documents from './pages/Documents';
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'journal', label: 'Journal', icon: BookOpen },
   { id: 'summary', label: 'Summary', icon: BarChart3 },
   { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+  { id: 'reports', label: 'Reports', icon: FileBarChart },
   { id: 'risk', label: 'Portfolio Risk', icon: Shield },
   { id: 'knowledge', label: 'Knowledgebase', icon: Library },
   { id: 'documents', label: 'Documents', icon: FolderOpen },
@@ -131,6 +133,7 @@ export default function App() {
           {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} />}
           {tab === 'summary' && <Summary authenticated={authenticated} account={selectedAccount} />}
           {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} />}
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}
