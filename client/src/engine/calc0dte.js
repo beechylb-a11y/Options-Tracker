@@ -123,7 +123,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
 
 export function calc0DTE(inputs) {
   const { price, high, low, vwap5, vwap5_30, vwap15, vwap15_30, atr, em, atr5, atr2h, gamStrike,
-    vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop,
+    vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop, netCreditDebit,
     theta, delta, gamma, hours, underlying,
     // Overnight inputs
     esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM } = inputs;
@@ -496,68 +496,63 @@ export function calc0DTE(inputs) {
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
 
   // ═══════════════════════════════════════
-  //  PAYOFF & EV CALCULATIONS
+  //  PAYOFF DIAGRAM — Generic engine
+  //  Uses net credit/debit + leg intrinsic values
   // ═══════════════════════════════════════
   let payoff = null;
+  const ncd = netCreditDebit; // per-share net credit (positive) or debit (negative)
   if (price > 0 && legs.length >= 2) {
     const strikes = legs.map(l => l.strike);
     const minStrike = Math.min(...strikes);
     const maxStrike = Math.max(...strikes);
     const range = maxStrike - minStrike || 10;
-    const plotMin = Math.round(minStrike - range * 0.8);
-    const plotMax = Math.round(maxStrike + range * 0.8);
+    const plotMin = Math.round(minStrike - range * 1.0);
+    const plotMax = Math.round(maxStrike + range * 1.0);
     const step = roundTo || 1;
 
-    // For spreads with dual EM suggestions (4 legs = 2 sets), use first 2 legs
+    // For spreads with dual EM suggestions (4 legs with VIX labels), use first pair
     const payoffLegs = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
 
-    // Build payoff curve: intrinsic value at expiry
-    // We calculate raw intrinsic, then calibrate so the curve matches
-    // the user's win (max profit) and risk (max loss) amounts
-    const rawPoints = [];
+    // Parse legs into structured format
+    const parsedLegs = payoffLegs.map(l => {
+      const label = l.label.toLowerCase();
+      return {
+        strike: l.strike,
+        type: label.includes('call') ? 'call' : 'put',
+        side: (label.includes('short') || label.includes('sell')) ? 'sell' : 'buy',
+        qty: label.includes('x2') ? 2 : 1
+      };
+    });
+
+    // Calculate payoff at each price point
+    // P&L = sum of (intrinsic × side × qty) + net credit/debit
+    // For SELL: you receive premium, lose on intrinsic
+    // For BUY: you pay premium, gain on intrinsic
+    const multiplier = 100; // options multiplier
+
+    const points = [];
     for (let px = plotMin; px <= plotMax; px += step) {
       let pnl = 0;
-      payoffLegs.forEach(l => {
-        const isShort = l.label.toLowerCase().includes('short') || l.label.toLowerCase().includes('sell');
-        const isCall = l.label.toLowerCase().includes('call');
-        const isPut = l.label.toLowerCase().includes('put');
-        const qty = l.label.includes('x2') ? 2 : 1;
-        const sign = isShort ? -1 : 1;
+      parsedLegs.forEach(leg => {
         let intrinsic = 0;
-        if (isCall) intrinsic = Math.max(0, px - l.strike);
-        else if (isPut) intrinsic = Math.max(0, l.strike - px);
-        pnl += sign * qty * intrinsic;
+        if (leg.type === 'call') intrinsic = Math.max(0, px - leg.strike);
+        else intrinsic = Math.max(0, leg.strike - px);
+        // Sell = short = negative intrinsic (you pay out), Buy = long = positive intrinsic (you receive)
+        const sign = leg.side === 'sell' ? -1 : 1;
+        pnl += sign * leg.qty * intrinsic;
       });
-      rawPoints.push({ price: px, pnl });
+      // Add net credit/debit (per share)
+      // ncd > 0 means credit received (shifts curve up)
+      // ncd < 0 means debit paid (shifts curve down)
+      const totalPnl = (pnl + ncd) * multiplier;
+      points.push({ price: px, pnl: totalPnl });
     }
-
-    // Find raw max and min to calibrate against win/risk
-    const rawPnls = rawPoints.map(p => p.pnl);
-    const rawMax = Math.max(...rawPnls);
-    const rawMin = Math.min(...rawPnls);
-
-    // Calibrate: shift the curve so that
-    //   max profit = win × 100 (in dollars)
-    //   max loss = -risk × 100 (in dollars)
-    // The shift = difference between raw max and user's win
-    let shift = 0;
-    if (win > 0 && rawMax !== rawMin) {
-      // For credit trades: raw curve has max at some positive value, we shift to match win
-      // For debit trades: raw curve has max at some positive value, we shift to match win
-      // In both cases: shift so rawMax + shift = win (per share)
-      shift = win - rawMax;
-    }
-
-    const points = rawPoints.map(p => ({
-      price: p.price,
-      pnl: (p.pnl + shift) * 100 // convert to dollars
-    }));
 
     const pnls = points.map(p => p.pnl);
     const maxProfit = Math.max(...pnls);
     const maxLossCalc = Math.min(...pnls);
 
-    // Find breakevens
+    // Find breakevens (where P&L crosses zero)
     const breakevens = [];
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
@@ -568,7 +563,7 @@ export function calc0DTE(inputs) {
       }
     }
 
-    // Profit band
+    // Profit band (price range where P&L > 0)
     const profitPrices = points.filter(p => p.pnl > 0).map(p => p.price);
     const profitBandLow = profitPrices.length > 0 ? Math.min(...profitPrices) : 0;
     const profitBandHigh = profitPrices.length > 0 ? Math.max(...profitPrices) : 0;
@@ -577,7 +572,8 @@ export function calc0DTE(inputs) {
     payoff = {
       points, maxProfit, maxLoss: maxLossCalc, breakevens,
       profitBandLow, profitBandHigh, profitBandWidth,
-      plotMin, plotMax, shift
+      plotMin, plotMax, ncd,
+      legs: parsedLegs
     };
   }
 

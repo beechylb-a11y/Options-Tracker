@@ -20,7 +20,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
-    win:'', risk:'', pop:'', hours:'6.5',
+    win:'', risk:'', pop:'', hours:'6.5', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
@@ -58,7 +58,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [i45, setI45] = useState({
     underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
-    outlook:'neutral', pop:'', win:'', risk:'',
+    outlook:'neutral', pop:'', win:'', risk:'', netCreditDebit:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
     bpr:'', theta:'', vega:'', delta:''
   });
@@ -89,6 +89,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'), esEM:fv(i0,'esEM'),
           bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
           risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
+        netCreditDebit:fv(i0,'netCreditDebit'),
           maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
           underlying:i0.underlying,
@@ -423,15 +424,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             </>
           )}
 
-          {/* Sizing — simplified */}
+          {/* Sizing */}
           <SectionLabel>Trade sizing</SectionLabel>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 gap-2.5">
+            <Inp label="Net credit/debit ($)" value={is0?i0.netCreditDebit:i45.netCreditDebit} onChange={v=>is0?set0('netCreditDebit',v):set45('netCreditDebit',v)}/>
+            <Inp label="POP (%)" value={is0?i0.pop:i45.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}/>
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
-            <Inp label="POP (%)" value={is0?i0.pop:i45.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}/>
           </div>
           {is0 && (
-            <div className="grid grid-cols-3 gap-2.5 mt-2">
+            <div className="grid grid-cols-2 gap-2.5 mt-2">
               <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>
             </div>
           )}
