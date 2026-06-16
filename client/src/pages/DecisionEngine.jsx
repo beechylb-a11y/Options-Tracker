@@ -142,6 +142,12 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const openTickets = decisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
   const closedTickets = decisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
 
+  const [prefillData, setPrefillData] = useState(null);
+  function handleSelectFromScan(underlying, data) {
+    setPrefillData({ underlying, ...data });
+    setPanel(null);
+  }
+
   return (
     <div className="fade-in">
       {/* Header */}
@@ -492,9 +498,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       )}
 
       {/* COMPARISON PANEL */}
-      {/* Multi-scan panel */}
       {panel === 'multiscan' && (
-        <MultiScanPanel mode={mode} />
+        <MultiScanPanel mode={mode} onSelect={handleSelectFromScan} />
       )}
 
       {panel === 'compare' && (
@@ -568,7 +573,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
       {/* Native Decision Engine */}
       <EnginePanel mode={mode} onLogTrade={handleEngineLog}
-        accountConfig={accounts?.find(a => a.id === account) || {}} />
+        accountConfig={accounts?.find(a => a.id === account) || {}}
+        prefillData={prefillData} onPrefillConsumed={() => setPrefillData(null)} />
     </div>
   );
 }
@@ -582,7 +588,7 @@ function Row({ label, value }) {
   );
 }
 
-function MultiScanPanel({ mode }) {
+function MultiScanPanel({ mode, onSelect }) {
   const is0 = mode === '0dte';
   const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'QQQ']);
   const [scanning, setScanning] = useState(false);
@@ -845,6 +851,13 @@ function MultiScanPanel({ mode }) {
                   const d = r.result?.decision || '--';
                   const col = d === 'Trade' ? '#3fb950' : d === 'Trade with caution' ? '#d29922' : '#f85149';
                   return <span style={{color:col,fontWeight:700}}>{d}</span>;
+                }},
+                { label: '', render: (r, underlying) => {
+                  if (!r.result || !r.data?.price) return null;
+                  return <button onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data); }}
+                    style={{padding:'4px 12px',borderRadius:6,border:'1px solid #238636',background:'transparent',color:'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                    Use →
+                  </button>;
                 }},
               ].map((row, ri) => (
                 <tr key={ri} className="border-t border-[#21262d]">

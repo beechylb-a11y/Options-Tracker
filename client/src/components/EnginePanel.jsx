@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST } from '../engine/data';
@@ -6,7 +6,7 @@ import { UNDERLYING_LIST } from '../engine/data';
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillData, onPrefillConsumed }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   const defBankroll = acfg.bankroll || 3000;
@@ -24,6 +24,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
     theta:'', delta:'', gamma:'', gamStrike:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
+
+  // Apply prefillData from multi-scan
+  useEffect(() => {
+    if (!prefillData || !is0) return;
+    setI0(prev => ({
+      ...prev,
+      underlying: prefillData.underlying || prev.underlying,
+      price: prefillData.price || prev.price,
+      high: prefillData.high || prev.high,
+      low: prefillData.low || prev.low,
+      vwap5: prefillData.vwap5 || prev.vwap5,
+      vwap5_30: prefillData.vwap5_30 || prev.vwap5_30,
+      vwap15: prefillData.vwap15 || prev.vwap15,
+      vwap15_30: prefillData.vwap15_30 || prev.vwap15_30,
+      em: prefillData.em || prev.em,
+      atr: prefillData.atr || prev.atr,
+      atr5: prefillData.atr5 || prev.atr5,
+      atr2h: prefillData.atr2h || prev.atr2h,
+      vix: prefillData.vix || prev.vix,
+      vix1d: prefillData.vix1d || prev.vix1d,
+      esOvernightHigh: prefillData.esOvernightHigh || prev.esOvernightHigh,
+      esOvernightLow: prefillData.esOvernightLow || prev.esOvernightLow,
+      esClose: prefillData.esClose || prev.esClose,
+      priorDayClose: prefillData.priorDayClose || prev.priorDayClose,
+      cashOpen: prefillData.cashOpen || prev.cashOpen,
+      esEM: prefillData.esEM || prev.esEM,
+    }));
+    setOverrideStrat(null);
+    if (onPrefillConsumed) onPrefillConsumed();
+  }, [prefillData]);
+
   const [i45, setI45] = useState({
     underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
