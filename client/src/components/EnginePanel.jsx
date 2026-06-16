@@ -301,13 +301,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     <div className="space-y-4">
       {/* Decision Block */}
       <div style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</div>
-          {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
-        </div>
-        <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
-          {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
-        </div>
+        <div style={{display:'flex',gap:20,alignItems:'flex-start'}}>
+          {/* Left: strategy info */}
+          <div style={{flex:'1 1 auto',minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</div>
+              {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+            </div>
+            <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
+              {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
+            </div>
         {r.legs.length > 0 && (
           <div style={{marginTop:10}}>
             {r.legs.length === 4 && r.legs[0]?.label?.includes('VIX') ? (
@@ -351,12 +354,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
-        {/* Mini payoff in decision banner */}
-        {r.payoff && r.payoff.points.length > 0 && (
-          <div style={{marginTop:8,maxWidth:400}}>
-            <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
-          </div>
-        )}
         {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
@@ -364,6 +361,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         {isOverride && (
           <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
         )}
+          </div>
+          {/* Right: mini payoff diagram */}
+          {r.payoff && r.payoff.points.length > 0 && (
+            <div style={{flex:'0 0 280px',minWidth:240}}>
+              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -480,43 +485,43 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             })}
           </div>
 
-          {/* Strategy ratings + Payoff side by side */}
-          <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
-            <div className="card" style={{flex:'1 1 50%',minWidth:0}}>
-              <div className="flex items-center justify-between mb-1">
-                <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
-                {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
-              </div>
-              <div className="space-y-0.5">
-                {r.ratings.map((s,i) => {
-                  const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
-                  const clickable = s.rating !== 'NO TRADE';
-                  const isSelected = overrideStrat === s.name;
-                  return (<div key={i}
-                    onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
-                    className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
-                    <span className="text-sm text-white">{s.name}</span>
-                    <div className="flex items-center gap-2">
-                      {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
-                      <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
-                    </div>
-                  </div>);
-                })}
+          {/* Strategy ratings */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-1">
+              <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
+              {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
+            </div>
+            <div className="space-y-0.5">
+              {r.ratings.map((s,i) => {
+                const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
+                const clickable = s.rating !== 'NO TRADE';
+                const isSelected = overrideStrat === s.name;
+                return (<div key={i}
+                  onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
+                  className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
+                  <span className="text-sm text-white">{s.name}</span>
+                  <div className="flex items-center gap-2">
+                    {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
+                    <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
+                  </div>
+                </div>);
+              })}
+            </div>
+          </div>
+
+          {/* Payoff diagram — full width */}
+          {r.payoff && r.payoff.points.length > 0 && (
+            <div className="card">
+              <SectionLabel white>Payoff at expiry</SectionLabel>
+              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
+              <div className="grid grid-cols-2 gap-1.5 mt-3">
+                <KV label="Max profit" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
+                <KV label="Max loss" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
+                <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
+                <KV label="Profit band" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
               </div>
             </div>
-            {r.payoff && r.payoff.points.length > 0 && (
-              <div className="card" style={{flex:'1 1 50%',minWidth:0}}>
-                <SectionLabel white>Payoff at expiry</SectionLabel>
-                <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
-                <div className="grid grid-cols-2 gap-1.5 mt-3">
-                  <KV label="Max profit" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
-                  <KV label="Max loss" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
-                  <KV label="Breakeven(s)" value={r.payoff.breakevens?.map(b=>b.toFixed(1)).join(', ')||'--'}/>
-                  <KV label="Profit band" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
@@ -631,9 +636,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
 function PayoffDiagram({ payoff, currentPrice, mini }) {
   if (!payoff || !payoff.points || payoff.points.length < 2) return null;
-  const W = mini ? 380 : 460;
-  const H = mini ? 100 : 210;
-  const PAD = mini ? { top: 6, right: 10, bottom: 18, left: 40 } : { top: 14, right: 15, bottom: 28, left: 55 };
+  const W = mini ? 280 : 460;
+  const H = mini ? 120 : 220;
+  const PAD = mini ? { top: 8, right: 10, bottom: 20, left: 42 } : { top: 14, right: 15, bottom: 28, left: 55 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const pts = payoff.points;
@@ -647,7 +652,7 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   const x = p => PAD.left + (p - minP) / (maxP - minP) * cW;
   const y = pnl => PAD.top + cH - ((pnl - minPnl) / pnlRange) * cH;
   const zeroY = y(0);
-  const fs = mini ? 7 : 10;
+  const fs = mini ? 9 : 11;
 
   // Build green/red fill paths
   let greenPath = '';
@@ -680,12 +685,12 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   return (
     <svg viewBox={'0 0 ' + W + ' ' + H} style={{width:'100%',height:'auto',overflow:'visible'}}>
       {/* Zero line */}
-      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#484f58" strokeWidth="0.5" strokeDasharray="3,3"/>
+      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="3,3"/>
       {/* Fill areas */}
-      <path d={fillAbove} fill="#3fb950" fillOpacity="0.15" />
-      <path d={fillBelow} fill="#f85149" fillOpacity="0.12" />
+      <path d={fillAbove} fill="#3fb950" fillOpacity="0.20" />
+      <path d={fillBelow} fill="#f85149" fillOpacity="0.15" />
       {/* P&L line */}
-      <path d={linePath} fill="none" stroke="#c9d1d9" strokeWidth={mini ? 1.5 : 2} strokeLinejoin="round" />
+      <path d={linePath} fill="none" stroke="#e6edf3" strokeWidth={mini ? 2 : 2.5} strokeLinejoin="round" />
       {/* Current price line */}
       {currentPrice > 0 && currentPrice >= minP && currentPrice <= maxP && (
         <>
@@ -711,11 +716,11 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
         return <text x={x(minPt.price)} y={y(minPt.pnl)+(mini?8:10)} textAnchor="middle" fill="#f85149" fontSize={fs} fontWeight="600">{'$' + minPnl.toFixed(0)}</text>;
       })()}
       {/* Axes */}
-      <text x={PAD.left-3} y={zeroY+3} textAnchor="end" fill="#484f58" fontSize={fs}>$0</text>
-      {!mini && maxPnl > 0 && <text x={PAD.left-3} y={y(maxPnl)+3} textAnchor="end" fill="#484f58" fontSize={fs}>${maxPnl.toFixed(0)}</text>}
-      {!mini && minPnl < 0 && <text x={PAD.left-3} y={y(minPnl)+3} textAnchor="end" fill="#484f58" fontSize={fs}>${minPnl.toFixed(0)}</text>}
+      <text x={PAD.left-3} y={zeroY+3} textAnchor="end" fill="#8b949e" fontSize={fs}>$0</text>
+      {!mini && maxPnl > 0 && <text x={PAD.left-3} y={y(maxPnl)+3} textAnchor="end" fill="#8b949e" fontSize={fs}>${maxPnl.toFixed(0)}</text>}
+      {!mini && minPnl < 0 && <text x={PAD.left-3} y={y(minPnl)+3} textAnchor="end" fill="#8b949e" fontSize={fs}>${minPnl.toFixed(0)}</text>}
       {priceTicks.map((t, i) => (
-        <text key={i} x={t.x} y={H-(mini?4:5)} textAnchor="middle" fill="#484f58" fontSize={fs}>{t.label}</text>
+        <text key={i} x={t.x} y={H-(mini?4:5)} textAnchor="middle" fill="#8b949e" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
   );
