@@ -279,7 +279,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
               const url = localStorage.getItem('bridgeUrl');
               if (!url) return;
               try {
-                const r = await fetch(url + '/api/health');
+                const r = await fetch(url + '/api/health', { headers: { 'ngrok-skip-browser-warning': '1' } });
                 const d = await r.json();
                 alert(d.ok ? 'Bridge connected! TWS: ' + (d.connected ? 'connected' : 'disconnected') : 'Bridge error');
               } catch (e) { alert('Cannot reach bridge: ' + e.message); }

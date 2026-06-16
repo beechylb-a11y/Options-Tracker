@@ -116,7 +116,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig }) {
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
       if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setAutoFilling(false); return; }
       const underlying = is0 ? i0.underlying : i45.underlying;
-      const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying);
+      const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
       if (is0) {
