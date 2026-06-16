@@ -8,7 +8,21 @@ import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'ngrok-skip-browser-warning']
+}));
+
+// Handle preflight explicitly
+app.options('*', (req, res) => {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, ngrok-skip-browser-warning'
+  });
+  res.sendStatus(204);
+});
 app.use(express.json());
 
 const PORT = process.env.BRIDGE_PORT || 3333;
@@ -136,9 +150,9 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 // ── Contract definitions ──
 const contracts = {
   SPX: { symbol: 'SPX', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
-  SPY: { symbol: 'SPY', secType: SecType.STK, exchange: 'SMART', currency: 'USD' },
-  QQQ: { symbol: 'QQQ', secType: SecType.STK, exchange: 'SMART', currency: 'USD' },
-  IWM: { symbol: 'IWM', secType: SecType.STK, exchange: 'SMART', currency: 'USD' },
+  SPY: { symbol: 'SPY', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
+  QQQ: { symbol: 'QQQ', secType: SecType.STK, exchange: 'SMART', primaryExch: 'NASDAQ', currency: 'USD' },
+  IWM: { symbol: 'IWM', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
   VIX: { symbol: 'VIX', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   VIX1D: { symbol: 'VIX1D', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   ES: { symbol: 'ES', secType: SecType.FUT, exchange: 'CME', currency: 'USD', lastTradeDateOrContractMonth: '' },
@@ -177,12 +191,15 @@ function getESContract() {
 
 // ── Calculate ATR from bars ──
 function calcATR(bars, period) {
-  if (bars.length < 2) return 0;
+  if (!bars || bars.length < 2) return 0;
   const trs = [];
   for (let i = 1; i < bars.length; i++) {
     const h = bars[i].high, l = bars[i].low, pc = bars[i - 1].close;
-    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    if (h > 0 && l > 0 && pc > 0) {
+      trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
   }
+  if (trs.length === 0) return 0;
   const n = Math.min(period, trs.length);
   return trs.slice(-n).reduce((s, v) => s + v, 0) / n;
 }
@@ -241,10 +258,12 @@ app.get('/api/market-data', async (req, res) => {
     const esEM = esClose > 0 && vix > 0 ? Math.round(esClose * (vix / 100) / SQRT252 * 10) / 10 : 0;
 
     // 3. Get historical bars for ATR calculations
+    // For SPX (index), use SPY for historical bars (SPX has no trade data)
+    const histContract = (underlying === 'SPX') ? contracts.SPY : mainContract;
     const [bars1D, bars5m, bars2h] = await Promise.all([
-      getHistoricalBars(mainContract, '20 D', BarSizeSetting.DAYS_ONE).catch(() => []),
-      getHistoricalBars(mainContract, '1 D', BarSizeSetting.MINUTES_FIVE).catch(() => []),
-      getHistoricalBars(mainContract, '5 D', BarSizeSetting.HOURS_TWO).catch(() => [])
+      getHistoricalBars(histContract, '20 D', BarSizeSetting.DAYS_ONE).catch(e => { console.log('[BRIDGE] bars1D error:', e.message); return []; }),
+      getHistoricalBars(histContract, '1 D', BarSizeSetting.MINUTES_FIVE).catch(e => { console.log('[BRIDGE] bars5m error:', e.message); return []; }),
+      getHistoricalBars(histContract, '5 D', BarSizeSetting.HOURS_TWO).catch(e => { console.log('[BRIDGE] bars2h error:', e.message); return []; })
     ]);
 
     const atr1d = calcATR(bars1D, 14);

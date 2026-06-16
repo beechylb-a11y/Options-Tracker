@@ -630,43 +630,13 @@ function MultiScanPanel({ mode, onSelect }) {
     }));
   }
 
-  function buildInputs(underlying) {
-    const m = manualData[underlying] || {};
-    const scaleV = (v) => {
-      const p = parseFloat(m.price) || 0;
-      if (underlying === 'SPX' && p > 1000 && v > 0 && v < p * 0.3) return v * 10;
-      return v;
-    };
-    return {
-      price: parseFloat(m.price) || 0,
-      high: parseFloat(m.high) || 0,
-      low: parseFloat(m.low) || 0,
-      cashOpen: parseFloat(m.cashOpen) || 0,
-      em: parseFloat(m.em) || 0,
-      atr: parseFloat(m.atr) || 0,
-      atr5: parseFloat(m.atr5) || 0,
-      atr2h: parseFloat(m.atr2h) || 0,
-      vix: parseFloat(m.vix) || 0,
-      vix1d: parseFloat(m.vix1d) || 0,
-      vwap5: scaleV(parseFloat(m.vwap5) || 0),
-      vwap5_30: scaleV(parseFloat(m.vwap5_30) || 0),
-      vwap15: scaleV(parseFloat(m.vwap15) || 0),
-      vwap15_30: scaleV(parseFloat(m.vwap15_30) || 0),
-      esClose: parseFloat(m.esClose) || 0,
-      priorDayClose: parseFloat(m.priorDayClose) || 0,
-      esOvernightHigh: parseFloat(m.esOvernightHigh) || 0,
-      esOvernightLow: parseFloat(m.esOvernightLow) || 0,
-      esEM: parseFloat(m.esEM) || 0,
-    };
-  }
-
   async function handleScan() {
     setScanning(true);
     setError('');
     const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+    let mergedData = { ...manualData };
 
     try {
-      // Fetch from bridge if available
       if (bridgeUrl) {
         const fetches = underlyings.filter(u => u).map(underlying =>
           fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, {
@@ -675,35 +645,58 @@ function MultiScanPanel({ mode, onSelect }) {
           .catch(() => ({ underlying, data: null }))
         );
         const marketData = await Promise.all(fetches);
-        // Merge bridge data into manualData (bridge fills, manual overrides)
         marketData.forEach(({ underlying, data }) => {
-          if (data && data.price > 0) {
-            const existing = manualData[underlying] || {};
+          if (data && !data.error) {
+            const existing = mergedData[underlying] || {};
             const merged = {};
             inputFields.forEach(f => {
-              // Manual entry takes precedence over bridge data
-              merged[f.key] = existing[f.key] || (data[f.key] != null ? String(data[f.key]) : '');
+              merged[f.key] = existing[f.key] || (data[f.key] != null && data[f.key] !== 0 ? String(data[f.key]) : existing[f.key] || '');
             });
-            setManualData(prev => ({ ...prev, [underlying]: merged }));
+            mergedData[underlying] = merged;
           }
         });
+        setManualData(mergedData);
       }
-
-      // Small delay to let state update
-      await new Promise(r => setTimeout(r, 100));
     } catch (e) {
       console.error('Bridge fetch error:', e);
     }
 
-    // Run engine for each underlying using current manualData
-    runEngine();
+    // Run engine with the merged data directly (not from state)
+    runEngine(mergedData);
     setScanning(false);
   }
 
-  function runEngine() {
+  function runEngine(dataOverride) {
+    const dataSource = dataOverride || manualData;
     try {
       const engineResults = underlyings.filter(u => u).map(underlying => {
-        const inp = buildInputs(underlying);
+        const m = dataSource[underlying] || {};
+        const scaleV = (v) => {
+          const p = parseFloat(m.price) || 0;
+          if (underlying === 'SPX' && p > 1000 && v > 0 && v < p * 0.3) return v * 10;
+          return v;
+        };
+        const inp = {
+          price: parseFloat(m.price) || 0,
+          high: parseFloat(m.high) || 0,
+          low: parseFloat(m.low) || 0,
+          cashOpen: parseFloat(m.cashOpen) || 0,
+          em: parseFloat(m.em) || 0,
+          atr: parseFloat(m.atr) || 0,
+          atr5: parseFloat(m.atr5) || 0,
+          atr2h: parseFloat(m.atr2h) || 0,
+          vix: parseFloat(m.vix) || 0,
+          vix1d: parseFloat(m.vix1d) || 0,
+          vwap5: scaleV(parseFloat(m.vwap5) || 0),
+          vwap5_30: scaleV(parseFloat(m.vwap5_30) || 0),
+          vwap15: scaleV(parseFloat(m.vwap15) || 0),
+          vwap15_30: scaleV(parseFloat(m.vwap15_30) || 0),
+          esClose: parseFloat(m.esClose) || 0,
+          priorDayClose: parseFloat(m.priorDayClose) || 0,
+          esOvernightHigh: parseFloat(m.esOvernightHigh) || 0,
+          esOvernightLow: parseFloat(m.esOvernightLow) || 0,
+          esEM: parseFloat(m.esEM) || 0,
+        };
         if (!inp.price) return { underlying, error: 'No price', result: null, data: inp };
         try {
           const result = is0 ? calc0DTE({
@@ -731,7 +724,7 @@ function MultiScanPanel({ mode, onSelect }) {
   }
 
   // Re-run engine when manual data changes
-  function handleRecalc() { runEngine(); }
+  function handleRecalc() { runEngine(manualData); }
 
   return (
     <div className="card mb-4 fade-in">
