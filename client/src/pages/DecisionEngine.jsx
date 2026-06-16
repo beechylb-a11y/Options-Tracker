@@ -171,6 +171,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <GitCompare size={14} /> Compare
           </button>
+          <button onClick={() => setPanel(panel === 'multiscan' ? null : 'multiscan')}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'multiscan' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <Zap size={14} /> Multi-scan
+          </button>
         </div>
       </div>
 
@@ -486,6 +490,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       )}
 
       {/* COMPARISON PANEL */}
+      {/* Multi-scan panel */}
+      {panel === 'multiscan' && (
+        <MultiScanPanel mode={mode} />
+      )}
+
       {panel === 'compare' && (
         <div className="card mb-4 fade-in" style={{ maxHeight: '500px', overflowY: 'auto' }}>
           <div className="flex items-center justify-between mb-4">
@@ -567,6 +576,231 @@ function Row({ label, value }) {
     <div className="flex justify-between">
       <span className="text-text-muted text-xs">{label}</span>
       <span className="text-text text-xs font-medium text-right max-w-[180px] truncate">{value || '--'}</span>
+    </div>
+  );
+}
+
+function MultiScanPanel({ mode }) {
+  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'QQQ']);
+  const [scanning, setScanning] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState('');
+
+  async function handleScan() {
+    setScanning(true);
+    setError('');
+    const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+    if (!bridgeUrl) { setError('Set IBKR Bridge URL in Settings first'); setScanning(false); return; }
+
+    try {
+      // Fetch market data for all underlyings in parallel
+      const fetches = underlyings.filter(u => u).map(underlying =>
+        fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, {
+          headers: { 'ngrok-skip-browser-warning': '1' }
+        }).then(r => r.json()).then(data => ({ underlying, data }))
+        .catch(e => ({ underlying, data: null, error: e.message }))
+      );
+      const marketData = await Promise.all(fetches);
+
+      // Run calc engine for each
+      const { calc0DTE } = await import('../engine/calc0dte.js');
+      const { calc45DTE } = await import('../engine/calc45dte.js');
+
+      const engineResults = marketData.map(({ underlying, data }) => {
+        if (!data || data.error || !data.price) {
+          return { underlying, error: data?.error || 'No data', result: null };
+        }
+        try {
+          const scaleV = (v) => {
+            if (underlying === 'SPX' && data.price > 1000 && v > 0 && v < data.price * 0.3) return v * 10;
+            return v;
+          };
+          const result = mode === '0dte' ? calc0DTE({
+            price: data.price, high: data.high, low: data.low,
+            vwap5: scaleV(data.vwap5), vwap5_30: scaleV(data.vwap5_30),
+            vwap15: scaleV(data.vwap15), vwap15_30: scaleV(data.vwap15_30),
+            atr: data.atr || 0, em: data.em || 0, atr5: data.atr5 || 0, atr2h: data.atr2h || 0,
+            gamStrike: 0, vix: data.vix || 0, vix1d: data.vix1d || 0,
+            esOvernightHigh: data.esOvernightHigh || 0, esOvernightLow: data.esOvernightLow || 0,
+            esClose: data.esClose || 0, priorDayClose: data.priorDayClose || 0,
+            cashOpen: data.cashOpen || 0, esEM: data.esEM || 0,
+            bankroll: 3000, startBR: 3000, risk: 0, maxLoss: 300, win: 0, maxOpen: 450,
+            pop: 0, theta: 0, delta: 0, gamma: 0, hours: 6.5,
+            underlying, overrideStrategy: null
+          }) : calc45DTE({
+            price: data.price, ivr: 0, iv: 0, hv: 0, vix: data.vix || 0,
+            ivFront: 0, ivBack: 0, skew: 0, dte: 45,
+            pop: 0, win: 0, risk: 0, bankroll: 3000, startBR: 3000,
+            maxLoss: 300, maxOpen: 450, bpr: 0, theta: 0, vega: 0, delta: 0,
+            underlying, termBias: 'contango', outlook: 'neutral', overrideStrategy: null
+          });
+          return { underlying, result, data };
+        } catch (e) {
+          return { underlying, error: e.message, result: null };
+        }
+      });
+
+      // Sort by setup score (best first)
+      engineResults.sort((a, b) => (b.result?.setupScore || 0) - (a.result?.setupScore || 0));
+      setResults(engineResults);
+    } catch (e) {
+      setError('Scan failed: ' + e.message);
+    }
+    setScanning(false);
+  }
+
+  const pnlColor = v => v > 0 ? '#3fb950' : v < 0 ? '#f85149' : '#c9d1d9';
+
+  return (
+    <div className="card mb-4 fade-in">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-medium text-white">Multi-Underlying Scan</h3>
+          <p className="text-xs text-text-muted mt-0.5">Compare setups across underlyings — pick the best trade of the day</p>
+        </div>
+        <button onClick={handleScan} disabled={scanning}
+          className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
+          <Zap size={14} className={scanning ? 'animate-spin' : ''} />
+          {scanning ? 'Scanning...' : 'Scan all'}
+        </button>
+      </div>
+
+      {/* Underlying selector */}
+      <div className="flex gap-2 mb-4">
+        {underlyings.map((u, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <select value={u} onChange={e => {
+              const next = [...underlyings];
+              next[i] = e.target.value;
+              setUnderlyings(next);
+            }} className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
+              {['SPX','SPY','QQQ','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            {underlyings.length > 2 && (
+              <button onClick={() => setUnderlyings(underlyings.filter((_, j) => j !== i))}
+                className="text-[#484f58] hover:text-red text-xs">×</button>
+            )}
+          </div>
+        ))}
+        {underlyings.length < 5 && (
+          <button onClick={() => setUnderlyings([...underlyings, 'SPY'])}
+            className="px-2 py-1.5 border border-dashed border-[#30363d] rounded text-xs text-[#484f58] hover:text-white hover:border-[#484f58]">+</button>
+        )}
+      </div>
+
+      {error && <div className="text-sm text-red mb-3">{error}</div>}
+
+      {/* Results comparison table */}
+      {results && results.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[10px] text-[#8b949e] uppercase tracking-wider">
+                <th className="text-left py-2 px-2"></th>
+                {results.map((r, i) => (
+                  <th key={i} className="text-center py-2 px-3" style={{minWidth:140}}>
+                    <span className="text-white text-sm font-bold">{r.underlying}</span>
+                    {i === 0 && r.result && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-green/10 text-green font-semibold">BEST</span>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Strategy</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center text-white font-medium text-xs">
+                    {r.result?.legStrat || r.result?.bestStrat || r.error || '--'}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Setup score</td>
+                {results.map((r, i) => {
+                  const s = r.result?.setupScore || 0;
+                  const col = s >= 85 ? '#3fb950' : s >= 70 ? '#2f81f7' : s >= 50 ? '#d29922' : '#f85149';
+                  return <td key={i} className="py-2 px-3 text-center mono font-bold" style={{color:col}}>{s}/100 <span className="text-[10px] font-normal">{r.result?.setup||''}</span></td>;
+                })}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Direction</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center text-xs" style={{color: r.result?.dirScore > 0 ? '#3fb950' : r.result?.dirScore < 0 ? '#f85149' : '#c9d1d9'}}>
+                    {r.result?.dirLabel || '--'}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Move consumed</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center mono text-xs text-white">
+                    {r.result?.moveConsumed !== undefined ? (r.result.moveConsumed * 100).toFixed(0) + '%' : '--'}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Regime</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center text-[11px] text-[#c9d1d9]">{r.result?.regime || '--'}</td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Compression</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center mono text-xs text-white">
+                    {r.result?.comp !== null && r.result?.comp !== undefined ? r.result.comp.toFixed(2) : '--'}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Trend</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center text-xs" style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>
+                    {r.result?.trendPattern || '--'}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">VWAP slope</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center text-xs" style={{color: r.result?.slope5?.direction === 'rising' ? '#3fb950' : r.result?.slope5?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>
+                    {r.result?.slope5?.strength || '--'} {r.result?.slope5?.direction !== 'unknown' ? '(' + (r.result?.slope5?.direction || '') + ')' : ''}
+                    {r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Price</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center mono text-xs text-white">{r.data?.price || '--'}</td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">VIX</td>
+                {results.map((r, i) => (
+                  <td key={i} className="py-2 px-3 text-center mono text-xs text-white">{r.data?.vix || '--'}</td>
+                ))}
+              </tr>
+              <tr className="border-t border-[#21262d]">
+                <td className="py-2 px-2 text-[#8b949e]">Decision</td>
+                {results.map((r, i) => {
+                  const d = r.result?.decision || '--';
+                  const col = d === 'Trade' ? '#3fb950' : d === 'Trade with caution' ? '#d29922' : '#f85149';
+                  return <td key={i} className="py-2 px-3 text-center text-xs font-bold" style={{color:col}}>{d}</td>;
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!results && !scanning && (
+        <div className="py-8 text-center text-[#484f58] text-sm">
+          Select underlyings and click "Scan all" to compare setups
+        </div>
+      )}
     </div>
   );
 }

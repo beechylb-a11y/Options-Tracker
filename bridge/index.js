@@ -31,6 +31,8 @@ function connectTWS() {
     ib.on(EventName.connected, () => {
       console.log('[BRIDGE] Connected to TWS');
       connected = true;
+      // Request delayed data when real-time not subscribed
+      ib.reqMarketDataType(3); // 3 = delayed-frozen (best available)
       resolve();
     });
 
@@ -58,14 +60,16 @@ function getSnapshot(contract) {
 
     const onTick = (id, field, value) => {
       if (id !== reqId) return;
-      // Field IDs: 1=bid, 2=ask, 4=last, 6=high, 7=low, 9=close, 14=open, 49=halted
-      if (field === 1) data.bid = value;
-      if (field === 2) data.ask = value;
-      if (field === 4) data.last = value;
-      if (field === 6) data.high = value;
-      if (field === 7) data.low = value;
-      if (field === 9) data.prevClose = value;
-      if (field === 14) data.open = value;
+      if (value <= 0) return; // ignore -1 placeholders and zero values
+      // Real-time field IDs: 1=bid, 2=ask, 4=last, 6=high, 7=low, 9=close, 14=open
+      // Delayed field IDs: 66=delayed_bid, 67=delayed_ask, 68=delayed_last, 72=delayed_high, 73=delayed_low, 75=delayed_close, 76=delayed_open
+      if (field === 1 || field === 66) data.bid = value;
+      if (field === 2 || field === 67) data.ask = value;
+      if (field === 4 || field === 68) data.last = value;
+      if (field === 6 || field === 72) data.high = value;
+      if (field === 7 || field === 73) data.low = value;
+      if (field === 9 || field === 75) data.prevClose = value;
+      if (field === 14 || field === 76) data.open = value;
     };
 
     const onTickEnd = (id) => {
@@ -79,7 +83,7 @@ function getSnapshot(contract) {
 
     ib.on(EventName.tickPrice, onTick);
     ib.on(EventName.tickSnapshotEnd, onTickEnd);
-    ib.reqMktData(reqId, contract, '', true, false);
+    ib.reqMktData(reqId, contract, '', false, false);
 
     setTimeout(() => {
       if (!resolved) {
@@ -87,9 +91,10 @@ function getSnapshot(contract) {
         ib.removeListener(EventName.tickPrice, onTick);
         ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
         ib.cancelMktData(reqId);
+        data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
         resolve(data);
       }
-    }, 3000);
+    }, 6000);
   });
 }
 
@@ -143,24 +148,31 @@ const contracts = {
 function getESContract() {
   const now = new Date();
   const month = now.getMonth(); // 0-11
+  const year = now.getFullYear();
   // ES quarterly months: Mar(2), Jun(5), Sep(8), Dec(11)
   const qMonths = [2, 5, 8, 11];
-  let nextQ = qMonths.find(m => m >= month);
-  let year = now.getFullYear();
-  if (nextQ === undefined) { nextQ = 2; year++; }
-  // If we're in expiry month and past 3rd Friday, use next quarter
-  if (nextQ === month) {
+  let nextQ = qMonths.find(m => m > month);
+  if (nextQ === undefined) { nextQ = 2; } // wrap to March next year
+  let contractYear = nextQ <= month ? year + 1 : year;
+  // If we're in the expiry month, check if past 3rd Friday
+  if (qMonths.includes(month)) {
     const thirdFri = new Date(year, month, 1);
     while (thirdFri.getDay() !== 5) thirdFri.setDate(thirdFri.getDate() + 1);
     thirdFri.setDate(thirdFri.getDate() + 14);
-    if (now > thirdFri) {
-      const idx = qMonths.indexOf(nextQ);
-      nextQ = qMonths[(idx + 1) % 4];
-      if (nextQ <= month) year++;
+    if (now <= thirdFri) {
+      nextQ = month;
+      contractYear = year;
     }
   }
-  const ym = year.toString() + String(nextQ + 1).padStart(2, '0');
-  return { ...contracts.ES, lastTradeDateOrContractMonth: ym };
+  const ym = contractYear.toString() + String(nextQ + 1).padStart(2, '0');
+  console.log('[BRIDGE] ES contract month:', ym);
+  return {
+    symbol: 'ES',
+    secType: SecType.FUT,
+    exchange: 'CME',
+    currency: 'USD',
+    lastTradeDateOrContractMonth: ym
+  };
 }
 
 // ── Calculate ATR from bars ──
