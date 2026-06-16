@@ -638,8 +638,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 function PayoffDiagram({ payoff, currentPrice, mini }) {
   if (!payoff || !payoff.points || payoff.points.length < 2) return null;
   const W = mini ? 280 : 460;
-  const H = mini ? 120 : 220;
-  const PAD = mini ? { top: 8, right: 10, bottom: 20, left: 42 } : { top: 14, right: 15, bottom: 28, left: 55 };
+  const H = mini ? 140 : 220;
+  const PAD = mini ? { top: 10, right: 12, bottom: 22, left: 48 } : { top: 14, right: 15, bottom: 28, left: 55 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const pts = payoff.points;
@@ -655,17 +655,13 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   const zeroY = y(0);
   const fs = mini ? 9 : 11;
 
-  // Build green/red fill paths
-  let greenPath = '';
-  let redPath = '';
+  // Build fill paths
   let linePath = '';
-  let prevAbove = null;
   pts.forEach((p, i) => {
     const px = x(p.price), py = y(p.pnl);
     linePath += (i === 0 ? 'M' : 'L') + px + ' ' + py + ' ';
   });
 
-  // Simple fill: area between line and zero
   let fillAbove = 'M' + x(pts[0].price) + ' ' + zeroY + ' ';
   let fillBelow = 'M' + x(pts[0].price) + ' ' + zeroY + ' ';
   pts.forEach(p => {
@@ -676,7 +672,7 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   fillAbove += 'L' + x(pts[pts.length-1].price) + ' ' + zeroY + ' Z';
   fillBelow += 'L' + x(pts[pts.length-1].price) + ' ' + zeroY + ' Z';
 
-  // Price axis labels
+  // Price axis ticks
   const priceTicks = [];
   for (let i = 0; i <= 4; i++) {
     const p = minP + (maxP - minP) * (i / 4);
@@ -686,7 +682,7 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   return (
     <svg viewBox={'0 0 ' + W + ' ' + H} style={{width:'100%',height:'auto',overflow:'visible'}}>
       {/* Zero line */}
-      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="3,3"/>
+      <line x1={PAD.left} y1={zeroY} x2={W-PAD.right} y2={zeroY} stroke="#c9d1d9" strokeWidth="0.5" strokeDasharray="3,3"/>
       {/* Fill areas */}
       <path d={fillAbove} fill="#3fb950" fillOpacity="0.20" />
       <path d={fillBelow} fill="#f85149" fillOpacity="0.15" />
@@ -696,32 +692,23 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
       {currentPrice > 0 && currentPrice >= minP && currentPrice <= maxP && (
         <>
           <line x1={x(currentPrice)} y1={PAD.top} x2={x(currentPrice)} y2={H-PAD.bottom} stroke="#2f81f7" strokeWidth="1" strokeDasharray="3,2"/>
-          <text x={x(currentPrice)} y={PAD.top-1} textAnchor="middle" fill="#2f81f7" fontSize={fs} fontWeight="600">{Math.round(currentPrice)}</text>
+          <text x={x(currentPrice)} y={PAD.top-2} textAnchor="middle" fill="#58a6ff" fontSize={fs} fontWeight="600">{Math.round(currentPrice)}</text>
         </>
       )}
       {/* Breakevens */}
       {payoff.breakevens?.map((be, i) => be >= minP && be <= maxP && (
         <g key={i}>
-          <circle cx={x(be)} cy={zeroY} r={mini ? 2 : 3} fill="#d29922" />
-          {!mini && <text x={x(be)} y={zeroY+10} textAnchor="middle" fill="#d29922" fontSize={fs} fontWeight="600">{be.toFixed(0)}</text>}
+          <circle cx={x(be)} cy={zeroY} r={mini ? 3 : 4} fill="#d29922" />
+          <text x={x(be)} y={zeroY+(mini?12:14)} textAnchor="middle" fill="#f0c040" fontSize={fs} fontWeight="600">{be.toFixed(0)}</text>
         </g>
       ))}
-      {/* Max profit label */}
-      {maxPnl > 0 && (() => {
-        const maxPt = pts.reduce((best, p) => p.pnl > best.pnl ? p : best, pts[0]);
-        return <text x={x(maxPt.price)} y={y(maxPt.pnl)-(mini?2:4)} textAnchor="middle" fill="#3fb950" fontSize={fs} fontWeight="600">{'+$' + maxPnl.toFixed(0)}</text>;
-      })()}
-      {/* Max loss label */}
-      {minPnl < 0 && (() => {
-        const minPt = pts.reduce((worst, p) => p.pnl < worst.pnl ? p : worst, pts[0]);
-        return <text x={x(minPt.price)} y={y(minPt.pnl)+(mini?8:10)} textAnchor="middle" fill="#f85149" fontSize={fs} fontWeight="600">{'$' + minPnl.toFixed(0)}</text>;
-      })()}
-      {/* Axes */}
-      <text x={PAD.left-3} y={zeroY+3} textAnchor="end" fill="#8b949e" fontSize={fs}>$0</text>
-      {!mini && maxPnl > 0 && <text x={PAD.left-3} y={y(maxPnl)+3} textAnchor="end" fill="#8b949e" fontSize={fs}>${maxPnl.toFixed(0)}</text>}
-      {!mini && minPnl < 0 && <text x={PAD.left-3} y={y(minPnl)+3} textAnchor="end" fill="#8b949e" fontSize={fs}>${minPnl.toFixed(0)}</text>}
+      {/* Y-axis labels */}
+      <text x={PAD.left-4} y={zeroY+4} textAnchor="end" fill="#c9d1d9" fontSize={fs}>$0</text>
+      {maxPnl > 0 && <text x={PAD.left-4} y={y(maxPnl)+4} textAnchor="end" fill="#c9d1d9" fontSize={mini ? 8 : fs}>{'$' + maxPnl.toFixed(0)}</text>}
+      {minPnl < 0 && <text x={PAD.left-4} y={y(minPnl)+4} textAnchor="end" fill="#c9d1d9" fontSize={mini ? 8 : fs}>{'$' + minPnl.toFixed(0)}</text>}
+      {/* X-axis price labels */}
       {priceTicks.map((t, i) => (
-        <text key={i} x={t.x} y={H-(mini?4:5)} textAnchor="middle" fill="#8b949e" fontSize={fs}>{t.label}</text>
+        <text key={i} x={t.x} y={H-(mini?5:5)} textAnchor="middle" fill="#c9d1d9" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
   );
