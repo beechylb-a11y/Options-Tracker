@@ -128,17 +128,36 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
   const effectiveStrat = r.legStrat || r.bestStrat;
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
-  const effectiveDecision = r.setup === 'No setup' ? 'No trade'
-    : isOverride ? 'Trade with caution'
-    : r.decision;
-  const effectiveDecisionClass = r.setup === 'No setup' ? 'nogo'
-    : isOverride ? 'warn'
-    : r.decisionClass;
-
-  // Banner color based on Adjusted Kelly $ health
+  // Banner title and color based on Adjusted Kelly health
   const kellyPct = r.adjustedKelly || 0;
-  const kellyHealth = kellyPct >= 0.15 ? 'strong' : kellyPct >= 0.08 ? 'decent' : kellyPct >= 0.03 ? 'marginal' : 'weak';
-  const dcBg = kellyHealth==='strong'?'#0d1f0d':kellyHealth==='decent'?'#141f0d':kellyHealth==='marginal'?'#1f1a0d':'#1f0d0d';
+  const missingInputs = r.missingSize;
+  const hasBlocker = !!r.hardBlocker;
+
+  let bannerTitle, kellyHealth;
+  if (hasBlocker) {
+    bannerTitle = r.hardBlocker;
+    kellyHealth = 'weak';
+  } else if (missingInputs) {
+    bannerTitle = 'Enter sizing';
+    kellyHealth = 'marginal';
+  } else if (kellyPct >= 0.15) {
+    bannerTitle = 'Strong setup';
+    kellyHealth = 'strong';
+  } else if (kellyPct >= 0.08) {
+    bannerTitle = 'Decent setup';
+    kellyHealth = 'decent';
+  } else if (kellyPct >= 0.03) {
+    bannerTitle = 'Marginal setup';
+    kellyHealth = 'marginal';
+  } else {
+    bannerTitle = 'Weak setup';
+    kellyHealth = 'weak';
+  }
+  if (isOverride && kellyHealth !== 'weak') bannerTitle += ' (override)';
+
+  const effectiveDecision = bannerTitle;
+
+  const dcBg = kellyHealth==='strong'?'#0d1f0d':kellyHealth==='decent'?'#0d1a0d':kellyHealth==='marginal'?'#1f1a0d':'#1f0d0d';
   const dcBorder = kellyHealth==='strong'?'#238636':kellyHealth==='decent'?'#4d8c2a':kellyHealth==='marginal'?'#9e6a03':'#da3633';
   const dcColor = kellyHealth==='strong'?'#3fb950':kellyHealth==='decent'?'#7bc74d':kellyHealth==='marginal'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
@@ -356,7 +375,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
-        {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
+        {!r.hardBlocker && kellyHealth !== 'weak' && !missingInputs && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
         <button onClick={handlePrint} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
