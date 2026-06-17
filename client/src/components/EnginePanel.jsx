@@ -128,38 +128,54 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
   const effectiveStrat = r.legStrat || r.bestStrat;
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
-  // Banner title and color based on Adjusted Kelly health
+  // ── Composite banner score ──
+  // Blends setup quality (market conditions) with sizing metrics (trade edge)
+  // Each metric normalized to 0-100, then averaged
   const kellyPct = r.adjustedKelly || 0;
   const missingInputs = r.missingSize;
   const hasBlocker = !!r.hardBlocker;
 
-  let bannerTitle, kellyHealth;
+  // Setup quality: already 0-100
+  const setupNorm = r.setupScore || 0;
+
+  // Sizing metrics normalized to 0-100
+  const kellyNorm = Math.min(100, (kellyPct / 0.25) * 100); // 25% = perfect
+  const volNorm = Math.min(100, (r.volFactor || 0) * 100); // 1.0 = perfect
+  const sharpeNorm = Math.min(100, (r.sharpeFactor || 0) * 100); // 1.0 = perfect
+  const popNorm = Math.min(100, ((r.popMargin || 0) / 2.0) * 100); // 2.0x = perfect
+  const evNorm = r.ev > 0 ? Math.min(100, (r.ev / 200) * 100) : 0; // $200 = perfect
+
+  // Composite: 40% setup quality + 60% sizing (Kelly, Vol, Sharpe, POP, EV)
+  const sizingAvg = missingInputs ? 50 : (kellyNorm + volNorm + sharpeNorm + popNorm + evNorm) / 5;
+  const compositeScore = missingInputs
+    ? setupNorm // only setup quality when no sizing entered
+    : Math.round(setupNorm * 0.40 + sizingAvg * 0.60);
+
+  let bannerTitle, bannerGrade;
   if (hasBlocker) {
     bannerTitle = r.hardBlocker;
-    kellyHealth = 'weak';
-  } else if (missingInputs) {
-    bannerTitle = 'Enter sizing';
-    kellyHealth = 'marginal';
-  } else if (kellyPct >= 0.15) {
+    bannerGrade = 'weak';
+  } else if (compositeScore >= 75) {
     bannerTitle = 'Strong setup';
-    kellyHealth = 'strong';
-  } else if (kellyPct >= 0.08) {
+    bannerGrade = 'strong';
+  } else if (compositeScore >= 55) {
     bannerTitle = 'Decent setup';
-    kellyHealth = 'decent';
-  } else if (kellyPct >= 0.03) {
+    bannerGrade = 'decent';
+  } else if (compositeScore >= 35) {
     bannerTitle = 'Marginal setup';
-    kellyHealth = 'marginal';
+    bannerGrade = 'marginal';
   } else {
     bannerTitle = 'Weak setup';
-    kellyHealth = 'weak';
+    bannerGrade = 'weak';
   }
-  if (isOverride && kellyHealth !== 'weak') bannerTitle += ' (override)';
+  if (missingInputs && !hasBlocker) bannerTitle = 'Enter sizing';
+  if (isOverride && bannerGrade !== 'weak') bannerTitle += ' (override)';
 
   const effectiveDecision = bannerTitle;
 
-  const dcBg = kellyHealth==='strong'?'#0d1f0d':kellyHealth==='decent'?'#0d1a0d':kellyHealth==='marginal'?'#1f1a0d':'#1f0d0d';
-  const dcBorder = kellyHealth==='strong'?'#238636':kellyHealth==='decent'?'#4d8c2a':kellyHealth==='marginal'?'#9e6a03':'#da3633';
-  const dcColor = kellyHealth==='strong'?'#3fb950':kellyHealth==='decent'?'#7bc74d':kellyHealth==='marginal'?'#d29922':'#f85149';
+  const dcBg = bannerGrade==='strong'?'#0d1f0d':bannerGrade==='decent'?'#0d1a0d':bannerGrade==='marginal'?'#1f1a0d':'#1f0d0d';
+  const dcBorder = bannerGrade==='strong'?'#238636':bannerGrade==='decent'?'#4d8c2a':bannerGrade==='marginal'?'#9e6a03':'#da3633';
+  const dcColor = bannerGrade==='strong'?'#3fb950':bannerGrade==='decent'?'#7bc74d':bannerGrade==='marginal'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
@@ -372,10 +388,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           </div>
         )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
-          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0}`}
+          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0} — Score ${compositeScore}/100`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
-        {!r.hardBlocker && kellyHealth !== 'weak' && !missingInputs && (
+        {!r.hardBlocker && bannerGrade !== 'weak' && !missingInputs && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
         <button onClick={handlePrint} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
