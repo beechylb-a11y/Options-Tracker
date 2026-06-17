@@ -527,17 +527,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
             <SectionLabel white>Sizing (Sharpe-adjusted Kelly)</SectionLabel>
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5 mb-3">
               <KV label="Contracts" value={r.contracts}/>
               <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
               <KV label="Raw Kelly" value={`${(r.rawKelly*100).toFixed(1)}%`}/>
               <KV label="Adjusted Kelly" value={`${(r.adjustedKelly*100).toFixed(1)}%`} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
-              <KV label="Vol factor" value={`${r.volFactor?.toFixed(2)||'--'}`} cls={r.volFactor<0.5?'text-amber':r.volFactor<1?'':'text-green'}/>
-              <KV label="Sharpe factor" value={`${r.sharpeFactor?.toFixed(2)||'--'} (${r.sharpeProxy?.toFixed(2)||'--'})`} cls={r.sharpeFactor<0.5?'text-amber':r.sharpeFactor<1?'':'text-green'}/>
-              <KV label="POP margin" value={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'} cls={r.popMargin>=1.5?'text-green':r.popMargin>=1.0?'text-amber':'text-red'}/>
-              <KV label="W/L ratio" value={r.wlRatio?.toFixed(2)||'--'}/>
-              <KV label="EV / trade" value={r.ev?`$${r.ev.toFixed(0)}`:'--'} cls={r.ev>0?'text-green':r.ev<0?'text-red':''}/>
+            </div>
+            <div className="space-y-3">
+              <SpeedTape label="Vol factor" value={r.volFactor||0} min={0} max={1}
+                zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
+                display={r.volFactor?.toFixed(2)||'--'}
+                sublabel={r.volFactor>=1?'VIX <12':r.volFactor>=0.75?'VIX 12-18':r.volFactor>=0.50?'VIX 18-25':'VIX >25'} />
+              <SpeedTape label="Sharpe factor" value={r.sharpeFactor||0} min={0} max={1}
+                zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
+                display={`${r.sharpeFactor?.toFixed(2)||'--'} (${r.sharpeProxy?.toFixed(2)||'--'})`}
+                sublabel={r.sharpeProxy>0.30?'Strong edge':r.sharpeProxy>0.15?'Decent edge':r.sharpeProxy>0.05?'Marginal edge':r.sharpeProxy>0?'Weak edge':'Negative EV'} />
+              <SpeedTape label="POP margin" value={Math.min(r.popMargin||0, 2.5)} min={0} max={2.5}
+                zones={[{to:0.8,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:2.5,color:'#3fb950'}]}
+                display={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'}
+                sublabel={r.popMargin>=1.5?'Strong':r.popMargin>=1.0?'Breakeven+':'Below breakeven'} />
+              <SpeedTape label="EV / trade" value={Math.max(Math.min(r.ev||0, 500), -200)} min={-200} max={500}
+                zones={[{to:-50,color:'#f85149'},{to:0,color:'#d29922'},{to:100,color:'#e3b341'},{to:500,color:'#3fb950'}]}
+                display={r.ev?`$${r.ev.toFixed(0)}`:'--'}
+                sublabel={r.ev>100?'Excellent':r.ev>50?'Good':r.ev>0?'Marginal':'No edge'} />
+              <SpeedTape label="W/L ratio" value={Math.min(r.wlRatio||0, 3)} min={0} max={3}
+                zones={[{to:0.5,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:3.0,color:'#3fb950'}]}
+                display={r.wlRatio?.toFixed(2)||'--'}
+                sublabel={r.wlRatio>=1.5?'Wins dominate':r.wlRatio>=1.0?'Balanced':r.wlRatio>=0.5?'POP compensates':'Check sizing'} />
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 mt-3" style={{paddingTop:8,borderTop:'1px solid #21262d'}}>
               <KV label="BE POP" value={r.bePop?`${(r.bePop*100).toFixed(1)}%`:'--'}/>
+              <KV label="Max risk" value={r.maxRisk?`$${r.maxRisk.toFixed(0)}`:'--'}/>
             </div>
           </div>
 
@@ -549,44 +569,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
-                {/* Theta Edge */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[#c9d1d9]">Theta Edge (Θ ÷ |Δ| × ATR)</span>
-                    <span className={`mono text-sm font-bold ${r.greeks.tEdge>=0.15?'text-green':r.greeks.tEdge>=0.05?'text-amber':'text-red'}`}>{r.greeks.tEdge.toFixed(3)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.tEdgeSignal==='weak'?'bg-red/10 text-red':r.greeks.tEdgeSignal==='marginal'?'bg-amber/10 text-amber':'bg-green/10 text-green'}`}>{r.greeks.tEdgeSignal}</span>
-                    <span className="text-[10px] text-[#8b949e]">{r.greeks.tEdgeAction}</span>
-                  </div>
-                </div>
-
-                {/* Gamma Risk */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[#c9d1d9]">Gamma Risk (Γ × ATR ÷ Θ)</span>
-                    <span className={`mono text-sm font-bold ${r.greeks.gRisk<0.30?'text-green':r.greeks.gRisk<0.70?'text-amber':r.greeks.gRisk<1.20?'text-amber':'text-red'}`}>{r.greeks.gRisk.toFixed(3)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.gRiskSignal==='low'?'bg-green/10 text-green':r.greeks.gRiskSignal==='moderate'?'bg-amber/10 text-amber':'bg-red/10 text-red'}`}>{r.greeks.gRiskSignal}</span>
-                    <span className="text-[10px] text-[#8b949e]">{r.greeks.gRiskAction}</span>
-                  </div>
-                </div>
-
-                {/* Max Tolerable Move */}
-                <div style={{borderTop:'1px solid #21262d', paddingTop:8}}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[#c9d1d9]">Max tolerable move (ΔS_max)</span>
-                    <div className="flex items-center gap-2">
-                      <span className="mono text-sm font-bold text-white">{r.greeks.dsMax.toFixed(1)} pts</span>
-                      <span className={`mono text-xs font-semibold ${r.greeks.dsATR>0.50?'text-green':r.greeks.dsATR>0.25?'text-amber':'text-red'}`}>{(r.greeks.dsATR*100).toFixed(0)}% ATR</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${r.greeks.dsSignal==='strong'||r.greeks.dsSignal==='good'?'bg-green/10 text-green':r.greeks.dsSignal==='marginal'?'bg-amber/10 text-amber':'bg-red/10 text-red'}`}>{r.greeks.dsSignal}</span>
-                    <span className="text-[10px] text-[#8b949e]">{r.greeks.dsAction}</span>
-                  </div>
-                </div>
+                <SpeedTape label="Theta Edge (Θ ÷ |Δ| × ATR)" value={Math.min(r.greeks.tEdge, 0.6)} min={0} max={0.6}
+                  zones={[{to:0.05,color:'#f85149'},{to:0.15,color:'#d29922'},{to:0.30,color:'#e3b341'},{to:0.6,color:'#3fb950'}]}
+                  display={r.greeks.tEdge.toFixed(3)}
+                  sublabel={r.greeks.tEdgeSignal + ' — ' + r.greeks.tEdgeAction} />
+                <SpeedTape label="Gamma Risk (Γ × ATR ÷ Θ)" value={Math.min(r.greeks.gRisk, 1.5)} min={0} max={1.5}
+                  zones={[{to:0.30,color:'#3fb950'},{to:0.70,color:'#e3b341'},{to:1.20,color:'#d29922'},{to:1.5,color:'#f85149'}]}
+                  display={r.greeks.gRisk.toFixed(3)}
+                  sublabel={r.greeks.gRiskSignal + ' — ' + r.greeks.gRiskAction} />
+                <SpeedTape label="Max tolerable move (ΔS_max)" value={Math.min(r.greeks.dsATR * 100, 200)} min={0} max={200}
+                  zones={[{to:25,color:'#f85149'},{to:50,color:'#d29922'},{to:100,color:'#e3b341'},{to:200,color:'#3fb950'}]}
+                  display={`${r.greeks.dsMax.toFixed(1)} pts (${(r.greeks.dsATR*100).toFixed(0)}% ATR)`}
+                  sublabel={r.greeks.dsSignal + ' — ' + r.greeks.dsAction} />
               </div>
             </div>
           )}
@@ -711,6 +705,53 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
         <text key={i} x={t.x} y={H-(mini?5:5)} textAnchor="middle" fill="#c9d1d9" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
+  );
+}
+
+function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
+  const range = max - min;
+  const pct = Math.max(0, Math.min(100, ((value - min) / range) * 100));
+  // Determine color at current position
+  let markerColor = '#8b949e';
+  let cumPct = 0;
+  for (const z of zones) {
+    const zonePct = ((z.to - min) / range) * 100;
+    if (pct <= zonePct) { markerColor = z.color; break; }
+    markerColor = z.color;
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-text-muted">{label}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
+          {sublabel && <span className="text-[10px] text-text-faint">{sublabel}</span>}
+        </div>
+      </div>
+      <div style={{position:'relative',height:8,borderRadius:4,overflow:'hidden',background:'#21262d'}}>
+        {/* Zone gradient */}
+        <div style={{display:'flex',height:'100%',width:'100%'}}>
+          {zones.map((z, i) => {
+            const prevTo = i === 0 ? min : zones[i-1].to;
+            const w = ((z.to - prevTo) / range) * 100;
+            return <div key={i} style={{width:w+'%',height:'100%',background:z.color,opacity:0.25}} />;
+          })}
+        </div>
+        {/* Filled portion */}
+        <div style={{position:'absolute',top:0,left:0,height:'100%',width:pct+'%',borderRadius:4,overflow:'hidden'}}>
+          <div style={{display:'flex',height:'100%',width: (100/pct*100)+'%'}}>
+            {zones.map((z, i) => {
+              const prevTo = i === 0 ? min : zones[i-1].to;
+              const w = ((z.to - prevTo) / range) * 100;
+              return <div key={i} style={{width:w+'%',height:'100%',background:z.color,opacity:0.85}} />;
+            })}
+          </div>
+        </div>
+        {/* Marker */}
+        <div style={{position:'absolute',top:-1,left:`calc(${pct}% - 1px)`,width:3,height:10,borderRadius:1,background:'#fff',boxShadow:'0 0 4px rgba(0,0,0,0.5)'}} />
+      </div>
+    </div>
   );
 }
 
