@@ -135,9 +135,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     : isOverride ? 'warn'
     : r.decisionClass;
 
-  const dcBg = effectiveDecisionClass==='go'?'#0d1f0d':effectiveDecisionClass==='warn'?'#1f1a0d':'#1f0d0d';
-  const dcBorder = effectiveDecisionClass==='go'?'#238636':effectiveDecisionClass==='warn'?'#9e6a03':'#da3633';
-  const dcColor = effectiveDecisionClass==='go'?'#3fb950':effectiveDecisionClass==='warn'?'#d29922':'#f85149';
+  // Banner color based on Adjusted Kelly $ health
+  const kellyPct = r.adjustedKelly || 0;
+  const kellyHealth = kellyPct >= 0.15 ? 'strong' : kellyPct >= 0.08 ? 'decent' : kellyPct >= 0.03 ? 'marginal' : 'weak';
+  const dcBg = kellyHealth==='strong'?'#0d1f0d':kellyHealth==='decent'?'#141f0d':kellyHealth==='marginal'?'#1f1a0d':'#1f0d0d';
+  const dcBorder = kellyHealth==='strong'?'#238636':kellyHealth==='decent'?'#4d8c2a':kellyHealth==='marginal'?'#9e6a03':'#da3633';
+  const dcColor = kellyHealth==='strong'?'#3fb950':kellyHealth==='decent'?'#7bc74d':kellyHealth==='marginal'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
@@ -350,8 +353,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           </div>
         )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
-          {!r.hardBlocker && `${is0?r.dirLabel:r.outlook||''} — max loss $${r.maxRisk?.toFixed(0)||0}`}
-          {r.warnings?.length>0 && ` — ${r.warnings[0]}`}
+          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0}`}
         </div>
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
         {!r.hardBlocker && effectiveDecision !== 'No trade' && effectiveDecision !== 'Enter sizing' && (
