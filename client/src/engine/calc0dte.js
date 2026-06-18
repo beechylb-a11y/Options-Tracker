@@ -306,7 +306,7 @@ export function calc0DTE(inputs) {
   const legStrat = overrideStrategy || bestStrat;
 
   // ── Strike engine (with directional gamma) ──
-  const baseDistance = price > 0 ? Math.max(emVIX / 2, emV1D, em * 0.5) : 0;
+  const baseDistance = price > 0 ? Math.max(emVIX, emV1D, em * 0.5) : 0;
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
@@ -360,28 +360,28 @@ export function calc0DTE(inputs) {
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
     } else if (legStrat === 'Bull put spread') {
       // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based
-      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Short put (VIX)', p - dVix), leg('Long put (VIX)', p - dVix * 2),
         leg('Short put (VIX1D)', p - dV1d), leg('Long put (VIX1D)', p - dV1d * 2)
       ];
     } else if (legStrat === 'Bear call spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Short call (VIX)', p + dVix), leg('Long call (VIX)', p + dVix * 2),
         leg('Short call (VIX1D)', p + dV1d), leg('Long call (VIX1D)', p + dV1d * 2)
       ];
     } else if (legStrat === 'Bull call spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVix * 0.5),
         leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1d * 0.5)
       ];
     } else if (legStrat === 'Bear put spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX / 2, roundTo * 2) : D;
+      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
       const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
         leg('Long put (VIX)', p), leg('Short put (VIX)', p - dVix * 0.5),
@@ -392,7 +392,7 @@ export function calc0DTE(inputs) {
   const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(legStrat);
   const wingTxt = D > 0
     ? isSpread
-      ? `EM(VIX)/2=${emVIX>0?(emVIX/2).toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
+      ? `EM(VIX)=${emVIX>0?emVIX.toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
       : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
     : '';
 
