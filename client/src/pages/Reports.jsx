@@ -156,28 +156,62 @@ export default function Reports({ authenticated, account }) {
   const maxBar = Math.max(1, ...monthlyData.map(m => Math.abs(m.pnl)));
 
   // ── PRINT REPORT ──
+  // Fee CSV upload state
+  const [feeData, setFeeData] = useState({ brokerage: 0, exchange: 0, regulatory: 0, platform: 0, other: 0 });
+
+  function handleFeeCSV(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const lines = text.split('\n').filter(l => l.trim());
+      let brokerage = 0, exchange = 0, regulatory = 0, platform = 0, other = 0;
+      lines.forEach(line => {
+        const cols = line.split(',');
+        // Try to find fee/commission columns
+        cols.forEach(col => {
+          const val = parseFloat(col.replace(/[^\d.-]/g, ''));
+          if (isNaN(val)) return;
+          const lower = line.toLowerCase();
+          if (lower.includes('commission') || lower.includes('brokerage')) brokerage += Math.abs(val);
+          else if (lower.includes('exchange')) exchange += Math.abs(val);
+          else if (lower.includes('regulatory') || lower.includes('reg')) regulatory += Math.abs(val);
+          else if (lower.includes('platform') || lower.includes('data')) platform += Math.abs(val);
+        });
+      });
+      // If no categorized fees found, sum all negative numbers as total fees
+      if (brokerage + exchange + regulatory + platform === 0) {
+        lines.forEach(line => {
+          const cols = line.split(',');
+          cols.forEach(col => {
+            const val = parseFloat(col.replace(/[^\d.-]/g, ''));
+            if (!isNaN(val) && val < 0) other += Math.abs(val);
+          });
+        });
+      }
+      setFeeData({ brokerage, exchange, regulatory, platform, other });
+    };
+    reader.readAsText(file);
+  }
+
+  const totalFeesAll = feeData.brokerage + feeData.exchange + feeData.regulatory + feeData.platform + feeData.other + totalFees;
+
   function handlePrint() {
     const w = window.open('', '_blank', 'width=900,height=700');
     const monthRows = monthlyData.map(m =>
-      `<tr><td>${m.fullLabel}</td><td class="r ${m.pnl>=0?'green':'red'}">${fmt$(m.pnl)}</td><td class="c">${m.count}</td><td class="c">${m.count>0?m.wins+'/'+m.losses:'—'}</td><td class="c">${m.count>0?(m.wins/m.count*100).toFixed(0)+'%':'—'}</td></tr>`
+      `<tr><td>${m.fullLabel}</td><td class="r ${m.pnl>=0?'green':'red'}">${fmt$(m.pnl)}</td><td class="c">${m.count}</td><td class="c">${m.count>0?(m.wins/m.count*100).toFixed(0)+'%':'\u2014'}</td></tr>`
     ).join('');
     const stratRows = byStrategy.map(([s, d]) =>
       `<tr><td>${s}</td><td class="c">${d.count}</td><td class="r ${d.pnl>=0?'green':'red'}">${fmt$(d.pnl)}</td></tr>`
     ).join('');
-    const undRows = byUnderlying.map(([u, d]) =>
-      `<tr><td>${u}</td><td class="c">${d.count}</td><td class="r ${d.pnl>=0?'green':'red'}">${fmt$(d.pnl)}</td></tr>`
-    ).join('');
-    const tradeRows = fyTrades.map((t, i) =>
-      `<tr><td>${i+1}</td><td>${t['Entry Date']||''}</td><td>${t['Close Date']||''}</td><td>${t['Underlying']||''}</td><td>${t['Strategy (OIC)']||t['Strategy']||''}</td><td class="c">${t['Qty']||1}</td><td class="r">${t['Net Credit ($)']||''}</td><td class="r ${t._pnl>=0?'green':'red'}">${fmt$(t._pnl)}</td></tr>`
-    ).join('');
 
-    w.document.write(`<!DOCTYPE html><html><head><title>Options Trading Report — ${getFYLabel(activeFY)}</title>
+    w.document.write(`<!DOCTYPE html><html><head><title>Options Trading Tax Report \u2014 ${getFYLabel(activeFY)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px;color:#1a1a1a;font-size:12px;line-height:1.5}
 h1{font-size:20px;margin-bottom:4px}
 h2{font-size:14px;margin:24px 0 8px;padding-bottom:4px;border-bottom:2px solid #1a1a1a}
-h3{font-size:12px;margin:16px 0 6px;color:#555}
 .subtitle{font-size:12px;color:#666;margin-bottom:20px}
 table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:11px}
 th{text-align:left;padding:6px 8px;background:#f5f5f5;border-bottom:2px solid #ddd;font-size:10px;text-transform:uppercase;color:#555}
@@ -187,112 +221,90 @@ td{padding:5px 8px;border-bottom:1px solid #eee}
 .green{color:#1a7f37}
 .red{color:#cf222e}
 .bold{font-weight:700}
-.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:16px}
-.summary-box{border:1px solid #ddd;border-radius:6px;padding:12px}
-.summary-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f0f0f0}
+.summary-box{border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:16px}
+.summary-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f0f0f0}
 .summary-row:last-child{border-bottom:none}
-.summary-row.total{border-top:2px solid #1a1a1a;font-weight:700;padding-top:6px;margin-top:4px}
+.summary-row.total{border-top:2px solid #1a1a1a;font-weight:700;padding-top:8px;margin-top:4px}
 .note{font-size:10px;color:#888;font-style:italic;margin:8px 0}
-.page-break{page-break-before:always}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 @media print{body{padding:16px} .no-print{display:none}}
 </style></head><body>
-<div class="no-print" style="margin-bottom:16px"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;cursor:pointer">Print / Save PDF</button></div>
+<div class="no-print" style="margin-bottom:16px"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;cursor:pointer;border-radius:6px;border:1px solid #ddd">Print / Save PDF</button></div>
 
-<h1>Options Trading Report</h1>
-<div class="subtitle">${getFYLabel(activeFY)} — ${getFYRange(activeFY)} | Generated ${new Date().toLocaleDateString('en-AU')}</div>
+<h1>Options Trading Tax Report</h1>
+<div class="subtitle">${getFYLabel(activeFY)} \u2014 ${getFYRange(activeFY)} | Generated ${new Date().toLocaleDateString('en-AU')}</div>
 
 <h2>1. Executive Summary</h2>
-<div class="summary-grid">
+<div class="two-col">
 <div class="summary-box">
-<div class="summary-row"><span>Gross Premium Received</span><span class="r">${fmt$(fy.premReceived)}</span></div>
-<div class="summary-row"><span>Gross Premium Paid</span><span class="r">${fmt$(fy.premPaid)}</span></div>
-<div class="summary-row"><span>Realised Trading Profit (Gross)</span><span class="r ${fy.grossProfit>=0?'green':''}">${fmt$(fy.grossProfit)}</span></div>
-<div class="summary-row"><span>Realised Trading Loss (Gross)</span><span class="r red">${fmt$(fy.grossLoss)}</span></div>
-<div class="summary-row"><span>Fees &amp; Commissions</span><span class="r">${fmt$(totalFees)}</span></div>
-<div class="summary-row total"><span>Net Trading Profit/(Loss)</span><span class="r bold ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Gross Realised Gains</span><span class="r green">${fmt$(fy.grossProfit)}</span></div>
+<div class="summary-row"><span>Gross Realised Losses</span><span class="r red">${fmt$(fy.grossLoss)}</span></div>
+<div class="summary-row"><span>Net Realised P&L</span><span class="r bold ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Total Fees &amp; Commissions</span><span class="r">${fmt$(totalFeesAll)}</span></div>
+<div class="summary-row total"><span>Net Trading Result</span><span class="r bold ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
 </div>
 <div class="summary-box">
 <div class="summary-row"><span>Total Trades Closed</span><span class="r">${fy.count}</span></div>
 <div class="summary-row"><span>Winning Trades</span><span class="r">${fy.wins}</span></div>
 <div class="summary-row"><span>Losing Trades</span><span class="r">${fy.losses}</span></div>
 <div class="summary-row"><span>Win Rate</span><span class="r">${fy.ba}%</span></div>
-<div class="summary-row"><span>Profit Factor</span><span class="r">${fy.pf === Infinity ? '∞' : fy.pf.toFixed(2)}</span></div>
+<div class="summary-row"><span>Average Holding Period</span><span class="r">${fy.avgHold} days</span></div>
 <div class="summary-row"><span>Currency</span><span class="r">USD</span></div>
 </div>
 </div>
 
-<h2>2. Trade Summary by Strategy</h2>
-<table><thead><tr><th>Strategy</th><th class="c">Trades</th><th class="r">P&amp;L</th></tr></thead>
+<h2>2. P&L by Strategy</h2>
+<table><thead><tr><th>Strategy</th><th class="c">Trades</th><th class="r">Realised P&L</th></tr></thead>
 <tbody>${stratRows}
 <tr class="bold" style="border-top:2px solid #1a1a1a"><td>Total</td><td class="c">${fy.count}</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td></tr>
 </tbody></table>
 
-<h2>3. Trade Summary by Underlying</h2>
-<table><thead><tr><th>Underlying</th><th class="c">Trades</th><th class="r">P&amp;L</th></tr></thead>
-<tbody>${undRows}
-<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Total</td><td class="c">${fy.count}</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td></tr>
-</tbody></table>
-
-<h2>4. Monthly P&amp;L</h2>
-<table><thead><tr><th>Month</th><th class="r">P&amp;L</th><th class="c">Trades</th><th class="c">W/L</th><th class="c">BA%</th></tr></thead>
+<h2>3. Monthly P&L</h2>
+<table><thead><tr><th>Month</th><th class="r">P&L</th><th class="c">Trades</th><th class="c">Win Rate</th></tr></thead>
 <tbody>${monthRows}
-<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Total</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td><td class="c">${fy.count}</td><td class="c">${fy.wins}/${fy.losses}</td><td class="c">${fy.ba}%</td></tr>
+<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Total</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td><td class="c">${fy.count}</td><td class="c">${fy.ba}%</td></tr>
 </tbody></table>
 
-<div class="page-break"></div>
+<h2>4. Fees &amp; Commissions</h2>
+<div class="summary-box" style="max-width:450px">
+<div class="summary-row"><span>Brokerage &amp; Commissions</span><span class="r">${fmt$(feeData.brokerage + totalFees)}</span></div>
+<div class="summary-row"><span>Exchange Fees</span><span class="r">${fmt$(feeData.exchange)}</span></div>
+<div class="summary-row"><span>Regulatory Fees</span><span class="r">${fmt$(feeData.regulatory)}</span></div>
+<div class="summary-row"><span>Platform / Data Fees</span><span class="r">${fmt$(feeData.platform)}</span></div>
+${feeData.other > 0 ? '<div class="summary-row"><span>Other Fees</span><span class="r">' + fmt$(feeData.other) + '</span></div>' : ''}
+<div class="summary-row total"><span>Total Fees &amp; Charges</span><span class="r bold">${fmt$(totalFeesAll)}</span></div>
+</div>
 
-<h2>5. Closed Trades Register</h2>
-<table><thead><tr><th>#</th><th>Open Date</th><th>Close Date</th><th>Underlying</th><th>Strategy</th><th class="c">Qty</th><th class="r">Net Cr/Db</th><th class="r">Realised P&amp;L</th></tr></thead>
-<tbody>${tradeRows}
-<tr class="bold" style="border-top:2px solid #1a1a1a"><td colspan="7">Total</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td></tr>
-</tbody></table>
-
-<h2>6. Fees &amp; Charges</h2>
-<table style="max-width:400px">
-<tbody>
-<tr><td>Brokerage &amp; Commissions</td><td class="r">${fmt$(totalFees)}</td></tr>
-<tr><td>Exchange &amp; Regulatory Fees</td><td class="r">Included above</td></tr>
-<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Total Fees</td><td class="r">${fmt$(totalFees)}</td></tr>
-</tbody></table>
-
-<h2>7. Trading Activity Statistics</h2>
-<table style="max-width:400px">
-<tbody>
-<tr><td>Total Trades</td><td class="r">${fy.count}</td></tr>
-<tr><td>Winning Trades</td><td class="r">${fy.wins}</td></tr>
-<tr><td>Losing Trades</td><td class="r">${fy.losses}</td></tr>
-<tr><td>Win Rate</td><td class="r">${fy.ba}%</td></tr>
-<tr><td>Average Holding Period</td><td class="r">${fy.avgHold} days</td></tr>
-<tr><td>Average Position Size</td><td class="r">${fy.avgSize} contracts</td></tr>
-<tr><td>Largest Single Win</td><td class="r green">${fmt$(fy.largestWin)}</td></tr>
-<tr><td>Largest Single Loss</td><td class="r red">${fmt$(fy.largestLoss)}</td></tr>
-<tr><td>Average Win</td><td class="r green">${fmt$(fy.avgWin)}</td></tr>
-<tr><td>Average Loss</td><td class="r red">${fmt$(fy.avgLoss)}</td></tr>
-<tr><td>Profit Factor</td><td class="r">${fy.pf === Infinity ? '∞' : fy.pf.toFixed(2)}</td></tr>
-<tr><td>Best Month</td><td class="r green">${fy.bestMonth?.fullLabel} (${fmt$(fy.bestMonth?.pnl||0)})</td></tr>
-<tr><td>Worst Month</td><td class="r red">${fy.worstMonth?.fullLabel} (${fmt$(fy.worstMonth?.pnl||0)})</td></tr>
-</tbody></table>
-
-<h2>8. Foreign Currency</h2>
+<h2>5. Foreign Currency</h2>
 <table style="max-width:500px">
-<thead><tr><th>Item</th><th class="r">USD</th><th class="r">AUD (convert)</th></tr></thead>
+<thead><tr><th>Item</th><th class="r">Amount (USD)</th><th class="r">Amount (AUD)</th></tr></thead>
 <tbody>
-<tr><td>Net Trading Profit/(Loss)</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
-<tr><td>Fees &amp; Commissions</td><td class="r">${fmt$(totalFees)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
+<tr><td>Net Realised P&L</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
+<tr><td>Total Fees</td><td class="r">${fmt$(totalFeesAll)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
+<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Net Taxable Result</td><td class="r ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
 </tbody></table>
 <div class="note">All amounts in USD. Convert using ATO average exchange rate for ${getFYLabel(activeFY)} or transaction-date rates as agreed with your tax advisor.</div>
 
-<h2>9. Tax Summary</h2>
+<h2>6. Tax Summary</h2>
 <div class="summary-box" style="max-width:500px">
-<div class="summary-row"><span>Gross Profits (winning trades)</span><span class="r green">${fmt$(fy.grossProfit)}</span></div>
+<div class="summary-row"><span>Gross Gains (profitable trades)</span><span class="r green">${fmt$(fy.grossProfit)}</span></div>
 <div class="summary-row"><span>Gross Losses (losing trades)</span><span class="r red">${fmt$(fy.grossLoss)}</span></div>
-<div class="summary-row"><span>Total Fees</span><span class="r">${fmt$(totalFees)}</span></div>
-<div class="summary-row total"><span>Net Taxable Result</span><span class="r bold ${fy.totalPnL - totalFees>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFees)}</span></div>
+<div class="summary-row"><span>Net Realised P&L</span><span class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Less: Deductible Fees</span><span class="r">(${fmt$(totalFeesAll)})</span></div>
+<div class="summary-row total"><span>Net Taxable Trading Result</span><span class="r bold ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
 </div>
-<div class="note">Options trading income is generally assessable as ordinary income for Australian residents conducting regular trading activity. Capital gains tax treatment may apply depending on individual circumstances. Consult your tax advisor for specific treatment.</div>
+<div class="note">Options trading income is generally assessable as ordinary income under s6-5 ITAA 1997 for Australian residents conducting regular trading activity. Capital gains treatment under Div 104 may apply in limited circumstances. This report does not constitute tax advice. Consult your registered tax agent.</div>
 
-<div style="margin-top:32px;padding-top:16px;border-top:1px solid #ddd;font-size:10px;color:#999">
-Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'})} | This report is provided for informational purposes and does not constitute tax advice.
+<h2>7. Account Reconciliation</h2>
+<div class="summary-box" style="max-width:450px">
+<div class="summary-row"><span>Net Realised P&L</span><span class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Total Fees Deducted</span><span class="r">${fmt$(totalFeesAll)}</span></div>
+<div class="summary-row total"><span>Net Cash Result</span><span class="r bold">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
+</div>
+<div class="note">Deposits, withdrawals, and opening/closing balances should be reconciled against broker statements.</div>
+
+<div style="margin-top:40px;padding-top:16px;border-top:1px solid #ddd;font-size:10px;color:#999">
+Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'})} | Prepared for tax reporting purposes. This report does not constitute financial or tax advice.
 </div>
 </body></html>`);
     w.document.close();
@@ -462,19 +474,50 @@ Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'nu
         </div>
       </div>
 
-      {/* 9. Tax Summary */}
+      {/* Tax Summary */}
       <div className="card">
-        <h3 className="text-sm font-semibold text-white mb-3">Tax Summary — {getFYLabel(activeFY)}</h3>
-        <p className="text-xs text-text-muted mb-3">{getFYRange(activeFY)} | All amounts USD — convert using ATO average rate or transaction-date rates</p>
+        <h3 className="text-sm font-semibold text-white mb-3">Tax Summary \u2014 {getFYLabel(activeFY)}</h3>
+        <p className="text-xs text-text-muted mb-3">{getFYRange(activeFY)} | All amounts USD</p>
         <div className="grid grid-cols-2 gap-8">
           <div className="space-y-1.5">
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Gross gains (profitable trades)</span><span className="mono font-bold text-green">{fmt$(fy.grossProfit)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Gross losses (losing trades)</span><span className="mono font-bold text-red">{fmt$(fy.grossLoss)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Total fees & commissions</span><span className="mono text-white">{fmt$(totalFees)}</span></div>
-            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Net taxable result</span><span className="mono font-bold" style={{color:pnlColor(fy.totalPnL - totalFees)}}>{fmt$(fy.totalPnL - totalFees)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Gross gains</span><span className="mono font-bold text-green">{fmt$(fy.grossProfit)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Gross losses</span><span className="mono font-bold text-red">{fmt$(fy.grossLoss)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Net realised P&L</span><span className="mono font-bold" style={{color:pnlColor(fy.totalPnL)}}>{fmt$(fy.totalPnL)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Less: fees & commissions</span><span className="mono text-white">({fmt$(totalFeesAll)})</span></div>
+            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Net taxable result</span><span className="mono font-bold" style={{color:pnlColor(fy.totalPnL - totalFeesAll)}}>{fmt$(fy.totalPnL - totalFeesAll)}</span></div>
           </div>
           <div>
-            <p className="text-xs text-text-muted">Options trading income is generally assessable as ordinary income for Australian residents conducting regular trading activity. Capital gains tax treatment may apply depending on individual circumstances. Consult your tax advisor for specific treatment.</p>
+            <p className="text-xs text-text-muted">Options trading income is generally assessable as ordinary income under s6-5 ITAA 1997 for Australian residents conducting regular trading activity. Convert to AUD using ATO average rate or transaction-date rates.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Fees & Charges */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-white">Fees & Commissions</h3>
+          <label className="px-3 py-1.5 text-xs border border-bg-border rounded-lg text-text-muted hover:bg-bg-hover cursor-pointer">
+            Upload fee CSV
+            <input type="file" accept=".csv" onChange={handleFeeCSV} className="hidden" />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-8">
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Brokerage & commissions</span><span className="mono text-white">{fmt$(feeData.brokerage + totalFees)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Exchange fees</span><span className="mono text-white">{fmt$(feeData.exchange)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Regulatory fees</span><span className="mono text-white">{fmt$(feeData.regulatory)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Platform / data fees</span><span className="mono text-white">{fmt$(feeData.platform)}</span></div>
+            {feeData.other > 0 && <div className="flex justify-between text-sm"><span className="text-text-muted">Other fees</span><span className="mono text-white">{fmt$(feeData.other)}</span></div>}
+            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Total fees</span><span className="mono font-bold text-white">{fmt$(totalFeesAll)}</span></div>
+          </div>
+          <div>
+            <p className="text-xs text-text-muted mb-2">Upload your broker fee CSV or enter amounts manually below.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="text-[10px] text-text-faint">Exchange fees</label><input type="number" step="any" value={feeData.exchange||''} onChange={e=>setFeeData(p=>({...p,exchange:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
+              <div><label className="text-[10px] text-text-faint">Regulatory fees</label><input type="number" step="any" value={feeData.regulatory||''} onChange={e=>setFeeData(p=>({...p,regulatory:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
+              <div><label className="text-[10px] text-text-faint">Platform fees</label><input type="number" step="any" value={feeData.platform||''} onChange={e=>setFeeData(p=>({...p,platform:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
+              <div><label className="text-[10px] text-text-faint">Other fees</label><input type="number" step="any" value={feeData.other||''} onChange={e=>setFeeData(p=>({...p,other:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
+            </div>
           </div>
         </div>
       </div>
