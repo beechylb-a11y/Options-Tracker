@@ -282,10 +282,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '.row .label{color:#8b949e}.row .value{font-weight:600;font-family:monospace}' +
       '.green{color:#3fb950}.red{color:#f85149}.amber{color:#d29922}.white{color:#e6edf3}' +
       '.leg{display:inline-block;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;font-family:monospace;margin:2px 4px 2px 0}' +
-      '.leg-short{background:#238636;color:#fff}.leg-long{background:#0d1a2e;color:#58a6ff}' +
+      '.leg-short{background:#8b2025;color:#f85149}.leg-long{background:#0d2818;color:#3fb950}' +
       '.warn{font-size:12px;color:#d29922;margin:2px 0}' +
       '.timestamp{font-size:11px;color:#484f58;margin-top:24px}' +
-      '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#0d1a2e}}' +
+      '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#1a7f37}.leg-short{color:#cf222e}}' +
       '</style></head><body>' +
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
       '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
@@ -366,7 +366,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(VIX):</span>
                   {r.legs.slice(0,2).map((l,i) => {
                     const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                       {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX)','')}</span>
                     </div>);
                   })}
@@ -375,7 +375,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(1D):</span>
                   {r.legs.slice(2,4).map((l,i) => {
                     const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                       {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX1D)','')}</span>
                     </div>);
                   })}
@@ -386,7 +386,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
                 {r.legs.map((l,i) => {
                   const isShort = l.label.toLowerCase().includes('short');
-                  return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#238636':'#0d1a2e',color:isShort?'#fff':'#58a6ff',fontFamily:'JetBrains Mono,monospace'}}>
+                  return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                     {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
                   </div>);
                 })}
@@ -478,7 +478,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Sizing */}
           <SectionLabel>Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
-            <Inp label="Net credit/debit ($)" value={is0?i0.netCreditDebit:i45.netCreditDebit} onChange={v=>is0?set0('netCreditDebit',v):set45('netCreditDebit',v)}/>
+            <div>
+              <label className="text-xs text-text-muted block mb-1">{r.targetIsCredit ? 'Net credit ($)' : 'Net debit ($)'}</label>
+              <input type="number" step="any"
+                value={is0?i0.netCreditDebit:i45.netCreditDebit}
+                onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
+                placeholder="—"
+                style={{
+                  width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
+                  outline:'none', border:'1px solid',
+                  borderColor: (is0?i0.netCreditDebit:i45.netCreditDebit)
+                    ? (parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? '#238636' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? '#da3633' : '#30363d')
+                    : '#30363d',
+                  background: (is0?i0.netCreditDebit:i45.netCreditDebit)
+                    ? (parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? '#0d2818' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? '#2d0f0f' : '#0d1117')
+                    : '#0d1117',
+                  color: (is0?i0.netCreditDebit:i45.netCreditDebit)
+                    ? (parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? '#3fb950' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? '#f85149' : '#c9d1d9')
+                    : '#c9d1d9'
+                }}
+              />
+            </div>
             <Inp label="POP (%)" value={is0?i0.pop:i45.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}/>
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
