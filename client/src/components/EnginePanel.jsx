@@ -120,7 +120,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         comp:null, rmRatio:0, moveConsumed:0, volRemaining:1, payoff:null, greeks:null,
         vwapDistPctEM:0, vwapOverextended:false, confirmed:false, diverges:false,
         slope5:{}, slope15:{}, slope:'flat', slopeDirection:'unknown',
-        overnightDir:'unknown', trendPattern:'unknown', wingTxt:'' };
+        overnightDir:'unknown', trendPattern:'unknown', wingTxt:'',
+        targetCredit:null, targetLabel:'', targetLow:0, targetHigh:0, targetMax:0, targetIsCredit:true,
+        fairValueScore:0, fairValueGrade:'', volScore:0, volGrade:'', structScore:0, structGrade:'',
+        regimeScore:0, regimeGrade:'', ivHvRatio:0 };
     }
   }, [is0, i0, i45, overrideStrat]);
 
@@ -480,7 +483,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
           </div>
-          {r.targetLabel && r.targetMax > 0 && (
+          {r.targetMax > 0 && (
             <CreditTape
               value={Math.abs(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)||0)}
               low={r.targetLow}
@@ -490,6 +493,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               label={r.targetLabel}
             />
           )}
+          {r.targetLabel && !r.targetMax && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
               <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>
