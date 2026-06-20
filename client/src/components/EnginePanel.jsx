@@ -540,7 +540,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               {r.bePop > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
             </div>
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
-            <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
+            <div>
+              <label className="text-xs text-text-muted block mb-1">Risk / contract ($)</label>
+              <input type="number" step="any"
+                value={is0?i0.risk:i45.risk}
+                onChange={e=>is0?set0('risk',e.target.value):set45('risk',e.target.value)}
+                placeholder="—"
+                style={{
+                  width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
+                  outline:'none', border:'1px solid',
+                  borderColor: (() => {
+                    const riskVal = parseFloat(is0?i0.risk:i45.risk) || 0;
+                    const kellyDol = r.kellyDollar || 0;
+                    if (!riskVal) return '#30363d';
+                    return riskVal <= kellyDol ? '#238636' : '#da3633';
+                  })(),
+                  background: (() => {
+                    const riskVal = parseFloat(is0?i0.risk:i45.risk) || 0;
+                    const kellyDol = r.kellyDollar || 0;
+                    if (!riskVal) return '#0d1117';
+                    return riskVal <= kellyDol ? '#0d2818' : '#2d0f0f';
+                  })(),
+                  color: (() => {
+                    const riskVal = parseFloat(is0?i0.risk:i45.risk) || 0;
+                    const kellyDol = r.kellyDollar || 0;
+                    if (!riskVal) return '#c9d1d9';
+                    return riskVal <= kellyDol ? '#3fb950' : '#f85149';
+                  })()
+                }}
+              />
+              {r.kellyDollar > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
+            </div>
           </div>
           {r.targetMax > 0 && (
             <CreditTape
