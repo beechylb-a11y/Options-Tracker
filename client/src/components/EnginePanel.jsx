@@ -20,7 +20,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
-    win:'', risk:'', pop:'', hours:'6.5', netCreditDebit:'',
+    win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
@@ -194,6 +194,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
       if (is0) {
+        // Calculate hours remaining until 4pm ET (16:00 New York)
+        const now = new Date();
+        const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const marketClose = new Date(et);
+        marketClose.setHours(16, 0, 0, 0);
+        const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
+        const hoursRounded = Math.round(hoursLeft * 10) / 10;
+
         setI0(prev => ({
           ...prev,
           price: d.price || prev.price,
@@ -214,7 +222,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           esClose: d.esClose || prev.esClose,
           priorDayClose: d.priorDayClose || prev.priorDayClose,
           cashOpen: d.cashOpen || prev.cashOpen,
-          esEM: d.esEM || prev.esEM
+          esEM: d.esEM || prev.esEM,
+          hours: hoursRounded > 0 ? hoursRounded : prev.hours
         }));
       }
     } catch (e) {
@@ -499,7 +508,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 }}
               />
             </div>
-            <Inp label="POP (%)" value={is0?i0.pop:i45.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}/>
+            <div>
+              <label className="text-xs text-text-muted block mb-1">POP (%)</label>
+              <input type="number" step="any"
+                value={is0?i0.pop:i45.pop}
+                onChange={e=>is0?set0('pop',e.target.value):set45('pop',e.target.value)}
+                placeholder="—"
+                style={{
+                  width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
+                  outline:'none', border:'1px solid',
+                  borderColor: (() => {
+                    const pop = parseFloat(is0?i0.pop:i45.pop) || 0;
+                    const bePop = (r.bePop || 0) * 100;
+                    if (!pop) return '#30363d';
+                    return pop >= bePop ? '#238636' : '#da3633';
+                  })(),
+                  background: (() => {
+                    const pop = parseFloat(is0?i0.pop:i45.pop) || 0;
+                    const bePop = (r.bePop || 0) * 100;
+                    if (!pop) return '#0d1117';
+                    return pop >= bePop ? '#0d2818' : '#2d0f0f';
+                  })(),
+                  color: (() => {
+                    const pop = parseFloat(is0?i0.pop:i45.pop) || 0;
+                    const bePop = (r.bePop || 0) * 100;
+                    if (!pop) return '#c9d1d9';
+                    return pop >= bePop ? '#3fb950' : '#f85149';
+                  })()
+                }}
+              />
+              {r.bePop > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
+            </div>
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
           </div>
@@ -516,7 +555,19 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {r.targetLabel && !r.targetMax && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
-              <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>
+              <div>
+                <label className="text-xs text-text-muted block mb-1">Hours remaining</label>
+                <input type="number" step="0.1"
+                  value={i0.hours}
+                  onChange={e=>set0('hours',e.target.value)}
+                  style={{
+                    width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14,
+                    fontFamily:'JetBrains Mono,monospace', outline:'none',
+                    border:'1px solid #30363d', background:'#0d1117', color:'#c9d1d9'
+                  }}
+                />
+                <div style={{fontSize:9,color:'#484f58',marginTop:2}}>Auto: 4pm ET minus current time</div>
+              </div>
             </div>
           )}
 
