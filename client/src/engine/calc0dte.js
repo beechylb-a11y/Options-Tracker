@@ -498,37 +498,51 @@ export function calc0DTE(inputs) {
   // ── Target credit/debit based on strategy type and wing width ──
   let targetCredit = null;
   let targetLabel = '';
+  let targetLow = 0, targetHigh = 0, targetMax = 0;
+  let targetIsCredit = true;
   if (D > 0) {
-    const width = D; // wing width in points
+    const width = D;
+    targetMax = width; // max possible credit/debit = wing width
     if (legStrat.includes('Iron Condor') || legStrat === 'Chicken condor') {
-      targetCredit = Math.round(width * 0.33 * 100) / 100; // 1/3 of wing width
-      targetLabel = `Target credit: $${targetCredit.toFixed(2)} (1/3 of ${width}pt wing)`;
+      targetLow = width * 0.25; targetHigh = width * 0.40;
+      targetCredit = (targetLow + targetHigh) / 2;
+      targetLabel = `Target credit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = true;
     } else if (legStrat === 'Iron butterfly') {
-      const lo = width * 0.25, hi = width * 0.30;
-      targetCredit = Math.round((lo + hi) / 2 * 100) / 100;
-      targetLabel = `Target credit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (25-30% of ${width}pt wing)`;
+      targetLow = width * 0.25; targetHigh = width * 0.35;
+      targetCredit = (targetLow + targetHigh) / 2;
+      targetLabel = `Target credit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = true;
     } else if (legStrat === 'Standard butterfly') {
-      const lo = width * 0.10, hi = width * 0.20;
-      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
-      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (10-20% of ${width}pt wing)`;
+      targetLow = width * 0.10; targetHigh = width * 0.25;
+      targetCredit = -(targetLow + targetHigh) / 2;
+      targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = false;
     } else if (legStrat === 'Broken wing butterfly') {
+      targetLow = 0; targetHigh = width * 0.10;
       targetCredit = 0;
       targetLabel = 'Target: even to small credit';
+      targetIsCredit = true;
     } else if (legStrat === 'Asymmetric butterfly') {
-      const lo = width * 0.05, hi = width * 0.15;
-      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
-      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (5-15% of ${width}pt wing)`;
+      targetLow = width * 0.05; targetHigh = width * 0.20;
+      targetCredit = -(targetLow + targetHigh) / 2;
+      targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = false;
     } else if (legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat.includes('Credit')) {
-      targetCredit = Math.round(width * 0.33 * 100) / 100;
-      targetLabel = `Target credit: $${targetCredit.toFixed(2)} (1/3 of ${width}pt width)`;
+      targetLow = width * 0.25; targetHigh = width * 0.40;
+      targetCredit = (targetLow + targetHigh) / 2;
+      targetLabel = `Target credit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = true;
     } else if (legStrat.includes('Bull call') || legStrat.includes('Bear put') || legStrat.includes('Debit')) {
-      const debit = Math.round(width * 0.67 * 100) / 100;
-      targetCredit = -debit;
-      targetLabel = `Target debit: $${debit.toFixed(2)} (2/3 of ${width}pt width)`;
+      targetLow = width * 0.50; targetHigh = width * 0.75;
+      targetCredit = -(targetLow + targetHigh) / 2;
+      targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = false;
     } else if (legStrat === 'Long Condor') {
-      const lo = width * 0.10, hi = width * 0.20;
-      targetCredit = -Math.round((lo + hi) / 2 * 100) / 100;
-      targetLabel = `Target debit: $${lo.toFixed(2)}–$${hi.toFixed(2)} (10-20% of ${width}pt wing)`;
+      targetLow = width * 0.10; targetHigh = width * 0.25;
+      targetCredit = -(targetLow + targetHigh) / 2;
+      targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
+      targetIsCredit = false;
     }
   }
 
@@ -875,7 +889,7 @@ export function calc0DTE(inputs) {
     volFactor, sharpeFactor, sharpeProxy,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
-    ev, payoff, targetCredit, targetLabel,
+    ev, payoff, targetCredit, targetLabel, targetLow, targetHigh, targetMax, targetIsCredit,
     // Fair Value
     fairValueScore, fairValueGrade, volScore, volGrade, structScore, structGrade,
     regimeScore, regimeGrade, ivHvRatio,

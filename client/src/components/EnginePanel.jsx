@@ -480,7 +480,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
             <Inp label="Risk / contract ($)" value={is0?i0.risk:i45.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}/>
           </div>
-          {r.targetLabel && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
+          {r.targetLabel && r.targetMax > 0 && (
+            <CreditTape
+              value={Math.abs(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)||0)}
+              low={r.targetLow}
+              high={r.targetHigh}
+              max={r.targetMax}
+              isCredit={r.targetIsCredit}
+              label={r.targetLabel}
+            />
+          )}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
               <Inp label="Hours remaining" value={i0.hours} onChange={v=>set0('hours',v)}/>
@@ -780,6 +789,64 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
         <text key={i} x={t.x} y={H-(mini?5:5)} textAnchor="middle" fill="#c9d1d9" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
+  );
+}
+
+function CreditTape({ value, low, high, max, isCredit, label }) {
+  // Shows where the entered credit/debit sits relative to the target range
+  // Green zone = target range, red = too cheap/expensive
+  const safeMax = max || 1;
+  const pct = (v) => Math.max(0, Math.min(100, (v / safeMax) * 100));
+  const valuePct = pct(value);
+  const lowPct = pct(low);
+  const highPct = pct(high);
+
+  // Determine grade based on where value falls
+  let grade, gradeColor;
+  if (value === 0) {
+    grade = 'Enter value'; gradeColor = '#8b949e';
+  } else if (value >= low && value <= high) {
+    grade = 'Fair value'; gradeColor = '#3fb950';
+  } else if (isCredit && value > high) {
+    grade = 'Rich — good fill'; gradeColor = '#3fb950';
+  } else if (isCredit && value < low) {
+    grade = 'Cheap — may need wider'; gradeColor = '#f85149';
+  } else if (!isCredit && value < low) {
+    grade = 'Cheap — good fill'; gradeColor = '#3fb950';
+  } else if (!isCredit && value > high) {
+    grade = 'Expensive — consider adjusting'; gradeColor = '#f85149';
+  } else {
+    grade = ''; gradeColor = '#8b949e';
+  }
+
+  return (
+    <div style={{marginTop:6}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <span style={{fontSize:10,color:'#8b949e'}}>{isCredit ? 'Credit received' : 'Debit paid'}</span>
+        <span style={{fontSize:10,fontWeight:600,color:gradeColor}}>{grade}</span>
+      </div>
+      <div style={{position:'relative',height:12,borderRadius:6,overflow:'hidden',background:'#21262d'}}>
+        {/* Red zone (too low for credit / too high for debit) */}
+        <div style={{position:'absolute',top:0,left:0,width:lowPct+'%',height:'100%',background:'#f85149',opacity:0.2}} />
+        {/* Green target zone */}
+        <div style={{position:'absolute',top:0,left:lowPct+'%',width:(highPct-lowPct)+'%',height:'100%',background:'#3fb950',opacity:0.3}} />
+        {/* Amber zone (above target for credit = bonus, below target for debit = bonus) */}
+        <div style={{position:'absolute',top:0,left:highPct+'%',width:(100-highPct)+'%',height:'100%',background: isCredit ? '#3fb950' : '#f85149',opacity:0.15}} />
+        {/* Target range markers */}
+        <div style={{position:'absolute',top:0,left:lowPct+'%',width:1,height:'100%',background:'#3fb950',opacity:0.6}} />
+        <div style={{position:'absolute',top:0,left:highPct+'%',width:1,height:'100%',background:'#3fb950',opacity:0.6}} />
+        {/* Value marker */}
+        {value > 0 && (
+          <div style={{position:'absolute',top:-1,left:`calc(${valuePct}% - 2px)`,width:5,height:14,borderRadius:2,background:'#fff',boxShadow:'0 0 6px rgba(0,0,0,0.5)'}} />
+        )}
+      </div>
+      {/* Scale labels */}
+      <div style={{display:'flex',justifyContent:'space-between',marginTop:3}}>
+        <span style={{fontSize:9,color:'#484f58'}}>$0</span>
+        <span style={{fontSize:9,color:'#3fb950',position:'relative',left:`${(lowPct+highPct)/2-50}%`}}>${low.toFixed(2)}–${high.toFixed(2)}</span>
+        <span style={{fontSize:9,color:'#484f58'}}>${safeMax.toFixed(1)}</span>
+      </div>
+    </div>
   );
 }
 
