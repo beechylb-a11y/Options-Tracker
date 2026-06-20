@@ -57,12 +57,12 @@ const STRATEGIES = [
   },
   {
     name: 'Long Condor - Reversed', type: 'Debit', legs: 4, dte: '0DTE',
-    structure: 'Long put — Short put — Short call — Long call (wider body than IC)',
-    setup: 'RM 50-75% EM, transition zone, stabilising. VIX1D cheap favourable.',
-    profit: 'Price finishes between the two middle short strikes. Not outside the outer wings.',
-    risk: 'Large move in either direction beyond outer wings.',
-    manage: 'Close at 50% of max value or exit if breakout develops.',
-    greeks: 'Delta-neutral, moderate gamma, theta positive near centre',
+    structure: 'Short put (outer) — Long put (inner) — Long call (inner) — Short call (outer)',
+    setup: 'RM < 50% EM, expecting breakout or trend day. VIX1D cheap favourable (buying vol cheap).',
+    profit: 'Price makes a large move beyond either inner long strike. Profits from breakout, trend day, or volatility expansion.',
+    risk: 'Price stays range-bound between the two inner long strikes. Max loss = net debit paid.',
+    manage: 'Close winning side at 50%+ profit. If range-bound near expiry, close to limit time decay.',
+    greeks: 'Delta-neutral at entry, positive gamma (benefits from movement), negative theta (time decay hurts)',
     tags: ['neutral', 'debit', 'defined risk']
   },
   {

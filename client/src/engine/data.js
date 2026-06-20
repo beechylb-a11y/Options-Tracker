@@ -43,7 +43,7 @@ export const MARKET_BEHAVIOUR_0DTE = {
   'Asymmetric butterfly':   'Price moves toward the profit zone body. No aggressive overshoot through risk side.',
   'Standard butterfly':     'Price pins near the middle short strike by expiry.',
   'Iron Condor - Normal':   'Price stays calmly between short put and short call. Low realised movement.',
-  'Long Condor - Reversed': 'Price finishes between the two middle short strikes. Not outside the outer wings.',
+  'Long Condor - Reversed': 'Price makes a large move beyond either long strike. Profits from breakout or trend day. Avoid range-bound markets.',
   'Iron butterfly':         'Price pins as close as possible to the central short strike within breakevens.',
   'Bull put spread':        'Price stays above the short put. Sideways-to-higher after entry.',
   'Bear call spread':       'Price stays below the short call. Sideways-to-lower after entry.',
@@ -109,7 +109,7 @@ export const DELTA_GUIDE = [
 ];
 
 export const UNDERLYING_LIST = [
-  'SPX', 'SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'IWM', 'VIX',
+  'SPX', 'SPY', 'QQQ', 'RUT', 'NVDA', 'TSLA', 'AAPL', 'IWM', 'VIX',
   'AMZN', 'MSFT', 'AMD', 'META', 'INTC', 'GOOGL', 'SLV', 'GLD',
   'HYG', 'TLT', 'MSTR', 'PLTR'
 ];
