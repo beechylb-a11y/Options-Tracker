@@ -533,6 +533,124 @@ export function calc0DTE(inputs) {
   }
 
   // ═══════════════════════════════════════
+  //  FAIR VALUE SCORE (0-100)
+  //  Volatility Score + Structure Score + Regime Score
+  // ═══════════════════════════════════════
+
+  // ── Volatility Score (0-100) ──
+  // IV/HV proxy: VIX1D represents short-term IV, VIX represents term vol
+  // For 0DTE: VIX1D is the relevant IV, EM/ATR ratio is realized vol proxy
+  const ivHvRatio = (vix > 0 && atr > 0 && price > 0)
+    ? (vix1d > 0 ? vix1d : vix) / ((atr / price) * 100 * SQRT252)
+    : 1.0;
+  const vixGapPct = vix > 0 ? (vix1d - vix) / vix : 0;
+
+  let volScore = 50; // default neutral
+  // IV/HV ratio: >1.1 means options are rich (good for sellers)
+  if (ivHvRatio > 1.3) volScore = 95;
+  else if (ivHvRatio > 1.1) volScore = 80;
+  else if (ivHvRatio > 0.9) volScore = 60;
+  else if (ivHvRatio > 0.8) volScore = 40;
+  else volScore = 20; // cheap vol — bad for sellers
+
+  // VIX1D/VIX gap adjustment
+  if (vixGapPct > 0.25) volScore = Math.min(100, volScore + 10); // extremely rich short-term
+  else if (vixGapPct > 0.10) volScore = Math.min(100, volScore + 5);
+  else if (vixGapPct < -0.10) volScore = Math.max(0, volScore - 10); // cheap short-term
+
+  const volGrade = volScore >= 80 ? 'Rich' : volScore >= 60 ? 'Fair' : 'Cheap';
+
+  // ── Structure Score (0-100) ──
+  // Based on debit/credit ratio, theta edge, gamma risk
+  let structScore = 50;
+
+  // Debit/credit ratio (how much you pay vs wing width)
+  if (D > 0 && netCreditDebit !== 0) {
+    const absNCD = Math.abs(netCreditDebit);
+    const ratio = absNCD / D;
+    if (netCreditDebit > 0) {
+      // Credit trade: higher credit = better value
+      if (ratio > 0.40) structScore = 95;
+      else if (ratio > 0.30) structScore = 85;
+      else if (ratio > 0.20) structScore = 70;
+      else if (ratio > 0.10) structScore = 55;
+      else structScore = 35;
+    } else {
+      // Debit trade: lower debit = better value
+      if (ratio < 0.10) structScore = 95;
+      else if (ratio < 0.20) structScore = 85;
+      else if (ratio < 0.30) structScore = 70;
+      else if (ratio < 0.50) structScore = 50;
+      else structScore = 30;
+    }
+  }
+
+  // Theta edge adjustment (if greeks available)
+  if (hasGreeks && theta > 0 && delta > 0 && atr5 > 0) {
+    const tEdge = theta / (delta * atr5);
+    if (tEdge > 0.30) structScore = Math.min(100, structScore + 10);
+    else if (tEdge > 0.15) structScore = Math.min(100, structScore + 5);
+    else if (tEdge < 0.05) structScore = Math.max(0, structScore - 15);
+  }
+
+  // Gamma risk adjustment
+  if (hasGreeks && gamma > 0 && theta > 0 && atr5 > 0) {
+    const gRisk = gamma * atr5 / theta;
+    if (gRisk > 1.20) structScore = Math.max(0, structScore - 15);
+    else if (gRisk > 0.70) structScore = Math.max(0, structScore - 5);
+    else if (gRisk < 0.30) structScore = Math.min(100, structScore + 5);
+  }
+
+  const structGrade = structScore >= 80 ? 'Excellent' : structScore >= 60 ? 'Good' : structScore >= 40 ? 'Fair' : 'Poor';
+
+  // ── Regime Score (0-100) ──
+  // Based on realized move %, compression, VWAP alignment, gamma strike proximity
+  let regimeScore = 50;
+
+  // Move consumed: for butterflies want >60%, for spreads want <40%
+  const isButterflyStrat = legStrat.includes('butterfly') || legStrat.includes('Butterfly') || legStrat === 'Iron butterfly' || legStrat.includes('BWB') || legStrat.includes('Broken');
+  if (moveConsumed > 0) {
+    if (isButterflyStrat) {
+      // Butterflies want high move consumed (exhaustion)
+      if (moveConsumed > 0.80) regimeScore = 95;
+      else if (moveConsumed > 0.60) regimeScore = 80;
+      else if (moveConsumed > 0.40) regimeScore = 55;
+      else regimeScore = 30;
+    } else {
+      // Spreads/condors want low move consumed (room to run or stay)
+      if (moveConsumed < 0.25) regimeScore = 90;
+      else if (moveConsumed < 0.40) regimeScore = 75;
+      else if (moveConsumed < 0.60) regimeScore = 55;
+      else regimeScore = 30;
+    }
+  }
+
+  // Compression adjustment
+  if (comp !== null) {
+    if (isButterflyStrat && isCompressing) regimeScore = Math.min(100, regimeScore + 10);
+    else if (isButterflyStrat && isExpanding) regimeScore = Math.max(0, regimeScore - 15);
+    else if (!isButterflyStrat && isExpanding) regimeScore = Math.min(100, regimeScore + 5);
+  }
+
+  // VWAP alignment
+  if (confirmed) regimeScore = Math.min(100, regimeScore + 5);
+  else if (diverges) regimeScore = Math.max(0, regimeScore - 5);
+
+  // Gamma strike proximity
+  if (gamDist !== null) {
+    if (gamDist < 0.5) regimeScore = Math.min(100, regimeScore + 10);
+    else if (gamDist < 1.0) regimeScore = Math.min(100, regimeScore + 5);
+    else if (gamDist > 2.0) regimeScore = Math.max(0, regimeScore - 5);
+  }
+
+  const regimeGrade = regimeScore >= 80 ? 'Excellent' : regimeScore >= 60 ? 'Good' : regimeScore >= 40 ? 'Fair' : 'Poor';
+
+  // ── Composite Fair Value Score ──
+  // Volatility 30% + Structure 30% + Regime 40%
+  const fairValueScore = Math.round(volScore * 0.30 + structScore * 0.30 + regimeScore * 0.40);
+  const fairValueGrade = fairValueScore >= 90 ? 'Excellent' : fairValueScore >= 80 ? 'Good' : fairValueScore >= 70 ? 'Marginal' : 'No Trade';
+
+  // ═══════════════════════════════════════
   //  PAYOFF DIAGRAM — Generic engine
   //  Uses net credit/debit + leg intrinsic values
   // ═══════════════════════════════════════
@@ -758,6 +876,9 @@ export function calc0DTE(inputs) {
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
     ev, payoff, targetCredit, targetLabel,
+    // Fair Value
+    fairValueScore, fairValueGrade, volScore, volGrade, structScore, structGrade,
+    regimeScore, regimeGrade, ivHvRatio,
     // Greeks
     greeks,
     // Decision

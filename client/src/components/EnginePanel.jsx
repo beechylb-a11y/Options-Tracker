@@ -307,6 +307,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '<div class="row"><span class="label">POP margin</span><span class="value ' + (r.popMargin >= 1.5 ? 'green' : r.popMargin >= 1.0 ? 'amber' : 'red') + '">' + (r.popMargin ? r.popMargin.toFixed(2) : '--') + 'x</span></div>' +
       '</div>' +
       greeksHtml +
+      '<div class="section"><div class="section-title">Fair Value Score — ' + r.fairValueScore + '/100 (' + r.fairValueGrade + ')</div>' +
+      '<div class="row"><span class="label">Volatility (IV/HV)</span><span class="value white">' + r.volScore + '/100 — ' + r.volGrade + '</span></div>' +
+      '<div class="row"><span class="label">Structure</span><span class="value white">' + r.structScore + '/100 — ' + r.structGrade + '</span></div>' +
+      '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regimeScore + '/100 — ' + r.regimeGrade + '</span></div>' +
+      '</div>' +
       '<div class="section"><div class="section-title">Signals</div>' + signalsHtml + '</div>' +
       (warningsHtml ? '<div class="section"><div class="section-title">Warnings</div>' + warningsHtml + '</div>' : '') +
       '<div class="timestamp">Generated ' + new Date().toLocaleString('en-AU') + ' \u2014 Options Tracker Decision Engine</div>' +
@@ -628,6 +633,39 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <div className="text-sm font-semibold text-white">{is0 ? r.regime : `${r.regime} — ${r.outlook||''}`}</div>
             <div className="text-xs text-[#c9d1d9] mt-1.5 leading-relaxed">{is0 ? `${r.regimeConds||''} — ${r.regimeCommentary||''}` : r.regimeCommentary||''}</div>
           </div>
+
+          {/* Fair Value Score */}
+          {is0 && r.fairValueScore !== undefined && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-2">
+                <SectionLabel white>Fair Value Score</SectionLabel>
+                <div className="flex items-center gap-2">
+                  <span className="mono text-lg font-bold" style={{color: r.fairValueScore>=90?'#3fb950':r.fairValueScore>=80?'#7bc74d':r.fairValueScore>=70?'#d29922':'#f85149'}}>{r.fairValueScore}/100</span>
+                  <span className="text-xs px-2 py-0.5 rounded font-semibold" style={{
+                    background: r.fairValueScore>=90?'#0d1f0d':r.fairValueScore>=80?'#0d1a0d':r.fairValueScore>=70?'#1f1a0d':'#1f0d0d',
+                    color: r.fairValueScore>=90?'#3fb950':r.fairValueScore>=80?'#7bc74d':r.fairValueScore>=70?'#d29922':'#f85149'
+                  }}>{r.fairValueGrade}</span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <SpeedTape label="Volatility (IV/HV)" value={r.volScore} min={0} max={100}
+                  zones={[{to:30,color:'#f85149'},{to:60,color:'#d29922'},{to:80,color:'#e3b341'},{to:100,color:'#3fb950'}]}
+                  display={`${r.volScore}/100 — ${r.volGrade}`}
+                  sublabel={r.ivHvRatio?`IV/HV ${r.ivHvRatio.toFixed(2)}`:''} />
+                <SpeedTape label="Structure (credit/debit ratio)" value={r.structScore} min={0} max={100}
+                  zones={[{to:30,color:'#f85149'},{to:60,color:'#d29922'},{to:80,color:'#e3b341'},{to:100,color:'#3fb950'}]}
+                  display={`${r.structScore}/100 — ${r.structGrade}`}
+                  sublabel={r.greeks?'Includes theta/gamma':'Enter credit/debit + Greeks for full score'} />
+                <SpeedTape label="Regime (conditions)" value={r.regimeScore} min={0} max={100}
+                  zones={[{to:30,color:'#f85149'},{to:60,color:'#d29922'},{to:80,color:'#e3b341'},{to:100,color:'#3fb950'}]}
+                  display={`${r.regimeScore}/100 — ${r.regimeGrade}`}
+                  sublabel={`Move ${(r.moveConsumed*100).toFixed(0)}% consumed, comp ${r.comp?.toFixed(2)||'--'}`} />
+              </div>
+              <div className="mt-3 pt-2 text-xs text-[#8b949e]" style={{borderTop:'1px solid #21262d'}}>
+                Weights: Volatility 30% + Structure 30% + Regime 40%
+              </div>
+            </div>
+          )}
 
           {/* Signals */}
           <div className="card">
