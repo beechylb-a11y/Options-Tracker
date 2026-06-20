@@ -352,7 +352,9 @@ export function calc0DTE(inputs) {
     } else if (legStrat === 'Iron Condor - Normal') {
       legs = [leg('Long put', p-2*D), leg('Short put', p-D), leg('Short call', p+D), leg('Long call', p+2*D)];
     } else if (legStrat === 'Long Condor - Reversed') {
-      legs = [leg('Long put', p-2*D), leg('Short put', p-D), leg('Short call', p+D), leg('Long call', p+2*D)];
+      // Reversed iron condor: sell outer wings, buy inner strikes
+      // Profits from large move — debit structure
+      legs = [leg('Short put', p-2*D), leg('Long put', p-D), leg('Long call', p+D), leg('Short call', p+2*D)];
     } else if (legStrat === 'Chicken condor') {
       const tightW = D, wideW = D * 1.5;
       legs = dirScore >= 0
@@ -538,8 +540,8 @@ export function calc0DTE(inputs) {
       targetCredit = -(targetLow + targetHigh) / 2;
       targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
       targetIsCredit = false;
-    } else if (legStrat === 'Long Condor') {
-      targetLow = width * 0.10; targetHigh = width * 0.25;
+    } else if (legStrat === 'Long Condor' || legStrat === 'Long Condor - Reversed') {
+      targetLow = width * 0.30; targetHigh = width * 0.60;
       targetCredit = -(targetLow + targetHigh) / 2;
       targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
       targetIsCredit = false;
