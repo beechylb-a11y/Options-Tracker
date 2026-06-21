@@ -913,7 +913,12 @@ export function calc0DTE(inputs) {
   if (hasGreeks && atr > 0) {
     const tEdge = delta * atr > 0 ? theta / (delta * atr) : 0;
     const gRisk = theta > 0 ? (gamma * atr) / theta : 0;
-    const dsMax = delta > 0 ? theta * (hours / 6.5) / delta : 0;
+    // Max tolerable move: how far price can move before theta earned is consumed
+    // theta is daily ($), hours is actual hours remaining to 4pm ET
+    // Theta earned in remaining time = theta × (hours / 6.5)
+    const hoursUsed = hours > 0 ? hours : 6.5; // fallback to full day if not entered
+    const thetaRemaining = theta * (hoursUsed / 6.5);
+    const dsMax = delta > 0 ? thetaRemaining / delta : 0;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
     // Theta edge interpretation

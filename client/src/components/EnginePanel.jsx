@@ -25,6 +25,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
 
+  // Auto-calculate hours remaining on mount
+  useEffect(() => {
+    if (!is0) return;
+    const now = new Date();
+    const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const marketClose = new Date(et);
+    marketClose.setHours(16, 0, 0, 0);
+    const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
+    const hoursRounded = Math.round(hoursLeft * 10) / 10;
+    if (hoursRounded > 0 && !i0.hours) {
+      setI0(prev => ({ ...prev, hours: hoursRounded }));
+    }
+  }, [is0]);
+
   // Apply prefillData from multi-scan
   useEffect(() => {
     if (!prefillData || !is0) return;
