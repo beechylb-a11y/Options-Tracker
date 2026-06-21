@@ -550,90 +550,151 @@ export function calc0DTE(inputs) {
 
   // ═══════════════════════════════════════
   //  FAIR VALUE SCORE (0-100)
-  //  Volatility Score + Structure Score + Regime Score
+  //  Strategy-specific: different strategies value different conditions
   // ═══════════════════════════════════════
 
-  // ── Volatility Score (0-100) ──
-  // IV/HV proxy: VIX1D represents short-term IV, VIX represents term vol
-  // For 0DTE: VIX1D is the relevant IV, EM/ATR ratio is realized vol proxy
   const ivHvRatio = (vix > 0 && atr > 0 && price > 0)
     ? (vix1d > 0 ? vix1d : vix) / ((atr / price) * 100 * SQRT252)
     : 1.0;
   const vixGapPct = vix > 0 ? (vix1d - vix) / vix : 0;
 
-  let volScore = 50; // default neutral
-  // IV/HV ratio: >1.1 means options are rich (good for sellers)
-  if (ivHvRatio > 1.3) volScore = 95;
-  else if (ivHvRatio > 1.1) volScore = 80;
-  else if (ivHvRatio > 0.9) volScore = 60;
-  else if (ivHvRatio > 0.8) volScore = 40;
-  else volScore = 20; // cheap vol — bad for sellers
+  // Classify strategy type for fair value
+  const isCredit = legStrat.includes('Iron Condor') || legStrat === 'Chicken condor' || legStrat === 'Iron butterfly'
+    || legStrat.includes('Bull put') || legStrat.includes('Bear call');
+  const isDebitBfly = legStrat.includes('butterfly') || legStrat.includes('Butterfly') || legStrat.includes('BWB') || legStrat.includes('Broken');
+  const isReversed = legStrat.includes('Reversed');
+  const isDebitSpread = legStrat.includes('Bull call') || legStrat.includes('Bear put');
 
-  // VIX1D/VIX gap adjustment
-  if (vixGapPct > 0.25) volScore = Math.min(100, volScore + 10); // extremely rich short-term
-  else if (vixGapPct > 0.10) volScore = Math.min(100, volScore + 5);
-  else if (vixGapPct < -0.10) volScore = Math.max(0, volScore - 10); // cheap short-term
-
+  // ── Volatility Score (0-100) ──
+  // Credit sellers want rich vol. Debit buyers want cheap vol. Reversed wants cheap vol (buying gamma).
+  let volScore = 50;
+  if (isCredit) {
+    // Credit strategies: rich vol = excellent (selling expensive options)
+    if (ivHvRatio > 1.3) volScore = 95;
+    else if (ivHvRatio > 1.1) volScore = 80;
+    else if (ivHvRatio > 0.9) volScore = 60;
+    else if (ivHvRatio > 0.8) volScore = 40;
+    else volScore = 20;
+    // Rich short-term vol bonus for credit sellers
+    if (vixGapPct > 0.25) volScore = Math.min(100, volScore + 10);
+    else if (vixGapPct > 0.10) volScore = Math.min(100, volScore + 5);
+    else if (vixGapPct < -0.10) volScore = Math.max(0, volScore - 10);
+  } else if (isReversed) {
+    // Reversed condor: buying vol — want CHEAP vol (inverted scale)
+    if (ivHvRatio < 0.8) volScore = 95;
+    else if (ivHvRatio < 0.9) volScore = 80;
+    else if (ivHvRatio < 1.1) volScore = 60;
+    else if (ivHvRatio < 1.3) volScore = 40;
+    else volScore = 20;
+    // Cheap short-term vol bonus for vol buyers
+    if (vixGapPct < -0.10) volScore = Math.min(100, volScore + 10);
+    else if (vixGapPct > 0.10) volScore = Math.max(0, volScore - 10);
+  } else if (isDebitBfly) {
+    // Debit butterflies: want vol near fair (not too rich or cheap)
+    // Sweet spot is IV/HV near 1.0 — paying fair for the structure
+    if (ivHvRatio > 0.85 && ivHvRatio < 1.15) volScore = 90;
+    else if (ivHvRatio > 0.75 && ivHvRatio < 1.25) volScore = 70;
+    else if (ivHvRatio < 0.75) volScore = 55; // cheap vol — butterfly shape less defined
+    else volScore = 40; // rich vol — paying too much
+    // Cheap short-term helps (buying near-term options)
+    if (vixGapPct < -0.10) volScore = Math.min(100, volScore + 10);
+    else if (vixGapPct > 0.25) volScore = Math.max(0, volScore - 10);
+  } else {
+    // Debit spreads: want cheap vol (buying)
+    if (ivHvRatio < 0.8) volScore = 90;
+    else if (ivHvRatio < 0.9) volScore = 75;
+    else if (ivHvRatio < 1.1) volScore = 60;
+    else if (ivHvRatio < 1.3) volScore = 40;
+    else volScore = 25;
+  }
   const volGrade = volScore >= 80 ? 'Rich' : volScore >= 60 ? 'Fair' : 'Cheap';
 
   // ── Structure Score (0-100) ──
-  // Based on debit/credit ratio, theta edge, gamma risk
   let structScore = 50;
-
-  // Debit/credit ratio (how much you pay vs wing width)
   if (D > 0 && netCreditDebit !== 0) {
     const absNCD = Math.abs(netCreditDebit);
     const ratio = absNCD / D;
-    if (netCreditDebit > 0) {
-      // Credit trade: higher credit = better value
+
+    if (isCredit) {
+      // Credit: higher credit = better
       if (ratio > 0.40) structScore = 95;
       else if (ratio > 0.30) structScore = 85;
       else if (ratio > 0.20) structScore = 70;
       else if (ratio > 0.10) structScore = 55;
       else structScore = 35;
+    } else if (isDebitBfly) {
+      // Debit butterfly: want debit 10-25% of width
+      if (ratio >= 0.10 && ratio <= 0.25) structScore = 95;
+      else if (ratio < 0.10) structScore = 80; // very cheap — possible but check liquidity
+      else if (ratio <= 0.35) structScore = 70;
+      else if (ratio <= 0.50) structScore = 45;
+      else structScore = 25;
+    } else if (isReversed) {
+      // Reversed condor: want low debit relative to potential payout
+      if (ratio < 0.30) structScore = 95;
+      else if (ratio < 0.45) structScore = 80;
+      else if (ratio < 0.60) structScore = 65;
+      else structScore = 35;
     } else {
-      // Debit trade: lower debit = better value
-      if (ratio < 0.10) structScore = 95;
-      else if (ratio < 0.20) structScore = 85;
-      else if (ratio < 0.30) structScore = 70;
-      else if (ratio < 0.50) structScore = 50;
+      // Debit spreads: lower debit = better
+      if (ratio < 0.50) structScore = 90;
+      else if (ratio < 0.65) structScore = 75;
+      else if (ratio < 0.80) structScore = 55;
       else structScore = 30;
     }
   }
 
-  // Theta edge adjustment (if greeks available)
+  // Greeks adjustments (apply to all strategies)
   if (hasGreeks && theta > 0 && delta > 0 && atr5 > 0) {
     const tEdge = theta / (delta * atr5);
-    if (tEdge > 0.30) structScore = Math.min(100, structScore + 10);
-    else if (tEdge > 0.15) structScore = Math.min(100, structScore + 5);
-    else if (tEdge < 0.05) structScore = Math.max(0, structScore - 15);
+    if (isCredit) {
+      // Credit sellers want high theta edge
+      if (tEdge > 0.30) structScore = Math.min(100, structScore + 10);
+      else if (tEdge > 0.15) structScore = Math.min(100, structScore + 5);
+      else if (tEdge < 0.05) structScore = Math.max(0, structScore - 15);
+    } else {
+      // Debit buyers: theta edge less relevant, but very low is still bad
+      if (tEdge < 0.03) structScore = Math.max(0, structScore - 5);
+    }
   }
-
-  // Gamma risk adjustment
   if (hasGreeks && gamma > 0 && theta > 0 && atr5 > 0) {
     const gRisk = gamma * atr5 / theta;
-    if (gRisk > 1.20) structScore = Math.max(0, structScore - 15);
-    else if (gRisk > 0.70) structScore = Math.max(0, structScore - 5);
-    else if (gRisk < 0.30) structScore = Math.min(100, structScore + 5);
+    if (isCredit) {
+      // Credit sellers fear gamma
+      if (gRisk > 1.20) structScore = Math.max(0, structScore - 15);
+      else if (gRisk > 0.70) structScore = Math.max(0, structScore - 5);
+      else if (gRisk < 0.30) structScore = Math.min(100, structScore + 5);
+    } else if (isReversed) {
+      // Reversed condor WANTS gamma — high gamma is good
+      if (gRisk > 1.20) structScore = Math.min(100, structScore + 10);
+      else if (gRisk > 0.70) structScore = Math.min(100, structScore + 5);
+    }
   }
-
   const structGrade = structScore >= 80 ? 'Excellent' : structScore >= 60 ? 'Good' : structScore >= 40 ? 'Fair' : 'Poor';
 
   // ── Regime Score (0-100) ──
-  // Based on realized move %, compression, VWAP alignment, gamma strike proximity
   let regimeScore = 50;
-
-  // Move consumed: for butterflies want >60%, for spreads want <40%
-  const isButterflyStrat = legStrat.includes('butterfly') || legStrat.includes('Butterfly') || legStrat === 'Iron butterfly' || legStrat.includes('BWB') || legStrat.includes('Broken');
   if (moveConsumed > 0) {
-    if (isButterflyStrat) {
-      // Butterflies want high move consumed (exhaustion)
+    if (isDebitBfly) {
+      // Butterflies want high move consumed (exhaustion = pinning)
       if (moveConsumed > 0.80) regimeScore = 95;
       else if (moveConsumed > 0.60) regimeScore = 80;
       else if (moveConsumed > 0.40) regimeScore = 55;
       else regimeScore = 30;
+    } else if (isReversed) {
+      // Reversed condor wants LOW move consumed (room for big move)
+      if (moveConsumed < 0.20) regimeScore = 95;
+      else if (moveConsumed < 0.35) regimeScore = 80;
+      else if (moveConsumed < 0.50) regimeScore = 60;
+      else regimeScore = 25; // too much already consumed — breakout less likely
+    } else if (isCredit) {
+      // Credit structures want moderate — not too much (gap risk) not too little (still moving)
+      if (moveConsumed > 0.30 && moveConsumed < 0.60) regimeScore = 90;
+      else if (moveConsumed < 0.30) regimeScore = 70;
+      else if (moveConsumed < 0.80) regimeScore = 55;
+      else regimeScore = 35;
     } else {
-      // Spreads/condors want low move consumed (room to run or stay)
+      // Debit spreads want low consumed (room for directional move)
       if (moveConsumed < 0.25) regimeScore = 90;
       else if (moveConsumed < 0.40) regimeScore = 75;
       else if (moveConsumed < 0.60) regimeScore = 55;
@@ -641,29 +702,56 @@ export function calc0DTE(inputs) {
     }
   }
 
-  // Compression adjustment
+  // Compression adjustments (strategy-specific)
   if (comp !== null) {
-    if (isButterflyStrat && isCompressing) regimeScore = Math.min(100, regimeScore + 10);
-    else if (isButterflyStrat && isExpanding) regimeScore = Math.max(0, regimeScore - 15);
-    else if (!isButterflyStrat && isExpanding) regimeScore = Math.min(100, regimeScore + 5);
+    if (isDebitBfly && isCompressing) regimeScore = Math.min(100, regimeScore + 10);
+    else if (isDebitBfly && isExpanding) regimeScore = Math.max(0, regimeScore - 15);
+    else if (isReversed && isExpanding) regimeScore = Math.min(100, regimeScore + 10); // reversed wants expansion
+    else if (isReversed && isCompressing) regimeScore = Math.max(0, regimeScore - 10);
+    else if (isCredit && isCompressing) regimeScore = Math.min(100, regimeScore + 5);
+    else if (isCredit && isExpanding) regimeScore = Math.max(0, regimeScore - 5);
   }
 
   // VWAP alignment
   if (confirmed) regimeScore = Math.min(100, regimeScore + 5);
   else if (diverges) regimeScore = Math.max(0, regimeScore - 5);
 
-  // Gamma strike proximity
+  // Gamma strike proximity (matters most for butterflies)
   if (gamDist !== null) {
-    if (gamDist < 0.5) regimeScore = Math.min(100, regimeScore + 10);
-    else if (gamDist < 1.0) regimeScore = Math.min(100, regimeScore + 5);
-    else if (gamDist > 2.0) regimeScore = Math.max(0, regimeScore - 5);
+    if (isDebitBfly) {
+      if (gamDist < 0.5) regimeScore = Math.min(100, regimeScore + 15);
+      else if (gamDist < 1.0) regimeScore = Math.min(100, regimeScore + 8);
+      else if (gamDist > 2.0) regimeScore = Math.max(0, regimeScore - 10);
+    } else {
+      if (gamDist < 0.5) regimeScore = Math.min(100, regimeScore + 5);
+      else if (gamDist < 1.0) regimeScore = Math.min(100, regimeScore + 3);
+    }
   }
+
+  // Trend pattern adjustments
+  if (trendPattern === 'continuation' && (isCredit || isDebitBfly)) regimeScore = Math.max(0, regimeScore - 10); // trending = bad for range structures
+  if (trendPattern === 'continuation' && (isReversed || isDebitSpread)) regimeScore = Math.min(100, regimeScore + 10); // trending = good for breakout/directional
+  if (trendPattern === 'range' && (isCredit || isDebitBfly)) regimeScore = Math.min(100, regimeScore + 5);
 
   const regimeGrade = regimeScore >= 80 ? 'Excellent' : regimeScore >= 60 ? 'Good' : regimeScore >= 40 ? 'Fair' : 'Poor';
 
-  // ── Composite Fair Value Score ──
-  // Volatility 30% + Structure 30% + Regime 40%
-  const fairValueScore = Math.round(volScore * 0.30 + structScore * 0.30 + regimeScore * 0.40);
+  // ── Composite Fair Value Score — strategy-specific weights ──
+  let fvWeightVol, fvWeightStruct, fvWeightRegime;
+  if (isCredit) {
+    // Credit strategies: vol matters most (selling premium), regime second
+    fvWeightVol = 0.35; fvWeightStruct = 0.25; fvWeightRegime = 0.40;
+  } else if (isReversed) {
+    // Reversed: vol critical (buying cheap), regime critical (need breakout)
+    fvWeightVol = 0.35; fvWeightStruct = 0.20; fvWeightRegime = 0.45;
+  } else if (isDebitBfly) {
+    // Butterflies: regime most important (pinning conditions), structure second (good price)
+    fvWeightVol = 0.20; fvWeightStruct = 0.30; fvWeightRegime = 0.50;
+  } else {
+    // Debit spreads: balanced
+    fvWeightVol = 0.30; fvWeightStruct = 0.30; fvWeightRegime = 0.40;
+  }
+
+  const fairValueScore = Math.round(volScore * fvWeightVol + structScore * fvWeightStruct + regimeScore * fvWeightRegime);
   const fairValueGrade = fairValueScore >= 90 ? 'Excellent' : fairValueScore >= 80 ? 'Good' : fairValueScore >= 70 ? 'Marginal' : 'No Trade';
 
   // ═══════════════════════════════════════
@@ -914,7 +1002,7 @@ export function calc0DTE(inputs) {
     ev, payoff, targetCredit, targetLabel, targetLow, targetHigh, targetMax, targetIsCredit,
     // Fair Value
     fairValueScore, fairValueGrade, volScore, volGrade, structScore, structGrade,
-    regimeScore, regimeGrade, ivHvRatio,
+    regimeScore, regimeGrade, ivHvRatio, fvWeightVol, fvWeightStruct, fvWeightRegime,
     // Greeks
     greeks,
     // Decision

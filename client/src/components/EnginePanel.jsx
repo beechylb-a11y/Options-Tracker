@@ -780,7 +780,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   sublabel={`Move ${(r.moveConsumed*100).toFixed(0)}% consumed, comp ${r.comp?.toFixed(2)||'--'}`} />
               </div>
               <div className="mt-3 pt-2 text-xs text-[#8b949e]" style={{borderTop:'1px solid #21262d'}}>
-                Weights: Volatility 30% + Structure 30% + Regime 40%
+                Weights ({r.legStrat||'--'}): Vol {((r.fvWeightVol||0.3)*100).toFixed(0)}% + Structure {((r.fvWeightStruct||0.3)*100).toFixed(0)}% + Regime {((r.fvWeightRegime||0.4)*100).toFixed(0)}%
               </div>
             </div>
           )}
