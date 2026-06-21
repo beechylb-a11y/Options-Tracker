@@ -601,6 +601,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             </div>
           )}
 
+          {/* Profit target scale */}
+          {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
+            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={r.targetIsCredit} />
+          )}
+
           {/* Greeks */}
           <SectionLabel>Greeks (optional)</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
@@ -898,6 +903,65 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
         <text key={i} x={t.x} y={H-(mini?5:5)} textAnchor="middle" fill="#c9d1d9" fontSize={fs}>{t.label}</text>
       ))}
     </svg>
+  );
+}
+
+function ProfitScale({ netCreditDebit, isCredit }) {
+  const ncd = Math.abs(netCreditDebit);
+  const pcts = [25, 30, 40, 50, 75, 100];
+  const multiplier = 100; // options multiplier
+
+  // For credit trades: profit target = close for LESS than credit received
+  //   e.g. sold for $2.00 credit, 50% profit = buy back at $1.00 (debit $1.00)
+  //   TWS entry: limit debit = credit × (1 - target%)
+  // For debit trades: profit target = close for MORE than debit paid
+  //   e.g. bought for $1.50 debit, 50% profit = sell at $2.25 ($1.50 + 50% of $1.50)
+  //   TWS entry: limit credit = debit × (1 + target%)
+  //   Actually for butterflies: 50% of max profit, not 50% of debit
+  //   Simpler: profit $ = ncd × target%, close price = ncd ± profit
+
+  return (
+    <div style={{marginTop:8,marginBottom:4}}>
+      <div style={{fontSize:10,color:'#8b949e',marginBottom:6,fontWeight:600}}>
+        Profit targets — TWS limit order values
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(6, 1fr)',gap:4}}>
+        {pcts.map(pct => {
+          const profitPerShare = ncd * (pct / 100);
+          const profitDollars = profitPerShare * multiplier;
+          let closePrice, closeType;
+          if (isCredit || netCreditDebit > 0) {
+            // Credit: buy back cheaper — close price = credit - profit
+            closePrice = ncd - profitPerShare;
+            closeType = 'debit';
+          } else {
+            // Debit: sell higher — close price = |debit| + profit
+            closePrice = ncd + profitPerShare;
+            closeType = 'credit';
+          }
+          const highlight = pct === 50;
+          return (
+            <div key={pct} style={{
+              background: highlight ? '#0d2818' : '#161b22',
+              border: `1px solid ${highlight ? '#238636' : '#21262d'}`,
+              borderRadius: 6, padding: '6px 4px', textAlign: 'center'
+            }}>
+              <div style={{fontSize:10,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#e6edf3',fontFamily:'JetBrains Mono,monospace',marginTop:2}}>
+                ${closePrice.toFixed(2)}
+              </div>
+              <div style={{fontSize:8,color:'#8b949e',marginTop:1}}>{closeType}</div>
+              <div style={{fontSize:8,color: highlight ? '#3fb950' : '#8b949e',marginTop:1}}>+${profitDollars.toFixed(0)}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{fontSize:9,color:'#484f58',marginTop:4}}>
+        {isCredit || netCreditDebit > 0
+          ? `Sold at $${ncd.toFixed(2)} credit — enter limit debit to close`
+          : `Bought at $${ncd.toFixed(2)} debit — enter limit credit to close`}
+      </div>
+    </div>
   );
 }
 
