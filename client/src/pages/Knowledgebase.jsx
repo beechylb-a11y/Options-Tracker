@@ -7,7 +7,7 @@ import { BookOpen, CheckSquare, Layers, CreditCard, AlertTriangle, ChevronDown, 
 const STRATEGIES = [
   {
     name: 'Iron Condor - Normal', type: 'Credit', legs: 4, dte: '0DTE / 45DTE',
-    structure: 'Long put — Short put — Short call — Long call',
+    structure: 'Four legs: buy an OTM put (lower wing), sell a closer put, sell a closer call, buy an OTM call (upper wing). Creates a profit zone between the two short strikes with defined risk at both wings.',
     setup: 'Neutral outlook, RM < 50% EM, rich or neutral VIX gap, flat VWAP slope',
     profit: 'Price stays calmly between short put and short call. Low realised movement.',
     risk: 'Large directional move through either short strike. Gap risk overnight (45DTE).',
@@ -17,7 +17,7 @@ const STRATEGIES = [
   },
   {
     name: 'Chicken Condor', type: 'Credit', legs: 4, dte: '0DTE',
-    structure: 'Long put — Short put (wide) — Short call (tight) — Long call',
+    structure: 'Four legs like an iron condor but asymmetric: the wing on the directional side is wider (more room), the opposite wing is tighter. Skews risk toward the less likely direction.',
     setup: 'Mild directional bias, RM < 50% EM, any VIX gap. Widen the threatened side.',
     profit: 'Price stays very contained inside short strikes. No late breakout.',
     risk: 'Move through the tight (directional) side. Less risk on the wide side.',
@@ -27,7 +27,7 @@ const STRATEGIES = [
   },
   {
     name: 'Broken Wing Butterfly', type: 'Debit/Even', legs: 3, dte: '0DTE / 45DTE',
-    structure: 'All calls (bull) or all puts (bear): Long — Short x2 — Long (broken wing wider)',
+    structure: 'Three legs, all puts or all calls: buy one at the near wing, sell two at the body strike, buy one at a wider far wing (1.75x). The broken wing reduces cost but adds directional risk on the near side.',
     setup: 'RM 50-100% EM, compression developing, gamma strike nearby. VIX1D cheap favourable.',
     profit: 'Price moves toward body strike and stalls. Avoid fast move through the risk wing.',
     risk: 'Fast move through the broken (wider) wing. Max loss on one side only.',
@@ -37,7 +37,7 @@ const STRATEGIES = [
   },
   {
     name: 'Asymmetric Butterfly', type: 'Debit', legs: 3, dte: '0DTE',
-    structure: 'All calls/puts: Long — Short x2 — Long (1.5x wing in trend direction)',
+    structure: 'Three legs, all same type: buy one at the near wing, sell two at the body, buy one at a 1.5x wider far wing. Moderate asymmetry between standard butterfly and BWB — directional bias with less skew.',
     setup: 'RM 75-100% EM, strong directional bias, compression. Similar to BWB but more biased.',
     profit: 'Price moves toward the profit zone body. No aggressive overshoot through risk side.',
     risk: 'Move through the narrow wing. Directional conviction must be correct.',
@@ -47,7 +47,7 @@ const STRATEGIES = [
   },
   {
     name: 'Standard Butterfly', type: 'Debit', legs: 3, dte: '0DTE / 45DTE',
-    structure: 'All calls or all puts: Long — Short x2 (ATM) — Long (symmetric wings)',
+    structure: 'Three legs, all same type: buy one below the body, sell two at the body strike (near ATM), buy one above. Equal wing widths create a symmetric tent-shaped payoff centered on the body strike.',
     setup: 'RM 75-100% EM, strong compression, gamma strike pinning, flat VWAP slope.',
     profit: 'Price pins near the middle short strike by expiry.',
     risk: 'Any significant move away from body strike. Loses value if price trends.',
@@ -57,7 +57,7 @@ const STRATEGIES = [
   },
   {
     name: 'Long Condor - Reversed', type: 'Debit', legs: 4, dte: '0DTE',
-    structure: 'Short put (outer) — Long put (inner) — Long call (inner) — Short call (outer)',
+    structure: 'Four legs: sell an OTM put (outer), buy a closer put (inner), buy a closer call (inner), sell an OTM call (outer). Opposite of iron condor — you pay a debit and profit from a large move in either direction.',
     setup: 'RM < 50% EM, expecting breakout or trend day. VIX1D cheap favourable (buying vol cheap).',
     profit: 'Price makes a large move beyond either inner long strike. Profits from breakout, trend day, or volatility expansion.',
     risk: 'Price stays range-bound between the two inner long strikes. Max loss = net debit paid.',
@@ -67,7 +67,7 @@ const STRATEGIES = [
   },
   {
     name: 'Iron Butterfly', type: 'Credit', legs: 4, dte: '0DTE / 45DTE',
-    structure: 'Long put (wing) — Short put (ATM) — Short call (ATM) — Long call (wing)',
+    structure: 'Four legs: buy an OTM put wing, sell a put at the money, sell a call at the money (same strike), buy an OTM call wing. Like an iron condor but with both short strikes at the same ATM price, creating maximum credit and a narrow profit peak.',
     setup: 'RM 75-100% EM, strong compression/pinning, flat VWAP, rich VIX gap.',
     profit: 'Price pins as close as possible to the central short strike within breakevens.',
     risk: 'Any move away from the body strike. Higher risk than IC due to ATM shorts.',
@@ -77,7 +77,7 @@ const STRATEGIES = [
   },
   {
     name: 'Bull Put Spread', type: 'Credit', legs: 2, dte: '0DTE / 45DTE',
-    structure: 'Short put (higher) — Long put (lower)',
+    structure: 'Two legs: sell a put at a higher strike (closer to price), buy a put at a lower strike (further away). You receive a credit. The long put caps your max loss at the width between strikes minus credit received.',
     setup: 'Bullish bias, RM < 50% EM, rich VIX gap, mild-strong upward VWAP slope.',
     profit: 'Price stays above the short put. Sideways-to-higher after entry.',
     risk: 'Price drops below short put strike. Max loss = width minus credit.',
@@ -87,7 +87,7 @@ const STRATEGIES = [
   },
   {
     name: 'Bear Call Spread', type: 'Credit', legs: 2, dte: '0DTE / 45DTE',
-    structure: 'Short call (lower) — Long call (higher)',
+    structure: 'Two legs: sell a call at a lower strike (closer to price), buy a call at a higher strike (further away). You receive a credit. The long call caps your max loss at the width minus credit received.',
     setup: 'Bearish bias, RM < 50% EM, rich VIX gap, mild-strong downward VWAP slope.',
     profit: 'Price stays below the short call. Sideways-to-lower after entry.',
     risk: 'Price rises above short call strike. Max loss = width minus credit.',
@@ -97,7 +97,7 @@ const STRATEGIES = [
   },
   {
     name: 'Bull Call Spread', type: 'Debit', legs: 2, dte: '0DTE / 45DTE',
-    structure: 'Long call (lower) — Short call (higher)',
+    structure: 'Two legs: buy a call at a lower strike (closer to price), sell a call at a higher strike (further away). You pay a debit. Max profit is the width between strikes minus the debit paid. Needs price to rise.',
     setup: 'Bullish bias, RM < 40%, cheap VIX gap. Needs quick directional move.',
     profit: 'Price moves upward quickly through the long call toward the short call.',
     risk: 'Price stays flat or drops. Theta decay works against you.',
@@ -107,7 +107,7 @@ const STRATEGIES = [
   },
   {
     name: 'Bear Put Spread', type: 'Debit', legs: 2, dte: '0DTE / 45DTE',
-    structure: 'Long put (higher) — Short put (lower)',
+    structure: 'Two legs: buy a put at a higher strike (closer to price), sell a put at a lower strike (further away). You pay a debit. Max profit is the width between strikes minus the debit paid. Needs price to fall.',
     setup: 'Bearish bias, RM < 40%, cheap VIX gap. Needs quick directional move.',
     profit: 'Price moves downward quickly through the long put toward the short put.',
     risk: 'Price stays flat or rises. Theta decay works against you.',
@@ -117,7 +117,7 @@ const STRATEGIES = [
   },
   {
     name: 'Calendar Spread', type: 'Debit', legs: 2, dte: '45DTE',
-    structure: 'Short front-month — Long back-month (same strike)',
+    structure: 'Two legs at the same strike but different expirations: sell the near-term option (faster decay), buy the longer-term option (slower decay). Profits from the front month decaying faster than the back month while price stays near the strike.',
     setup: 'IVR 10-30, contango term structure, neutral outlook, low skew.',
     profit: 'Price stays near the strike. Front month decays faster than back month.',
     risk: 'Large directional move or backwardation (front IV rising vs back).',
@@ -127,7 +127,7 @@ const STRATEGIES = [
   },
   {
     name: 'Diagonal Spread', type: 'Debit', legs: 2, dte: '45DTE',
-    structure: 'Long 60-90d call — Short 20-30d call at higher strike',
+    structure: 'Two legs at different strikes and expirations: buy a longer-dated call (60-90 DTE), sell a shorter-dated call (20-30 DTE) at a higher strike. Like a covered call using a LEAPS instead of stock. Profits from time spread and mild directional move.',
     setup: 'IVR moderate, contango, mild directional bias. Front month OTM short.',
     profit: 'Price drifts toward the short strike. Time spread earns theta differential.',
     risk: 'Fast move through short strike or large IV collapse in back month.',
@@ -137,7 +137,7 @@ const STRATEGIES = [
   },
   {
     name: 'Jade Lizard', type: 'Credit', legs: 3, dte: '45DTE',
-    structure: 'Short put — Short call spread (bear call spread above)',
+    structure: 'Three legs: sell a naked put below price, then sell a bear call spread (short call + long call) above price. Total credit should exceed the call spread width, eliminating upside risk. Downside risk is the short put.',
     setup: 'IVR > 40, elevated skew, bullish-neutral. Total credit > call spread width.',
     profit: 'Price stays above short put. Total credit exceeds call spread width (no upside risk).',
     risk: 'Price drops below short put. Upside risk eliminated if credit > call width.',
