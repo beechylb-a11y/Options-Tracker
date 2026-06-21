@@ -698,6 +698,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={`${r.sharpeFactor?.toFixed(2)||'--'} (${r.sharpeProxy?.toFixed(2)||'--'})`}
                 sublabel={r.sharpeProxy>0.30?'Strong edge':r.sharpeProxy>0.15?'Decent edge':r.sharpeProxy>0.05?'Marginal edge':r.sharpeProxy>0?'Weak edge':'Negative EV'} />
+              <SpeedTape label="Strategy modifier" value={r.stratModifier||1} min={0.5} max={1}
+                zones={[{to:0.70,color:'#f85149'},{to:0.85,color:'#d29922'},{to:0.95,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
+                display={`${r.stratModifier?.toFixed(2)||'--'}`}
+                sublabel={r.stratModReason||''} />
               <SpeedTape label="POP margin" value={Math.min(r.popMargin||0, 2.5)} min={0} max={2.5}
                 zones={[{to:0.8,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:2.5,color:'#3fb950'}]}
                 display={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'}

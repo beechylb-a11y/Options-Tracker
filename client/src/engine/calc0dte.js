@@ -787,9 +787,29 @@ export function calc0DTE(inputs) {
   else if (sharpeProxy > 0) sharpeFactor = 0.35;     // weak edge
   else sharpeFactor = 0.25;                           // negative EV
 
-  // Adjusted Kelly = raw Kelly × vol factor × Sharpe factor
-  const adjustedKelly = rawKelly * volFactor * sharpeFactor;
-  const kelly = adjustedKelly; // use adjusted for all downstream
+  // Strategy-specific sizing modifier
+  // Accounts for tail risk, win frequency, and gamma exposure per strategy type
+  let stratModifier = 1.0;
+  let stratModReason = 'Standard';
+  if (legStrat.includes('Iron Condor') || legStrat.includes('Chicken')) {
+    stratModifier = 0.85; stratModReason = 'Credit condor — tail risk';
+  } else if (legStrat === 'Iron butterfly') {
+    stratModifier = 0.90; stratModReason = 'Iron fly — steep loss slopes';
+  } else if (legStrat === 'Standard butterfly' || legStrat === 'Asymmetric butterfly') {
+    stratModifier = 1.00; stratModReason = 'Butterfly — capped debit risk';
+  } else if (legStrat === 'Broken wing butterfly') {
+    stratModifier = 0.80; stratModReason = 'BWB — asymmetric tail risk';
+  } else if (legStrat === 'Long Condor - Reversed') {
+    stratModifier = 0.70; stratModReason = 'Reversed condor — low POP, preserve capital';
+  } else if (legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat.includes('Credit')) {
+    stratModifier = 0.85; stratModReason = 'Credit spread — tail risk';
+  } else if (legStrat.includes('Bull call') || legStrat.includes('Bear put') || legStrat.includes('Debit')) {
+    stratModifier = 0.95; stratModReason = 'Debit spread — capped risk';
+  }
+
+  // Adjusted Kelly = raw Kelly × vol factor × Sharpe factor × strategy modifier
+  const adjustedKelly = rawKelly * volFactor * sharpeFactor * stratModifier;
+  const kelly = adjustedKelly;
   const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
   const kellyRisk = kelly * bankroll;
   const riskCap = maxOpen > 0 ? Math.min(kellyRisk, maxLoss, maxOpen) : Math.min(kellyRisk, maxLoss);
@@ -888,7 +908,7 @@ export function calc0DTE(inputs) {
     setupScore, setup, criteria,
     // Kelly (Sharpe-adjusted)
     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
-    volFactor, sharpeFactor, sharpeProxy,
+    volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
     ev, payoff, targetCredit, targetLabel, targetLow, targetHigh, targetMax, targetIsCredit,
