@@ -306,12 +306,19 @@ export default function Knowledgebase() {
 
                   {expanded && (
                     <div className="space-y-2 pt-2 border-t border-bg-border fade-in">
-                      <CardRow label="When to use" value={s.setup} />
-                      <CardRow label="Profit if" value={s.profit} cls="text-green" />
-                      <CardRow label="Risk" value={s.risk} cls="text-red" />
-                      <CardRow label="Management" value={s.manage} />
-                      <CardRow label="Greeks profile" value={s.greeks} cls="text-accent" />
-                      <div className="text-[10px] text-text-faint mt-1">DTE: {s.dte}</div>
+                      <div className="flex gap-4">
+                        <div className="flex-1 space-y-2">
+                          <CardRow label="When to use" value={s.setup} />
+                          <CardRow label="Profit if" value={s.profit} cls="text-green" />
+                          <CardRow label="Risk" value={s.risk} cls="text-red" />
+                          <CardRow label="Management" value={s.manage} />
+                          <CardRow label="Greeks profile" value={s.greeks} cls="text-accent" />
+                          <div className="text-[10px] text-text-faint mt-1">DTE: {s.dte}</div>
+                        </div>
+                        <div style={{flex:'0 0 180px'}}>
+                          <StrategyDiagram name={s.name} type={s.type} />
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -468,6 +475,115 @@ export default function Knowledgebase() {
 }
 
 // ─── Sub-components ───
+function StrategyDiagram({ name, type }) {
+  const W = 180, H = 100;
+  const z = 50; // zero line Y
+  const g = '#3fb950', r = '#f85149', gr = '#8b949e';
+
+  // Each strategy has a characteristic payoff shape
+  const shapes = {
+    'Iron Condor - Normal': {
+      // Flat loss left, slope up, flat profit, slope down, flat loss right
+      path: 'M10 75 L40 75 L55 30 L125 30 L140 75 L170 75',
+      fill: 'M55 50 L55 30 L125 30 L125 50 Z',
+      fillLoss: 'M10 50 L10 75 L40 75 L55 50 Z,M125 50 L140 75 L170 75 L170 50 Z'
+    },
+    'Chicken Condor': {
+      path: 'M10 75 L35 75 L50 30 L130 30 L145 75 L170 75',
+      fill: 'M50 50 L50 30 L130 30 L130 50 Z',
+      fillLoss: 'M10 50 L10 75 L35 75 L50 50 Z,M130 50 L145 75 L170 75 L170 50 Z'
+    },
+    'Broken wing butterfly': {
+      // Asymmetric tent: steep left loss, peak, gradual right loss
+      path: 'M10 70 L50 70 L90 15 L130 50 L170 70',
+      fill: 'M50 50 L90 15 L130 50 Z',
+      fillLoss: 'M10 50 L10 70 L50 70 L50 50 Z'
+    },
+    'Asymmetric butterfly': {
+      path: 'M10 65 L45 65 L90 15 L135 65 L170 65',
+      fill: 'M45 50 L90 15 L135 50 Z',
+      fillLoss: 'M10 50 L10 65 L45 65 L45 50 Z'
+    },
+    'Standard butterfly': {
+      // Symmetric tent
+      path: 'M10 65 L50 65 L90 15 L130 65 L170 65',
+      fill: 'M50 50 L90 15 L130 50 Z',
+      fillLoss: 'M10 50 L10 65 L50 65 L50 50 Z,M130 50 L130 65 L170 65 L170 50 Z'
+    },
+    'Iron butterfly': {
+      // V shape inverted - credit structure, profit at centre
+      path: 'M10 75 L45 75 L90 15 L135 75 L170 75',
+      fill: 'M45 50 L90 15 L135 50 Z',
+      fillLoss: 'M10 50 L10 75 L45 75 L45 50 Z,M135 50 L135 75 L170 75 L170 50 Z'
+    },
+    'Long Condor - Reversed': {
+      // Inverted iron condor - profit on wings, loss in middle
+      path: 'M10 25 L40 25 L55 70 L125 70 L140 25 L170 25',
+      fill: 'M10 50 L10 25 L40 25 L55 50 Z,M125 50 L140 25 L170 25 L170 50 Z',
+      fillLoss: 'M55 50 L55 70 L125 70 L125 50 Z'
+    },
+    'Bull put spread': {
+      // Flat loss left, slope up, flat profit right
+      path: 'M10 75 L60 75 L110 25 L170 25',
+      fill: 'M110 50 L110 25 L170 25 L170 50 Z',
+      fillLoss: 'M10 50 L10 75 L60 75 L85 50 Z'
+    },
+    'Bear call spread': {
+      // Flat profit left, slope down, flat loss right
+      path: 'M10 25 L60 25 L110 75 L170 75',
+      fill: 'M10 50 L10 25 L60 25 L85 50 Z',
+      fillLoss: 'M110 50 L110 75 L170 75 L170 50 Z'
+    },
+    'Bull call spread': {
+      // Flat loss left, slope up, flat profit right (debit)
+      path: 'M10 65 L60 65 L110 20 L170 20',
+      fill: 'M85 50 L110 20 L170 20 L170 50 Z',
+      fillLoss: 'M10 50 L10 65 L60 65 L85 50 Z'
+    },
+    'Bear put spread': {
+      // Flat profit left, slope down, flat loss right (debit)
+      path: 'M10 20 L60 20 L110 65 L170 65',
+      fill: 'M10 50 L10 20 L60 20 L85 50 Z',
+      fillLoss: 'M85 50 L110 65 L170 65 L170 50 Z'
+    },
+  };
+
+  // Find matching shape (partial match)
+  let shape = null;
+  for (const [key, val] of Object.entries(shapes)) {
+    if (name.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(name.toLowerCase().replace(' - reversed','').replace(' - normal',''))) {
+      shape = val;
+      break;
+    }
+  }
+  if (!shape) {
+    // Default: try to match by type
+    if (type === 'Credit') shape = shapes['Iron Condor - Normal'];
+    else shape = shapes['Standard butterfly'];
+  }
+
+  const lossPaths = (shape.fillLoss || '').split(',').filter(Boolean);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
+      <text x={W/2} y={10} textAnchor="middle" fill="#8b949e" fontSize="8" fontWeight="600">Payoff at expiry</text>
+      {/* Zero line */}
+      <line x1="10" y1={z} x2="170" y2={z} stroke="#484f58" strokeWidth="0.5" strokeDasharray="2,2"/>
+      <text x="6" y={z+3} textAnchor="end" fill="#484f58" fontSize="7">$0</text>
+      {/* Green profit fill */}
+      {shape.fill && <path d={shape.fill} fill={g} fillOpacity="0.2" />}
+      {/* Red loss fill */}
+      {lossPaths.map((lp, i) => <path key={i} d={lp} fill={r} fillOpacity="0.15" />)}
+      {/* P&L line */}
+      <path d={shape.path} fill="none" stroke="#e6edf3" strokeWidth="2" strokeLinejoin="round" />
+      {/* Labels */}
+      <text x="10" y={H-2} fill="#484f58" fontSize="7">Lower</text>
+      <text x={W-10} y={H-2} textAnchor="end" fill="#484f58" fontSize="7">Higher</text>
+      <text x={W/2} y={H-2} textAnchor="middle" fill="#484f58" fontSize="7">Price →</text>
+    </svg>
+  );
+}
+
 function CardRow({ label, value, cls }) {
   return (
     <div>
