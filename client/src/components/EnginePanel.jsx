@@ -502,7 +502,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           <SectionLabel>Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="text-xs text-text-muted block mb-1">{r.targetIsCredit ? 'Net credit ($)' : 'Net debit ($)'}</label>
+              <label className="text-xs text-text-muted block mb-1">{parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? 'Net credit ($)' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? 'Net debit ($)' : 'Net credit/debit ($)'}</label>
               <input type="number" step="any"
                 value={is0?i0.netCreditDebit:i45.netCreditDebit}
                 onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
@@ -586,16 +586,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               {r.kellyDollar > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
             </div>
           </div>
-          {r.targetMax > 0 && (
-            <CreditTape
-              value={Math.abs(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)||0)}
+          {r.targetMax > 0 && (() => {
+            const ncdVal = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0;
+            const actualIsCredit = ncdVal >= 0;
+            return <CreditTape
+              value={Math.abs(ncdVal)}
               low={r.targetLow}
               high={r.targetHigh}
               max={r.targetMax}
-              isCredit={r.targetIsCredit}
+              isCredit={actualIsCredit}
               label={r.targetLabel}
-            />
-          )}
+            />;
+          })()}
           {r.targetLabel && !r.targetMax && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
@@ -617,7 +619,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Profit target scale */}
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
-            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={r.targetIsCredit} />
+            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0} />
           )}
 
           {/* Greeks */}

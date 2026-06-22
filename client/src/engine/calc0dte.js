@@ -521,10 +521,14 @@ export function calc0DTE(inputs) {
       targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
       targetIsCredit = false;
     } else if (legStrat === 'Broken wing butterfly') {
-      targetLow = 0; targetHigh = width * 0.10;
-      targetCredit = 0;
-      targetLabel = 'Target: even to small credit';
-      targetIsCredit = true;
+      // BWB: typically a debit trade. Near wing is tight, broken wing is wide.
+      // Debit depends on how wide the broken wing is vs near wing.
+      // Typical debit = 30-60% of near wing width
+      const nearW = D; // near wing width
+      targetLow = nearW * 0.20; targetHigh = nearW * 0.60;
+      targetCredit = -(targetLow + targetHigh) / 2;
+      targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)} (or small credit)`;
+      targetIsCredit = false;
     } else if (legStrat === 'Asymmetric butterfly') {
       targetLow = width * 0.05; targetHigh = width * 0.20;
       targetCredit = -(targetLow + targetHigh) / 2;
@@ -623,12 +627,21 @@ export function calc0DTE(inputs) {
       else if (ratio > 0.10) structScore = 55;
       else structScore = 35;
     } else if (isDebitBfly) {
-      // Debit butterfly: want debit 10-25% of width
-      if (ratio >= 0.10 && ratio <= 0.25) structScore = 95;
-      else if (ratio < 0.10) structScore = 80; // very cheap — possible but check liquidity
-      else if (ratio <= 0.35) structScore = 70;
-      else if (ratio <= 0.50) structScore = 45;
-      else structScore = 25;
+      // Debit butterfly: evaluate based on debit relative to wing width
+      // BWB: also factor in win/risk ratio since structure is asymmetric
+      if (win > 0 && risk > 0) {
+        // Use actual win/risk from broker data
+        const rr = win / risk;
+        if (rr > 0.50) structScore = 95;       // excellent risk/reward
+        else if (rr > 0.30) structScore = 80;
+        else if (rr > 0.20) structScore = 65;
+        else if (rr > 0.10) structScore = 50;
+        else structScore = 30;
+      } else if (ratio >= 0.10 && ratio <= 0.30) structScore = 90;
+      else if (ratio < 0.10) structScore = 80;
+      else if (ratio <= 0.45) structScore = 65;
+      else if (ratio <= 0.60) structScore = 45;
+      else structScore = 30;
     } else if (isReversed) {
       // Reversed condor: want low debit relative to potential payout
       if (ratio < 0.30) structScore = 95;
