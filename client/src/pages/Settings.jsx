@@ -11,7 +11,19 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   // Account management
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
-  const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '300', maxOpenRisk: '450' });
+  const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' });
+
+  // Auto-calc defaults when bankroll changes (only if user hasn't manually edited)
+  const [manualLoss, setManualLoss] = useState(false);
+  const [manualRisk, setManualRisk] = useState(false);
+
+  function handleBankrollChange(val) {
+    const b = parseFloat(val) || 0;
+    const updates = { bankroll: val };
+    if (!manualLoss) updates.maxDailyLoss = Math.round(b * 0.20).toString();
+    if (!manualRisk) updates.maxOpenRisk = Math.round(b * 0.40).toString();
+    setAccountForm(f => ({ ...f, ...updates }));
+  }
   const [savingAccounts, setSavingAccounts] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
@@ -53,7 +65,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       await api.saveAccounts(updated);
       onAccountsChange(updated);
       setShowAddAccount(false);
-      setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '300', maxOpenRisk: '450' });
+      setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' }); setManualLoss(false); setManualRisk(false);
     } catch (e) { console.error(e); }
     setSavingAccounts(false);
   }
@@ -130,7 +142,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-semibold">Trading Accounts</h3>
-          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '300', maxOpenRisk: '450' }); }}
+          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' }); setManualLoss(false); setManualRisk(false); }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors">
             <Plus size={12} /> Add account
           </button>
@@ -151,7 +163,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       </div>
                       <div>
                         <label className="text-[10px] text-text-muted block mb-0.5">Bankroll ($)</label>
-                        <input type="number" value={accountForm.bankroll} onChange={e => setAccountForm(f => ({ ...f, bankroll: e.target.value }))}
+                        <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
@@ -160,13 +172,13 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($)</label>
-                        <input type="number" value={accountForm.maxDailyLoss} onChange={e => setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value }))}
+                        <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#484f58"}}>default 20%</span></label>
+                        <input type="number" value={accountForm.maxDailyLoss} onChange={e => { setManualLoss(true); setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value })); }}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($)</label>
-                        <input type="number" value={accountForm.maxOpenRisk} onChange={e => setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value }))}
+                        <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#484f58"}}>default 40%</span></label>
+                        <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                     </div>
@@ -191,7 +203,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span>Max risk: <span className="mono text-text">{fmt$(a.maxOpenRisk)}</span></span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk }); setShowAddAccount(false); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk }); setShowAddAccount(false); setManualLoss(true); setManualRisk(true); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);
@@ -231,7 +243,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
               </div>
               <div>
                 <label className="text-[10px] text-text-muted block mb-0.5">Bankroll ($)</label>
-                <input type="number" value={accountForm.bankroll} onChange={e => setAccountForm(f => ({ ...f, bankroll: e.target.value }))}
+                <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
@@ -240,13 +252,13 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($)</label>
-                <input type="number" value={accountForm.maxDailyLoss} onChange={e => setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value }))}
+                <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#484f58"}}>default 20%</span></label>
+                <input type="number" value={accountForm.maxDailyLoss} onChange={e => { setManualLoss(true); setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value })); }}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($)</label>
-                <input type="number" value={accountForm.maxOpenRisk} onChange={e => setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value }))}
+                <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#484f58"}}>default 40%</span></label>
+                <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
             </div>
