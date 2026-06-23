@@ -87,7 +87,7 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 app.get('/auth/status', (req, res) => {
-  res.json({ authenticated: !!storedTokens });
+  res.json({ authenticated: !!storedTokens, sheetId: process.env.SPREADSHEET_ID || '' });
 });
 
 // Auto-load tokens from Config sheet on startup

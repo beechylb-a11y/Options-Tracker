@@ -3,7 +3,7 @@ import { LogIn, Save, ExternalLink, Shield, Plus, Trash2, Edit3, X } from 'lucid
 import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
 
-export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange }) {
+export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, sheetId }) {
   const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -109,7 +109,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
           <div className="flex items-center gap-3">
             <div className="w-2.5 h-2.5 rounded-full bg-green" />
             <span className="text-sm text-text">Connected to Google Sheets</span>
-            <a href={`https://docs.google.com/spreadsheets/d/${import.meta.env.VITE_SPREADSHEET_ID || 'your-sheet-id'}`}
+            <a href={`https://docs.google.com/spreadsheets/d/${sheetId || ''}/edit`}
               target="_blank" rel="noopener noreferrer"
               className="ml-auto flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors">
               <ExternalLink size={12} /> Open Sheet

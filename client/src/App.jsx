@@ -34,9 +34,11 @@ export default function App() {
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState('all');
 
+  const [sheetId, setSheetId] = useState('');
+
   useEffect(() => {
     api.authStatus()
-      .then(d => { setAuthenticated(d.authenticated); setLoading(false); })
+      .then(d => { setAuthenticated(d.authenticated); setSheetId(d.sheetId || ''); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -137,7 +139,7 @@ export default function App() {
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}
-          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} accounts={accounts} onAccountsChange={setAccounts} />}
+          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} accounts={accounts} onAccountsChange={setAccounts} sheetId={sheetId} />}
         </div>
       </main>
     </div>
