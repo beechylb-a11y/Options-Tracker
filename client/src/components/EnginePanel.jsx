@@ -1088,17 +1088,47 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
 
 function Info({ text }) {
   const [show, setShow] = React.useState(false);
+  const ref = React.useRef(null);
+  const [flipDown, setFlipDown] = React.useState(false);
+
+  React.useEffect(() => {
+    if (show && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setFlipDown(rect.top < 320);
+    }
+  }, [show]);
+
   return (
-    <span style={{position:'relative',display:'inline-block',marginLeft:5}}>
+    <span ref={ref} style={{position:'relative',display:'inline-block',marginLeft:5}}>
       <span
         onClick={() => setShow(!show)}
         onMouseEnter={() => setShow(true)}
         onMouseLeave={() => setShow(false)}
         style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:15,height:15,borderRadius:'50%',background:'#21262d',color:'#8b949e',fontSize:9,fontWeight:700,cursor:'pointer',border:'1px solid #30363d',lineHeight:1,userSelect:'none'}}>?</span>
       {show && (
-        <div style={{position:'absolute',bottom:'calc(100% + 8px)',left:'50%',transform:'translateX(-50%)',width:300,padding:'10px 12px',background:'#161b22',border:'1px solid #30363d',borderRadius:8,fontSize:11,color:'#c9d1d9',lineHeight:1.6,zIndex:100,boxShadow:'0 4px 16px rgba(0,0,0,0.5)',whiteSpace:'normal'}}>
+        <div style={{
+          position:'absolute',
+          ...(flipDown
+            ? {top:'calc(100% + 8px)'}
+            : {bottom:'calc(100% + 8px)'}),
+          left:'50%',transform:'translateX(-50%)',
+          width:300,padding:'10px 12px',
+          background:'#161b22',border:'1px solid #30363d',borderRadius:8,
+          fontSize:11,color:'#c9d1d9',lineHeight:1.6,
+          zIndex:100,boxShadow:'0 4px 16px rgba(0,0,0,0.5)',whiteSpace:'normal',
+          maxWidth:'calc(100vw - 40px)'
+        }}>
           {text}
-          <div style={{position:'absolute',bottom:-5,left:'50%',transform:'translateX(-50%) rotate(45deg)',width:8,height:8,background:'#161b22',borderRight:'1px solid #30363d',borderBottom:'1px solid #30363d'}} />
+          <div style={{
+            position:'absolute',
+            ...(flipDown
+              ? {top:-5}
+              : {bottom:-5}),
+            left:'50%',
+            transform:`translateX(-50%) rotate(${flipDown ? '-135' : '45'}deg)`,
+            width:8,height:8,background:'#161b22',
+            borderRight:'1px solid #30363d',borderBottom:'1px solid #30363d'
+          }} />
         </div>
       )}
     </span>
