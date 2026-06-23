@@ -290,7 +290,7 @@ export default function Knowledgebase() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-medium text-text">{s.name}</h3>
-                      <span className={`badge text-[9px] ${s.type === 'Credit' ? 'badge-green' : s.type === 'Debit' ? 'badge-blue' : 'badge-amber'}`}>{s.type}</span>
+                      <span className={`badge text-[9px] ${s.type === 'Credit' ? 'badge-green' : s.type === 'Debit' ? 'badge-red' : 'badge-amber'}`}>{s.type}</span>
                       <span className="text-[10px] text-text-faint">{s.legs} legs</span>
                     </div>
                     {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
