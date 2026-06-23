@@ -46,16 +46,19 @@ const auth = initAuth({
 
 // Persistent token store — saves to Config sheet so tokens survive restarts
 let storedTokens = null;
-const TOKEN_CONFIG_KEY = 'google_tokens';
 
 // Try to load tokens from environment variable (set in Railway)
 if (process.env.GOOGLE_TOKENS) {
   try {
     storedTokens = JSON.parse(process.env.GOOGLE_TOKENS);
     setTokens(storedTokens);
-    console.log('[AUTH] Loaded tokens from environment');
+    console.log('[AUTH] Loaded tokens from environment, refresh_token:', !!storedTokens.refresh_token);
+    // Verify connection and ensure sheet structure
+    ensureSheetStructure()
+      .then(() => console.log('[AUTH] Sheet connection verified'))
+      .catch(e => console.error('[AUTH] Sheet connection failed:', e.message));
   } catch (e) {
-    console.log('[AUTH] Failed to parse GOOGLE_TOKENS env');
+    console.log('[AUTH] Failed to parse GOOGLE_TOKENS env:', e.message);
   }
 }
 
