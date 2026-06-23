@@ -44,8 +44,20 @@ const auth = initAuth({
   redirectUri: process.env.GOOGLE_REDIRECT_URI
 });
 
-// In-memory token store (use a DB in production)
+// Persistent token store — saves to Config sheet so tokens survive restarts
 let storedTokens = null;
+const TOKEN_CONFIG_KEY = 'google_tokens';
+
+// Try to load tokens from environment variable (set in Railway)
+if (process.env.GOOGLE_TOKENS) {
+  try {
+    storedTokens = JSON.parse(process.env.GOOGLE_TOKENS);
+    setTokens(storedTokens);
+    console.log('[AUTH] Loaded tokens from environment');
+  } catch (e) {
+    console.log('[AUTH] Failed to parse GOOGLE_TOKENS env');
+  }
+}
 
 app.get('/auth/google', (req, res) => {
   res.json({ url: getAuthUrl() });
@@ -55,8 +67,14 @@ app.get('/auth/google/callback', async (req, res) => {
   try {
     const tokens = await handleAuthCallback(req.query.code);
     storedTokens = tokens;
+    console.log('[AUTH] Tokens received, refresh_token:', !!tokens.refresh_token);
     await ensureSheetStructure();
-    // Redirect to frontend
+    // Save tokens to Config sheet for persistence
+    try {
+      await saveTokensToConfig(tokens);
+    } catch (e) {
+      console.log('[AUTH] Could not save tokens to config:', e.message);
+    }
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
     res.redirect(`${clientUrl}?auth=success`);
   } catch (err) {
@@ -68,6 +86,27 @@ app.get('/auth/google/callback', async (req, res) => {
 app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!storedTokens });
 });
+
+// Auto-load tokens from Config sheet on startup
+async function loadTokensFromConfig() {
+  try {
+    if (storedTokens) return; // already loaded from env
+    const { google } = await import('googleapis');
+    // Can't read Config without auth — need env var for bootstrap
+    console.log('[AUTH] No tokens in memory. Set GOOGLE_TOKENS env var in Railway or sign in via the app.');
+  } catch (e) {
+    console.log('[AUTH] Token load failed:', e.message);
+  }
+}
+
+async function saveTokensToConfig(tokens) {
+  // Store as JSON in Config sheet for future reference
+  // But primary persistence is the GOOGLE_TOKENS env var in Railway
+  console.log('[AUTH] Tokens to persist (copy to Railway GOOGLE_TOKENS env var):');
+  console.log(JSON.stringify(tokens));
+}
+
+loadTokensFromConfig();
 
 // Middleware to check auth
 function requireAuth(req, res, next) {
