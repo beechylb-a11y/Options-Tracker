@@ -445,7 +445,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Market Data */}
           <div className="flex items-center justify-between">
-            <SectionLabel>Market data</SectionLabel>
+            <SectionLabel info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 and 15 with 30-min ago values for slope calculation. SPX uses SPY VWAP ×10 automatically.">Market data</SectionLabel>
             {is0 && (
               <button onClick={handleAutoFill} disabled={autoFilling}
                 style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
@@ -486,7 +486,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* ES Overnight (0DTE only) */}
           {is0 && (
             <>
-              <SectionLabel>ES Overnight</SectionLabel>
+              <SectionLabel info="ES futures data for overnight analysis. Prior Close = yesterday's 4pm settle. Pre-open = current ES price. Overnight High/Low = session range. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection.">ES Overnight</SectionLabel>
               <div className="grid grid-cols-2 gap-2.5">
                 <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
                 <Inp label="ES Pre-open" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
@@ -499,7 +499,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           )}
 
           {/* Sizing */}
-          <SectionLabel>Trade sizing</SectionLabel>
+          <SectionLabel info="Net credit/debit from your broker order preview. POP = probability of profit. Win = max profit per contract. Risk = max loss per contract. Enter positive for credit received, negative for debit paid. Input boxes change colour: green = within budget, red = exceeds limits.">Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className="text-xs text-text-muted block mb-1">{parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? 'Net credit ($)' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? 'Net debit ($)' : 'Net credit/debit ($)'}</label>
@@ -623,7 +623,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           )}
 
           {/* Greeks */}
-          <SectionLabel>Greeks (optional)</SectionLabel>
+          <SectionLabel info="Enter from your broker's position Greeks. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis.">Greeks (optional)</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             {is0 ? <>
               <Inp label="Theta ($)" value={i0.theta} onChange={v=>set0('theta',v)}/>
@@ -644,7 +644,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Setup quality */}
           <div className="card">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-white uppercase tracking-wider">Setup quality</span>
+              <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="9 criteria scored out of 100: Compression (20), Move consumed (20), Strategy fit (15), VWAP slope + 15m confirm (10), VIX gap (10), ES overnight direction (10), Overnight range (5), VWAP distance (5), Gamma distance (5). A+ = 85+, A = 70+, B = 50+, No setup = below 50." /></span>
               <div className="flex items-center gap-2">
                 <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
                 <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{r.setupScore}/100</span>
@@ -666,7 +666,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Strategy ratings */}
           <div className="card">
             <div className="flex items-center justify-between mb-1">
-              <SectionLabel white>Strategy ratings — {r.regime}</SectionLabel>
+              <SectionLabel white info="Each strategy rated EXCELLENT, GOOD, MARGINAL, or NO TRADE based on current regime, direction strength, and move consumed. Click any MARGINAL+ strategy to override the engine recommendation. BWB preferred for strong direction, Asymmetric for mild, Standard butterfly for neutral.">Strategy ratings — {r.regime}</SectionLabel>
               {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
             </div>
             <div className="space-y-0.5">
@@ -690,7 +690,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Payoff diagram — full width */}
           {r.payoff && r.payoff.points.length > 0 && (
             <div className="card">
-              <SectionLabel white>Payoff at expiry</SectionLabel>
+              <SectionLabel white info="P&L diagram at expiration across price range. Green zone = profit, red zone = loss. White line = payoff curve. Blue dashed = current price. Yellow dots = breakeven prices. Calculated from leg structure and net credit/debit entered.">Payoff at expiry</SectionLabel>
               <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
               <div className="grid grid-cols-2 gap-1.5 mt-3">
                 <KV label="Max profit" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
@@ -703,7 +703,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
-            <SectionLabel white>Sizing (Sharpe-adjusted Kelly)</SectionLabel>
+            <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk). Each factor shown on a speed tape from red (reduce size) to green (full size). Prevents oversizing in high-vol or low-edge conditions.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 mb-3">
               <KV label="Contracts" value={r.contracts}/>
               <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
@@ -746,7 +746,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {is0 && r.greeks && (
             <div className="card">
               <div className="flex items-center justify-between mb-2">
-                <SectionLabel white>Trade survivability</SectionLabel>
+                <SectionLabel white info="Theta Edge = theta earned per unit of directional risk. Gamma Risk = how fast delta changes vs theta earned. Max Tolerable Move = furthest price can move before theta is consumed. Uses actual hours remaining to 4pm ET. Sweet spot: Theta Edge 0.15-0.40, Gamma Risk < 0.70.">Trade survivability</SectionLabel>
                 {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
@@ -768,7 +768,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Regime */}
           <div className="card">
-            <SectionLabel white>Regime</SectionLabel>
+            <SectionLabel white info="Current market regime based on realised move as % of expected move (RM ratio) and ATR compression. Determines which strategies are favoured. Butterfly zone = >60% consumed + compressing. Each regime has different strategy ratings.">Regime</SectionLabel>
             <div className="text-sm font-semibold text-white">{is0 ? r.regime : `${r.regime} — ${r.outlook||''}`}</div>
             <div className="text-xs text-[#c9d1d9] mt-1.5 leading-relaxed">{is0 ? `${r.regimeConds||''} — ${r.regimeCommentary||''}` : r.regimeCommentary||''}</div>
           </div>
@@ -777,7 +777,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {is0 && r.fairValueScore !== undefined && (
             <div className="card">
               <div className="flex items-center justify-between mb-2">
-                <SectionLabel white>Fair Value Score</SectionLabel>
+                <SectionLabel white info="Strategy-specific score: is this trade cheap, fair, or expensive? Volatility Score = IV/HV ratio (credit sellers want rich, debit buyers want cheap). Structure Score = credit/debit ratio and greeks quality. Regime Score = do conditions suit this strategy? Weights vary by strategy type.">Fair Value Score</SectionLabel>
                 <div className="flex items-center gap-2">
                   <span className="mono text-lg font-bold" style={{color: r.fairValueScore>=90?'#3fb950':r.fairValueScore>=80?'#7bc74d':r.fairValueScore>=70?'#d29922':'#f85149'}}>{r.fairValueScore}/100</span>
                   <span className="text-xs px-2 py-0.5 rounded font-semibold" style={{
@@ -808,7 +808,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Signals */}
           <div className="card">
-            <SectionLabel white>Signals</SectionLabel>
+            <SectionLabel white info="All derived market signals: direction and trend pattern, move consumed breakdown (directional vs range), overnight ES analysis, VWAP slope with 15m confirmation, VIX gap grade, compression ratio, gamma distance. These feed into the setup quality scoring.">Signals</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5">
               {is0 ? <>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
@@ -1086,8 +1086,32 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
   );
 }
 
-function SectionLabel({ children, white }) {
-  return <div className={`text-xs font-semibold uppercase tracking-wider mt-4 mb-2 first:mt-0 ${white ? 'text-white' : 'text-[#c9d1d9]'}`}>{children}</div>;
+function Info({ text }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <span style={{position:'relative',display:'inline-block',marginLeft:5}}>
+      <span
+        onClick={() => setShow(!show)}
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:15,height:15,borderRadius:'50%',background:'#21262d',color:'#8b949e',fontSize:9,fontWeight:700,cursor:'pointer',border:'1px solid #30363d',lineHeight:1,userSelect:'none'}}>?</span>
+      {show && (
+        <div style={{position:'absolute',bottom:'calc(100% + 8px)',left:'50%',transform:'translateX(-50%)',width:300,padding:'10px 12px',background:'#161b22',border:'1px solid #30363d',borderRadius:8,fontSize:11,color:'#c9d1d9',lineHeight:1.6,zIndex:100,boxShadow:'0 4px 16px rgba(0,0,0,0.5)',whiteSpace:'normal'}}>
+          {text}
+          <div style={{position:'absolute',bottom:-5,left:'50%',transform:'translateX(-50%) rotate(45deg)',width:8,height:8,background:'#161b22',borderRight:'1px solid #30363d',borderBottom:'1px solid #30363d'}} />
+        </div>
+      )}
+    </span>
+  );
+}
+
+function SectionLabel({ children, white, info }) {
+  return (
+    <div className={`text-xs font-semibold uppercase tracking-wider mt-4 mb-2 first:mt-0 flex items-center ${white ? 'text-white' : 'text-[#c9d1d9]'}`}>
+      {children}
+      {info && <Info text={info} />}
+    </div>
+  );
 }
 
 function Inp({label,value,onChange,type}) {
