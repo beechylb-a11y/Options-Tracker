@@ -69,7 +69,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   async function handleCloseTicket(dec) {
     setSaving(true);
     try {
-      const result = await api.closeTicket(dec._rowIndex, closeForm);
+      const result = await api.closeTicket(dec._rowIndex, { ...closeForm, account: account || '' });
       console.log('[CLOSE TICKET RESULT]', result);
       showToast('Trade ticket closed', 'success');
       setClosingIdx(null);
@@ -139,8 +139,12 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     setManualSaving(false);
   }
 
-  const openTickets = decisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
-  const closedTickets = decisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
+  const accountDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
+    const decAccount = d.Account || d._raw?.[26] || d._raw?.[25] || '';
+    return decAccount === account || !decAccount;
+  });
+  const openTickets = accountDecisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
+  const closedTickets = accountDecisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
 
   const [prefillData, setPrefillData] = useState(null);
   function handleSelectFromScan(underlying, data) {
@@ -757,7 +761,7 @@ function MultiScanPanel({ mode, onSelect }) {
             <select value={u} onChange={e => {
               const next = [...underlyings]; next[i] = e.target.value; setUnderlyings(next);
             }} className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
-              {['SPX','SPY','QQQ','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s =>
+              {['SPX','SPY','QQQ','RUT','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s =>
                 <option key={s} value={s}>{s}</option>
               )}
             </select>

@@ -364,7 +364,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       marketBehaviour:r.behaviour, notes:isOverride ? `Manual override: engine recommended ${r.bestStrat}, user selected ${effectiveStrat}` : '',
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
-      em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString() });
+      em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
+      account: accountConfig?.id || '' });
   }
 
   return (

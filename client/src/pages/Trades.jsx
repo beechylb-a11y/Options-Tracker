@@ -11,7 +11,12 @@ export default function Trades({ authenticated, account, accounts }) {
   const [expandedRow, setExpandedRow] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
-  const [uploadAccount, setUploadAccount] = useState('');
+  const [uploadAccount, setUploadAccount] = useState(account || '');
+
+  // Sync upload account with sidebar selection
+  useEffect(() => {
+    if (account && account !== 'all') setUploadAccount(account);
+  }, [account]);
   const [loading, setLoading] = useState(true);
   const [uncategorised, setUncategorised] = useState([]);
   const [showReview, setShowReview] = useState(false);

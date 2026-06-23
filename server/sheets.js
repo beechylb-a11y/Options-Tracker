@@ -359,7 +359,8 @@ export async function logDecision(decision) {
     '',  // Close Date
     '',  // Close Price
     '',  // Actual P&L
-    ''   // Trade Notes
+    '',  // Trade Notes
+    decision.account || ''  // Account
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
