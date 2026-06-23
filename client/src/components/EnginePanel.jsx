@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST } from '../engine/data';
@@ -1088,48 +1089,44 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
 
 function Info({ text }) {
   const [show, setShow] = React.useState(false);
+  const [pos, setPos] = React.useState({ top: 0, left: 0, flipDown: false });
   const ref = React.useRef(null);
-  const [flipDown, setFlipDown] = React.useState(false);
 
-  React.useEffect(() => {
-    if (show && ref.current) {
+  const updatePos = () => {
+    if (ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      setFlipDown(rect.top < 320);
+      const flipDown = rect.top < 200;
+      setPos({
+        top: flipDown ? rect.bottom + 8 : rect.top - 8,
+        left: Math.min(Math.max(rect.left, 160), window.innerWidth - 160),
+        flipDown
+      });
     }
-  }, [show]);
+  };
 
   return (
     <span ref={ref} style={{position:'relative',display:'inline-block',marginLeft:5}}>
       <span
-        onClick={() => setShow(!show)}
-        onMouseEnter={() => setShow(true)}
+        onClick={(e) => { e.stopPropagation(); setShow(!show); if (!show) updatePos(); }}
+        onMouseEnter={() => { setShow(true); updatePos(); }}
         onMouseLeave={() => setShow(false)}
         style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:15,height:15,borderRadius:'50%',background:'#21262d',color:'#8b949e',fontSize:9,fontWeight:700,cursor:'pointer',border:'1px solid #30363d',lineHeight:1,userSelect:'none'}}>?</span>
-      {show && (
+      {show && ReactDOM.createPortal(
         <div style={{
-          position:'absolute',
-          ...(flipDown
-            ? {top:'calc(100% + 8px)'}
-            : {bottom:'calc(100% + 8px)'}),
-          left:'50%',transform:'translateX(-50%)',
-          width:300,padding:'10px 12px',
-          background:'#161b22',border:'1px solid #30363d',borderRadius:8,
-          fontSize:11,color:'#c9d1d9',lineHeight:1.6,
-          zIndex:100,boxShadow:'0 4px 16px rgba(0,0,0,0.5)',whiteSpace:'normal',
-          maxWidth:'calc(100vw - 40px)'
+          position:'fixed',
+          top: pos.flipDown ? pos.top : 'auto',
+          bottom: pos.flipDown ? 'auto' : (window.innerHeight - pos.top),
+          left: pos.left,
+          transform:'translateX(-50%)',
+          width:300,padding:'12px 14px',
+          background:'#1c2128',border:'1px solid #444c56',borderRadius:10,
+          fontSize:11,color:'#e6edf3',lineHeight:1.6,
+          zIndex:9999,boxShadow:'0 8px 24px rgba(0,0,0,0.6)',whiteSpace:'normal',
+          maxWidth:'calc(100vw - 32px)',pointerEvents:'none'
         }}>
           {text}
-          <div style={{
-            position:'absolute',
-            ...(flipDown
-              ? {top:-5}
-              : {bottom:-5}),
-            left:'50%',
-            transform:`translateX(-50%) rotate(${flipDown ? '-135' : '45'}deg)`,
-            width:8,height:8,background:'#161b22',
-            borderRight:'1px solid #30363d',borderBottom:'1px solid #30363d'
-          }} />
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );
