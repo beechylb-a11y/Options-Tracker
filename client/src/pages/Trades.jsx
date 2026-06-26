@@ -499,7 +499,16 @@ export default function Trades({ authenticated, account, accounts }) {
         </div>
       )}
     </div>
-  );
+
+      {closingTrade && (
+        <CloseTradeModal
+          trade={closingTrade}
+          type="tracker"
+          onClose={() => setClosingTrade(null)}
+          onClosed={() => { setClosingTrade(null); loadData(); }}
+        />
+      )}
+  </>);
 }
 
 function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setEditForm, saving, tradeIdx }) {
