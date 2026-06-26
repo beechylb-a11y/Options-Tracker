@@ -107,8 +107,8 @@ export default function Trades({ authenticated, account, accounts }) {
           </button>
           {accounts && accounts.length > 0 && (
             <select value={uploadAccount} onChange={e => setUploadAccount(e.target.value)}
-              className="px-2 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white outline-none">
-              <option value="">No account</option>
+              className="px-2 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white outline-none"
+              title="Account for uploaded trades">
               {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           )}
@@ -485,7 +485,7 @@ export default function Trades({ authenticated, account, accounts }) {
       ) : (
         <div className="card text-center py-12">
           <p className="text-text-faint mb-4">No trades to show</p>
-          <p className="text-text-muted text-sm">Upload a TastyTrade Activity CSV to import your trading history</p>
+          <p className="text-text-muted text-sm">Upload a CSV to import trades to this account</p>
         </div>
       )}
     </div>
