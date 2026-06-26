@@ -450,7 +450,7 @@ export default function Trades({ authenticated, account, accounts }) {
                               </div>
                             </div>
                           ) : (
-                            <TradeTicket trade={t} legs={getLegsForTrade(t)} tradeIdx={i}
+                            <TradeTicket trade={t} legs={getLegsForTrade(t)} tradeIdx={i} accounts={accounts}
                               editingRow={editingRow} editForm={editForm} setEditForm={setEditForm} saving={saving}
                               onEdit={(action, idx) => {
                                 if (action === null) { setEditingRow(null); return; }
@@ -476,7 +476,8 @@ export default function Trades({ authenticated, account, accounts }) {
                                   totalPnl: action['Total P&L ($)'] || '',
                                   netCredit: action['Net Credit ($)'] || '',
                                   qty: action.Qty || '',
-                                  status: action.Status || 'Open'
+                                  status: action.Status || 'Open',
+                                  account: action.Account || ''
                                 });
                                 setEditingRow(idx);
                               }}
@@ -502,7 +503,7 @@ export default function Trades({ authenticated, account, accounts }) {
   );
 }
 
-function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setEditForm, saving, tradeIdx }) {
+function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setEditForm, saving, tradeIdx, accounts }) {
   const pnl = parseFloat(trade['Total P&L ($)']) || 0;
   const isEditing = editingRow === tradeIdx;
 
@@ -572,7 +573,14 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
                 <option value="Assigned">Assigned</option>
               </select>
             </div>
-          </div>
+            <div>
+              <label className="text-[10px] text-text-muted block mb-1">Account</label>
+              <select value={editForm.account || ''} onChange={e => setEditForm(f => ({ ...f, account: e.target.value }))}
+                className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
+                <option value="">No account</option>
+                {(accounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
           <div className="flex gap-2 mt-3">
             <button onClick={() => onEdit(null, null)} disabled={saving}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted transition-colors">
