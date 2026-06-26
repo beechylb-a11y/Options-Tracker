@@ -59,7 +59,7 @@ export default function Dashboard({ authenticated, account }) {
   // Merge closed decision tickets into trades
   const filteredDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
     const decAccount = d.Account || '';
-    return decAccount === account;
+    return decAccount === account || !decAccount;
   });
   const closedTickets = filteredDecisions
     .filter(d => d.Status === 'Closed' && d['Actual P&L'])
