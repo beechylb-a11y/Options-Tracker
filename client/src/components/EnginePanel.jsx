@@ -369,6 +369,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
   function handleLog() {
     if (!onLogTrade) return;
+    if (!accountConfig?.id) {
+      alert('Please select a specific account in the sidebar before logging a trade.');
+      return;
+    }
     const inp = is0 ? i0 : i45;
     const ncd = parseFloat(inp.netCreditDebit) || 0;
     onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
