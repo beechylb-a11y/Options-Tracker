@@ -57,6 +57,9 @@ export const api = {
   closeTrade: (rowIndex, data) => fetchJSON(`/api/tracker/${rowIndex}/close`, {
     method: 'PUT', body: JSON.stringify(data)
   }),
+  reconcile: (fills) => fetchJSON('/api/reconcile', {
+    method: 'POST', body: JSON.stringify({ fills })
+  }),
   deleteTrade: (rowIndex) => fetchJSON(`/api/tracker/${rowIndex}`, {
     method: 'DELETE'
   }),

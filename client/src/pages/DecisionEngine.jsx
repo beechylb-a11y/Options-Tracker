@@ -18,6 +18,32 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Close ticket state
   const [closingIdx, setClosingIdx] = useState(null);
   const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', actualPnl: '' });
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResults, setReconcileResults] = useState(null);
+
+  async function handleReconcile() {
+    setReconciling(true);
+    setReconcileResults(null);
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setReconciling(false); return; }
+
+      const resp = await fetch(bridgeUrl + '/api/executions', { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const data = await resp.json();
+
+      if (!data.fills || data.fills.length === 0) {
+        setReconcileResults({ matches: [], unmatchedCount: 0 });
+        setReconciling(false);
+        return;
+      }
+
+      const result = await api.reconcile(data.fills);
+      setReconcileResults(result);
+    } catch (e) {
+      alert('Reconcile failed: ' + e.message);
+    }
+    setReconciling(false);
+  }
 
   // Notes edit state
   const [editingNotesIdx, setEditingNotesIdx] = useState(null);
@@ -319,9 +345,62 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           {/* Open tickets */}
           {openTickets.length > 0 && (
             <div className="mb-4">
-              <h3 className="text-xs text-text-faint uppercase tracking-wider mb-2 flex items-center gap-2">
-                <Clock size={12} /> Open tickets ({openTickets.length})
-              </h3>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs text-text-faint uppercase tracking-wider flex items-center gap-2">
+                  <Clock size={12} /> Open tickets ({openTickets.length})
+                </h3>
+                <button onClick={handleReconcile} disabled={reconciling}
+                  className="text-[11px] px-3 py-1 border border-[#2f81f7] rounded-lg text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
+                  {reconciling ? 'Reconciling...' : '⚡ Reconcile with TWS'}
+                </button>
+              </div>
+
+              {/* Reconcile results */}
+              {reconcileResults && (
+                <div className="mb-3 p-3 rounded-lg border border-[#30363d] bg-[#0d1117]">
+                  <div className="text-xs text-[#8b949e] mb-2">
+                    {reconcileResults.matches.length} matched, {reconcileResults.unmatchedCount} unmatched fills
+                  </div>
+                  {reconcileResults.matches.map((m, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0">
+                      <div>
+                        <span className="text-sm text-white font-medium">{m.ticket.underlying}</span>
+                        <span className="text-xs text-[#8b949e] ml-2">{m.ticket.strategy}</span>
+                        <span className="text-xs text-[#484f58] ml-2">{m.fillCount} fills</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? '#3fb950' : '#f85149'}}>{fmt$(m.totalPnl)}</span>
+                        <button onClick={async () => {
+                          try {
+                            if (m.ticket.type === 'decision') {
+                              await api.closeTicket(m.ticket.rowIndex, {
+                                closeDate: new Date().toISOString().split('T')[0],
+                                actualPnl: m.totalPnl.toString(),
+                                closePrice: '',
+                                account: account || ''
+                              });
+                            } else {
+                              await api.closeTrade(m.ticket.rowIndex, {
+                                closeDate: new Date().toISOString().split('T')[0],
+                                closePnl: m.totalPnl.toString(),
+                                closePrice: ''
+                              });
+                            }
+                            loadDecisions();
+                            setReconcileResults(r => ({
+                              ...r,
+                              matches: r.matches.filter((_, j) => j !== i)
+                            }));
+                          } catch (e) { alert('Error: ' + e.message); }
+                        }}
+                          className="text-[10px] px-2 py-1 bg-[#238636] rounded text-white hover:bg-[#2ea043] font-semibold">
+                          Accept & close
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {openTickets.map((dec, i) => {
                 const globalIdx = decisions.indexOf(dec);
                 const expanded = expandedIdx === globalIdx;

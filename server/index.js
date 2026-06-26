@@ -938,6 +938,112 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
+// ================================================================
+//  AUTO-RECONCILE — Match TWS fills to open tickets
+// ================================================================
+app.post('/api/reconcile', requireAuth, async (req, res) => {
+  try {
+    const { fills } = req.body; // TWS fills passed from client
+    if (!fills || !fills.length) return res.json({ matches: [], unmatched: [] });
+
+    // Get open decisions and open tracker trades
+    const decRows = await getDecisions();
+    const decHeaders = decRows[0] || [];
+    const decisions = decRows.slice(1).map((row, idx) => {
+      const obj = { _rowIndex: idx + 2, _raw: row, _type: 'decision' };
+      decHeaders.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    }).filter(d => d.Status !== 'Closed');
+
+    const trkRows = await getTradeTracker();
+    const trkHeaders = trkRows[0] || [];
+    const trades = trkRows.slice(1).map((row, idx) => {
+      const obj = { _rowIndex: idx + 2, _raw: row, _type: 'tracker' };
+      trkHeaders.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    }).filter(t => t.Status === 'Open');
+
+    // Group fills by symbol
+    const fillsBySymbol = {};
+    fills.forEach(f => {
+      const sym = (f.symbol || '').toUpperCase();
+      if (!fillsBySymbol[sym]) fillsBySymbol[sym] = [];
+      fillsBySymbol[sym].push(f);
+    });
+
+    // SPX/SPY equivalence
+    if (fillsBySymbol['SPY']) {
+      if (!fillsBySymbol['SPX']) fillsBySymbol['SPX'] = [];
+      // SPY fills could match SPX trades (different contracts but same direction)
+    }
+
+    const matches = [];
+    const matchedFillIds = new Set();
+    const matchedTicketIds = new Set();
+
+    // Try to match each open ticket to fills
+    const allOpen = [...decisions, ...trades];
+    for (const ticket of allOpen) {
+      const sym = (ticket.Underlying || '').toUpperCase();
+      const ticketFills = fillsBySymbol[sym] || [];
+      if (ticketFills.length === 0) continue;
+
+      // Parse strikes from ticket
+      const strikesStr = ticket['Wing Strikes'] || '';
+      const ticketStrikes = strikesStr.split(/[\/|,\s]+/).map(Number).filter(n => n > 0);
+
+      // Match fills by strike overlap
+      let matchedLegs = [];
+      let totalPnl = 0;
+      let totalComm = 0;
+      let matchQty = 0;
+
+      for (const fill of ticketFills) {
+        if (matchedFillIds.has(fill.execId)) continue;
+
+        // Match by strike if available
+        const fillStrike = fill.strike || 0;
+        const strikeMatch = ticketStrikes.length === 0 || fillStrike === 0 || ticketStrikes.includes(fillStrike);
+
+        if (strikeMatch && fill.symbol.toUpperCase() === sym) {
+          matchedLegs.push(fill);
+          matchedFillIds.add(fill.execId);
+          if (fill.realizedPnl && fill.realizedPnl < 1e300) totalPnl += fill.realizedPnl;
+          totalComm += fill.commission || 0;
+          matchQty += fill.qty || 0;
+        }
+      }
+
+      if (matchedLegs.length > 0) {
+        matchedTicketIds.add(ticket._rowIndex + ticket._type);
+        matches.push({
+          ticket: {
+            type: ticket._type,
+            rowIndex: ticket._rowIndex,
+            underlying: sym,
+            strategy: ticket.Strategy || ticket['Strategy (OIC)'] || '',
+            strikes: strikesStr,
+            qty: parseInt(ticket.Qty || ticket.Contracts || 1),
+            entryDate: ticket['Entry Date'] || ticket.Timestamp?.split('T')[0] || ''
+          },
+          fills: matchedLegs,
+          totalPnl: Math.round((totalPnl - totalComm) * 100) / 100,
+          totalComm: Math.round(totalComm * 100) / 100,
+          fillCount: matchedLegs.length,
+          matchQty
+        });
+      }
+    }
+
+    // Unmatched fills
+    const unmatched = fills.filter(f => !matchedFillIds.has(f.execId));
+
+    res.json({ matches, unmatched, matchCount: matches.length, unmatchedCount: unmatched.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Options Tracker server running on port ${PORT}`);
 });
