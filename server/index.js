@@ -362,6 +362,75 @@ app.put('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
   }
 });
 
+// Close a trade in TradeTracker (full or partial)
+app.put('/api/tracker/:rowIndex/close', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
+    const { closeDate, closePnl, closePrice, notes, partial, partialQty } = req.body;
+
+    const rows = await getTradeTracker();
+    const headers = rows[0] || [];
+    const row = rows[rowIndex - 1];
+    if (!row) return res.status(404).json({ error: 'Row not found' });
+
+    const cDate = closeDate || new Date().toISOString().split('T')[0];
+    const pnl = parseFloat(closePnl) || 0;
+    const isWin = pnl >= 0;
+
+    if (partial && partialQty) {
+      // Partial close: reduce qty, log partial P&L, keep status Open
+      const origQty = parseInt(row[headers.indexOf('Qty')] || 1);
+      const closeQty = parseInt(partialQty);
+      const remainQty = Math.max(0, origQty - closeQty);
+      const origPnl = parseFloat(row[headers.indexOf('Total P&L ($)')] || 0);
+
+      // Update original row with remaining qty
+      const updates = {};
+      updates[headers.indexOf('Qty')] = remainQty;
+      updates[headers.indexOf('Total P&L ($)')] = origPnl + pnl;
+      if (remainQty <= 0) {
+        updates[headers.indexOf('Status')] = 'Closed';
+        updates[headers.indexOf('Close Date')] = cDate;
+        updates[headers.indexOf('W / L')] = (origPnl + pnl) >= 0 ? 'Win' : 'Loss';
+      }
+      await updateTradeTrackerRow(rowIndex, updates);
+
+      // Append a partial close record
+      const partialRow = [
+        `PARTIAL-${rowIndex}-${Date.now()}`,
+        row[headers.indexOf('Entry Date')] || '',
+        row[headers.indexOf('Expiry Date')] || '',
+        cDate,
+        row[headers.indexOf('Strategy (OIC)')] || '',
+        row[headers.indexOf('Underlying')] || '',
+        closeQty,
+        closePrice || '',
+        pnl,
+        isWin ? 'Win' : 'Loss',
+        '',
+        'Closed',
+        row[headers.indexOf('Account')] || ''
+      ];
+      await appendTradeTrackerRow(partialRow);
+
+      res.json({ ok: true, action: 'partial', remaining: remainQty });
+    } else {
+      // Full close
+      const updates = {};
+      updates[headers.indexOf('Close Date')] = cDate;
+      updates[headers.indexOf('Total P&L ($)')] = pnl;
+      updates[headers.indexOf('W / L')] = isWin ? 'Win' : 'Loss';
+      updates[headers.indexOf('Status')] = 'Closed';
+      await updateTradeTrackerRow(rowIndex, updates);
+
+      res.json({ ok: true, action: 'closed' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
   try {
     const rowIndex = parseInt(req.params.rowIndex);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X } from 'lucide-react';
+import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X, DollarSign } from 'lucide-react';
 import { api } from '../utils/api';
+import CloseTradeModal from '../components/CloseTradeModal';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
 
 export default function Trades({ authenticated, account, accounts }) {
@@ -21,6 +22,7 @@ export default function Trades({ authenticated, account, accounts }) {
   const [uncategorised, setUncategorised] = useState([]);
   const [showReview, setShowReview] = useState(false);
   const [savingRow, setSavingRow] = useState(null);
+  const [closingTrade, setClosingTrade] = useState(null);
   const [editingRow, setEditingRow] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [deleting, setDeleting] = useState(null);
@@ -93,7 +95,7 @@ export default function Trades({ authenticated, account, accounts }) {
     );
   }
 
-  return (
+  return (<>
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -405,9 +407,17 @@ export default function Trades({ authenticated, account, accounts }) {
                         {t['W / L'] && <span className={`badge ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
                       </td>
                       <td className="py-2.5 px-4">
-                        <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>
-                          {t.Status}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>
+                            {t.Status}
+                          </span>
+                          {isOpen && (
+                            <button onClick={(e) => { e.stopPropagation(); setClosingTrade(t); }}
+                              className="text-[10px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                              Close
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 px-4 mono text-xs text-text-muted">
                         {isOpen && dte ? <span className={dte <= 3 ? 'text-red' : dte <= 7 ? 'text-amber' : ''}>{dte}d</span> : ''}
@@ -576,7 +586,17 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
         </div>
       )}
     </div>
-  );
+    </div>
+
+      {closingTrade && (
+        <CloseTradeModal
+          trade={closingTrade}
+          type="tracker"
+          onClose={() => setClosingTrade(null)}
+          onClosed={() => { setClosingTrade(null); loadData(); }}
+        />
+      )}
+    </>);
 }
 
 function EditField({ label, value, onChange, type = 'text' }) {

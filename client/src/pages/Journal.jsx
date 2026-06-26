@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
+import CloseTradeModal from '../components/CloseTradeModal';
 
 export default function Journal({ authenticated, account }) {
   const [journal, setJournal] = useState([]);
@@ -14,6 +15,7 @@ export default function Journal({ authenticated, account }) {
   const [noteDate, setNoteDate] = useState('');
   const [noteText, setNoteText] = useState('');
   const [reviewText, setReviewText] = useState('');
+  const [closingTrade, setClosingTrade] = useState(null);
   const [savingReview, setSavingReview] = useState(false);
 
   useEffect(() => {
@@ -215,7 +217,7 @@ export default function Journal({ authenticated, account }) {
   const selDayWins = allClosedOnDay.filter(t => (t['W / L'] === 'Win') || (parseFloat(t['Actual P&L']) >= 0 && t['Actual P&L'])).length;
   const selDayLosses = allClosedOnDay.filter(t => (t['W / L'] === 'Loss') || (parseFloat(t['Actual P&L']) < 0)).length;
 
-  return (
+  return (<>
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-display text-2xl font-bold">Journal</h2>
@@ -395,8 +397,11 @@ export default function Journal({ authenticated, account }) {
                           <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent">{d.Engine || '0DTE'}</span>
                           <span className="text-sm font-medium text-white">{d.Underlying}</span>
                           <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
-                          <span className={`text-xs font-medium ${d.Direction === 'Trade' ? 'text-green' : d.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>{d.Direction}</span>
                           <span className="text-xs text-text-faint mono">{d['Setup Score']}</span>
+                          <button onClick={() => setClosingTrade({ trade: d, type: 'ticket' })}
+                            className="text-[10px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                            Close
+                          </button>
                         </div>
                       );
                     })}
@@ -478,5 +483,15 @@ export default function Journal({ authenticated, account }) {
         </div>
       </div>
     </div>
+
+      {closingTrade && (
+        <CloseTradeModal
+          trade={closingTrade.trade}
+          type={closingTrade.type}
+          onClose={() => setClosingTrade(null)}
+          onClosed={() => { setClosingTrade(null); window.location.reload(); }}
+        />
+      )}
+    </>
   );
 }
