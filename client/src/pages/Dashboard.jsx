@@ -52,17 +52,6 @@ export default function Dashboard({ authenticated, account }) {
   const startBR = config?.startingBankroll ?? 1;
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
 
-  // Calculate stats from merged closed trades (tracker + tickets)
-  const totalTrades = closedTrades.length;
-  const wins = closedTrades.filter(t => t['W / L'] === 'Win');
-  const losses = closedTrades.filter(t => t['W / L'] === 'Loss');
-  const totalPnl = closedTrades.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
-  const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / wins.length : 0;
-  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / losses.length : 0;
-  const battingAvg = totalTrades > 0 ? (wins.length / totalTrades * 100) : 0;
-  const expectancy = totalTrades > 0 ? totalPnl / totalTrades : 0;
-  const calcRoi = startBR > 0 ? (totalPnl / startBR * 100) : 0;
-
   // ── Closed trades sorted by date ──
   const allTracker = tracker;
   const filteredTracker = filterByAccount(allTracker, account);
@@ -94,6 +83,17 @@ export default function Dashboard({ authenticated, account }) {
     ...closedTickets
   ];
   const closedTrades = allClosed.sort((a, b) => new Date(a['Entry Date'] || a['Close Date'] || 0) - new Date(b['Entry Date'] || b['Close Date'] || 0));
+
+  // Calculate stats from merged closed trades (tracker + tickets)
+  const totalTrades = closedTrades.length;
+  const wins = closedTrades.filter(t => t['W / L'] === 'Win');
+  const losses = closedTrades.filter(t => t['W / L'] === 'Loss');
+  const totalPnl = closedTrades.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+  const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / losses.length : 0;
+  const battingAvg = totalTrades > 0 ? (wins.length / totalTrades * 100) : 0;
+  const expectancy = totalTrades > 0 ? totalPnl / totalTrades : 0;
+  const calcRoi = startBR > 0 ? (totalPnl / startBR * 100) : 0;
 
   // ── Equity curve (cumulative P&L over time) ──
   let cumPnl = 0;
