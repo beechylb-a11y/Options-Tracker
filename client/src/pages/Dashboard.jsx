@@ -8,6 +8,7 @@ export default function Dashboard({ authenticated, account }) {
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
   const [tracker, setTracker] = useState([]);
+  const [decisions, setDecisions] = useState([]);
   const [journal, setJournal] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -16,9 +17,16 @@ export default function Dashboard({ authenticated, account }) {
     Promise.all([
       api.getStats(account).catch(() => ({ stats: {}, config: {} })),
       api.getTracker().catch(() => []),
-      api.getJournal().catch(() => [])
-    ]).then(([s, t, j]) => {
+      api.getJournal().catch(() => []),
+      api.getDecisions().catch(() => [])
+    ]).then(([s, t, j, d]) => {
       setStats(s.stats); setConfig(s.config); setTracker(t); setJournal(j);
+      // Parse decisions if raw arrays
+      if (Array.isArray(d) && d.length > 0 && d[0]._rowIndex !== undefined) {
+        setDecisions(d);
+      } else {
+        setDecisions([]);
+      }
       setLoading(false);
     });
   }, [authenticated, account]);
@@ -40,21 +48,52 @@ export default function Dashboard({ authenticated, account }) {
   if (loading) return <div className="text-text-muted text-sm">Loading dashboard...</div>;
 
   const ba = stats?.battingAvg ?? 0;
-  const totalPnl = stats?.totalPnl ?? 0;
-  const avgWin = stats?.avgWin ?? 0;
-  const avgLoss = stats?.avgLoss ?? 0;
-  const expectancy = stats?.expectancy ?? 0;
-  const totalTrades = stats?.totalTrades ?? 0;
   const bankroll = config?.currentBankroll ?? 0;
   const startBR = config?.startingBankroll ?? 1;
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
 
+  // Calculate stats from merged closed trades (tracker + tickets)
+  const totalTrades = closedTrades.length;
+  const wins = closedTrades.filter(t => t['W / L'] === 'Win');
+  const losses = closedTrades.filter(t => t['W / L'] === 'Loss');
+  const totalPnl = closedTrades.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+  const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / losses.length : 0;
+  const battingAvg = totalTrades > 0 ? (wins.length / totalTrades * 100) : 0;
+  const expectancy = totalTrades > 0 ? totalPnl / totalTrades : 0;
+  const calcRoi = startBR > 0 ? (totalPnl / startBR * 100) : 0;
+
   // ── Closed trades sorted by date ──
   const allTracker = tracker;
   const filteredTracker = filterByAccount(allTracker, account);
-  const closedTrades = filteredTracker
-    .filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
-    .sort((a, b) => new Date(a['Entry Date'] || 0) - new Date(b['Entry Date'] || 0));
+  
+  // Merge closed decision tickets into trades
+  const filteredDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
+    const decAccount = d.Account || '';
+    return decAccount === account;
+  });
+  const closedTickets = filteredDecisions
+    .filter(d => d.Status === 'Closed' && d['Actual P&L'])
+    .map(d => ({
+      'Entry Date': d.Timestamp?.split('T')[0] || '',
+      'Close Date': d['Close Date'] || d.Timestamp?.split('T')[0] || '',
+      'Expiry Date': '',
+      'Strategy (OIC)': (d.Strategy || '').split(' - ').slice(1, -1).join(' - ') || d.Strategy,
+      Underlying: d.Underlying || '',
+      Qty: d.Contracts || 1,
+      'Net Credit ($)': '',
+      'Total P&L ($)': d['Actual P&L'],
+      'W / L': parseFloat(d['Actual P&L']) >= 0 ? 'Win' : 'Loss',
+      Status: 'Closed',
+      Account: d.Account || '',
+      _source: 'ticket'
+    }));
+  
+  const allClosed = [
+    ...filteredTracker.filter(t => t.Status !== 'Open' && t['Total P&L ($)']),
+    ...closedTickets
+  ];
+  const closedTrades = allClosed.sort((a, b) => new Date(a['Entry Date'] || a['Close Date'] || 0) - new Date(b['Entry Date'] || b['Close Date'] || 0));
 
   // ── Equity curve (cumulative P&L over time) ──
   let cumPnl = 0;
@@ -163,8 +202,8 @@ export default function Dashboard({ authenticated, account }) {
       {/* KPI Cards - Row 1 */}
       <div className="grid grid-cols-6 gap-3 mb-3">
         <KPI icon={DollarSign} label="Total P&L" value={fmt$(totalPnl)} cls={totalPnl >= 0 ? 'green' : 'red'} />
-        <KPI icon={Percent} label="ROI" value={(roi * 100).toFixed(1) + '%'} cls={roi >= 0 ? 'green' : 'red'} />
-        <KPI icon={Target} label="Batting Avg" value={ba + '%'} cls={ba >= 60 ? 'green' : ba >= 40 ? 'amber' : 'red'} />
+        <KPI icon={Percent} label="ROI" value={calcRoi.toFixed(1) + '%'} cls={calcRoi >= 0 ? 'green' : 'red'} />
+        <KPI icon={Target} label="Batting Avg" value={battingAvg.toFixed(1) + '%'} cls={battingAvg >= 60 ? 'green' : battingAvg >= 40 ? 'amber' : 'red'} />
         <KPI icon={TrendingUp} label="Avg Win" value={fmt$(avgWin)} cls="green" />
         <KPI icon={TrendingDown} label="Avg Loss" value={fmt$(avgLoss)} cls="red" />
         <KPI icon={Activity} label="Expectancy" value={fmt$(expectancy)} cls={expectancy >= 0 ? 'green' : 'red'} />
