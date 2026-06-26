@@ -595,7 +595,6 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
         </div>
       )}
     </div>
-    </div>
 
       {closingTrade && (
         <CloseTradeModal
@@ -605,7 +604,7 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
           onClosed={() => { setClosingTrade(null); loadData(); }}
         />
       )}
-    </>);
+  </>);
 }
 
 function EditField({ label, value, onChange, type = 'text' }) {
