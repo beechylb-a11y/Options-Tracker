@@ -180,13 +180,13 @@ export async function saveAccounts(accounts) {
   await updateConfig('accounts', JSON.stringify(accounts));
 }
 
-export async function backfillAccountColumn(accountId) {
+export async function backfillAccountColumn(accountId, force = false) {
   const sheets = getSheets();
   const rows = await getTradeTracker();
   let updated = 0;
   for (let i = 1; i < rows.length; i++) {
     const currentAccount = rows[i][12] || '';
-    if (!currentAccount) {
+    if (!currentAccount || force) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID(),
         range: `TradeTracker!M${i + 1}`,

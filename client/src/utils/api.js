@@ -27,8 +27,8 @@ export const api = {
   saveAccounts: (accounts) => fetchJSON('/api/accounts', {
     method: 'PUT', body: JSON.stringify({ accounts })
   }),
-  backfillAccount: (accountId) => fetchJSON('/api/accounts/backfill', {
-    method: 'PUT', body: JSON.stringify({ accountId })
+  backfillAccount: (accountId, force) => fetchJSON('/api/accounts/backfill', {
+    method: 'PUT', body: JSON.stringify({ accountId, force: !!force })
   }),
 
   // CSV upload

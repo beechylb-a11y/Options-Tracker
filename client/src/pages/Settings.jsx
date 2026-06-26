@@ -217,6 +217,19 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       title="Tag all untagged trades to this account">
                       {backfilling ? '...' : 'Backfill'}
                     </button>
+                    <button onClick={async () => {
+                      if (!confirm(`Re-tag ALL trades to "${a.name}"? This overwrites existing account tags.`)) return;
+                      setBackfilling(true); setBackfillResult(null);
+                      try {
+                        const r = await api.backfillAccount(a.id, true);
+                        setBackfillResult(`Re-tagged ${r.updated} trades to "${a.name}"`);
+                      } catch (e) { setBackfillResult('Error: ' + e.message); }
+                      setBackfilling(false);
+                    }} disabled={backfilling}
+                      className="text-[10px] px-2 py-1 border border-[#9e6a03] rounded text-[#d29922] hover:bg-[#1f1a0d] disabled:opacity-50"
+                      title="Re-tag ALL trades to this account (overwrites existing)">
+                      Re-tag all
+                    </button>
                     <button onClick={() => handleDeleteAccount(a.id)}
                       className="text-text-faint hover:text-red p-1"><Trash2 size={14} /></button>
                   </>

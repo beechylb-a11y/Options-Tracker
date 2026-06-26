@@ -164,7 +164,7 @@ app.put('/api/accounts/backfill', requireAuth, async (req, res) => {
   try {
     const accountId = req.body.accountId;
     if (!accountId) return res.status(400).json({ error: 'No accountId provided' });
-    const updated = await backfillAccountColumn(accountId);
+    const updated = await backfillAccountColumn(accountId, req.body.force || false);
     res.json({ ok: true, updated });
   } catch (err) {
     console.error('Backfill error:', err);
