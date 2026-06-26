@@ -595,15 +595,14 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
         </div>
       )}
     </div>
-
-      {closingTrade && (
-        <CloseTradeModal
-          trade={closingTrade}
-          type="tracker"
-          onClose={() => setClosingTrade(null)}
-          onClosed={() => { setClosingTrade(null); loadData(); }}
-        />
-      )}
+    {closingTrade && (
+      <CloseTradeModal
+        trade={closingTrade}
+        type="tracker"
+        onClose={() => setClosingTrade(null)}
+        onClosed={() => { setClosingTrade(null); loadData(); }}
+      />
+    )}
   </>);
 }
 
