@@ -581,6 +581,7 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
                 {(accounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </div>
+          </div>
           <div className="flex gap-2 mt-3">
             <button onClick={() => onEdit(null, null)} disabled={saving}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted transition-colors">
