@@ -299,19 +299,37 @@ export default function Dashboard({ authenticated, account }) {
                 const todayStr = now.toISOString().split('T')[0];
                 const expiryStr = expiryDate.toISOString().split('T')[0];
                 const is0DTE = dte <= 0 || expiryStr === todayStr;
+                // Detect 45DTE trades (anything with DTE > 1 at entry, or strategy suggests longer term)
+                const is45DTE = dte > 1;
                 let timeLabel = `${dte}d`;
-                let urgentClass = dte <= 3 ? 'badge-red' : dte <= 7 ? 'badge-amber' : 'badge-blue';
+                let urgentClass = 'badge-blue';
+                let warningNote = '';
+
                 if (is0DTE) {
                   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
                   const close4pm = new Date(et); close4pm.setHours(16, 0, 0, 0);
                   const hoursLeft = Math.max(0, (close4pm - et) / 3600000);
                   timeLabel = hoursLeft > 0 ? `${hoursLeft.toFixed(1)}h` : 'Expired';
-                  urgentClass = hoursLeft <= 1 ? 'badge-red' : hoursLeft <= 2 ? 'badge-amber' : 'badge-red';
-                  // 3pm ET reminder
+                  urgentClass = hoursLeft <= 1 ? 'badge-red' : 'badge-red';
                   const reminder3pm = new Date(et); reminder3pm.setHours(15, 0, 0, 0);
-                  if (et >= reminder3pm && hoursLeft > 0) {
-                    timeLabel += ' ⚠';
+                  if (et >= reminder3pm && hoursLeft > 0) timeLabel += ' ⚠';
+                } else if (is45DTE) {
+                  // 45DTE management: close by 21 DTE, warn approaching
+                  if (dte <= 14) {
+                    urgentClass = 'badge-red';
+                    warningNote = 'Past 21 DTE — close now';
+                  } else if (dte <= 21) {
+                    urgentClass = 'badge-red';
+                    warningNote = 'At 21 DTE — manage/close';
+                  } else if (dte <= 28) {
+                    urgentClass = 'badge-amber';
+                    warningNote = 'Approaching 21 DTE';
+                  } else {
+                    urgentClass = 'badge-blue';
                   }
+                  timeLabel = `${dte}d`;
+                } else {
+                  urgentClass = dte <= 3 ? 'badge-red' : dte <= 7 ? 'badge-amber' : 'badge-blue';
                 }
                 return (
                   <div key={i} className="flex items-center justify-between py-1.5 border-b border-bg-border last:border-0">
@@ -319,9 +337,12 @@ export default function Dashboard({ authenticated, account }) {
                       <span className="text-sm font-medium">{t.Underlying}</span>
                       <span className="text-xs text-text-muted ml-2">{t['Strategy (OIC)']}</span>
                     </div>
-                    <span className={`badge ${urgentClass}`}>
-                      {timeLabel}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {warningNote && <span className="text-[10px] text-[#d29922]">{warningNote}</span>}
+                      <span className={`badge ${urgentClass}`}>
+                        {timeLabel}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
