@@ -35,5 +35,8 @@ export function pnlColor(n) {
 
 export function filterByAccount(trades, account) {
   if (!account || account === 'all') return trades;
-  return trades.filter(t => (t.Account || t['Account'] || '') === account);
+  return trades.filter(t => {
+    const tradeAccount = t.Account || t['Account'] || '';
+    return tradeAccount === account || tradeAccount === '';
+  });
 }
