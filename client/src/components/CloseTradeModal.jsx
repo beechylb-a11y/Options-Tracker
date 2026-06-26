@@ -3,9 +3,10 @@ import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 
 export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
-  // type: 'tracker' (TradeTracker row) or 'ticket' (Decision engine ticket)
   const [closing, setClosing] = useState(false);
   const [partial, setPartial] = useState(false);
+  const [fetchingTWS, setFetchingTWS] = useState(false);
+  const [twsFills, setTwsFills] = useState(null);
   const [form, setForm] = useState({
     closeDate: new Date().toISOString().split('T')[0],
     closePnl: '',
@@ -18,6 +19,50 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
   const strategy = trade['Strategy (OIC)'] || trade.Strategy || '';
   const qty = parseInt(trade.Qty || trade.Contracts || 1);
   const entryCredit = parseFloat(trade['Net Credit ($)'] || 0);
+
+  // Fetch executions from TWS bridge
+  async function fetchFromTWS() {
+    setFetchingTWS(true);
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setFetchingTWS(false); return; }
+
+      const resp = await fetch(bridgeUrl + '/api/executions', { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const data = await resp.json();
+
+      if (!data.fills || data.fills.length === 0) {
+        setTwsFills([]);
+        setFetchingTWS(false);
+        return;
+      }
+
+      // Filter fills matching this trade's underlying
+      const sym = underlying.toUpperCase();
+      const matchingFills = data.fills.filter(f => {
+        const fillSym = (f.symbol || '').toUpperCase();
+        return fillSym === sym || fillSym === 'SPY' && sym === 'SPX' || fillSym === 'IWM' && sym === 'RUT';
+      });
+
+      setTwsFills(matchingFills);
+
+      // Auto-calculate total P&L from matching fills
+      if (matchingFills.length > 0) {
+        const totalPnl = matchingFills.reduce((s, f) => {
+          const pnl = f.realizedPnl && f.realizedPnl < 1e300 ? f.realizedPnl : 0;
+          return s + pnl;
+        }, 0);
+        const totalComm = matchingFills.reduce((s, f) => s + (f.commission || 0), 0);
+        const netPnl = Math.round((totalPnl - totalComm) * 100) / 100;
+
+        if (netPnl !== 0) {
+          setForm(f => ({ ...f, closePnl: netPnl.toString() }));
+        }
+      }
+    } catch (e) {
+      alert('Failed to fetch from TWS: ' + e.message);
+    }
+    setFetchingTWS(false);
+  }
 
   async function handleClose() {
     setClosing(true);
@@ -32,7 +77,6 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           partialQty: partial ? form.partialQty : null
         });
       } else {
-        // Decision ticket
         await api.closeTicket(trade._rowIndex, {
           closeDate: form.closeDate,
           closePrice: form.closePrice,
@@ -50,8 +94,10 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
   const pnl = parseFloat(form.closePnl) || 0;
 
   return (
-    <div style={{position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}>
-      <div style={{background:'#161b22',border:'1px solid #30363d',borderRadius:12,padding:24,width:420,maxHeight:'90vh',overflow:'auto'}}>
+    <div style={{position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}
+      onClick={onClose}>
+      <div style={{background:'#161b22',border:'1px solid #30363d',borderRadius:12,padding:24,width:480,maxHeight:'90vh',overflow:'auto'}}
+        onClick={e => e.stopPropagation()}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
           <h3 style={{fontSize:16,fontWeight:700,color:'#e6edf3'}}>Close Trade</h3>
           <button onClick={onClose} style={{background:'none',border:'none',color:'#8b949e',cursor:'pointer',fontSize:18}}>×</button>
@@ -64,6 +110,42 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
             Qty: {qty} | Entry credit: {entryCredit ? fmt$(entryCredit) : '—'} | Entry: {trade['Entry Date'] || trade.Timestamp?.split('T')[0] || '—'}
           </div>
         </div>
+
+        {/* TWS fetch button */}
+        <button onClick={fetchFromTWS} disabled={fetchingTWS}
+          style={{width:'100%',padding:'8px 16px',borderRadius:8,border:'1px solid #2f81f7',background:'#0d1a2e',color:'#58a6ff',fontSize:13,fontWeight:600,cursor:'pointer',marginBottom:12,opacity:fetchingTWS?0.5:1}}>
+          {fetchingTWS ? 'Fetching from TWS...' : '⚡ Fetch P&L from TWS'}
+        </button>
+
+        {/* TWS fills display */}
+        {twsFills !== null && (
+          <div style={{marginBottom:12,padding:8,borderRadius:6,background:'#0d1117',border:'1px solid #21262d'}}>
+            {twsFills.length === 0 ? (
+              <div style={{fontSize:11,color:'#8b949e'}}>No fills found for {underlying} today</div>
+            ) : (
+              <>
+                <div style={{fontSize:10,color:'#8b949e',marginBottom:6}}>TWS fills for {underlying} today:</div>
+                {twsFills.map((f, i) => (
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:i < twsFills.length-1?'1px solid #21262d':'none'}}>
+                    <div style={{fontSize:11,color:'#c9d1d9'}}>
+                      <span style={{color:f.side==='BOT'?'#3fb950':'#f85149',fontWeight:600}}>{f.side}</span>
+                      {' '}{f.qty}x {f.symbol}
+                      {f.strike > 0 && <span style={{color:'#8b949e'}}> {f.strike}{f.right}</span>}
+                      {f.expiry && <span style={{color:'#484f58'}}> {f.expiry}</span>}
+                    </div>
+                    <div style={{fontSize:11,fontFamily:'JetBrains Mono,monospace'}}>
+                      <span style={{color:'#c9d1d9'}}>@{f.price?.toFixed(2)}</span>
+                      {f.realizedPnl && f.realizedPnl < 1e300 && (
+                        <span style={{marginLeft:8,color:pnlColor(f.realizedPnl)}}>{fmt$(f.realizedPnl)}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {pnl !== 0 && <div style={{fontSize:10,color:'#3fb950',marginTop:6}}>✓ P&L auto-filled from TWS fills</div>}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Partial toggle */}
         <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>

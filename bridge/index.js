@@ -151,6 +151,7 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 // ── Contract definitions ──
 const contracts = {
   SPX: { symbol: 'SPX', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
+  RUT: { symbol: 'RUT', secType: SecType.IND, exchange: 'RUSSELL', currency: 'USD' },
   SPY: { symbol: 'SPY', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
   QQQ: { symbol: 'QQQ', secType: SecType.STK, exchange: 'SMART', primaryExch: 'NASDAQ', currency: 'USD' },
   IWM: { symbol: 'IWM', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
@@ -238,6 +239,7 @@ app.get('/api/market-data', async (req, res) => {
     await connectTWS();
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const usesSPYVwap = underlying === 'SPX';
+    const usesIWMVwap = underlying === 'RUT';
 
     // 1. Get snapshots in parallel
     const mainContract = contracts[underlying] || contracts.SPX;
@@ -270,9 +272,10 @@ app.get('/api/market-data', async (req, res) => {
 
     // 3. Get historical bars for ATR calculations
     // SPX index has no MIDPOINT historical data — use SPY bars and scale ×10
-    const histContract = (underlying === 'SPX') ? contracts.SPY : mainContract;
+    // RUT index — use IWM bars and scale by RUT/IWM ratio
+    const histContract = (underlying === 'SPX') ? contracts.SPY : (underlying === 'RUT') ? contracts.IWM : mainContract;
     const histWhat = (histContract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
-    const atrScale = (underlying === 'SPX') ? 10 : 1;
+    const atrScale = (underlying === 'SPX') ? 10 : (underlying === 'RUT') ? 1 : 1;
     console.log('[BRIDGE] Requesting historical bars for', underlying, 'using', histContract.symbol, 'scale:', atrScale);
     const [bars1D, bars5m, bars2h] = await Promise.all([
       getHistoricalBars(histContract, '20 D', BarSizeSetting.DAYS_ONE, histWhat).catch(e => { console.log('[BRIDGE] bars1D error:', e.message); return []; }),
@@ -324,7 +327,7 @@ app.get('/api/market-data', async (req, res) => {
     let vwap5 = 0, vwap5_30 = 0, vwap15 = 0, vwap15_30 = 0;
     try {
       // For VWAP we need volume data — use stocks directly, skip for indices if subscription missing
-      const vwapContract = usesSPYVwap ? contracts.SPY : mainContract;
+      const vwapContract = usesSPYVwap ? contracts.SPY : usesIWMVwap ? contracts.IWM : mainContract;
       const vwapWhat = (vwapContract.secType === SecType.IND) ? WhatToShow.BID_ASK : WhatToShow.TRADES;
       const vwapBars = await getHistoricalBars(vwapContract, '1 D', BarSizeSetting.MINUTES_FIVE, vwapWhat);
       if (vwapBars.length > 0) {
@@ -400,6 +403,114 @@ app.get('/api/market-data', async (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, connected, timestamp: new Date().toISOString() });
+});
+
+// ── Fetch today's executions (fills) from TWS ──
+app.get('/api/executions', async (req, res) => {
+  if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+  const reqId = nextReqId++;
+  const executions = [];
+  const commissions = {};
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        ib.removeListener(EventName.execDetails, onExec);
+        ib.removeListener(EventName.execDetailsEnd, onEnd);
+        ib.removeListener(EventName.commissionReport, onComm);
+        resolve(executions);
+      }, 10000);
+
+      function onExec(rId, contract, execution) {
+        if (rId !== reqId) return;
+        executions.push({
+          execId: execution.execId,
+          time: execution.time,
+          account: execution.acctNumber,
+          symbol: contract.symbol,
+          secType: contract.secType,
+          exchange: contract.exchange,
+          side: execution.side, // BOT or SLD
+          qty: execution.shares || execution.filledQuantity,
+          price: execution.price,
+          avgPrice: execution.avgPrice,
+          orderId: execution.orderId,
+          orderRef: execution.orderRef || '',
+          // Option details
+          strike: contract.strike || 0,
+          right: contract.right || '', // C or P
+          expiry: contract.lastTradeDateOrContractMonth || '',
+          multiplier: contract.multiplier || '100',
+          realizedPnl: execution.realizedPNL || 0
+        });
+      }
+
+      function onComm(report) {
+        if (report.execId) {
+          commissions[report.execId] = {
+            commission: report.commission,
+            realizedPnl: report.realizedPNL,
+            yield: report.yield
+          };
+        }
+      }
+
+      function onEnd(rId) {
+        if (rId !== reqId) return;
+        clearTimeout(timeout);
+        ib.removeListener(EventName.execDetails, onExec);
+        ib.removeListener(EventName.execDetailsEnd, onEnd);
+        // Wait a moment for commission reports to arrive
+        setTimeout(() => {
+          ib.removeListener(EventName.commissionReport, onComm);
+          resolve(executions);
+        }, 1000);
+      }
+
+      ib.on(EventName.execDetails, onExec);
+      ib.on(EventName.execDetailsEnd, onEnd);
+      ib.on(EventName.commissionReport, onComm);
+
+      // Request executions — empty filter gets all for today
+      // Request executions — empty filter gets all for today
+      const today = new Date();
+      const timeStr = today.getFullYear() + ('0'+(today.getMonth()+1)).slice(-2) + ('0'+today.getDate()).slice(-2) + '-00:00:00';
+      const filter = { clientId: 0, acctCode: '', time: timeStr, symbol: '', secType: '', exchange: '', side: '' };
+      ib.reqExecutions(reqId, filter);
+    });
+
+    // Merge commissions with executions
+    const merged = executions.map(e => ({
+      ...e,
+      commission: commissions[e.execId]?.commission || 0,
+      realizedPnl: commissions[e.execId]?.realizedPnl || e.realizedPnl || 0
+    }));
+
+    // Group by orderId to get net positions
+    const orderGroups = {};
+    merged.forEach(e => {
+      const key = e.orderId || e.execId;
+      if (!orderGroups[key]) orderGroups[key] = { fills: [], symbol: e.symbol, side: e.side, totalQty: 0, totalCommission: 0, realizedPnl: 0 };
+      orderGroups[key].fills.push(e);
+      orderGroups[key].totalQty += e.qty;
+      orderGroups[key].totalCommission += e.commission;
+      if (e.realizedPnl && e.realizedPnl !== 1.7976931348623157e+308) {
+        orderGroups[key].realizedPnl += e.realizedPnl;
+      }
+    });
+
+    console.log(`[BRIDGE] Executions: ${merged.length} fills, ${Object.keys(orderGroups).length} orders`);
+    res.json({
+      fills: merged,
+      orders: Object.values(orderGroups),
+      count: merged.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[BRIDGE] Executions error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Disconnect
