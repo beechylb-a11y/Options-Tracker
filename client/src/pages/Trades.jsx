@@ -95,7 +95,7 @@ export default function Trades({ authenticated, account, accounts }) {
     );
   }
 
-  return (<>
+  return (
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -499,16 +499,7 @@ export default function Trades({ authenticated, account, accounts }) {
         </div>
       )}
     </div>
-
-      {closingTrade && (
-        <CloseTradeModal
-          trade={closingTrade}
-          type="tracker"
-          onClose={() => setClosingTrade(null)}
-          onClosed={() => { setClosingTrade(null); loadData(); }}
-        />
-      )}
-  </>);
+  );
 }
 
 function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setEditForm, saving, tradeIdx }) {
@@ -594,16 +585,16 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
           </div>
         </div>
       )}
+      {closingTrade && (
+        <CloseTradeModal
+          trade={closingTrade}
+          type="tracker"
+          onClose={() => setClosingTrade(null)}
+          onClosed={() => { setClosingTrade(null); loadData(); }}
+        />
+      )}
     </div>
-    {closingTrade && (
-      <CloseTradeModal
-        trade={closingTrade}
-        type="tracker"
-        onClose={() => setClosingTrade(null)}
-        onClosed={() => { setClosingTrade(null); loadData(); }}
-      />
-    )}
-  </>);
+  );
 }
 
 function EditField({ label, value, onChange, type = 'text' }) {
