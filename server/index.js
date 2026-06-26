@@ -417,7 +417,13 @@ app.post('/api/decisions', requireAuth, async (req, res) => {
 app.get('/api/decisions', requireAuth, async (req, res) => {
   try {
     const rows = await getDecisions();
-    res.json(rows);
+    const headers = rows[0] || [];
+    const data = rows.slice(1).map((row, idx) => {
+      const obj = { _rowIndex: idx + 2, _raw: row };
+      headers.forEach((h, i) => { obj[h] = row[i] || ''; });
+      return obj;
+    });
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

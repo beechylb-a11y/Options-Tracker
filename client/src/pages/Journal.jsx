@@ -25,13 +25,17 @@ export default function Journal({ authenticated, account }) {
     ]).then(([j, t, d]) => {
       setJournal(j);
       setTracker(t);
-      if (d && d.length > 1) {
-        const headers = d[0];
-        setDecisions(d.slice(1).map(row => {
-          const obj = {};
-          headers.forEach((h, i) => { obj[h] = row[i] || ''; });
-          return obj;
-        }));
+      if (Array.isArray(d) && d.length > 0) {
+        if (d[0]._rowIndex !== undefined) {
+          setDecisions(d);
+        } else if (Array.isArray(d[0])) {
+          const headers = d[0];
+          setDecisions(d.slice(1).map((row, idx) => {
+            const obj = { _rowIndex: idx + 2, _raw: row };
+            headers.forEach((h, i) => { obj[h] = row[i] || ''; });
+            return obj;
+          }));
+        }
       }
       setLoading(false);
     });

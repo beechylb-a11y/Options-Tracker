@@ -34,15 +34,22 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
   function loadDecisions() {
     if (!authenticated) return Promise.resolve();
-    return api.getDecisions().then(rows => {
-      if (rows && rows.length > 1) {
-        const headers = rows[0];
-        const data = rows.slice(1).map((row, idx) => {
-          const obj = { _rowIndex: idx + 2, _raw: row };
-          headers.forEach((h, i) => { obj[h] = row[i] || ''; });
-          return obj;
-        }).reverse();
-        setDecisions(data);
+    return api.getDecisions().then(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        // Check if server returned parsed objects or raw arrays
+        if (data[0]._rowIndex !== undefined) {
+          // Pre-parsed objects from server
+          setDecisions([...data].reverse());
+        } else if (Array.isArray(data[0])) {
+          // Raw arrays (legacy) — parse manually
+          const headers = data[0];
+          const rows = data.slice(1).map((row, idx) => {
+            const obj = { _rowIndex: idx + 2, _raw: row };
+            headers.forEach((h, i) => { obj[h] = row[i] || ''; });
+            return obj;
+          }).reverse();
+          setDecisions(rows);
+        }
       }
     }).catch(() => {});
   }
