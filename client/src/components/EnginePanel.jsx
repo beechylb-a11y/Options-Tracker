@@ -313,7 +313,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '</style></head><body>' +
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
       '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
-      '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + ' \u2014 ' + r.setup + ' (' + r.setupScore + '/100)</h2>' +
+      '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + '</h2>' +
+      '<div style="display:flex;gap:20px;margin-top:8px;font-size:12px">' +
+        '<div style="padding:6px 12px;border-radius:6px;background:' + sBg + ';border:1px solid ' + sClr + '">' +
+          '<span style="color:#8b949e">Setup Quality</span> <span style="color:' + sClr + ';font-weight:700;font-family:monospace">' + r.setup + ' ' + r.setupScore + '/100</span>' +
+        '</div>' +
+        '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
+          '<span style="color:#8b949e">Adj Kelly</span> <span style="color:' + (r.kellyOverRisk ? '#f85149' : '#3fb950') + ';font-weight:700;font-family:monospace">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + ' (' + (r.adjustedKelly ? (r.adjustedKelly*100).toFixed(1) : '0') + '%)</span>' +
+        '</div>' +
+        '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
+          '<span style="color:#8b949e">Fair Value</span> <span style="color:' + (r.fairValueScore >= 80 ? '#3fb950' : r.fairValueScore >= 70 ? '#d29922' : '#f85149') + ';font-weight:700;font-family:monospace">' + r.fairValueScore + '/100 ' + r.fairValueGrade + '</span>' +
+        '</div>' +
+        '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
+          '<span style="color:#8b949e">Score</span> <span style="color:' + dcColor + ';font-weight:700;font-family:monospace">' + compositeScore + '/100</span>' +
+        '</div>' +
+      '</div>' +
+      (warningsHtml ? '<div style="margin-top:10px;padding:8px 12px;background:#1f1a0d;border:1px solid #9e6a03;border-radius:6px">' + warningsHtml + '</div>' : '') +
       '<div style="margin-top:12px">' + legsHtml + '</div>' +
       (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
       (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
@@ -340,7 +355,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regimeScore + '/100 — ' + r.regimeGrade + '</span></div>' +
       '</div>' +
       '<div class="section"><div class="section-title">Signals</div>' + signalsHtml + '</div>' +
-      (warningsHtml ? '<div class="section"><div class="section-title">Warnings</div>' + warningsHtml + '</div>' : '') +
       '<div class="timestamp">Generated ' + new Date().toLocaleString('en-AU') + ' \u2014 Options Tracker Decision Engine</div>' +
       '</body></html>';
 
