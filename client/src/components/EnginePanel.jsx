@@ -370,16 +370,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   function handleLog() {
     if (!onLogTrade) return;
     const inp = is0 ? i0 : i45;
+    const ncd = parseFloat(inp.netCreditDebit) || 0;
     onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
       strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
       setupGrade:r.setup, regime:r.regime, wingStrikes:r.legs.map(l=>l.strike).join(' / '),
-      marketBehaviour:r.behaviour, notes:isOverride ? `Manual override: engine recommended ${r.bestStrat}, user selected ${effectiveStrat}` : '',
+      marketBehaviour:r.behaviour,
+      notes: [
+        isOverride ? `Override: engine=${r.bestStrat}, selected=${effectiveStrat}` : '',
+        `Score ${compositeScore}/100 | FV ${r.fairValueScore}/100 (${r.fairValueGrade})`,
+        `Kelly ${(r.adjustedKelly*100).toFixed(1)}% | Vol ${r.volFactor?.toFixed(2)} | Sharpe ${r.sharpeFactor?.toFixed(2)} | Strat ${r.stratModifier?.toFixed(2)}`,
+        ncd > 0 ? `Credit $${ncd.toFixed(2)}` : ncd < 0 ? `Debit $${Math.abs(ncd).toFixed(2)}` : '',
+        `POP ${inp.pop||'--'}% | Win $${inp.win||'--'} | Risk $${inp.risk||'--'}`,
+        r.legs.map(l => `${l.strike} ${l.label}`).join(' | ')
+      ].filter(Boolean).join('\n'),
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
       em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
-      account: accountConfig?.id || '' });
+      account: accountConfig?.id || '',
+      // Expiry info for tracking
+      dte: is0 ? '0DTE' : '45DTE',
+      expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today
+    });
   }
 
   return (

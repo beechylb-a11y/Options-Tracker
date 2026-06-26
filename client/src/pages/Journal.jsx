@@ -67,8 +67,12 @@ export default function Journal({ authenticated, account }) {
     if (wl === 'Loss') dayStats[d].losses++;
   });
 
-  // 2. Closed decision engine tickets
-  const closedDecisions = decisions.filter(d => d.Status === 'Closed' && d['Actual P&L']);
+  // 2. Closed decision engine tickets (filtered by account)
+  const accountDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
+    const decAccount = d.Account || '';
+    return decAccount === account || !decAccount;
+  });
+  const closedDecisions = accountDecisions.filter(d => d.Status === 'Closed' && d['Actual P&L']);
   closedDecisions.forEach(d => {
     const closeDate = (d['Close Date'] || '').split('T')[0];
     const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
@@ -127,7 +131,7 @@ export default function Journal({ authenticated, account }) {
   }
 
   function getOpenDecisionsForDate(dateStr) {
-    return decisions.filter(d => {
+    return accountDecisions.filter(d => {
       if (d.Status === 'Closed') return false;
       if (!d.Timestamp) return false;
       try { return new Date(d.Timestamp).toISOString().split('T')[0] === dateStr; }
@@ -335,14 +339,18 @@ export default function Journal({ authenticated, account }) {
                       const isWin = pnl >= 0;
                       const stratParts = (d.Strategy || '').split(' - ');
                       const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : d.Strategy;
+                      const isMatched = !!(d['Matched Trade'] || d._raw?.[20]);
                       return (
-                        <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-amber/20 bg-amber/5">
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
-                          <span className="text-sm font-medium text-white">{d.Underlying}</span>
-                          <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
-                          <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
-                          <span className={`badge text-[10px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
-                          <span className="badge text-[10px] badge-amber">Ticket</span>
+                        <div key={i} className="py-2 px-3 rounded-lg border border-amber/20 bg-amber/5">
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
+                            <span className="text-sm font-medium text-white">{d.Underlying}</span>
+                            <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
+                            <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                            <span className={`badge text-[10px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
+                            <span className={`badge text-[10px] ${isMatched ? 'badge-green' : 'badge-amber'}`}>{isMatched ? 'Matched' : 'Unmatched'}</span>
+                          </div>
+                          {d.Notes && <div className="text-[10px] text-[#8b949e] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
                         </div>
                       );
                     })}

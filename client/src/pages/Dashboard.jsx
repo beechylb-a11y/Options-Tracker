@@ -292,15 +292,35 @@ export default function Dashboard({ authenticated, account }) {
           {upcoming.length > 0 ? (
             <div className="space-y-2">
               {upcoming.map((t, i) => {
-                const dte = Math.ceil((new Date(t['Expiry Date']) - new Date()) / (1000 * 60 * 60 * 24));
+                const expiryDate = new Date(t['Expiry Date']);
+                const now = new Date();
+                const dte = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+                // For 0DTE (expires today): show hours remaining to 4pm ET
+                const todayStr = now.toISOString().split('T')[0];
+                const expiryStr = expiryDate.toISOString().split('T')[0];
+                const is0DTE = dte <= 0 || expiryStr === todayStr;
+                let timeLabel = `${dte}d`;
+                let urgentClass = dte <= 3 ? 'badge-red' : dte <= 7 ? 'badge-amber' : 'badge-blue';
+                if (is0DTE) {
+                  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+                  const close4pm = new Date(et); close4pm.setHours(16, 0, 0, 0);
+                  const hoursLeft = Math.max(0, (close4pm - et) / 3600000);
+                  timeLabel = hoursLeft > 0 ? `${hoursLeft.toFixed(1)}h` : 'Expired';
+                  urgentClass = hoursLeft <= 1 ? 'badge-red' : hoursLeft <= 2 ? 'badge-amber' : 'badge-red';
+                  // 3pm ET reminder
+                  const reminder3pm = new Date(et); reminder3pm.setHours(15, 0, 0, 0);
+                  if (et >= reminder3pm && hoursLeft > 0) {
+                    timeLabel += ' ⚠';
+                  }
+                }
                 return (
                   <div key={i} className="flex items-center justify-between py-1.5 border-b border-bg-border last:border-0">
                     <div>
                       <span className="text-sm font-medium">{t.Underlying}</span>
                       <span className="text-xs text-text-muted ml-2">{t['Strategy (OIC)']}</span>
                     </div>
-                    <span className={`badge ${dte <= 3 ? 'badge-red' : dte <= 7 ? 'badge-amber' : 'badge-blue'}`}>
-                      {dte}d
+                    <span className={`badge ${urgentClass}`}>
+                      {timeLabel}
                     </span>
                   </div>
                 );
