@@ -88,6 +88,16 @@ export default function Journal({ authenticated, account }) {
     else dayStats[dt].losses++;
   });
 
+  // 3. Open (unmatched) decision engine entries — show on calendar with indicator
+  const openDecisions = accountDecisions.filter(d => d.Status !== 'Closed');
+  openDecisions.forEach(d => {
+    const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+    if (!entryDate) return;
+    if (!dayStats[entryDate]) dayStats[entryDate] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0, openCount: 0 };
+    if (!dayStats[entryDate].openCount) dayStats[entryDate].openCount = 0;
+    dayStats[entryDate].openCount++;
+  });
+
   // ── Notes from Journal sheet ──
   const notesByDate = {};
   journal.forEach(j => {
@@ -269,6 +279,14 @@ export default function Journal({ authenticated, account }) {
                           {data.ticketCount > 0 && <span className="text-amber"> ⚡{data.ticketCount}</span>}
                         </div>
                       </div>
+                    )}
+                    {data && !data.count && data.openCount > 0 && (
+                      <div className="absolute bottom-1 left-1 right-1">
+                        <div className="text-[9px] text-amber">⚡{data.openCount} open</div>
+                      </div>
+                    )}
+                    {data && data.count > 0 && data.openCount > 0 && (
+                      <div className="absolute top-1 left-1"><span className="text-[8px] text-amber">⚡{data.openCount}</span></div>
                     )}
                     {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
                   </div>
