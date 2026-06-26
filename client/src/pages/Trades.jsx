@@ -499,6 +499,14 @@ export default function Trades({ authenticated, account, accounts }) {
           <p className="text-text-muted text-sm">Upload a CSV to import trades to this account</p>
         </div>
       )}
+      {closingTrade && (
+        <CloseTradeModal
+          trade={closingTrade}
+          type="tracker"
+          onClose={() => setClosingTrade(null)}
+          onClosed={() => { setClosingTrade(null); loadData(); }}
+        />
+      )}
     </div>
   );
 }
@@ -593,14 +601,6 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
             </button>
           </div>
         </div>
-      )}
-      {closingTrade && (
-        <CloseTradeModal
-          trade={closingTrade}
-          type="tracker"
-          onClose={() => setClosingTrade(null)}
-          onClosed={() => { setClosingTrade(null); loadData(); }}
-        />
       )}
     </div>
   );
