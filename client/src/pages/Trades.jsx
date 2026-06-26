@@ -111,7 +111,7 @@ export default function Trades({ authenticated, account, accounts }) {
             <select value={uploadAccount} onChange={e => setUploadAccount(e.target.value)}
               className="px-2 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white outline-none"
               title="Account for uploaded trades">
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {(accounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           )}
           <label className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">
