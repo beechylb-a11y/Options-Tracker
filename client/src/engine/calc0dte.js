@@ -628,20 +628,18 @@ export function calc0DTE(inputs) {
       else structScore = 35;
     } else if (isDebitBfly) {
       // Debit butterfly: evaluate based on debit relative to wing width
-      // BWB: also factor in win/risk ratio since structure is asymmetric
+      // <25% Excellent, 25-40% Good, 40-55% Marginal, >55% No Trade
       if (win > 0 && risk > 0) {
-        // Use actual win/risk from broker data
         const rr = win / risk;
-        if (rr > 0.50) structScore = 95;       // excellent risk/reward
+        if (rr > 0.50) structScore = 95;
         else if (rr > 0.30) structScore = 80;
         else if (rr > 0.20) structScore = 65;
         else if (rr > 0.10) structScore = 50;
         else structScore = 30;
-      } else if (ratio >= 0.10 && ratio <= 0.30) structScore = 90;
-      else if (ratio < 0.10) structScore = 80;
-      else if (ratio <= 0.45) structScore = 65;
-      else if (ratio <= 0.60) structScore = 45;
-      else structScore = 30;
+      } else if (ratio < 0.25) structScore = 95;      // Excellent
+      else if (ratio < 0.40) structScore = 80;         // Good
+      else if (ratio < 0.55) structScore = 55;         // Marginal
+      else structScore = 25;                           // No Trade
     } else if (isReversed) {
       // Reversed condor: want low debit relative to potential payout
       if (ratio < 0.30) structScore = 95;
@@ -980,6 +978,16 @@ export function calc0DTE(inputs) {
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
+
+  // Debit/wing ratio check for butterflies
+  if (isDebitBfly && D > 0 && netCreditDebit < 0) {
+    const debitWingRatio = Math.abs(netCreditDebit) / D;
+    if (debitWingRatio > 0.55) {
+      blockers.push(`Debit ${(debitWingRatio*100).toFixed(0)}% of wing width — too expensive (>55%)`);
+    } else if (debitWingRatio > 0.40) {
+      warnings.push(`Debit ${(debitWingRatio*100).toFixed(0)}% of wing width — marginal value (40-55%)`);
+    }
+  }
   if (overextendedWarning) warnings.push('Strong direction + overextended — consider pullback');
   if (hasOvernight && overnightMovePct > 0.60 && isDirectional) warnings.push(`Overnight consumed ${(overnightMovePct*100).toFixed(0)}% EM — limited room`);
   if (trendPattern === 'continuation' && totalDirConsumed > 0.80) warnings.push('Continuation trend — ' + (totalDirConsumed*100).toFixed(0) + '% consumed directionally — avoid chasing');
