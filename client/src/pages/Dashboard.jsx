@@ -334,7 +334,7 @@ export default function Dashboard({ authenticated, account }) {
                 const expiryDate = new Date(t['Expiry Date']);
                 const now = new Date();
                 const dte = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
-                // For 0DTE (expires today): show hours remaining to 4pm ET
+                // For 0DTE (expires today): show hours remaining to 3pm ET close
                 const todayStr = now.toISOString().split('T')[0];
                 const expiryStr = expiryDate.toISOString().split('T')[0];
                 const is0DTE = dte <= 0 || expiryStr === todayStr;
@@ -346,11 +346,11 @@ export default function Dashboard({ authenticated, account }) {
 
                 if (is0DTE) {
                   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-                  const close4pm = new Date(et); close4pm.setHours(16, 0, 0, 0);
+                  const close4pm = new Date(et); close4pm.setHours(15, 0, 0, 0);
                   const hoursLeft = Math.max(0, (close4pm - et) / 3600000);
                   timeLabel = hoursLeft > 0 ? `${hoursLeft.toFixed(1)}h` : 'Expired';
                   urgentClass = hoursLeft <= 1 ? 'badge-red' : 'badge-red';
-                  const reminder3pm = new Date(et); reminder3pm.setHours(15, 0, 0, 0);
+                  const reminder3pm = new Date(et); reminder3pm.setHours(14, 30, 0, 0);
                   if (et >= reminder3pm && hoursLeft > 0) timeLabel += ' ⚠';
                 } else if (is45DTE) {
                   // 45DTE management: close by 21 DTE, warn approaching

@@ -32,7 +32,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     const now = new Date();
     const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const marketClose = new Date(et);
-    marketClose.setHours(16, 0, 0, 0);
+    marketClose.setHours(15, 0, 0, 0);
     const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
     const hoursRounded = Math.round(hoursLeft * 10) / 10;
     if (hoursRounded > 0 && !i0.hours) {
@@ -209,11 +209,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
       if (is0) {
-        // Calculate hours remaining until 4pm ET (16:00 New York)
+        // Calculate hours remaining until 3pm ET (15:00 New York)
         const now = new Date();
         const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
         const marketClose = new Date(et);
-        marketClose.setHours(16, 0, 0, 0);
+        marketClose.setHours(15, 0, 0, 0);
         const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
         const hoursRounded = Math.round(hoursLeft * 10) / 10;
 
@@ -645,7 +645,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                     border:'1px solid #30363d', background:'#0d1117', color:'#c9d1d9'
                   }}
                 />
-                <div style={{fontSize:9,color:'#484f58',marginTop:2}}>Auto: 4pm ET minus current time</div>
+                <div style={{fontSize:9,color:'#484f58',marginTop:2}}>Auto: 3pm ET minus current time</div>
               </div>
             </div>
           )}

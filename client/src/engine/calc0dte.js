@@ -926,9 +926,10 @@ export function calc0DTE(inputs) {
     const gRisk = theta > 0 ? (gamma * atr) / theta : 0;
     // Max tolerable move: how far price can move before theta earned is consumed
     // theta is daily ($), hours is actual hours remaining to 4pm ET
-    // Theta earned in remaining time = theta × (hours / 6.5)
-    const hoursUsed = hours > 0 ? hours : 6.5; // fallback to full day if not entered
-    const thetaRemaining = theta * (hoursUsed / 6.5);
+    // Theta earned in remaining time = theta × (hours / 5.5)
+    // 0DTE target close at 3pm ET = 5.5 trading hours from 9:30am
+    const hoursUsed = hours > 0 ? hours : 5.5; // fallback to full 0DTE session
+    const thetaRemaining = theta * (hoursUsed / 5.5);
     const dsMax = delta > 0 ? thetaRemaining / delta : 0;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
