@@ -836,6 +836,45 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             </div>
           )}
 
+          {/* 45DTE Directional Edge */}
+          {!is0 && r.greeks && r.greeks.edgeRatio !== undefined && (
+            <div className="card">
+              <SectionLabel white info="Directional Edge for 45DTE: compares expected directional P&L over the holding period (to 21 DTE exit) against theta earned. Credit sellers want low ratio (theta dominates). Debit buyers want high ratio (move dominates). Uses remaining EM based on IV and days to exit.">Directional Edge (45DTE)</SectionLabel>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-[#8b949e]">Holding: {r.greeks.daysToExit} days to 21 DTE exit | Remaining EM: {r.greeks.remainingEM?.toFixed(1)} pts</span>
+                <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
+                  background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d',
+                  color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'
+                }}>{r.greeks.edgePhase}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
+                  <div className="text-[9px] text-[#8b949e]">Directional $</div>
+                  <div className="mono text-sm font-bold text-white">${r.greeks.directionalGain?.toFixed(0)}</div>
+                </div>
+                <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
+                  <div className="text-[9px] text-[#8b949e]">Theta $ ({r.greeks.daysToExit}d)</div>
+                  <div className="mono text-sm font-bold text-white">${r.greeks.thetaPressure?.toFixed(0)}</div>
+                </div>
+                <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':'#0d1117'}}>
+                  <div className="text-[9px] text-[#8b949e]">Edge Ratio</div>
+                  <div className="mono text-lg font-bold" style={{color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'}}>{r.greeks.edgeRatio?.toFixed(2)}</div>
+                </div>
+              </div>
+              <SpeedTape label="Move / Theta" value={Math.min(r.greeks.edgeRatio, 4)} min={0} max={4}
+                zones={r.greeks.isCreditStrat
+                  ? [{to:0.5,color:'#3fb950'},{to:0.8,color:'#e3b341'},{to:1.2,color:'#d29922'},{to:4,color:'#f85149'}]
+                  : [{to:0.8,color:'#f85149'},{to:1.2,color:'#d29922'},{to:2.0,color:'#e3b341'},{to:4,color:'#3fb950'}]
+                }
+                display={r.greeks.edgeRatio?.toFixed(2)}
+                sublabel={r.greeks.edgeAction} />
+              <div className="grid grid-cols-2 gap-1.5 mt-3">
+                <KV label="Theta efficiency" value={r.greeks.tEff ? (r.greeks.tEff * 100).toFixed(2) + '%' : '--'} />
+                <KV label="Vega/Theta" value={r.greeks.tvRatio?.toFixed(2) || '--'} />
+              </div>
+            </div>
+          )}
+
           {/* Regime */}
           <div className="card">
             <SectionLabel white info="Current market regime based on realised move as % of expected move (RM ratio) and ATR compression. Determines which strategies are favoured. Butterfly zone = >60% consumed + compressing. Each regime has different strategy ratings.">Regime</SectionLabel>

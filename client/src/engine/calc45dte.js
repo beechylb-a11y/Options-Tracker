@@ -153,11 +153,51 @@ export function calc45DTE(inputs) {
   const maxRisk = contracts*risk;
   const kellyOverRisk = risk>0&&kellyDollar>0&&risk>kellyDollar;
 
-  // Greeks
+  // Greeks + Directional Edge
   let greeks = null;
   if (theta>0||vega>0||delta>0) {
     const tvRatio = (theta>0&&vega>0)?vega/theta:0;
-    greeks = { tEff, tvRatio, vega: vega||0, delta: delta||0 };
+
+    // 45DTE Directional Edge
+    // Remaining EM = IV × √(remaining DTE / 365) × price
+    const remainingDTE = Math.max(dte - 21, 1); // target exit at 21 DTE
+    const daysToExit = dte - 21; // days until planned exit
+    const remainingEM = iv > 0 && price > 0 ? price * (iv / 100) * Math.sqrt(remainingDTE / 365) : 0;
+    const directionalGain = Math.abs(delta) * remainingEM;
+    const thetaPressure = theta * Math.max(daysToExit, 1);
+    const edgeRatio = thetaPressure > 0 ? directionalGain / thetaPressure : directionalGain > 0 ? 99 : 0;
+
+    // Strategy interpretation for 45DTE
+    const isCreditStrat = legStrat.includes('Iron Condor') || legStrat.includes('Iron butterfly')
+      || legStrat.includes('Put spread') || legStrat.includes('Call spread')
+      || legStrat.includes('Strangle');
+    const isDebitDir = legStrat.includes('Bull call') || legStrat.includes('Bear put')
+      || legStrat.includes('Calendar') || legStrat.includes('Diagonal');
+
+    let edgeSignal, edgeAction, edgePhase;
+    if (isCreditStrat) {
+      if (edgeRatio < 0.5) { edgeSignal = 'excellent'; edgeAction = 'Theta strongly dominates over ' + daysToExit + ' days'; }
+      else if (edgeRatio < 0.8) { edgeSignal = 'good'; edgeAction = 'Theta advantage holds — favourable premium sale'; }
+      else if (edgeRatio < 1.2) { edgeSignal = 'marginal'; edgeAction = 'Directional risk meaningful — tighten strikes or reduce size'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Move likely exceeds theta — unfavourable for credit'; }
+      edgePhase = 'theta-dominant';
+    } else if (isDebitDir) {
+      if (edgeRatio > 2.0) { edgeSignal = 'excellent'; edgeAction = 'Strong directional edge over ' + daysToExit + ' day holding'; }
+      else if (edgeRatio > 1.2) { edgeSignal = 'good'; edgeAction = 'Directional P&L should outpace decay'; }
+      else if (edgeRatio > 0.8) { edgeSignal = 'marginal'; edgeAction = 'Thin edge — need strong directional conviction'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Theta eroding edge — reconsider entry or timing'; }
+      edgePhase = 'move-dominant';
+    } else {
+      if (edgeRatio > 1.5) { edgeSignal = 'good'; edgeAction = 'Directional component stronger'; }
+      else if (edgeRatio > 0.7) { edgeSignal = 'good'; edgeAction = 'Balanced — monitor through holding period'; }
+      else { edgeSignal = 'good'; edgeAction = 'Theta component stronger'; }
+      edgePhase = 'balanced';
+    }
+
+    greeks = { tEff, tvRatio, vega: vega||0, delta: delta||0,
+      directionalGain, thetaPressure, edgeRatio, edgeSignal, edgeAction, edgePhase,
+      remainingEM, remainingDTE, daysToExit, isCreditStrat, isDebitDir
+    };
   }
 
   // Decision
