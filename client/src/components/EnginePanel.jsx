@@ -532,7 +532,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           )}
 
           {/* Sizing */}
-          <SectionLabel info="Net credit/debit from your broker order preview. POP = probability of profit. Win = max profit per contract. Risk = max loss per contract. Enter positive for credit received, negative for debit paid. Input boxes change colour: green = within budget, red = exceeds limits.">Trade sizing</SectionLabel>
+          <SectionLabel info="Net credit/debit from your broker order preview — positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width.">Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className="text-xs text-text-muted block mb-1">{parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? 'Net credit ($)' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? 'Net debit ($)' : 'Net credit/debit ($)'}</label>
@@ -736,7 +736,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
-            <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk). Each factor shown on a speed tape from red (reduce size) to green (full size). Prevents oversizing in high-vol or low-edge conditions.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
+            <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk per strategy). Vol Factor: VIX <12 = 1.0, 12-18 = 0.75, 18-25 = 0.50, >25 = 0.25. Sharpe Factor: based on EV/risk ratio. Strategy Modifier: butterflies 1.0, IC/credit spreads 0.85, BWB 0.80, reversed condor 0.70. Adj Kelly $ = max recommended risk. Risk per contract turns red if it exceeds Kelly $. POP turns red if below breakeven POP.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 mb-3">
               <KV label="Contracts" value={r.contracts}/>
               <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
@@ -779,7 +779,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {is0 && r.greeks && (
             <div className="card">
               <div className="flex items-center justify-between mb-2">
-                <SectionLabel white info="Theta Edge = theta earned per unit of directional risk. Gamma Risk = how fast delta changes vs theta earned. Max Tolerable Move = furthest price can move before theta is consumed. Uses actual hours remaining to 4pm ET. Sweet spot: Theta Edge 0.15-0.40, Gamma Risk < 0.70.">Trade survivability</SectionLabel>
+                <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Gamma Risk = how fast delta changes vs theta (< 0.70 safe). Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates.">Trade survivability</SectionLabel>
                 {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
@@ -839,7 +839,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* 45DTE Directional Edge */}
           {!is0 && r.greeks && r.greeks.edgeRatio !== undefined && (
             <div className="card">
-              <SectionLabel white info="Directional Edge for 45DTE: compares expected directional P&L over the holding period (to 21 DTE exit) against theta earned. Credit sellers want low ratio (theta dominates). Debit buyers want high ratio (move dominates). Uses remaining EM based on IV and days to exit.">Directional Edge (45DTE)</SectionLabel>
+              <SectionLabel white info="Directional Edge for 45DTE trades. Compares expected directional P&L (delta × remaining expected move) against total theta earned over the holding period to 21 DTE exit. Remaining EM = price × IV × √(remaining DTE / 365). Credit sellers (IC, spreads): want Edge Ratio < 0.5 (theta strongly dominates over the holding period). Debit directional (bull call, calendars): want Edge Ratio > 2.0 (move potential exceeds decay). Theta efficiency = daily theta as % of buying power reduction. Vega/Theta = IV sensitivity per unit of decay — high ratio means IV changes matter more than time.">Directional Edge (45DTE)</SectionLabel>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-[#8b949e]">Holding: {r.greeks.daysToExit} days to 21 DTE exit | Remaining EM: {r.greeks.remainingEM?.toFixed(1)} pts</span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
