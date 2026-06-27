@@ -795,6 +795,43 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   zones={[{to:25,color:'#f85149'},{to:50,color:'#d29922'},{to:100,color:'#e3b341'},{to:200,color:'#3fb950'}]}
                   display={`${r.greeks.dsMax.toFixed(1)} pts (${(r.greeks.dsATR*100).toFixed(0)}% ATR)`}
                   sublabel={r.greeks.dsSignal + ' — ' + r.greeks.dsAction} />
+
+                {/* Directional Edge */}
+                {r.greeks.edgeRatio !== undefined && (
+                  <div style={{marginTop:12,paddingTop:10,borderTop:'1px solid #21262d'}}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-white font-semibold">Directional Edge</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
+                        background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d',
+                        color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'
+                      }}>{r.greeks.edgePhase}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 mb-2">
+                      <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
+                        <div className="text-[9px] text-[#8b949e]">Directional $</div>
+                        <div className="mono text-sm font-bold text-white">${r.greeks.directionalGain?.toFixed(0)}</div>
+                        <div className="text-[8px] text-[#484f58]">{r.greeks.remainingMove?.toFixed(1)} pts left</div>
+                      </div>
+                      <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
+                        <div className="text-[9px] text-[#8b949e]">Theta $</div>
+                        <div className="mono text-sm font-bold text-white">${r.greeks.thetaPressure?.toFixed(0)}</div>
+                        <div className="text-[8px] text-[#484f58]">to planned exit</div>
+                      </div>
+                      <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d'}}>
+                        <div className="text-[9px] text-[#8b949e]">Edge Ratio</div>
+                        <div className="mono text-lg font-bold" style={{color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'}}>{r.greeks.edgeRatio?.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <SpeedTape label="Move / Theta" value={Math.min(r.greeks.edgeRatio, 4)} min={0} max={4}
+                      zones={r.greeks.isCreditStrat
+                        ? [{to:0.7,color:'#3fb950'},{to:1.0,color:'#e3b341'},{to:1.5,color:'#d29922'},{to:4,color:'#f85149'}]
+                        : [{to:0.7,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:4,color:'#3fb950'}]
+                      }
+                      display={r.greeks.edgeRatio?.toFixed(2)}
+                      sublabel={r.greeks.edgeAction} />
+                    <div className="text-[9px] text-[#484f58] mt-1">Time threshold: {r.greeks.edgeThreshold?.toFixed(1)} | {r.greeks.isCreditStrat ? 'Credit: lower = better' : r.greeks.isBflyCondor ? 'Butterfly: transitions through phases' : 'Debit: higher = better'}</div>
+                  </div>
+                )}
               </div>
             </div>
           )}

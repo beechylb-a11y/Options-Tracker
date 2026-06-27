@@ -957,7 +957,79 @@ export function calc0DTE(inputs) {
     // Sweet spot check
     const sweetSpot = tEdge >= 0.15 && tEdge <= 0.40 && gRisk < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
 
-    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot };
+    // ── Directional Edge Framework ──
+    // Measures whether price movement or time decay will dominate
+    const remainingMove = Math.max(0, em - (moveConsumed * em)); // Expected remaining move in points
+    const directionalGain = Math.abs(delta) * remainingMove; // $ directional P&L potential
+    const thetaPressure = thetaRemaining; // $ theta earned until planned exit
+
+    // Edge Ratio = Directional Gain / Theta Pressure
+    const edgeRatio = thetaPressure > 0 ? directionalGain / thetaPressure : directionalGain > 0 ? 99 : 0;
+
+    // Time-adjusted thresholds — tighten through the day
+    let edgeThreshold = 2.0; // default
+    if (hoursUsed <= 1) edgeThreshold = 1.0;
+    else if (hoursUsed <= 2) edgeThreshold = 1.2;
+    else if (hoursUsed <= 3) edgeThreshold = 1.5;
+    else if (hoursUsed <= 4) edgeThreshold = 2.0;
+    else edgeThreshold = 2.5;
+
+    // Strategy-specific interpretation
+    const isCreditStrat = legStrat.includes('Iron Condor') || legStrat === 'Iron butterfly'
+      || legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat === 'Chicken condor';
+    const isDebitDir = legStrat.includes('Bull call') || legStrat.includes('Bear put');
+    const isBflyCondor = legStrat.includes('butterfly') || legStrat.includes('Butterfly')
+      || legStrat.includes('BWB') || legStrat.includes('Broken') || legStrat.includes('Reversed');
+
+    let edgeSignal, edgeAction, edgePhase;
+    if (isCreditStrat) {
+      // Credit sellers WANT low ratio — theta should dominate
+      if (edgeRatio < 0.7) { edgeSignal = 'excellent'; edgeAction = 'Theta dominates — ideal for premium selling'; }
+      else if (edgeRatio < 1.0) { edgeSignal = 'good'; edgeAction = 'Theta still stronger — favourable'; }
+      else if (edgeRatio < 1.5) { edgeSignal = 'marginal'; edgeAction = 'Directional risk rising — watch closely'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Move likely to overcome theta — avoid or hedge'; }
+      edgePhase = 'theta-dominant';
+    } else if (isDebitDir) {
+      // Debit directional WANT high ratio — move should dominate
+      if (edgeRatio > 2.5) { edgeSignal = 'excellent'; edgeAction = 'Strong remaining move vs decay — directional edge'; }
+      else if (edgeRatio > 1.5) { edgeSignal = 'good'; edgeAction = 'Move still outpacing theta — proceed'; }
+      else if (edgeRatio > 1.0) { edgeSignal = 'marginal'; edgeAction = 'Edge thinning — tighten profit target'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Theta consuming edge — close or roll'; }
+      edgePhase = 'move-dominant';
+    } else if (isBflyCondor) {
+      // Butterflies/condors want TRANSITION: high ratio early (move to body) → low ratio late (theta collects)
+      if (moveConsumed < 0.4) {
+        // Early phase — need move toward body
+        if (edgeRatio > 1.5) { edgeSignal = 'excellent'; edgeAction = 'Move toward body still likely — good entry'; }
+        else if (edgeRatio > 1.0) { edgeSignal = 'good'; edgeAction = 'Moderate directional edge — acceptable'; }
+        else { edgeSignal = 'marginal'; edgeAction = 'May not reach body — check if already near target'; }
+        edgePhase = 'approach';
+      } else if (moveConsumed < 0.7) {
+        // Transition phase — near body
+        if (edgeRatio >= 0.7 && edgeRatio <= 1.5) { edgeSignal = 'excellent'; edgeAction = 'Transition zone — price near body, theta building'; }
+        else if (edgeRatio > 1.5) { edgeSignal = 'good'; edgeAction = 'Still moving — watch for overshoot'; }
+        else { edgeSignal = 'good'; edgeAction = 'Theta taking over — body reached, hold for decay'; }
+        edgePhase = 'transition';
+      } else {
+        // Late phase — want theta to dominate
+        if (edgeRatio < 0.7) { edgeSignal = 'excellent'; edgeAction = 'Theta dominating — collect remaining value'; }
+        else if (edgeRatio < 1.0) { edgeSignal = 'good'; edgeAction = 'Mostly theta now — hold to target'; }
+        else { edgeSignal = 'marginal'; edgeAction = 'Unexpected movement — consider closing early'; }
+        edgePhase = 'collection';
+      }
+    } else {
+      // Default
+      if (edgeRatio > 2.0) { edgeSignal = 'excellent'; edgeAction = 'Direction dominates'; }
+      else if (edgeRatio > 1.0) { edgeSignal = 'good'; edgeAction = 'Balanced'; }
+      else { edgeSignal = 'marginal'; edgeAction = 'Theta dominant'; }
+      edgePhase = 'neutral';
+    }
+
+    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot,
+      // Directional Edge
+      directionalGain, thetaPressure, edgeRatio, edgeThreshold, edgeSignal, edgeAction, edgePhase,
+      remainingMove, isCreditStrat, isDebitDir, isBflyCondor
+    };
   }
 
   // ── Warnings ──
