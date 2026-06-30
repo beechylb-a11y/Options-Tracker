@@ -129,7 +129,7 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 ml-[220px] min-h-screen">
         <div className="max-w-[1400px] mx-auto p-6">
-          {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} />}

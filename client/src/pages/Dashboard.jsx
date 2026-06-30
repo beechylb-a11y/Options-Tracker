@@ -4,7 +4,7 @@ import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame,
 import { api } from '../utils/api';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, filterByAccount } from '../utils/format';
 
-export default function Dashboard({ authenticated, account }) {
+export default function Dashboard({ authenticated, account, accounts = [] }) {
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
   const [tracker, setTracker] = useState([]);
@@ -55,8 +55,13 @@ export default function Dashboard({ authenticated, account }) {
   // ── Closed trades sorted by date ──
   // PaperTrade is excluded from the aggregated "All accounts" view so it never
   // distorts real-money P&L / batting average / streaks. It still appears when
-  // PaperTrade is explicitly selected.
-  const AGG_EXCLUDED = ['PaperTrade'];
+  // PaperTrade is explicitly selected. The Account column stores account *ids*,
+  // so resolve PaperTrade's id by name (fallback to the literal string for
+  // any legacy rows tagged by name).
+  const paperIds = accounts
+    .filter(a => (a.name || '').toLowerCase() === 'papertrade' || (a.id || '').toLowerCase().startsWith('papertrade'))
+    .map(a => a.id);
+  const AGG_EXCLUDED = [...paperIds, 'PaperTrade'];
   const isAggregate = !account || account === 'all';
   const allTracker = isAggregate
     ? tracker.filter(t => !AGG_EXCLUDED.includes(t.Account || ''))

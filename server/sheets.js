@@ -107,7 +107,7 @@ const REQUIRED_TABS = {
     'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
     'Wing Strikes', 'Market Behaviour', 'Notes',
     'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade',
-    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes']],
+    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes', 'Account']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -313,6 +313,57 @@ export async function retagAccountsByDate({
   };
 }
 
+// Companion migration for the Decisions sheet. Account is col 27 (index 26 = AA).
+// Only fills tickets whose Account is blank (so it won't clobber correctly-tagged
+// ones), keyed on the ticket Timestamp (col A) date. Same rule as the tracker.
+export async function retagDecisionAccountsByDate({
+  monthAccountName, defaultAccountName, year, month, onlyBlank = true, dryRun = false
+}) {
+  const accounts = await getAccounts();
+  const findId = (name) => {
+    const a = accounts.find(x =>
+      x.name?.toLowerCase() === name.toLowerCase() || x.id?.toLowerCase() === name.toLowerCase());
+    return a ? a.id : null;
+  };
+  const monthId = findId(monthAccountName);
+  const defaultId = findId(defaultAccountName);
+  if (!monthId || !defaultId) throw new Error(`Account name not found. Configured: ${accounts.map(a => a.name).join(', ')}`);
+
+  const sheets = getSheets();
+  const rows = await getDecisions();
+  const dataRows = rows.slice(1);
+  const inTargetMonth = (s) => {
+    const m = /^(\d{4})-(\d{2})/.exec(String(s || '').trim());
+    return m && Number(m[1]) === year && Number(m[2]) === month;
+  };
+
+  const updates = []; // { range, value }
+  const preview = [];
+  dataRows.forEach((row, idx) => {
+    const existing = row[26] || '';
+    if (onlyBlank && existing) return; // leave correctly-tagged tickets alone
+    const ts = row[0] || '';
+    const closeDate = row[22] || ''; // Close Date col 23 (index 22)
+    const effective = (ts.split('T')[0]) || closeDate;
+    const newId = inTargetMonth(effective) ? monthId : defaultId;
+    const rowNum = idx + 2;
+    updates.push({ range: `Decisions!AA${rowNum}`, value: newId });
+    preview.push({ row: rowNum, timestamp: ts, from: existing || '(blank)', to: newId });
+  });
+
+  if (!dryRun && updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SHEET_ID(),
+      requestBody: {
+        valueInputOption: 'RAW',
+        data: updates.map(u => ({ range: u.range, values: [[u.value]] }))
+      }
+    });
+  }
+
+  return { dryRun, updated: updates.length, monthId, defaultId, preview };
+}
+
 // ================================================================
 //  TRADES (raw legs from tastytrade CSV)
 // ================================================================
@@ -489,7 +540,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:Z'
+    range: 'Decisions!A:AA'  // include col 27 (Account); A:Z truncated it before
   });
   return res.data.values || [];
 }

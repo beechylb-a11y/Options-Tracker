@@ -173,7 +173,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   }
 
   const accountDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
-    const decAccount = d.Account || d._raw?.[26] || d._raw?.[25] || '';
+    // d.Account is now populated (Account is col 27 in the Decisions header).
+    // _raw[26] is a defensive fallback for tickets written before the header existed.
+    const decAccount = d.Account || d._raw?.[26] || '';
     return decAccount === account || !decAccount;
   });
   const openTickets = accountDecisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');

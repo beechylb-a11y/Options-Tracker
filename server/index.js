@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
   setOnTokensRefreshed, getCurrentTokens,
-  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate,
+  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate, retagDecisionAccountsByDate,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
@@ -192,6 +192,23 @@ app.get('/api/accounts/retag-by-date', requireAuth, async (req, res) => {
   }
 });
 
+// Companion: re-tag blank-account Decision tickets by date (same rule).
+app.get('/api/accounts/retag-decisions-by-date', requireAuth, async (req, res) => {
+  try {
+    const result = await retagDecisionAccountsByDate({
+      monthAccountName: req.query.monthAccount || 'PaperTrade',
+      defaultAccountName: req.query.defaultAccount || 'TastyTrade',
+      year: Number(req.query.year) || 2026,
+      month: Number(req.query.month) || 6,
+      onlyBlank: req.query.onlyBlank !== 'false',
+      dryRun: req.query.dryRun === 'true'
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostic: list distinct Account values actually stored in the sheets vs the
 // configured accounts, so account-filter mismatches are easy to spot.
 app.get('/api/accounts/diagnostic', requireAuth, async (req, res) => {
@@ -212,16 +229,14 @@ app.get('/api/accounts/diagnostic', requireAuth, async (req, res) => {
       return counts;
     };
 
-    // TradeTracker Account = column M (index 12). Decisions has NO defined
-    // Account column (headers run 0-25); some code reads _raw[26]/[25], so we
-    // expose both to see whether any account data was appended beyond headers.
+    // TradeTracker Account = column M (index 12). Decisions Account = col 27
+    // (index 26 = AA), now defined in the header.
     res.json({
       configuredAccounts: accounts.map(a => ({ id: a.id, name: a.name })),
       trackerAccountValues: tally(trackerRows, 12),
-      decisionCol25_TradeNotes: tally(decisionRows, 25),
-      decisionCol26_overflow: tally(decisionRows, 26),
+      decisionAccountValues: tally(decisionRows, 26),
       decisionHeaderLength: (decisionRows[0] || []).length,
-      note: 'Values are JSON-encoded so trailing spaces / case differences are visible. TradeTracker filter matches configuredAccounts.id with strict equality on col 12. Decisions has no Account column in its header.'
+      note: 'Values are JSON-encoded so trailing spaces / case differences are visible. Both filters match configuredAccounts.id with strict equality (tracker col 12, decisions col 26).'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -556,8 +571,11 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     } else {
       // "All accounts" (or unknown): aggregate bankrolls across real-money
       // accounts. PaperTrade is excluded so it never inflates the totals.
-      const EXCLUDED = ['PaperTrade'];
-      const realAccounts = accounts.filter(a => !EXCLUDED.includes(a.id) && !EXCLUDED.includes(a.name));
+      // Match by name OR id (ids look like 'papertrade-xxxx').
+      const isPaper = (a) =>
+        (a.name || '').toLowerCase() === 'papertrade' ||
+        (a.id || '').toLowerCase().startsWith('papertrade');
+      const realAccounts = accounts.filter(a => !isPaper(a));
       if (realAccounts.length > 0) {
         config.currentBankroll = realAccounts.reduce((s, a) => s + (Number(a.bankroll) || 0), 0);
         config.startingBankroll = realAccounts.reduce((s, a) => s + (Number(a.startingBankroll) || 0), 0);
