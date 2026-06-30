@@ -460,10 +460,28 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     const accounts = await getAccounts();
     const acct = accounts.find(a => a.id === account);
     if (acct) {
-      config.currentBankroll = acct.bankroll;
-      config.startingBankroll = acct.startingBankroll;
+      // Single account selected: use its own bankroll + risk limits
+      config.currentBankroll = Number(acct.bankroll) || 0;
+      config.startingBankroll = Number(acct.startingBankroll) || 0;
       config.maxDailyLoss = acct.maxDailyLoss;
       config.maxOpenRisk = acct.maxOpenRisk;
+      config.aggregated = false;
+      config.activeAccount = acct.id;
+    } else {
+      // "All accounts" (or unknown): aggregate bankrolls across real-money
+      // accounts. PaperTrade is excluded so it never inflates the totals.
+      const EXCLUDED = ['PaperTrade'];
+      const realAccounts = accounts.filter(a => !EXCLUDED.includes(a.id) && !EXCLUDED.includes(a.name));
+      if (realAccounts.length > 0) {
+        config.currentBankroll = realAccounts.reduce((s, a) => s + (Number(a.bankroll) || 0), 0);
+        config.startingBankroll = realAccounts.reduce((s, a) => s + (Number(a.startingBankroll) || 0), 0);
+        // Risk limits don't aggregate meaningfully; surface as combined dollar caps.
+        config.maxDailyLoss = realAccounts.reduce((s, a) => s + (Number(a.maxDailyLoss) || 0), 0) || config.maxDailyLoss;
+        config.maxOpenRisk = realAccounts.reduce((s, a) => s + (Number(a.maxOpenRisk) || 0), 0) || config.maxOpenRisk;
+      }
+      config.aggregated = true;
+      config.activeAccount = 'all';
+      config.aggregatedAccounts = realAccounts.map(a => a.id);
     }
     res.json({ stats, config });
   } catch (err) {

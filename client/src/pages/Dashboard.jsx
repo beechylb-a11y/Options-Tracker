@@ -53,14 +53,23 @@ export default function Dashboard({ authenticated, account }) {
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
 
   // ── Closed trades sorted by date ──
-  const allTracker = tracker;
+  // PaperTrade is excluded from the aggregated "All accounts" view so it never
+  // distorts real-money P&L / batting average / streaks. It still appears when
+  // PaperTrade is explicitly selected.
+  const AGG_EXCLUDED = ['PaperTrade'];
+  const isAggregate = !account || account === 'all';
+  const allTracker = isAggregate
+    ? tracker.filter(t => !AGG_EXCLUDED.includes(t.Account || ''))
+    : tracker;
   const filteredTracker = filterByAccount(allTracker, account);
-  
+
   // Merge closed decision tickets into trades
-  const filteredDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
-    const decAccount = d.Account || '';
-    return decAccount === account || !decAccount;
-  });
+  const filteredDecisions = isAggregate
+    ? decisions.filter(d => !AGG_EXCLUDED.includes(d.Account || ''))
+    : decisions.filter(d => {
+        const decAccount = d.Account || '';
+        return decAccount === account || !decAccount;
+      });
   const closedTickets = filteredDecisions
     .filter(d => d.Status === 'Closed' && d['Actual P&L'])
     .map(d => ({
@@ -186,15 +195,39 @@ export default function Dashboard({ authenticated, account }) {
   const totalLosses = Math.abs(closedTrades.filter(t => t['W / L'] === 'Loss').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0));
   const profitFactor = totalLosses > 0 ? Math.round(totalWins / totalLosses * 100) / 100 : totalWins > 0 ? 999 : 0;
 
+  // ── Risk limits (per-account, or combined dollar caps when aggregated) ──
+  const maxDailyLoss = Number(config?.maxDailyLoss) || 0;
+  const maxOpenRisk = Number(config?.maxOpenRisk) || 0;
+  // Today's realised P&L against the daily-loss cap.
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayPnl = closedTrades
+    .filter(t => (t['Close Date'] || t['Entry Date'] || '').split('T')[0] === todayStr)
+    .reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+  const dailyLossUsedPct = maxDailyLoss > 0 && todayPnl < 0
+    ? Math.min(100, (Math.abs(todayPnl) / maxDailyLoss) * 100)
+    : 0;
+  // Open risk proxy: the TradeTracker has no dedicated max-loss column, so we
+  // approximate using net credit at risk on open positions. Shown as a guide.
+  const openRiskTotal = openTrades.reduce((s, t) => {
+    const r = parseFloat(t['Net Credit ($)'] || 0);
+    return s + (isNaN(r) ? 0 : Math.abs(r));
+  }, 0);
+  const openRiskUsedPct = maxOpenRisk > 0 ? Math.min(100, (openRiskTotal / maxOpenRisk) * 100) : 0;
+  const aggregated = config?.aggregated === true || isAggregate;
+
   return (
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="font-display text-2xl font-bold">Dashboard</h2>
-          <p className="text-text-muted text-sm mt-0.5">Your trading command center</p>
+          <p className="text-text-muted text-sm mt-0.5">
+            {aggregated
+              ? 'All accounts — aggregated (excl. PaperTrade)'
+              : `Account: ${account}`}
+          </p>
         </div>
         <div className="text-right">
-          <div className="text-xs text-text-faint">Current bankroll</div>
+          <div className="text-xs text-text-faint">{aggregated ? 'Combined bankroll' : 'Current bankroll'}</div>
           <div className="font-display text-xl font-bold mono" style={{ color: pnlColor(bankroll - startBR) }}>{fmt$(bankroll)}</div>
         </div>
       </div>
@@ -226,6 +259,24 @@ export default function Dashboard({ authenticated, account }) {
         <KPI icon={Calendar} label="Win / Loss days" value={`${winDays}W / ${lossDays}L`} cls="" />
         <KPI icon={Activity} label="Profit factor" value={profitFactor.toFixed(2) + 'x'}
           cls={profitFactor >= 2 ? 'green' : profitFactor >= 1 ? 'amber' : 'red'} />
+      </div>
+
+      {/* KPI Cards - Row 3: Risk limits */}
+      <div className="grid grid-cols-6 gap-3 mb-6">
+        <KPI icon={DollarSign} label={aggregated ? 'Daily loss cap (all)' : 'Daily loss cap'}
+          value={maxDailyLoss > 0 ? fmt$(maxDailyLoss) : '--'} cls=""
+          sub={maxDailyLoss > 0 ? `Today: ${fmt$(todayPnl)}` : ''} />
+        <KPI icon={Activity} label="Daily loss used"
+          value={maxDailyLoss > 0 ? dailyLossUsedPct.toFixed(0) + '%' : '--'}
+          cls={dailyLossUsedPct >= 100 ? 'red' : dailyLossUsedPct >= 75 ? 'amber' : 'green'} />
+        <KPI icon={DollarSign} label={aggregated ? 'Open risk cap (all)' : 'Open risk cap'}
+          value={maxOpenRisk > 0 ? fmt$(maxOpenRisk) : '--'} cls=""
+          sub={openRiskTotal > 0 ? `Open: ${fmt$(openRiskTotal)}` : ''} />
+        <KPI icon={Activity} label="Open risk used"
+          value={maxOpenRisk > 0 ? openRiskUsedPct.toFixed(0) + '%' : '--'}
+          cls={openRiskUsedPct >= 100 ? 'red' : openRiskUsedPct >= 75 ? 'amber' : 'green'} />
+        <KPI icon={DollarSign} label="Starting bankroll" value={fmt$(startBR)} cls="" />
+        <KPI icon={DollarSign} label="Open positions" value={openTrades.length} cls="" />
       </div>
 
       {/* Row 2: Equity Curve + Drawdown */}
