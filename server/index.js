@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
   setOnTokensRefreshed, getCurrentTokens,
-  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn,
+  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
@@ -172,6 +172,62 @@ app.put('/api/config/:key', requireAuth, async (req, res) => {
 // ================================================================
 //  ACCOUNTS
 // ================================================================
+
+// One-time data repair: re-tag TradeTracker Account column by date.
+// Defaults to the agreed rule: June 2026 -> PaperTrade, everything else -> TastyTrade.
+// Use ?dryRun=true first to preview, then POST/GET without it to apply.
+app.get('/api/accounts/retag-by-date', requireAuth, async (req, res) => {
+  try {
+    const dryRun = req.query.dryRun === 'true';
+    const result = await retagAccountsByDate({
+      monthAccountName: req.query.monthAccount || 'PaperTrade',
+      defaultAccountName: req.query.defaultAccount || 'TastyTrade',
+      year: Number(req.query.year) || 2026,
+      month: Number(req.query.month) || 6,
+      dryRun
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diagnostic: list distinct Account values actually stored in the sheets vs the
+// configured accounts, so account-filter mismatches are easy to spot.
+app.get('/api/accounts/diagnostic', requireAuth, async (req, res) => {
+  try {
+    const accounts = await getAccounts();
+    const trackerRows = await getTradeTracker();
+    const decisionRows = await getDecisions();
+
+    const tally = (rows, colIndex) => {
+      const counts = {};
+      rows.slice(1).forEach(row => {
+        const raw = row[colIndex];
+        const key = (raw === undefined || raw === null || raw === '')
+          ? '(blank)'
+          : JSON.stringify(raw); // JSON.stringify exposes hidden whitespace/casing
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return counts;
+    };
+
+    // TradeTracker Account = column M (index 12). Decisions has NO defined
+    // Account column (headers run 0-25); some code reads _raw[26]/[25], so we
+    // expose both to see whether any account data was appended beyond headers.
+    res.json({
+      configuredAccounts: accounts.map(a => ({ id: a.id, name: a.name })),
+      trackerAccountValues: tally(trackerRows, 12),
+      decisionCol25_TradeNotes: tally(decisionRows, 25),
+      decisionCol26_overflow: tally(decisionRows, 26),
+      decisionHeaderLength: (decisionRows[0] || []).length,
+      note: 'Values are JSON-encoded so trailing spaces / case differences are visible. TradeTracker filter matches configuredAccounts.id with strict equality on col 12. Decisions has no Account column in its header.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/accounts', requireAuth, async (req, res) => {
   try {
     const accounts = await getAccounts();

@@ -232,6 +232,87 @@ export async function backfillAccountColumn(accountId, force = false) {
   return updated;
 }
 
+// One-time data-repair migration: re-tag the Account column (col M) by date.
+// Rule (per user): trades whose effective date falls in the target month/year
+// go to `monthAccountName`; everything else goes to `defaultAccountName`.
+// Effective date = Entry Date (col B) if present, else Close Date (col D).
+// Resolves account names -> ids from the configured accounts list (the filter
+// matches on id). Pass dryRun=true to preview without writing.
+export async function retagAccountsByDate({
+  monthAccountName,        // e.g. 'PaperTrade'
+  defaultAccountName,      // e.g. 'TastyTrade'
+  year,                    // e.g. 2026
+  month,                   // 1-12, e.g. 6 for June
+  dryRun = false
+}) {
+  const accounts = await getAccounts();
+  const findId = (name) => {
+    const a = accounts.find(x =>
+      x.name?.toLowerCase() === name.toLowerCase() ||
+      x.id?.toLowerCase() === name.toLowerCase()
+    );
+    return a ? a.id : null;
+  };
+  const monthId = findId(monthAccountName);
+  const defaultId = findId(defaultAccountName);
+  if (!monthId) throw new Error(`Account "${monthAccountName}" not found in config. Configured: ${accounts.map(a => a.name).join(', ')}`);
+  if (!defaultId) throw new Error(`Account "${defaultAccountName}" not found in config. Configured: ${accounts.map(a => a.name).join(', ')}`);
+
+  const sheets = getSheets();
+  const rows = await getTradeTracker();
+  const dataRows = rows.slice(1);
+
+  const newColumn = [];          // values for M2..Mn
+  const preview = [];            // human-readable summary
+  let monthCount = 0, defaultCount = 0;
+
+  const inTargetMonth = (dateStr) => {
+    if (!dateStr) return false;
+    // Accept YYYY-MM-DD (the format in the sheet). Be defensive about parsing.
+    const m = /^(\d{4})-(\d{2})/.exec(String(dateStr).trim());
+    if (!m) return false;
+    return Number(m[1]) === year && Number(m[2]) === month;
+  };
+
+  dataRows.forEach((row, idx) => {
+    const entryDate = row[1] || '';   // col B
+    const closeDate = row[3] || '';   // col D
+    const effective = entryDate || closeDate;
+    const isTargetMonth = inTargetMonth(effective);
+    const newId = isTargetMonth ? monthId : defaultId;
+    newColumn.push([newId]);
+    if (isTargetMonth) monthCount++; else defaultCount++;
+    preview.push({
+      row: idx + 2,
+      order: row[0] || '',
+      entryDate, closeDate,
+      effective,
+      from: row[12] || '(blank)',
+      to: newId,
+      account: isTargetMonth ? monthAccountName : defaultAccountName
+    });
+  });
+
+  if (!dryRun && newColumn.length > 0) {
+    // Single batch write to M2:M{n} — one API call, not N.
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(),
+      range: `TradeTracker!M2:M${newColumn.length + 1}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: newColumn }
+    });
+  }
+
+  return {
+    dryRun,
+    totalRows: newColumn.length,
+    monthAccount: { name: monthAccountName, id: monthId, count: monthCount },
+    defaultAccount: { name: defaultAccountName, id: defaultId, count: defaultCount },
+    target: `${year}-${String(month).padStart(2, '0')}`,
+    preview
+  };
+}
+
 // ================================================================
 //  TRADES (raw legs from tastytrade CSV)
 // ================================================================
