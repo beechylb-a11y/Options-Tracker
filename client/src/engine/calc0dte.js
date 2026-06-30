@@ -126,7 +126,13 @@ export function calc0DTE(inputs) {
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop, netCreditDebit,
     theta, delta, gamma, hours, underlying,
     // Overnight inputs
-    esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM } = inputs;
+    esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM,
+    // Optional per-strategy realized history: { trades, winRate, avgWin, avgLoss }
+    // (avgWin/avgLoss as positive dollar magnitudes per contract). When trades
+    // >= EV_HISTORY_THRESHOLD, measured expectancy replaces estimates.
+    // Pass either a resolved `history` object or a `historyByStrategy` map keyed
+    // by strategy name (the engine indexes it by its own legStrat below).
+    history: historyInput, historyByStrategy } = inputs;
 
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
@@ -847,11 +853,72 @@ export function calc0DTE(inputs) {
     };
   }
 
-  // ── EV calculation ──
-  // EV = (POP × win) - ((1-POP) × risk) — already in dollars per contract
-  const ev = (win > 0 && risk > 0 && popFrac > 0)
-    ? (popFrac * win) - ((1 - popFrac) * risk)
+  // ── EV calculation (tiered) ──
+  // Old model used max profit × POP − max loss × (1−POP), which is too punitive:
+  // you rarely capture max profit and rarely eat max loss. Instead:
+  //   Tier 1 (estimate): scale max profit/loss by per-strategy capture fractions
+  //                      to approximate the average winner / average loser.
+  //   Tier 3 (measured): once >= 50 closed trades for this strategy exist, use
+  //                      the realized winRate / avgWin / avgLoss directly.
+  //   POP term: blend model POP early → realized win% as data accumulates.
+  const EV_HISTORY_THRESHOLD = 50;
+
+  // Resolve the realized-history slice for this strategy (if a map was passed).
+  const history = historyInput || (historyByStrategy ? historyByStrategy[legStrat] : null);
+
+  // Per-strategy capture fractions { winCap, lossCap } as a share of max.
+  // winCap  = typical fraction of MAX PROFIT actually realized on winners.
+  // lossCap = typical fraction of MAX LOSS actually given back on losers.
+  // Butterflies: pin is rare, so winCap is low; managed exits keep lossCap < 1.
+  // Condors/credit spreads: take-profit at ~50% credit, stops cap the loss.
+  function captureFractions(s) {
+    if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
+    if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
+    if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
+    if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
+    if (s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 }; // credit spreads
+    if (s.includes('Bull call') || s.includes('Bear put')) return { winCap: 0.50, lossCap: 0.60 }; // debit spreads
+    if (s.includes('Reversed') || s === 'Long Condor - Reversed') return { winCap: 0.45, lossCap: 0.55 };
+    return { winCap: 0.40, lossCap: 0.60 }; // sensible default
+  }
+
+  const { winCap, lossCap } = captureFractions(legStrat);
+
+  // Estimated average winner / loser (dollars per contract) from the structure.
+  const estAvgWin = win * winCap;
+  const estAvgLoss = risk * lossCap;
+
+  // Decide estimate vs measured, and blend the probability term.
+  const histTrades = history?.trades || 0;
+  const hasMeasured = histTrades >= EV_HISTORY_THRESHOLD
+    && history?.avgWin > 0 && history?.avgLoss > 0;
+  // Blend weight ramps 0→1 over the first threshold of trades.
+  const wMeasured = Math.min(1, histTrades / EV_HISTORY_THRESHOLD);
+
+  // Win probability: model POP blended toward realized win% as data grows.
+  const modelWinP = popFrac;
+  const realWinP = (history?.winRate > 0) ? history.winRate : modelWinP;
+  const winP = (history?.winRate > 0)
+    ? (1 - wMeasured) * modelWinP + wMeasured * realWinP
+    : modelWinP;
+
+  // Average win/loss magnitudes: measured if available, else estimate.
+  const avgWinUsed = hasMeasured ? history.avgWin : estAvgWin;
+  const avgLossUsed = hasMeasured ? history.avgLoss : estAvgLoss;
+
+  const ev = (avgWinUsed > 0 && avgLossUsed > 0 && winP > 0)
+    ? (winP * avgWinUsed) - ((1 - winP) * avgLossUsed)
     : 0;
+
+  // Surface how EV was derived (for the UI to show "estimated" vs "measured").
+  const evBasis = {
+    mode: hasMeasured ? 'measured' : 'estimated',
+    historyTrades: histTrades,
+    threshold: EV_HISTORY_THRESHOLD,
+    winCap, lossCap,
+    winP, avgWin: avgWinUsed, avgLoss: avgLossUsed,
+    maxWin: win, maxLoss: risk
+  };
 
   // ═══════════════════════════════════════
   //  SHARPE-ADJUSTED KELLY SIZING
@@ -1098,7 +1165,7 @@ export function calc0DTE(inputs) {
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff
-    ev, payoff, targetCredit, targetLabel, targetLow, targetHigh, targetMax, targetIsCredit,
+    ev, evBasis, payoff, targetCredit, targetLabel, targetLow, targetHigh, targetMax, targetIsCredit,
     // Fair Value
     fairValueScore, fairValueGrade, volScore, volGrade, structScore, structGrade,
     regimeScore, regimeGrade, ivHvRatio, fvWeightVol, fvWeightStruct, fvWeightRegime,

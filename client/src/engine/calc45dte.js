@@ -9,7 +9,10 @@ function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','NO TRADE']; return
 export function calc45DTE(inputs) {
   const { underlying, price, ivr, iv, hv, vix, ivFront, ivBack, skew,
     termBias, dte=45, outlook, pop, win, risk, bankroll, startBR,
-    maxLoss, maxOpen, bpr, theta, vega, delta } = inputs;
+    maxLoss, maxOpen, bpr, theta, vega, delta,
+    // Optional per-strategy realized history (resolved object or a map keyed
+    // by strategy name via historyByStrategy).
+    history: historyInput, historyByStrategy } = inputs;
 
   const hasPrice = price > 0, hasVol = iv > 0, hasGreeks = theta > 0 && bpr > 0;
   const hasTerm = ivFront > 0 && ivBack > 0;
@@ -153,6 +156,40 @@ export function calc45DTE(inputs) {
   const maxRisk = contracts*risk;
   const kellyOverRisk = risk>0&&kellyDollar>0&&risk>kellyDollar;
 
+  // ── EV calculation (tiered: estimated capture-fractions → measured history) ──
+  // Same model as 0DTE. avgWin/avgLoss come from per-strategy capture fractions
+  // until >= 50 closed trades exist for the strategy, then from realized stats.
+  const EV_HISTORY_THRESHOLD = 50;
+  const history = historyInput || (historyByStrategy ? historyByStrategy[legStrat] : null);
+  function captureFractions45(s) {
+    if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
+    if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
+    if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
+    if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
+    if (s.includes('Credit') || s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 };
+    if (s.includes('Bull call') || s.includes('Bear put') || s.includes('Debit')) return { winCap: 0.50, lossCap: 0.60 };
+    if (s.includes('Reversed')) return { winCap: 0.45, lossCap: 0.55 };
+    return { winCap: 0.40, lossCap: 0.60 };
+  }
+  const { winCap: evWinCap, lossCap: evLossCap } = captureFractions45(legStrat);
+  const estAvgWin = win * evWinCap;
+  const estAvgLoss = risk * evLossCap;
+  const histTrades = history?.trades || 0;
+  const hasMeasured = histTrades >= EV_HISTORY_THRESHOLD && history?.avgWin > 0 && history?.avgLoss > 0;
+  const wMeasured = Math.min(1, histTrades / EV_HISTORY_THRESHOLD);
+  const realWinP = (history?.winRate > 0) ? history.winRate : popFrac;
+  const winP = (history?.winRate > 0) ? (1 - wMeasured) * popFrac + wMeasured * realWinP : popFrac;
+  const avgWinUsed = hasMeasured ? history.avgWin : estAvgWin;
+  const avgLossUsed = hasMeasured ? history.avgLoss : estAvgLoss;
+  const ev = (avgWinUsed > 0 && avgLossUsed > 0 && winP > 0)
+    ? (winP * avgWinUsed) - ((1 - winP) * avgLossUsed) : 0;
+  const evBasis = {
+    mode: hasMeasured ? 'measured' : 'estimated',
+    historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
+    winCap: evWinCap, lossCap: evLossCap,
+    winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk
+  };
+
   // Greeks + Directional Edge
   let greeks = null;
   if (theta>0||vega>0||delta>0) {
@@ -232,6 +269,7 @@ export function calc45DTE(inputs) {
     legs, strikeLine,
     setupScore, setup, criteria,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    ev, evBasis,
     targetCredit, targetLabel,
     fullC, halfC, contracts, maxRisk, tEff,
     greeks, sdRange, deltaGuide: DELTA_GUIDE,

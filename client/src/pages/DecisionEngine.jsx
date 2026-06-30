@@ -9,6 +9,7 @@ import { calc45DTE } from '../engine/calc45dte';
 export default function DecisionEngine({ authenticated, account, accounts }) {
   const [mode, setMode] = useState('0dte');
   const [decisions, setDecisions] = useState([]);
+  const [strategyHistory, setStrategyHistory] = useState(null);
   const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
   const [comparison, setComparison] = useState(null);
   const [compLoading, setCompLoading] = useState(false);
@@ -81,6 +82,15 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   }
 
   useEffect(() => { loadDecisions(); }, [authenticated]);
+
+  // Per-strategy realized history powers measured-mode EV. Scoped to the
+  // selected account; re-fetched when the account changes.
+  useEffect(() => {
+    if (!authenticated) return;
+    api.getStrategyHistory(account)
+      .then(res => setStrategyHistory(res?.history || null))
+      .catch(() => setStrategyHistory(null));
+  }, [authenticated, account]);
 
   // Handle native engine log trade
   function handleEngineLog(data) {
@@ -666,7 +676,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       {/* Native Decision Engine */}
       <EnginePanel mode={mode} onLogTrade={handleEngineLog}
         accountConfig={accounts?.find(a => a.id === account) || {}}
-        prefillData={prefillData} onPrefillConsumed={() => setPrefillData(null)} />
+        prefillData={prefillData} onPrefillConsumed={() => setPrefillData(null)}
+        strategyHistory={strategyHistory} />
     </div>
   );
 }

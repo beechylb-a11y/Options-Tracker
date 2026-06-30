@@ -51,6 +51,7 @@ export const api = {
   // Trades
   getTrades: () => fetchJSON('/api/trades'),
   getTracker: () => fetchJSON('/api/tracker'),
+  getStrategyHistory: (account) => fetchJSON(`/api/strategy-history${account && account !== 'all' ? '?account=' + account : ''}`),
   updateTrade: (rowIndex, updates) => fetchJSON(`/api/tracker/${rowIndex}`, {
     method: 'PUT', body: JSON.stringify(updates)
   }),

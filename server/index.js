@@ -9,7 +9,7 @@ import {
   setOnTokensRefreshed, getCurrentTokens,
   ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate, retagDecisionAccountsByDate,
   appendTrades, getTrades, clearTrades,
-  writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
+  writeTradeTracker, getTradeTracker, getStrategyHistory, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
   logDecision, getDecisions,
   getBattingAverage, updateBattingAverage,
@@ -433,6 +433,18 @@ app.get('/api/trades', requireAuth, async (req, res) => {
 // ================================================================
 //  TRADE TRACKER
 // ================================================================
+// Per-strategy realized expectancy (for EV measured-mode in the engines).
+// Optional ?account=<id> to scope to one account.
+app.get('/api/strategy-history', requireAuth, async (req, res) => {
+  try {
+    const account = req.query.account && req.query.account !== 'all' ? req.query.account : null;
+    const history = await getStrategyHistory(account);
+    res.json({ account: account || 'all', history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/tracker', requireAuth, async (req, res) => {
   try {
     const rows = await getTradeTracker();

@@ -7,7 +7,7 @@ import { UNDERLYING_LIST } from '../engine/data';
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillData, onPrefillConsumed }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillData, onPrefillConsumed, strategyHistory }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   const defBankroll = acfg.bankroll || 3000;
@@ -109,7 +109,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
           underlying:i0.underlying,
-          overrideStrategy: overrideStrat
+          overrideStrategy: overrideStrat,
+          historyByStrategy: strategyHistory || null
         });
       } else {
         return calc45DTE({
@@ -121,7 +122,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
           theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
           underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
-          overrideStrategy: overrideStrat
+          overrideStrategy: overrideStrat,
+          historyByStrategy: strategyHistory || null
         });
       }
     } catch (e) {
@@ -140,7 +142,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         fairValueScore:0, fairValueGrade:'', volScore:0, volGrade:'', structScore:0, structGrade:'',
         regimeScore:0, regimeGrade:'', ivHvRatio:0 };
     }
-  }, [is0, i0, i45, overrideStrat]);
+  }, [is0, i0, i45, overrideStrat, strategyHistory]);
 
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
@@ -345,7 +347,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%</span></div>' +
       '<div class="row"><span class="label">Vol factor</span><span class="value white">' + (r.volFactor ? r.volFactor.toFixed(2) : '--') + '</span></div>' +
       '<div class="row"><span class="label">Sharpe factor</span><span class="value white">' + (r.sharpeFactor ? r.sharpeFactor.toFixed(2) : '--') + '</span></div>' +
-      '<div class="row"><span class="label">EV / trade</span><span class="value ' + (r.ev > 0 ? 'green' : 'red') + '">$' + (r.ev ? r.ev.toFixed(0) : '0') + '</span></div>' +
+      '<div class="row"><span class="label">EV / trade' + (r.evBasis ? ' <span style="opacity:0.6;font-size:9px">(' + (r.evBasis.mode==='measured'?'measured':'est') + ')</span>' : '') + '</span><span class="value ' + (r.ev > 0 ? 'green' : 'red') + '">$' + (r.ev ? r.ev.toFixed(0) : '0') + '</span></div>' +
       '<div class="row"><span class="label">POP margin</span><span class="value ' + (r.popMargin >= 1.5 ? 'green' : r.popMargin >= 1.0 ? 'amber' : 'red') + '">' + (r.popMargin ? r.popMargin.toFixed(2) : '--') + 'x</span></div>' +
       '</div>' +
       greeksHtml +
@@ -763,7 +765,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <SpeedTape label="EV / trade" value={Math.max(Math.min(r.ev||0, 500), -200)} min={-200} max={500}
                 zones={[{to:-50,color:'#f85149'},{to:0,color:'#d29922'},{to:100,color:'#e3b341'},{to:500,color:'#3fb950'}]}
                 display={r.ev?`$${r.ev.toFixed(0)}`:'--'}
-                sublabel={r.ev>100?'Excellent':r.ev>50?'Good':r.ev>0?'Marginal':'No edge'} />
+                sublabel={(r.evBasis?.mode==='measured'
+                  ? `Measured · ${r.evBasis.historyTrades} trades`
+                  : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
+                  + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
+              {r.evBasis && (
+                <div style={{fontSize:'10px',color:'#7d8590',marginTop:'-6px',marginBottom:'4px',paddingLeft:'2px'}}>
+                  {r.evBasis.mode==='measured'
+                    ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
+                    : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
+                </div>
+              )}
               <SpeedTape label="W/L ratio" value={Math.min(r.wlRatio||0, 3)} min={0} max={3}
                 zones={[{to:0.5,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:3.0,color:'#3fb950'}]}
                 display={r.wlRatio?.toFixed(2)||'--'}

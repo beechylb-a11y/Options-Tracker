@@ -425,6 +425,46 @@ export async function getTradeTracker() {
   return res.data.values || [];
 }
 
+// Per-strategy realized expectancy from closed TradeTracker rows. Used by the
+// engines to switch EV from estimated capture-fractions to measured numbers
+// once enough history exists. P&L is normalized per-contract (divided by Qty)
+// because the engines reason per-contract. Optionally filter by account.
+// Returns { [strategyName]: { trades, wins, losses, winRate, avgWin, avgLoss, totalPnl } }.
+export async function getStrategyHistory(account = null) {
+  const rows = await getTradeTracker();
+  const out = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const strategy = (r[4] || '').trim();
+    const qty = Math.abs(parseFloat(r[6])) || 1;
+    const pnl = parseFloat(r[8]);
+    const status = (r[11] || '').trim();
+    const rowAccount = r[12] || '';
+    if (!strategy) continue;
+    if (isNaN(pnl)) continue;                      // only rows with a realized P&L
+    if (status && status.toLowerCase() === 'open') continue; // closed only
+    if (account && rowAccount !== account) continue;
+
+    const perContract = pnl / qty;
+    if (!out[strategy]) {
+      out[strategy] = { trades: 0, wins: 0, losses: 0, _winSum: 0, _lossSum: 0, totalPnl: 0 };
+    }
+    const s = out[strategy];
+    s.trades += 1;
+    s.totalPnl += pnl;
+    if (perContract >= 0) { s.wins += 1; s._winSum += perContract; }
+    else { s.losses += 1; s._lossSum += Math.abs(perContract); }
+  }
+  // Finalize averages
+  Object.values(out).forEach(s => {
+    s.winRate = s.trades > 0 ? s.wins / s.trades : 0;
+    s.avgWin = s.wins > 0 ? s._winSum / s.wins : 0;
+    s.avgLoss = s.losses > 0 ? s._lossSum / s.losses : 0;
+    delete s._winSum; delete s._lossSum;
+  });
+  return out;
+}
+
 export async function appendTradeTrackerRow(row) {
   const sheets = getSheets();
   await sheets.spreadsheets.values.append({
