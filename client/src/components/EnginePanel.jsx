@@ -770,7 +770,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
                   + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
               {r.evBasis && (
-                <div style={{fontSize:'10px',color:'#7d8590',marginTop:'-6px',marginBottom:'4px',paddingLeft:'2px'}}>
+                <div style={{fontSize:'10px',lineHeight:'1.4',color:'#8b949e',margin:'2px 0 10px',paddingLeft:'2px',whiteSpace:'normal'}}>
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
