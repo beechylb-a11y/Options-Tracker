@@ -10,13 +10,34 @@ let sheetsClient = null;
 let authClient = null;
 
 // ---- Auth setup ----
+let onTokensRefreshed = null; // callback set by index.js to persist refreshed tokens
+let currentTokens = null;     // last-known full token set (incl. refresh_token)
+
 export function initAuth(credentials) {
   authClient = new google.auth.OAuth2(
     credentials.clientId,
     credentials.clientSecret,
     credentials.redirectUri
   );
+  // The google-auth library auto-refreshes the access token when it expires and
+  // emits a 'tokens' event. The refresh response does NOT include refresh_token,
+  // so we merge it back in and hand the full set to the persistence callback.
+  authClient.on('tokens', (tokens) => {
+    currentTokens = {
+      ...(currentTokens || {}),
+      ...tokens,
+      refresh_token: tokens.refresh_token || currentTokens?.refresh_token
+    };
+    if (onTokensRefreshed) {
+      Promise.resolve(onTokensRefreshed(currentTokens)).catch(() => {});
+    }
+  });
   return authClient;
+}
+
+// Register a callback invoked whenever tokens are refreshed (for persistence).
+export function setOnTokensRefreshed(cb) {
+  onTokensRefreshed = cb;
 }
 
 export function getAuthUrl() {
@@ -34,14 +55,26 @@ export function getAuthUrl() {
 
 export async function handleAuthCallback(code) {
   const { tokens } = await authClient.getToken(code);
+  currentTokens = { ...tokens };
   authClient.setCredentials(tokens);
   sheetsClient = google.sheets({ version: 'v4', auth: authClient });
   return tokens;
 }
 
 export function setTokens(tokens) {
-  authClient.setCredentials(tokens);
+  // Preserve an existing refresh_token if a partial token set is passed in.
+  currentTokens = {
+    ...(currentTokens || {}),
+    ...tokens,
+    refresh_token: tokens.refresh_token || currentTokens?.refresh_token
+  };
+  authClient.setCredentials(currentTokens);
   sheetsClient = google.sheets({ version: 'v4', auth: authClient });
+}
+
+// Read-only accessor for the current full token set.
+export function getCurrentTokens() {
+  return currentTokens;
 }
 
 function getSheets() {

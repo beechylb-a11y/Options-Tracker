@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   initAuth, getAuthUrl, handleAuthCallback, setTokens,
+  setOnTokensRefreshed, getCurrentTokens,
   ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, appendTradeTrackerRow,
@@ -46,6 +47,18 @@ const auth = initAuth({
 
 // Persistent token store — saves to Config sheet so tokens survive restarts
 let storedTokens = null;
+
+// Whenever the google-auth library refreshes the access token, persist the
+// full token set (incl. refresh_token) to the Config sheet automatically.
+setOnTokensRefreshed(async (tokens) => {
+  storedTokens = tokens;
+  try {
+    await saveTokensToConfig(tokens);
+    console.log('[AUTH] Refreshed tokens persisted to Config sheet');
+  } catch (e) {
+    console.log('[AUTH] Could not persist refreshed tokens:', e.message);
+  }
+});
 
 // Try to load tokens from environment variable (set in Railway)
 if (process.env.GOOGLE_TOKENS) {
@@ -90,22 +103,39 @@ app.get('/auth/status', (req, res) => {
   res.json({ authenticated: !!storedTokens, sheetId: process.env.SPREADSHEET_ID || '' });
 });
 
-// Auto-load tokens from Config sheet on startup
+// Auto-load tokens from Config sheet on startup (fallback if no env var, or to
+// pick up a refresh_token persisted on a previous run).
 async function loadTokensFromConfig() {
   try {
-    if (storedTokens) return; // already loaded from env
-    const { google } = await import('googleapis');
-    // Can't read Config without auth — need env var for bootstrap
-    console.log('[AUTH] No tokens in memory. Set GOOGLE_TOKENS env var in Railway or sign in via the app.');
+    if (storedTokens) return; // already loaded from env var
+    if (!process.env.GOOGLE_TOKENS_BOOTSTRAP) {
+      console.log('[AUTH] No tokens in memory and no bootstrap token. Set GOOGLE_TOKENS in Railway or sign in via the app.');
+      return;
+    }
+    // Use a minimal bootstrap token (must contain a refresh_token) just long
+    // enough to read the persisted token set back out of the Config sheet.
+    const bootstrap = JSON.parse(process.env.GOOGLE_TOKENS_BOOTSTRAP);
+    setTokens(bootstrap);
+    const config = await getConfig();
+    if (config.googleTokens) {
+      const saved = JSON.parse(config.googleTokens);
+      storedTokens = saved;
+      setTokens(saved);
+      console.log('[AUTH] Loaded tokens from Config sheet, refresh_token:', !!saved.refresh_token);
+      await ensureSheetStructure();
+    }
   } catch (e) {
-    console.log('[AUTH] Token load failed:', e.message);
+    console.log('[AUTH] Token load from sheet failed:', e.message);
   }
 }
 
 async function saveTokensToConfig(tokens) {
-  // Store as JSON in Config sheet for future reference
-  // But primary persistence is the GOOGLE_TOKENS env var in Railway
-  console.log('[AUTH] Tokens to persist (copy to Railway GOOGLE_TOKENS env var):');
+  // Persist the full token set to the Config sheet so it survives restarts
+  // without manual env-var edits. The refresh_token is the part that matters.
+  if (!tokens) return;
+  await updateConfig('googleTokens', JSON.stringify(tokens));
+  // Also log it so it can be copied to the Railway env var as a backup.
+  console.log('[AUTH] Tokens persisted to Config sheet. Backup blob:');
   console.log(JSON.stringify(tokens));
 }
 
