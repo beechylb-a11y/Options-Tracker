@@ -83,7 +83,14 @@ app.get('/auth/google/callback', async (req, res) => {
   try {
     const tokens = await handleAuthCallback(req.query.code);
     storedTokens = tokens;
-    console.log('[AUTH] Tokens received, refresh_token:', !!tokens.refresh_token);
+    console.log('[AUTH] Tokens received, refresh_token present:', !!tokens.refresh_token);
+    if (tokens.refresh_token) {
+      console.log('[AUTH] ===== COPY THE LINE BELOW INTO Railway env var GOOGLE_TOKENS (one-time) =====');
+      console.log(JSON.stringify(tokens));
+      console.log('[AUTH] ===== After setting GOOGLE_TOKENS you will not need to re-auth again. =====');
+    } else {
+      console.log('[AUTH] WARNING: no refresh_token in this grant. Revoke app access at myaccount.google.com/permissions, then re-auth so Google issues a fresh refresh_token.');
+    }
     await ensureSheetStructure();
     // Save tokens to Config sheet for persistence
     try {
@@ -100,32 +107,45 @@ app.get('/auth/google/callback', async (req, res) => {
 });
 
 app.get('/auth/status', (req, res) => {
-  res.json({ authenticated: !!storedTokens, sheetId: process.env.SPREADSHEET_ID || '' });
+  const cur = getCurrentTokens() || storedTokens;
+  res.json({
+    authenticated: !!storedTokens,
+    hasRefreshToken: !!(cur && cur.refresh_token),
+    sheetId: process.env.SPREADSHEET_ID || ''
+  });
 });
 
-// Auto-load tokens from Config sheet on startup (fallback if no env var, or to
-// pick up a refresh_token persisted on a previous run).
+// Auto-load tokens on startup. The refresh_token (in GOOGLE_TOKENS) is the
+// durable credential — the google-auth library uses it to mint fresh access
+// tokens automatically, so a single valid GOOGLE_TOKENS env var (containing a
+// refresh_token) is all that's needed and survives every restart.
+// The Config sheet copy is a secondary backup, only readable once we already
+// have working auth, so it can't be the primary bootstrap.
 async function loadTokensFromConfig() {
   try {
-    if (storedTokens) return; // already loaded from env var
-    if (!process.env.GOOGLE_TOKENS_BOOTSTRAP) {
-      console.log('[AUTH] No tokens in memory and no bootstrap token. Set GOOGLE_TOKENS in Railway or sign in via the app.');
+    if (storedTokens && storedTokens.refresh_token) {
+      console.log('[AUTH] Startup: using refresh_token from GOOGLE_TOKENS env (access tokens auto-refresh).');
+      // Verify we can actually reach the sheet; if the access token is stale the
+      // library refreshes it transparently on this first call.
+      try {
+        await ensureSheetStructure();
+        console.log('[AUTH] Startup: sheet reachable, auth healthy.');
+        // Opportunistically refresh the sheet backup copy.
+        try { await saveTokensToConfig(getCurrentTokens() || storedTokens); } catch (e) {}
+      } catch (e) {
+        console.log('[AUTH] Startup: sheet call failed —', e.message,
+          '\n[AUTH] If this is invalid_grant, the refresh_token was revoked; re-auth via /auth/google once and update GOOGLE_TOKENS.');
+      }
       return;
     }
-    // Use a minimal bootstrap token (must contain a refresh_token) just long
-    // enough to read the persisted token set back out of the Config sheet.
-    const bootstrap = JSON.parse(process.env.GOOGLE_TOKENS_BOOTSTRAP);
-    setTokens(bootstrap);
-    const config = await getConfig();
-    if (config.googleTokens) {
-      const saved = JSON.parse(config.googleTokens);
-      storedTokens = saved;
-      setTokens(saved);
-      console.log('[AUTH] Loaded tokens from Config sheet, refresh_token:', !!saved.refresh_token);
-      await ensureSheetStructure();
+    if (storedTokens && !storedTokens.refresh_token) {
+      console.log('[AUTH] WARNING: GOOGLE_TOKENS has an access token but NO refresh_token. '
+        + 'It will stop working within ~1 hour. Re-auth via /auth/google (prompt=consent) and copy the FULL token blob (with refresh_token) into GOOGLE_TOKENS.');
+      return;
     }
+    console.log('[AUTH] No GOOGLE_TOKENS env var set. Sign in via /auth/google, then copy the logged token blob into the Railway GOOGLE_TOKENS env var.');
   } catch (e) {
-    console.log('[AUTH] Token load from sheet failed:', e.message);
+    console.log('[AUTH] Token load failed:', e.message);
   }
 }
 
