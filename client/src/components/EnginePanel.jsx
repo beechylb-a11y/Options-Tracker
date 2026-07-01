@@ -15,6 +15,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const defMaxOpen = acfg.maxOpenRisk || 450;
   const [overrideStrat, setOverrideStrat] = useState(null);
   const [autoFilling, setAutoFilling] = useState(false);
+  const [fetchingGreeks, setFetchingGreeks] = useState(false);
 
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
@@ -200,6 +201,71 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
 
   // Show VWAP scaling notice (vwapScaled defined above)
+
+  async function handleFetchGreeks() {
+    setFetchingGreeks(true);
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setFetchingGreeks(false); return; }
+      const underlying = is0 ? i0.underlying : i45.underlying;
+      const legsSrc = result?.legs || [];
+      if (!legsSrc.length) { alert('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
+
+      // Derive expiry (YYYYMMDD). 0DTE = today (ET); 45DTE = today + DTE input.
+      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      let expDate = nowET;
+      if (!is0) {
+        const dte = parseInt(i45.dte, 10);
+        if (dte > 0) { expDate = new Date(nowET); expDate.setDate(expDate.getDate() + dte); }
+      }
+      const yyyymmdd = expDate.getFullYear().toString()
+        + String(expDate.getMonth() + 1).padStart(2, '0')
+        + String(expDate.getDate()).padStart(2, '0');
+
+      // Build legs: right from label (put/call), signed qty from long/short (+x2 body).
+      const legs = legsSrc.map(l => {
+        const lbl = (l.label || '').toLowerCase();
+        const right = lbl.includes('put') ? 'P' : 'C';
+        const isShort = lbl.includes('short');
+        const isBody = lbl.includes('body') || lbl.includes('x2');
+        const mag = isBody ? 2 : 1;
+        return { strike: l.strike, right, qty: (isShort ? -mag : mag) };
+      });
+
+      const url = bridgeUrl + '/api/option-greeks?underlying=' + underlying
+        + '&expiry=' + yyyymmdd + '&legs=' + encodeURIComponent(JSON.stringify(legs));
+      const resp = await fetch(url, { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const d = await resp.json();
+      if (d.error) { alert('Bridge error: ' + d.error); setFetchingGreeks(false); return; }
+      if (d.notSubscribed || (!d.net && d.message)) {
+        alert(d.message || 'TWS returned no Greeks — options market data not subscribed. Enter Greeks manually.');
+        setFetchingGreeks(false); return;
+      }
+      if (!d.net) { alert('No Greeks returned — TWS may lack option data permissions, or the expiry/strikes are invalid. You can enter Greeks manually.'); setFetchingGreeks(false); return; }
+
+      // Net position greeks. gamStrike (pin magnet) ~ the body strike for flies.
+      const bodyLeg = legsSrc.find(l => (l.label || '').toLowerCase().includes('body'));
+      if (is0) {
+        setI0(prev => ({
+          ...prev,
+          theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
+          delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
+          gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
+          gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike
+        }));
+      } else {
+        setI45(prev => ({
+          ...prev,
+          theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
+          delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
+          vega: d.net.vega != null ? String(d.net.vega) : prev.vega
+        }));
+      }
+    } catch (e) {
+      alert('Fetch Greeks failed: ' + e.message);
+    }
+    setFetchingGreeks(false);
+  }
 
   async function handleAutoFill() {
     setAutoFilling(true);
@@ -658,7 +724,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           )}
 
           {/* Greeks */}
-          <SectionLabel info="Enter from your broker's position Greeks. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis.">Greeks (optional)</SectionLabel>
+          <div className="flex items-center justify-between">
+            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge).">Greeks (optional)</SectionLabel>
+            <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
+              title="Fetch model Greeks for the computed strikes from TWS via the bridge"
+              style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+              {fetchingGreeks ? 'Fetching…' : '⚡ Fetch Greeks (TWS)'}
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-2.5">
             {is0 ? <>
               <Inp label="Theta ($)" value={i0.theta} onChange={v=>set0('theta',v)}/>
@@ -786,6 +859,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <KV label="Max risk" value={r.maxRisk?`$${r.maxRisk.toFixed(0)}`:'--'}/>
             </div>
           </div>
+
+          {/* Directional Edge prompt — always visible so the feature is discoverable */}
+          {!r.greeks && (
+            <div className="card" style={{borderStyle:'dashed',borderColor:'#30363d'}}>
+              <div className="flex items-center justify-between mb-1">
+                <SectionLabel white info="Directional Edge compares how much price movement can still benefit the position (delta × remaining expected move) against remaining time decay (theta pressure). Enter Greeks — or fetch them from TWS — to unlock the survivability gauges and Edge Ratio.">Trade survivability · Directional Edge</SectionLabel>
+              </div>
+              <div style={{fontSize:12,color:'#8b949e',lineHeight:1.5}}>
+                Enter <span style={{color:'#c9d1d9'}}>Delta</span> and <span style={{color:'#c9d1d9'}}>Theta</span>{is0 && <> (and optionally Gamma)</>} above to compute Directional Edge — the metric that tells you whether expected price movement still outweighs time decay.
+                <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
+                  style={{marginLeft:8,padding:'2px 8px',borderRadius:5,border:'1px solid #30363d',background:'transparent',color:'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                  {fetchingGreeks ? 'Fetching…' : '⚡ Fetch from TWS'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Greeks Analysis — Theta Edge, Gamma Risk, Max Move */}
           {is0 && r.greeks && (

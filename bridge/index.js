@@ -112,7 +112,95 @@ function getSnapshot(contract) {
   });
 }
 
-// ── Request historical bars ──
+// ── Request option model Greeks (delta/gamma/theta/vega/IV) ──
+// Greeks only exist for a specific option contract. We request generic tick
+// 106 which enables modelGreeks, then listen for tickOptionComputation.
+// tickType 13 = model option computation (IBKR's theoretical greeks).
+function getOptionGreeks(contract) {
+  return new Promise((resolve) => {
+    const reqId = getReqId();
+    let resolved = false;
+    let notSubscribed = false;
+    const done = (data) => {
+      if (resolved) return;
+      resolved = true;
+      ib.removeListener(EventName.tickOptionComputation, onGreeks);
+      ib.removeListener(EventName.tickOptionComputation, rawDump);
+      ib.removeListener(EventName.tickSnapshotEnd, onEnd);
+      ib.removeListener(EventName.error, onErr);
+      try { ib.cancelMktData(reqId); } catch (e) {}
+      resolve(data);
+    };
+    // Confirmed from live RAW args dump on @stoqey/ib 1.3.x: 10 arguments,
+    // (reqId, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega,
+    // theta, undPrice). No tickAttrib/field arg. tickType 10-13 = the various
+    // IV/greek computations; model greeks arrive as 13 (or 10-12 for bid/ask/last).
+    const onGreeks = (id, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice) => {
+      if (id !== reqId) return;
+      // Require a usable delta; skip the null-filled ticks that arrive when the
+      // options feed isn't subscribed (TWS still emits empty computations).
+      if (delta == null || Number.isNaN(delta)) return;
+      done({
+        iv: impliedVol && impliedVol > 0 ? +(impliedVol * 100).toFixed(2) : null,
+        delta: delta != null ? +Number(delta).toFixed(4) : null,
+        gamma: gamma != null ? +Number(gamma).toFixed(5) : null,
+        theta: theta != null ? +Number(theta).toFixed(4) : null,
+        vega: vega != null ? +Number(vega).toFixed(4) : null,
+        undPrice: undPrice != null && undPrice > 0 ? +Number(undPrice).toFixed(2) : null,
+        tickType
+      });
+    };
+    const onEnd = (id) => { if (id === reqId) done(null); };
+
+    // Detect market-data-not-subscribed errors (10089/10090/10167/10168/354)
+    // scoped to THIS request, so the endpoint can tell the user clearly.
+    const onErr = (err, code, id) => {
+      if (id !== reqId) return;
+      if ([10089, 10090, 10091, 10167, 10168, 354, 10197].includes(code)) {
+        notSubscribed = true;
+      }
+    };
+    ib.on(EventName.error, onErr);
+
+    ib.on(EventName.tickOptionComputation, onGreeks);
+    // TEMP one-time raw-args dump to verify signature; remove once confirmed.
+    const rawDump = (...args) => {
+      console.log('[BRIDGE] tickOptionComputation RAW args:', JSON.stringify(args.map(a =>
+        (typeof a === 'number' ? +a.toFixed(5) : a))));
+      ib.removeListener(EventName.tickOptionComputation, rawDump);
+    };
+    ib.on(EventName.tickOptionComputation, rawDump);
+    // genericTickList '106' = option implied vol / model greeks; snapshot=false
+    // because greeks stream after a short delay; we time out ourselves.
+    ib.reqMktData(reqId, contract, '106', false, false);
+
+    setTimeout(() => done(notSubscribed ? { notSubscribed: true } : null), 7000);
+    ib.on(EventName.tickSnapshotEnd, onEnd);
+    // genericTickList '106' = option implied vol / model greeks; snapshot=false
+    // because greeks stream after a short delay; we time out ourselves.
+    ib.reqMktData(reqId, contract, '106', false, false);
+
+    setTimeout(() => done(null), 7000);
+  });
+}
+
+// Build an OCC-style option contract for a leg.
+function buildOptionContract(underlying, expiry, strike, right) {
+  // expiry: 'YYYYMMDD'; right: 'C' | 'P'
+  const u = underlying.toUpperCase();
+  const isIndex = ['SPX', 'RUT', 'VIX', 'NDX'].includes(u);
+  return {
+    symbol: u,
+    secType: SecType.OPT,
+    currency: 'USD',
+    exchange: isIndex ? 'CBOE' : 'SMART',
+    lastTradeDateOrContractMonth: expiry,
+    strike: Number(strike),
+    right: right.toUpperCase().startsWith('P') ? 'P' : 'C',
+    multiplier: '100',
+    tradingClass: (u === 'SPX') ? 'SPXW' : undefined  // 0DTE SPX uses weeklys
+  };
+}
 function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES) {
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
@@ -403,6 +491,67 @@ app.get('/api/market-data', async (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, connected, timestamp: new Date().toISOString() });
+});
+
+// ── Fetch model Greeks for one or more option legs ──
+// GET /api/option-greeks?underlying=SPX&expiry=YYYYMMDD&strike=7480&right=C
+// For multi-leg positions, pass legs as JSON: ?legs=[{strike,right},...]
+// Returns single-leg greeks, and (if multiple legs) net position greeks.
+app.get('/api/option-greeks', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const underlying = (req.query.underlying || 'SPX').toUpperCase();
+    const expiry = req.query.expiry; // YYYYMMDD
+    if (!expiry) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
+
+    // Parse legs: either a single strike/right, or a legs=[...] array with qty.
+    let legs;
+    if (req.query.legs) {
+      legs = JSON.parse(req.query.legs); // [{ strike, right, qty }]
+    } else {
+      legs = [{ strike: Number(req.query.strike), right: req.query.right || 'C', qty: 1 }];
+    }
+
+    const results = [];
+    let anyNotSubscribed = false;
+    for (const leg of legs) {
+      const contract = buildOptionContract(underlying, expiry, leg.strike, leg.right);
+      const g = await getOptionGreeks(contract);
+      if (g && g.notSubscribed) { anyNotSubscribed = true; results.push({ strike: leg.strike, right: leg.right, qty: leg.qty || 1, greeks: null }); }
+      else results.push({ strike: leg.strike, right: leg.right, qty: leg.qty || 1, greeks: g });
+    }
+
+    // Net position greeks (sum of qty × per-contract greek). For a butterfly the
+    // engine mainly wants |delta|, theta, gamma of the whole structure.
+    const net = { delta: 0, gamma: 0, theta: 0, vega: 0 };
+    let haveAny = false;
+    for (const r of results) {
+      if (!r.greeks) continue;
+      haveAny = true;
+      const q = r.qty || 1;
+      net.delta += (r.greeks.delta || 0) * q * 100; // ×100 → position dollars per $1 move
+      net.gamma += (r.greeks.gamma || 0) * q * 100;
+      net.theta += (r.greeks.theta || 0) * q * 100; // per-day position theta ($)
+      net.vega  += (r.greeks.vega  || 0) * q * 100;
+    }
+    // Deliver theta as a positive daily-decay magnitude (engine convention).
+    const netOut = haveAny ? {
+      delta: +net.delta.toFixed(2),
+      gamma: +net.gamma.toFixed(2),
+      theta: +Math.abs(net.theta).toFixed(2),
+      vega: +net.vega.toFixed(2)
+    } : null;
+
+    res.json({ underlying, expiry, legs: results, net: netOut,
+      notSubscribed: anyNotSubscribed && !netOut,
+      message: (anyNotSubscribed && !netOut)
+        ? 'TWS returned no Greeks — your IBKR account is not subscribed to options market data for ' + underlying + '. Enable the OPRA / US options data subscription in IBKR Account Management, or enter Greeks manually.'
+        : undefined });
+  } catch (err) {
+    console.log('[BRIDGE] option-greeks error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Fetch today's executions (fills) from TWS ──
