@@ -192,7 +192,7 @@ export function calc45DTE(inputs) {
 
   // Greeks + Directional Edge
   let greeks = null;
-  if (theta>0||vega>0||delta>0) {
+  if (theta>0||vega>0||Math.abs(delta)>0) {
     const tvRatio = (theta>0&&vega>0)?vega/theta:0;
 
     // 45DTE Directional Edge

@@ -208,7 +208,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
       if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setFetchingGreeks(false); return; }
       const underlying = is0 ? i0.underlying : i45.underlying;
-      const legsSrc = result?.legs || [];
+      const legsSrc = r?.legs || [];
       if (!legsSrc.length) { alert('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
 
       // Derive expiry (YYYYMMDD). 0DTE = today (ET); 45DTE = today + DTE input.

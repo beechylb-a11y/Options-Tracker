@@ -137,7 +137,7 @@ export function calc0DTE(inputs) {
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
   const hasGam = gamStrike > 0 && atr > 0;
-  const hasGreeks = theta > 0 && delta > 0;
+  const hasGreeks = theta > 0 && Math.abs(delta) > 0;
   const popFrac = pop / 100;
   const hasOvernight = esOvernightHigh > 0 && esOvernightLow > 0 && priorDayClose > 0;
   const hasCashOpen = cashOpen > 0;
@@ -662,8 +662,8 @@ export function calc0DTE(inputs) {
   }
 
   // Greeks adjustments (apply to all strategies)
-  if (hasGreeks && theta > 0 && delta > 0 && atr5 > 0) {
-    const tEdge = theta / (delta * atr5);
+  if (hasGreeks && theta > 0 && Math.abs(delta) > 0 && atr5 > 0) {
+    const tEdge = theta / (Math.abs(delta) * atr5);
     if (isCredit) {
       // Credit sellers want high theta edge
       if (tEdge > 0.30) structScore = Math.min(100, structScore + 10);
@@ -989,7 +989,8 @@ export function calc0DTE(inputs) {
   // ── Greeks analysis ──
   let greeks = null;
   if (hasGreeks && atr > 0) {
-    const tEdge = delta * atr > 0 ? theta / (delta * atr) : 0;
+    const absDelta = Math.abs(delta);
+    const tEdge = absDelta * atr > 0 ? theta / (absDelta * atr) : 0;
     const gRisk = theta > 0 ? (gamma * atr) / theta : 0;
     // Max tolerable move: how far price can move before theta earned is consumed
     // theta is daily ($), hours is actual hours remaining to 4pm ET
@@ -997,7 +998,7 @@ export function calc0DTE(inputs) {
     // 0DTE target close at 3pm ET = 5.5 trading hours from 9:30am
     const hoursUsed = hours > 0 ? hours : 5.5; // fallback to full 0DTE session
     const thetaRemaining = theta * (hoursUsed / 5.5);
-    const dsMax = delta > 0 ? thetaRemaining / delta : 0;
+    const dsMax = absDelta > 0 ? thetaRemaining / absDelta : 0;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
     // Theta edge interpretation
