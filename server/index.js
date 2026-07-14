@@ -150,13 +150,18 @@ async function loadTokensFromConfig() {
 }
 
 async function saveTokensToConfig(tokens) {
-  // Persist the full token set to the Config sheet so it survives restarts
-  // without manual env-var edits. The refresh_token is the part that matters.
+  // DO NOT write tokens to the Config sheet.
+  // Storing a large JSON blob in Config corrupted the key/value layout and broke
+  // getAccounts(), and a refresh_token in a spreadsheet is a security liability.
+  // The refresh_token belongs ONLY in the Railway GOOGLE_TOKENS env var.
+  // This function is intentionally a no-op for the sheet; it only logs the blob
+  // so it can be copied into the env var once.
   if (!tokens) return;
-  await updateConfig('googleTokens', JSON.stringify(tokens));
-  // Also log it so it can be copied to the Railway env var as a backup.
-  console.log('[AUTH] Tokens persisted to Config sheet. Backup blob:');
-  console.log(JSON.stringify(tokens));
+  if (tokens.refresh_token) {
+    console.log('[AUTH] ===== COPY THE LINE BELOW INTO Railway env var GOOGLE_TOKENS (one-time) =====');
+    console.log(JSON.stringify(tokens));
+    console.log('[AUTH] ===== After setting GOOGLE_TOKENS you will not need to re-auth again. =====');
+  }
 }
 
 loadTokensFromConfig();

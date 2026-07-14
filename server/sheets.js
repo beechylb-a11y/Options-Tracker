@@ -204,9 +204,25 @@ export async function updateConfig(key, value) {
 // Account format: [{ id, name, bankroll, startingBankroll, maxDailyLoss, maxOpenRisk }]
 export async function getAccounts() {
   const config = await getConfig();
+  const raw = config.accounts;
+  if (!raw) {
+    console.log('[ACCOUNTS] WARNING: no "accounts" key found in Config sheet. '
+      + 'Config keys present: ' + Object.keys(config).join(', '));
+    return [];
+  }
   try {
-    return JSON.parse(config.accounts || '[]');
-  } catch (e) { return []; }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.log('[ACCOUNTS] WARNING: Config "accounts" is not an array.');
+      return [];
+    }
+    return parsed;
+  } catch (e) {
+    // Never silently swallow this — an empty account list looks like data loss.
+    console.log('[ACCOUNTS] ERROR: failed to parse Config "accounts" JSON:', e.message);
+    console.log('[ACCOUNTS] Raw value starts with:', String(raw).slice(0, 120));
+    return [];
+  }
 }
 
 export async function saveAccounts(accounts) {
