@@ -12,7 +12,8 @@ export function calc45DTE(inputs) {
     maxLoss, maxOpen, bpr, theta, vega, delta,
     // Optional per-strategy realized history (resolved object or a map keyed
     // by strategy name via historyByStrategy).
-    history: historyInput, historyByStrategy } = inputs;
+    // wingDeltas: { lowerAbsDelta, upperAbsDelta } for skew-aware P(max loss).
+    history: historyInput, historyByStrategy, wingDeltas } = inputs;
 
   const hasPrice = price > 0, hasVol = iv > 0, hasGreeks = theta > 0 && bpr > 0;
   const hasTerm = ivFront > 0 && ivBack > 0;
@@ -106,20 +107,78 @@ export function calc45DTE(inputs) {
     strikeLine = `1 SD=${em45.toFixed(1)} pts | 0.5 SD=${sd50.toFixed(1)} pts | ${dte}d @ IV ${iv.toFixed(1)}%`;
   }
 
+  // ── P(max loss): probability price settles in a max-loss tail by expiry ──
+  // 45DTE version uses the full-DTE lognormal sigma (NOT the intraday 5.5h window
+  // used in 0DTE): sigma = price × (IV/100) × √(DTE/365). Much wider distribution
+  // than 0DTE, so tail probabilities run higher and brackets are recalibrated.
+  function normCdf(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return z > 0 ? 1 - p : p;
+  }
+  let pMaxLoss = null, pMaxLossLow = null, pMaxLossHigh = null;
+  let pMaxLossModel = null, pMaxLossDelta = null, pMaxLossSource = null;
+  const DEBIT_MID_RISK = ['Long Condor - Reversed','Calendar spread','Diagonal spread'];
+  if (legs.length > 0 && price > 0 && iv > 0 && dte > 0 && !DEBIT_MID_RISK.includes(legStrat)) {
+    const strikes = legs.map(l => l.strike);
+    const lowerWing = Math.min(...strikes);
+    const upperWing = Math.max(...strikes);
+    const sigma = price * (iv / 100) * Math.sqrt(dte / 365);
+    if (sigma > 0) {
+      pMaxLossLow = normCdf((lowerWing - price) / sigma);
+      pMaxLossHigh = 1 - normCdf((upperWing - price) / sigma);
+      // One-sided risk strategies
+      if (legStrat === 'Credit spread') {
+        if (isBull || !isBear) pMaxLossHigh = 0; else pMaxLossLow = 0;
+      } else if (legStrat === 'Bull call spread') { pMaxLossHigh = 0; }
+      else if (legStrat === 'Bear put spread') { pMaxLossLow = 0; }
+      else if (legStrat === 'Jade lizard') { pMaxLossHigh = 0; } // no upside risk by design
+      pMaxLossModel = Math.min(1, (pMaxLossLow || 0) + (pMaxLossHigh || 0));
+
+      // Delta-proxy cross-check (embeds real IV + skew)
+      if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
+        let dLow = wingDeltas.lowerAbsDelta != null ? (1 - Math.abs(wingDeltas.lowerAbsDelta)) : (pMaxLossLow || 0);
+        let dHigh = wingDeltas.upperAbsDelta != null ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
+        if (legStrat === 'Bull call spread' || legStrat === 'Jade lizard') dHigh = 0;
+        if (legStrat === 'Bear put spread') dLow = 0;
+        if (legStrat === 'Credit spread') { if (isBull || !isBear) dHigh = 0; else dLow = 0; }
+        pMaxLossDelta = Math.min(1, dLow + dHigh);
+      }
+
+      if (pMaxLossModel != null && pMaxLossDelta != null) { pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2; pMaxLossSource = 'blend'; }
+      else if (pMaxLossDelta != null) { pMaxLoss = pMaxLossDelta; pMaxLossSource = 'delta'; }
+      else { pMaxLoss = pMaxLossModel; pMaxLossSource = 'model'; }
+    }
+  }
+
   // Scoring (100 pts)
   let setupScore = 0;
   const criteria = [];
-  const ivrPts = ivr>60?30:ivr>40?25:ivr>20?15:ivr>10?8:0;
-  setupScore += ivrPts; criteria.push({label:`IV Rank ${ivr>0?ivr.toFixed(0)+'%':'--'}`, pts:ivrPts, max:30});
+  const ivrPts = ivr>60?25:ivr>40?21:ivr>20?13:ivr>10?7:0;
+  setupScore += ivrPts; criteria.push({label:`IV Rank ${ivr>0?ivr.toFixed(0)+'%':'--'}`, pts:ivrPts, max:25});
   const ivhvPts = ivhvRatio>1.2?20:ivhvRatio>=1.0?12:ivhvRatio>0?4:0;
   setupScore += ivhvPts; criteria.push({label:`IV/HV ${ivhvRatio>0?ivhvRatio.toFixed(2):'--'}`, pts:ivhvPts, max:20});
-  const stratFit = bestRating==='EXCELLENT'?20:bestRating==='GOOD'?13:bestRating==='MARGINAL'?6:0;
-  setupScore += stratFit; criteria.push({label:`Strategy fit (${bestRating})`, pts:stratFit, max:20});
+  const stratFit = bestRating==='EXCELLENT'?15:bestRating==='GOOD'?10:bestRating==='MARGINAL'?5:0;
+  setupScore += stratFit; criteria.push({label:`Strategy fit (${bestRating})`, pts:stratFit, max:15});
   const tEff = hasGreeks ? theta/bpr : 0;
   const tEffPts = !hasGreeks?8:tEff>0.02?15:tEff>0.01?10:tEff>0.005?5:0;
   setupScore += tEffPts; criteria.push({label:`Theta efficiency ${hasGreeks?tEff.toFixed(4):'--'}`, pts:tEffPts, max:15});
   const termPts = termBias==='contango'?15:termBias==='flat'?8:0;
   setupScore += termPts; criteria.push({label:`Term structure (${termBias})`, pts:termPts, max:15});
+
+  // Tail risk — P(max loss) (10). Recalibrated for the 45DTE horizon: the wider
+  // distribution means tail probabilities run higher than 0DTE, so brackets are
+  // shifted up (10/20/30/40% rather than 5/10/15/25%).
+  let tailPts45, tailLabel45;
+  if (pMaxLoss == null) {
+    tailPts45 = 5; tailLabel45 = 'Tail risk --';
+  } else {
+    tailPts45 = pMaxLoss < 0.10 ? 10 : pMaxLoss < 0.20 ? 8 : pMaxLoss < 0.30 ? 6 : pMaxLoss < 0.40 ? 3 : 0;
+    const srcTag = pMaxLossSource === 'blend' ? ' (blend)' : pMaxLossSource === 'delta' ? ' (delta)' : '';
+    tailLabel45 = `P(max loss) ${(pMaxLoss*100).toFixed(0)}%${srcTag}`;
+  }
+  setupScore += tailPts45; criteria.push({label:tailLabel45, pts:tailPts45, max:10});
 
   const setup = setupScore>=85?'A+ Setup':setupScore>=70?'A Setup':setupScore>=50?'B Setup':'No setup';
 
@@ -181,10 +240,22 @@ export function calc45DTE(inputs) {
   const winP = (history?.winRate > 0) ? (1 - wMeasured) * popFrac + wMeasured * realWinP : popFrac;
   const avgWinUsed = hasMeasured ? history.avgWin : estAvgWin;
   const avgLossUsed = hasMeasured ? history.avgLoss : estAvgLoss;
-  const ev = (avgWinUsed > 0 && avgLossUsed > 0 && winP > 0)
-    ? (winP * avgWinUsed) - ((1 - winP) * avgLossUsed) : 0;
+  // Distribution-weighted loss when P(max loss) is known (estimated mode):
+  // price the max-loss tail explicitly rather than smearing into one average.
+  let lossTerm45 = (1 - winP) * avgLossUsed, lossModel45 = 'flat';
+  if (!hasMeasured && pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
+    const pTail = Math.min(pMaxLoss, 1 - winP);
+    const pPartial = Math.max(0, (1 - winP) - pTail);
+    const partialLoss = risk * (evLossCap * 0.6);
+    lossTerm45 = pTail * risk + pPartial * partialLoss;
+    lossModel45 = 'distribution';
+  }
+  const ev = (avgWinUsed > 0 && winP > 0)
+    ? (winP * avgWinUsed) - lossTerm45 : 0;
   const evBasis = {
     mode: hasMeasured ? 'measured' : 'estimated',
+    lossModel: lossModel45,
+    pMaxLoss: pMaxLoss != null ? +(pMaxLoss).toFixed(4) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
     winCap: evWinCap, lossCap: evLossCap,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk
@@ -268,6 +339,7 @@ export function calc45DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     legs, strikeLine,
     setupScore, setup, criteria,
+    pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
     ev, evBasis,
     targetCredit, targetLabel,

@@ -80,7 +80,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
     outlook:'neutral', pop:'', win:'', risk:'', netCreditDebit:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
-    bpr:'', theta:'', vega:'', delta:''
+    bpr:'', theta:'', vega:'', delta:'', lowerWingDelta:'', upperWingDelta:''
   });
 
   const set0 = (k,v) => setI0(p => ({...p,[k]:v}));
@@ -132,7 +132,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
           underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
           overrideStrategy: overrideStrat,
-          historyByStrategy: strategyHistory || null
+          historyByStrategy: strategyHistory || null,
+          wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
+            lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
+            upperAbsDelta: i45.upperWingDelta !== '' ? Math.abs(parseFloat(i45.upperWingDelta)) : null
+          } : null
         });
       }
     } catch (e) {
@@ -281,7 +285,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           ...prev,
           theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
-          vega: d.net.vega != null ? String(d.net.vega) : prev.vega
+          vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
+          lowerWingDelta: lowerWD || prev.lowerWingDelta,
+          upperWingDelta: upperWD || prev.upperWingDelta
         }));
       }
     } catch (e) {
@@ -853,9 +859,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
               <Inp label="Delta" value={i45.delta} onChange={v=>set45('delta',v)}/>
               {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
+              <Inp label="Lower wing Δ" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
+              <Inp label="Upper wing Δ" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
             </>}
           </div>
-          {is0 && r.pMaxLoss != null && (
+          {r.pMaxLoss != null && (
             <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:11,lineHeight:1.5,color:'#8b949e'}}>
               <span style={{color:'#c9d1d9',fontWeight:600}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
               <span style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:9,fontWeight:600,
@@ -864,7 +872,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 {r.pMaxLossSource==='blend'?'MODEL + DELTA':r.pMaxLossSource==='delta'?'DELTA (skew)':'MODEL (flat vol)'}
               </span>
               <div style={{marginTop:4}}>
-                {r.pMaxLossModel!=null && <>Model {(r.pMaxLossModel*100).toFixed(1)}% (VIX1D, flat)</>}
+                {r.pMaxLossModel!=null && <>Model {(r.pMaxLossModel*100).toFixed(1)}% ({is0?'VIX1D':`${i45.dte||45}d IV`}, flat)</>}
                 {r.pMaxLossDelta!=null && <> · Delta {(r.pMaxLossDelta*100).toFixed(1)}% (real IV + skew)</>}
                 {r.pMaxLossDelta==null && <> · enter wing Δ above for skew-aware cross-check</>}
               </div>
