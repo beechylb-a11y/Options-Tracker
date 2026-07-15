@@ -20,6 +20,13 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
   const qty = parseInt(trade.Qty || trade.Contracts || 1);
   const entryCredit = parseFloat(trade['Net Credit ($)'] || 0);
 
+  // Accounts with no live TWS fills to fetch (paper / manual). For these the
+  // modal shows manual-entry fields mirroring what the fetch would populate,
+  // instead of a fetch button that would always come back empty.
+  const acct = (trade.Account || trade.account || '').toLowerCase();
+  const MANUAL_ACCOUNT_PREFIXES = ['papertrade']; // extend if other accounts don't use TWS
+  const isManualAccount = MANUAL_ACCOUNT_PREFIXES.some(p => acct.startsWith(p));
+
   // Fetch executions from TWS bridge
   async function fetchFromTWS() {
     setFetchingTWS(true);
@@ -111,11 +118,20 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           </div>
         </div>
 
-        {/* TWS fetch button */}
-        <button onClick={fetchFromTWS} disabled={fetchingTWS}
-          style={{width:'100%',padding:'8px 16px',borderRadius:8,border:'1px solid #2f81f7',background:'#0d1a2e',color:'#58a6ff',fontSize:13,fontWeight:600,cursor:'pointer',marginBottom:12,opacity:fetchingTWS?0.5:1}}>
-          {fetchingTWS ? 'Fetching from TWS...' : '⚡ Fetch P&L from TWS'}
-        </button>
+        {/* TWS fetch button (live accounts) OR manual-entry note (paper) */}
+        {isManualAccount ? (
+          <div style={{marginBottom:12,padding:10,borderRadius:8,background:'#0d1117',border:'1px dashed #30363d'}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#d29922',marginBottom:4}}>Manual close (paper / non-TWS account)</div>
+            <div style={{fontSize:11,color:'#8b949e',lineHeight:1.5}}>
+              No TWS fills to fetch for this account — enter the close details below as they would have been filled: the <b style={{color:'#c9d1d9'}}>close price</b> (net credit/debit to exit) and the resulting <b style={{color:'#c9d1d9'}}>realised P&amp;L</b>. Entry credit was {entryCredit ? fmt$(entryCredit) : '—'} on {qty} contract{qty>1?'s':''}.
+            </div>
+          </div>
+        ) : (
+          <button onClick={fetchFromTWS} disabled={fetchingTWS}
+            style={{width:'100%',padding:'8px 16px',borderRadius:8,border:'1px solid #2f81f7',background:'#0d1a2e',color:'#58a6ff',fontSize:13,fontWeight:600,cursor:'pointer',marginBottom:12,opacity:fetchingTWS?0.5:1}}>
+            {fetchingTWS ? 'Fetching from TWS...' : '⚡ Fetch P&L from TWS'}
+          </button>
+        )}
 
         {/* TWS fills display */}
         {twsFills !== null && (
@@ -178,8 +194,25 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
                 color: pnl > 0 ? '#3fb950' : pnl < 0 ? '#f85149' : '#e6edf3'}} />
           </div>
           <div>
-            <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Close price (optional)</label>
-            <input type="number" step="any" value={form.closePrice} onChange={e => setForm(f => ({...f, closePrice: e.target.value}))}
+            <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Close price {isManualAccount ? '(net credit/debit to close)' : '(optional)'}</label>
+            <input type="number" step="any" value={form.closePrice} onChange={e => {
+                const cp = e.target.value;
+                setForm(f => {
+                  const next = { ...f, closePrice: cp };
+                  // For manual accounts, derive P&L from entry vs close price.
+                  // Credit strategy: P&L = (entry credit − close debit) × qty × 100.
+                  // entryCredit here is already in $ for the position; closePrice
+                  // is per-contract net. Best-effort auto-fill; user can override.
+                  if (isManualAccount && cp !== '' && !isNaN(parseFloat(cp))) {
+                    const closeVal = parseFloat(cp);
+                    const perContractEntry = qty ? entryCredit / qty : entryCredit;
+                    const pnlPerContract = perContractEntry - closeVal;
+                    const derived = Math.round(pnlPerContract * qty * 100) / 100;
+                    if (!isNaN(derived)) next.closePnl = String(derived);
+                  }
+                  return next;
+                });
+              }}
               placeholder="Net credit/debit to close"
               style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}} />
           </div>

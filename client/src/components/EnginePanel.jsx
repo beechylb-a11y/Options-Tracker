@@ -283,7 +283,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       if (d.error) { alert('Bridge error: ' + d.error); setLoadingTws(false); return; }
       const structs = d.structures || [];
       if (structs.length === 0) {
-        alert('No open option positions found in TWS.');
+        alert('No open option positions in TWS. For paper trades, enter the strikes, contracts and net credit/debit manually — the ticket fields below mirror what a fetch would fill.');
         setLoadingTws(false); return;
       }
       if (structs.length === 1) {
