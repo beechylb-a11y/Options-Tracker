@@ -27,6 +27,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
     win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
+    lowerWingDelta:'', upperWingDelta:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
 
@@ -114,7 +115,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
           underlying:i0.underlying,
           overrideStrategy: overrideStrat,
-          historyByStrategy: strategyHistory || null
+          historyByStrategy: strategyHistory || null,
+          wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
+            lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
+            upperAbsDelta: i0.upperWingDelta !== '' ? Math.abs(parseFloat(i0.upperWingDelta)) : null
+          } : null
         });
       } else {
         return calc45DTE({
@@ -248,13 +253,26 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
       // Net position greeks. gamStrike (pin magnet) ~ the body strike for flies.
       const bodyLeg = legsSrc.find(l => (l.label || '').toLowerCase().includes('body'));
+      // Outer wing deltas for the skew-aware P(max loss) cross-check: pick the
+      // lowest- and highest-strike legs from the per-leg greeks the bridge returned.
+      let lowerWD = '', upperWD = '';
+      if (Array.isArray(d.legs) && d.legs.length > 1) {
+        const withGreeks = d.legs.filter(l => l.greeks && l.greeks.delta != null);
+        if (withGreeks.length > 1) {
+          const sorted = [...withGreeks].sort((a, b) => a.strike - b.strike);
+          lowerWD = String(Math.abs(sorted[0].greeks.delta));
+          upperWD = String(Math.abs(sorted[sorted.length - 1].greeks.delta));
+        }
+      }
       if (is0) {
         setI0(prev => ({
           ...prev,
           theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
-          gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike
+          gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike,
+          lowerWingDelta: lowerWD || prev.lowerWingDelta,
+          upperWingDelta: upperWD || prev.upperWingDelta
         }));
       } else {
         setI45(prev => ({
@@ -808,6 +826,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Inp label="Delta" value={i0.delta} onChange={v=>set0('delta',v)}/>
               <Inp label="Gamma" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
               <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
+              <Inp label="Lower wing Δ" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
+              <Inp label="Upper wing Δ" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
             </> : <>
               <Inp label="Theta ($)" value={i45.theta} onChange={v=>set45('theta',v)}/>
               <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
@@ -815,6 +835,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
             </>}
           </div>
+          {is0 && r.pMaxLoss != null && (
+            <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:11,lineHeight:1.5,color:'#8b949e'}}>
+              <span style={{color:'#c9d1d9',fontWeight:600}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
+              <span style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:9,fontWeight:600,
+                background: r.pMaxLossSource==='blend'?'#0d2818':r.pMaxLossSource==='delta'?'#1f1a0d':'#161b22',
+                color: r.pMaxLossSource==='blend'?'#3fb950':r.pMaxLossSource==='delta'?'#d29922':'#8b949e'}}>
+                {r.pMaxLossSource==='blend'?'MODEL + DELTA':r.pMaxLossSource==='delta'?'DELTA (skew)':'MODEL (flat vol)'}
+              </span>
+              <div style={{marginTop:4}}>
+                {r.pMaxLossModel!=null && <>Model {(r.pMaxLossModel*100).toFixed(1)}% (VIX1D, flat)</>}
+                {r.pMaxLossDelta!=null && <> · Delta {(r.pMaxLossDelta*100).toFixed(1)}% (real IV + skew)</>}
+                {r.pMaxLossDelta==null && <> · enter wing Δ above for skew-aware cross-check</>}
+              </div>
+              {r.pMaxLossLow!=null && r.pMaxLossHigh!=null && (
+                <div style={{marginTop:2,color:'#6e7681'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── RESULTS PANEL ── */}

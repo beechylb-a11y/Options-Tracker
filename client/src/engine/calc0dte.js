@@ -132,7 +132,9 @@ export function calc0DTE(inputs) {
     // >= EV_HISTORY_THRESHOLD, measured expectancy replaces estimates.
     // Pass either a resolved `history` object or a `historyByStrategy` map keyed
     // by strategy name (the engine indexes it by its own legStrat below).
-    history: historyInput, historyByStrategy } = inputs;
+    // wingDeltas: { lowerAbsDelta, upperAbsDelta } — |delta| of the outer wing
+    // options from the live chain, for the skew-aware P(max loss) cross-check.
+    history: historyInput, historyByStrategy, wingDeltas } = inputs;
 
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
@@ -398,6 +400,73 @@ export function calc0DTE(inputs) {
     }
   }
   const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(legStrat);
+
+  // ── P(max loss): probability price settles in a max-loss tail by close ──
+  // Max loss on a defined-risk structure occurs OUTSIDE the outer wings. Using
+  // the lognormal 0DTE approximation: remaining session sigma = EM × √(hours/5.5)
+  // (EM shrinks as the day burns down). P(below lower wing) + P(above upper wing).
+  // No Greeks needed. For spreads (one-sided risk) only the at-risk tail counts.
+  function normCdf(z) { // standard normal CDF via erf approximation
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return z > 0 ? 1 - p : p;
+  }
+  let pMaxLoss = null, pMaxLossLow = null, pMaxLossHigh = null;
+  let pMaxLossModel = null, pMaxLossDelta = null, pMaxLossSource = null;
+  if (legs.length > 0 && price > 0 && em > 0) {
+    const strikes = legs.map(l => l.strike);
+    const lowerWing = Math.min(...strikes);
+    const upperWing = Math.max(...strikes);
+    const hoursLeft = hours > 0 ? hours : 5.5;
+    // Sigma from the best available 0DTE vol proxy. VIX1D (1-day vol index) is
+    // closest to actual ATM 0DTE IV, so prefer its EM when present; else fall
+    // back to the general EM input. Both are skew-free (see delta method below).
+    const emBase = emV1D > 0 ? emV1D : em;
+    const sigma = emBase * Math.sqrt(Math.min(1, hoursLeft / 5.5)); // remaining-session move
+    if (sigma > 0) {
+      // Reversed condor is a DEBIT structure — max loss is in the MIDDLE, not
+      // the tails — so this tail method doesn't apply; leave null for it.
+      if (legStrat !== 'Long Condor - Reversed') {
+        pMaxLossLow = normCdf((lowerWing - price) / sigma);          // P(settle below lower wing)
+        pMaxLossHigh = 1 - normCdf((upperWing - price) / sigma);     // P(settle above upper wing)
+        if (legStrat === 'Bull put spread') { pMaxLossHigh = 0; }    // risk only on downside
+        else if (legStrat === 'Bear call spread') { pMaxLossLow = 0; } // risk only on upside
+        else if (legStrat === 'Bull call spread') { pMaxLossHigh = 0; pMaxLossLow = normCdf((Math.min(...strikes) - price) / sigma); }
+        else if (legStrat === 'Bear put spread') { pMaxLossLow = 0; pMaxLossHigh = 1 - normCdf((Math.max(...strikes) - price) / sigma); }
+        pMaxLossModel = Math.min(1, (pMaxLossLow || 0) + (pMaxLossHigh || 0));
+
+        // ── Delta-proxy cross-check (embeds real IV level + skew) ──
+        // Wing deltas come from the option chain via TWS or per-leg manual entry.
+        // P(below lower wing) ≈ 1 − |delta of lower long call|  (or |delta| of a
+        // long put wing directly); P(above upper wing) ≈ |delta of upper call|.
+        // Only computed when wingDeltas provided: { lowerAbsDelta, upperAbsDelta }.
+        if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
+          const lowTail = wingDeltas.lowerAbsDelta != null
+            ? (1 - Math.abs(wingDeltas.lowerAbsDelta)) : (pMaxLossLow || 0);
+          const highTail = wingDeltas.upperAbsDelta != null
+            ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
+          // Respect one-sided-risk strategies
+          let dLow = lowTail, dHigh = highTail;
+          if (legStrat === 'Bull put spread' || legStrat === 'Bull call spread') dHigh = 0;
+          if (legStrat === 'Bear call spread' || legStrat === 'Bear put spread') dLow = 0;
+          pMaxLossDelta = Math.min(1, dLow + dHigh);
+        }
+
+        // Blend: when both exist, average them (delta embeds skew, model is
+        // smooth/stable). When only one exists, use it.
+        if (pMaxLossModel != null && pMaxLossDelta != null) {
+          pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2;
+          pMaxLossSource = 'blend';
+        } else if (pMaxLossDelta != null) {
+          pMaxLoss = pMaxLossDelta; pMaxLossSource = 'delta';
+        } else {
+          pMaxLoss = pMaxLossModel; pMaxLossSource = 'model';
+        }
+      }
+    }
+  }
+
   const wingTxt = D > 0
     ? isSpread
       ? `EM(VIX)=${emVIX>0?emVIX.toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
@@ -413,29 +482,44 @@ export function calc0DTE(inputs) {
   let setupScore = 0;
   const criteria = [];
 
-  // 1. Compression signal (20)
+  // 1. Compression signal (15)
   const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(bestStrat);
   const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
   let compPts;
-  if (!hasComp) compPts = 7;
-  else if (isCentred) compPts = comp<0.35?20:comp<0.50?16:comp<0.80?8:2;
-  else if (isDirectional) compPts = comp>0.80?18:comp>0.50?14:comp>0.35?10:6;
-  else compPts = comp<0.50?14:comp<0.80?10:5;
+  if (!hasComp) compPts = 5;
+  else if (isCentred) compPts = comp<0.35?15:comp<0.50?12:comp<0.80?6:2;
+  else if (isDirectional) compPts = comp>0.80?14:comp>0.50?11:comp>0.35?8:5;
+  else compPts = comp<0.50?11:comp<0.80?8:4;
   setupScore += compPts;
-  criteria.push({ label: `Compression ${hasComp?comp.toFixed(2):'--'}`, pts: compPts, max: 20 });
+  criteria.push({ label: `Compression ${hasComp?comp.toFixed(2):'--'}`, pts: compPts, max: 15 });
 
-  // 2. Expected move consumed (20)
+  // 2. Expected move consumed (15)
   let movePts;
-  if (em <= 0) movePts = 7;
+  if (em <= 0) movePts = 5;
   else if (isCentred) {
     // Butterflies want high move consumed
-    movePts = moveConsumed>0.80?20:moveConsumed>0.60?16:moveConsumed>0.40?10:moveConsumed>0.25?5:2;
+    movePts = moveConsumed>0.80?15:moveConsumed>0.60?12:moveConsumed>0.40?8:moveConsumed>0.25?4:2;
   } else {
     // Spreads want low move consumed (room to run)
-    movePts = moveConsumed<0.30?20:moveConsumed<0.50?16:moveConsumed<0.60?10:moveConsumed<0.80?5:0;
+    movePts = moveConsumed<0.30?15:moveConsumed<0.50?12:moveConsumed<0.60?8:moveConsumed<0.80?4:0;
   }
   setupScore += movePts;
-  criteria.push({ label: `Move consumed ${em>0?(moveConsumed*100).toFixed(0)+'%':'--'}`, pts: movePts, max: 20 });
+  criteria.push({ label: `Move consumed ${em>0?(moveConsumed*100).toFixed(0)+'%':'--'}`, pts: movePts, max: 15 });
+
+  // 2b. Tail risk — P(max loss) (10). Lower probability of settling in a
+  // max-loss tail = higher score. Rewards structures whose wings are far from
+  // spot relative to the remaining expected move.
+  let tailPts, tailLabel;
+  if (pMaxLoss == null) {
+    tailPts = 5; // unknown (missing EM/price, or reversed condor) → neutral
+    tailLabel = 'Tail risk --';
+  } else {
+    tailPts = pMaxLoss < 0.05 ? 10 : pMaxLoss < 0.10 ? 8 : pMaxLoss < 0.15 ? 6 : pMaxLoss < 0.25 ? 3 : 0;
+    const srcTag = pMaxLossSource === 'blend' ? ' (blend)' : pMaxLossSource === 'delta' ? ' (delta)' : '';
+    tailLabel = `P(max loss) ${(pMaxLoss*100).toFixed(0)}%${srcTag}`;
+  }
+  setupScore += tailPts;
+  criteria.push({ label: tailLabel, pts: tailPts, max: 10 });
 
   // 3. Strategy fit (15)
   const stratFit = bestRating==='EXCELLENT'?15:bestRating==='GOOD'?10:bestRating==='MARGINAL'?5:0;
@@ -906,13 +990,32 @@ export function calc0DTE(inputs) {
   const avgWinUsed = hasMeasured ? history.avgWin : estAvgWin;
   const avgLossUsed = hasMeasured ? history.avgLoss : estAvgLoss;
 
-  const ev = (avgWinUsed > 0 && avgLossUsed > 0 && winP > 0)
-    ? (winP * avgWinUsed) - ((1 - winP) * avgLossUsed)
+  // Loss side: when P(max loss) is known and we're estimating, split the loss
+  // distribution into a MAX-LOSS component (probability pMaxLoss × full risk)
+  // and a PARTIAL-LOSS component (the rest of the loss probability × estimated
+  // partial loss). This is more accurate than a single average loss because a
+  // butterfly's rare-but-large tail is priced explicitly rather than smeared in.
+  let lossTerm, evMode2 = 'flat';
+  const lossProb = 1 - winP;
+  if (!hasMeasured && pMaxLoss != null && lossProb > 0 && risk > 0) {
+    const pTail = Math.min(pMaxLoss, lossProb);            // capped at total loss prob
+    const pPartial = Math.max(0, lossProb - pTail);
+    const partialLoss = risk * (lossCap * 0.6);            // partial losers give back less
+    lossTerm = pTail * risk + pPartial * partialLoss;      // absolute expected loss $
+    evMode2 = 'distribution';
+  } else {
+    lossTerm = lossProb * avgLossUsed;                     // original flat model
+  }
+
+  const ev = (avgWinUsed > 0 && winP > 0)
+    ? (winP * avgWinUsed) - lossTerm
     : 0;
 
   // Surface how EV was derived (for the UI to show "estimated" vs "measured").
   const evBasis = {
     mode: hasMeasured ? 'measured' : 'estimated',
+    lossModel: evMode2,
+    pMaxLoss: pMaxLoss != null ? +(pMaxLoss).toFixed(4) : null,
     historyTrades: histTrades,
     threshold: EV_HISTORY_THRESHOLD,
     winCap, lossCap,
@@ -1161,6 +1264,7 @@ export function calc0DTE(inputs) {
     legs, wingTxt, D, baseDistance, distMult,
     // Scoring
     setupScore, setup, criteria,
+    pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     // Kelly (Sharpe-adjusted)
     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
