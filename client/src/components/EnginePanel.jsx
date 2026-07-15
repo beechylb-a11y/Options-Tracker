@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
-import { UNDERLYING_LIST } from '../engine/data';
+import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
@@ -156,6 +156,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
   const effectiveStrat = r.legStrat || r.bestStrat;
+  const ticketNet = is0 ? i0.netCreditDebit : i45.netCreditDebit;
+  const cashType = resolveCashType(effectiveStrat, ticketNet); // 'credit' | 'debit' | 'varies'
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
   // ── Composite banner score ──
   // Blends setup quality (market conditions) with sizing metrics (trade edge)
@@ -545,6 +547,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</div>
               {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+              {(() => {
+                const net = parseFloat(ticketNet);
+                const hasNet = !isNaN(net) && net !== 0;
+                const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
+                const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
+                const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#8b949e';
+                const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(0)}` : '';
+                return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
+                  style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
+              })()}
             </div>
             <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
               {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
@@ -691,7 +703,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           <SectionLabel info="Net credit/debit from your broker order preview — positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width.">Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="text-xs text-text-muted block mb-1">{parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0 ? 'Net credit ($)' : parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) < 0 ? 'Net debit ($)' : 'Net credit/debit ($)'}</label>
+              <label className="text-xs text-text-muted block mb-1">{(() => {
+                const v = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit);
+                if (v > 0) return 'Net credit ($)';
+                if (v < 0) return 'Net debit ($)';
+                // No value yet — hint from the strategy's expected type.
+                return cashType === 'credit' ? 'Net credit ($) — expected'
+                  : cashType === 'debit' ? 'Net debit ($) — expected'
+                  : 'Net credit/debit ($)';
+              })()}</label>
               <input type="number" step="any"
                 value={is0?i0.netCreditDebit:i45.netCreditDebit}
                 onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
@@ -893,7 +913,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 return (<div key={i}
                   onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}
                   className={`flex items-center justify-between py-1.5 rounded px-1 -mx-1 transition-colors ${clickable ? 'cursor-pointer hover:bg-[#161b22]' : 'opacity-50'} ${isSelected ? 'bg-[#1f1a0d] ring-1 ring-[#9e6a03]' : ''}`}>
-                  <span className="text-sm text-white">{s.name}</span>
+                  <span className="text-sm text-white">{s.name}
+                    {(() => {
+                      const ct = resolveCashType(s.name, null);
+                      const t = ct === 'credit' ? 'CR' : ct === 'debit' ? 'DR' : 'CR/DR';
+                      const c = ct === 'credit' ? '#3fb950' : ct === 'debit' ? '#e3a008' : '#6e7681';
+                      return <span title={ct==='credit'?'Credit — collect premium':ct==='debit'?'Debit — pay premium':'Credit or debit'}
+                        style={{marginLeft:6,fontSize:9,fontWeight:700,color:c,letterSpacing:'0.03em'}}>{t}</span>;
+                    })()}
+                  </span>
                   <div className="flex items-center gap-2">
                     {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
                     <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>

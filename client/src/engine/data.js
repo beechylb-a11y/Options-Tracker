@@ -19,6 +19,39 @@ export const STRATS_45DTE = [
   'Iron butterfly', 'Standard butterfly'
 ];
 
+// Single source of truth for whether a strategy is a net CREDIT (you collect
+// premium) or net DEBIT (you pay). 'varies' = depends on how it's structured;
+// resolve from the ticket's net credit/debit at runtime.
+export const STRATEGY_CASH_TYPE = {
+  'Iron Condor - Normal':   'credit',
+  'Iron butterfly':         'credit',
+  'Bull put spread':        'credit',
+  'Bear call spread':       'credit',
+  'Credit spread':          'credit',
+  'Chicken condor':         'credit',
+  'Jade lizard':            'credit',
+  'Standard butterfly':     'debit',
+  'Asymmetric butterfly':   'debit',
+  'Long Condor - Reversed': 'debit',
+  'Bull call spread':       'debit',
+  'Bear put spread':        'debit',
+  'Calendar spread':        'debit',
+  'Diagonal spread':        'debit',
+  'Broken wing butterfly':  'varies', // credit or small debit by wing width
+  'Ratio spread':           'varies'  // front-ratio credit / back-ratio debit
+};
+
+// Resolve the effective type for a strategy given the ticket's net credit/debit.
+// netCreditDebit: positive = credit received, negative = debit paid, 0/blank = unknown.
+// Returns 'credit' | 'debit' | 'varies' (varies only when no net is available yet).
+export function resolveCashType(strategy, netCreditDebit) {
+  const base = STRATEGY_CASH_TYPE[strategy] || 'varies';
+  if (base !== 'varies') return base;
+  const n = parseFloat(netCreditDebit);
+  if (!isNaN(n) && n !== 0) return n > 0 ? 'credit' : 'debit';
+  return 'varies';
+}
+
 export const REGIME_CONDS = {
   'RM < 25%':          'Move from open < 25% EM — pinning not developed — trend can still build',
   'RM 25-50%':         'Move 25-50% EM — neutral zone — market has room, need additional signals',
