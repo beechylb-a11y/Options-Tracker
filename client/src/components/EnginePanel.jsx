@@ -16,6 +16,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [overrideStrat, setOverrideStrat] = useState(null);
   const [autoFilling, setAutoFilling] = useState(false);
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
+  const [loadingTws, setLoadingTws] = useState(false);
+  const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
+  const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
 
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
@@ -265,6 +268,53 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       alert('Fetch Greeks failed: ' + e.message);
     }
     setFetchingGreeks(false);
+  }
+
+  // Load an option structure from TWS open positions into the ticket, then
+  // chain the market-data auto-fill. Auto-loads if one structure, else picker.
+  async function handleLoadFromTWS() {
+    setLoadingTws(true);
+    setTwsStructures(null);
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setLoadingTws(false); return; }
+      const resp = await fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const d = await resp.json();
+      if (d.error) { alert('Bridge error: ' + d.error); setLoadingTws(false); return; }
+      const structs = d.structures || [];
+      if (structs.length === 0) {
+        alert('No open option positions found in TWS.');
+        setLoadingTws(false); return;
+      }
+      if (structs.length === 1) {
+        await applyTwsStructure(structs[0]);
+      } else {
+        // Several open structures — show a picker.
+        setTwsStructures(structs);
+      }
+    } catch (e) {
+      alert('Load from TWS failed: ' + e.message);
+    }
+    setLoadingTws(false);
+  }
+
+  // Apply a chosen structure to the ticket fields, then fetch market data.
+  async function applyTwsStructure(s) {
+    setTwsStructures(null);
+    const underlying = s.underlying || (is0 ? i0.underlying : i45.underlying);
+    // Net credit/debit per contract → dollars (×100). isCredit true = credit.
+    const netDollars = Math.round((s.netCreditDebit || 0) * 100);
+    const patch = {
+      underlying,
+      contracts: s.contracts || 1,
+      netCreditDebit: netDollars ? String(netDollars) : '',
+    };
+    if (is0) setI0(prev => ({ ...prev, ...patch }));
+    else setI45(prev => ({ ...prev, ...patch }));
+    // Stash the legs so Fetch Greeks / payoff can use exact strikes.
+    setTwsLegs(s.legs || []);
+    // Chain the market-data auto-fill so price/EM/VIX populate too.
+    await handleAutoFill();
   }
 
   async function handleAutoFill() {
@@ -547,13 +597,33 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Market Data */}
           <div className="flex items-center justify-between">
             <SectionLabel info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 and 15 with 30-min ago values for slope calculation. SPX uses SPY VWAP ×10 automatically.">Market data</SectionLabel>
-            {is0 && (
-              <button onClick={handleAutoFill} disabled={autoFilling}
-                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
-                {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
+            <div className="flex items-center gap-2">
+              <button onClick={handleLoadFromTWS} disabled={loadingTws}
+                title="Load an open option position from TWS into the ticket, then pull market data"
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:loadingTws?'#161b22':'transparent',color:loadingTws?'#8b949e':'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                {loadingTws ? 'Loading…' : '📥 Load position (TWS)'}
               </button>
-            )}
+              {is0 && (
+                <button onClick={handleAutoFill} disabled={autoFilling}
+                  style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                  {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
+                </button>
+              )}
+            </div>
           </div>
+          {twsStructures && twsStructures.length > 1 && (
+            <div style={{border:'1px solid #30363d',borderRadius:8,padding:10,marginBottom:8,background:'#0d1117'}}>
+              <div style={{fontSize:12,color:'#8b949e',marginBottom:6}}>Multiple open positions in TWS — pick one:</div>
+              {twsStructures.map((s, i) => (
+                <button key={i} onClick={() => applyTwsStructure(s)}
+                  style={{display:'block',width:'100%',textAlign:'left',padding:'6px 8px',marginBottom:4,borderRadius:6,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>
+                  <b>{s.underlying}</b> {s.shape} · {s.legCount} legs · strikes {s.strikes.join('/')} · {s.isCredit ? 'credit' : 'debit'} ${Math.abs(Math.round((s.netCreditDebit||0)*100))} · exp {s.expiry}
+                </button>
+              ))}
+              <button onClick={() => setTwsStructures(null)}
+                style={{marginTop:4,padding:'3px 8px',borderRadius:5,border:'none',background:'transparent',color:'#8b949e',fontSize:11,cursor:'pointer'}}>Cancel</button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2.5">
             <Sel label="Underlying" value={is0?i0.underlying:i45.underlying} onChange={v=>is0?set0('underlying',v):set45('underlying',v)} options={UNDERLYING_LIST}/>
             <Inp label="Price" value={is0?i0.price:i45.price} onChange={v=>is0?set0('price',v):set45('price',v)}/>

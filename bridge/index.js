@@ -662,6 +662,161 @@ app.get('/api/executions', async (req, res) => {
   }
 });
 
+// ── Current open option positions, grouped into multi-leg structures ──
+// GET /api/positions  → { structures: [...], raw: [...] }
+// Each structure groups legs by underlying+expiry so the Decision Engine can
+// pre-fill strikes/qty/right. Net price sign: negative = net debit paid,
+// positive = net credit received (per contract, ×100 for dollars).
+app.get('/api/positions', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+    const positions = [];
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        ib.removeListener(EventName.position, onPos);
+        ib.removeListener(EventName.positionEnd, onEnd);
+        try { ib.cancelPositions(); } catch (e) {}
+        resolve();
+      }, 8000);
+
+      function onPos(account, contract, pos, avgCost) {
+        // Only option legs with a live position
+        if (contract.secType !== 'OPT' || !pos) return;
+        positions.push({
+          account,
+          underlying: contract.symbol,
+          expiry: contract.lastTradeDateOrContractMonth || '',
+          strike: contract.strike || 0,
+          right: contract.right || '',      // C or P
+          qty: pos,                          // signed: + long, - short
+          avgCost: avgCost || 0,             // per contract incl. multiplier
+          multiplier: Number(contract.multiplier) || 100
+        });
+      }
+      function onEnd() {
+        clearTimeout(timeout);
+        ib.removeListener(EventName.position, onPos);
+        ib.removeListener(EventName.positionEnd, onEnd);
+        try { ib.cancelPositions(); } catch (e) {}
+        resolve();
+      }
+      ib.on(EventName.position, onPos);
+      ib.on(EventName.positionEnd, onEnd);
+      ib.reqPositions();
+    });
+
+    res.json(groupIntoStructures(positions));
+  } catch (err) {
+    console.log('[BRIDGE] positions error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Working orders not yet filled (so a ticket can pre-fill before the fill) ──
+// GET /api/open-orders → { structures: [...], raw: [...] }
+app.get('/api/open-orders', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+    const legs = [];
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        ib.removeListener(EventName.openOrder, onOrder);
+        ib.removeListener(EventName.openOrderEnd, onEnd);
+        resolve();
+      }, 8000);
+
+      function onOrder(orderId, contract, order, orderState) {
+        if (contract.secType !== 'OPT') return;
+        // BUY → +qty (long leg), SELL → -qty (short leg)
+        const signedQty = (order.action === 'SELL' ? -1 : 1) * (order.totalQuantity || 0);
+        legs.push({
+          orderId,
+          underlying: contract.symbol,
+          expiry: contract.lastTradeDateOrContractMonth || '',
+          strike: contract.strike || 0,
+          right: contract.right || '',
+          qty: signedQty,
+          avgCost: order.lmtPrice || 0,     // limit price for a working order
+          multiplier: Number(contract.multiplier) || 100,
+          status: orderState?.status || '',
+          lmtPrice: order.lmtPrice || 0
+        });
+      }
+      function onEnd() {
+        clearTimeout(timeout);
+        ib.removeListener(EventName.openOrder, onOrder);
+        ib.removeListener(EventName.openOrderEnd, onEnd);
+        resolve();
+      }
+      ib.on(EventName.openOrder, onOrder);
+      ib.on(EventName.openOrderEnd, onEnd);
+      ib.reqAllOpenOrders();
+    });
+
+    res.json(groupIntoStructures(legs));
+  } catch (err) {
+    console.log('[BRIDGE] open-orders error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Group option legs by underlying+expiry into structures the engine can read.
+// Infers a strategy shape and a net price (credit +, debit −) per contract.
+function groupIntoStructures(legs) {
+  const groups = {};
+  legs.forEach(l => {
+    const key = `${l.underlying}|${l.expiry}`;
+    if (!groups[key]) groups[key] = { underlying: l.underlying, expiry: l.expiry, legs: [] };
+    groups[key].legs.push(l);
+  });
+
+  const structures = Object.values(groups).map(g => {
+    // Sort legs by strike for readability
+    const sorted = [...g.legs].sort((a, b) => a.strike - b.strike);
+    const calls = sorted.filter(l => l.right === 'C').length;
+    const puts = sorted.filter(l => l.right === 'P').length;
+    const shorts = sorted.filter(l => l.qty < 0).length;
+    const longs = sorted.filter(l => l.qty > 0).length;
+    const n = sorted.length;
+
+    // Net cash per 1-lot of the structure: sum(qty * avgCost). avgCost from
+    // reqPositions already includes the multiplier and sign of the position,
+    // but for orders it's a per-contract limit price — normalise to per-share.
+    // Net debit (you paid) shows negative; net credit (you received) positive.
+    let netPerContract = 0;
+    sorted.forEach(l => {
+      const perShare = l.avgCost > 100 ? l.avgCost / l.multiplier : l.avgCost;
+      netPerContract += -(Math.sign(l.qty)) * perShare * Math.abs(l.qty);
+    });
+
+    // Rough strategy shape inference (for the banner / ticket label).
+    let shape = 'Custom';
+    if (n === 4 && calls === 2 && puts === 2 && shorts === 2 && longs === 2) shape = 'Iron condor / Iron fly';
+    else if (n === 4 && shorts === 2 && longs === 2 && (calls === 4 || puts === 4)) shape = 'Butterfly';
+    else if (n === 3 && shorts === 1 && longs === 2) shape = 'Broken wing / Butterfly';
+    else if (n === 2 && shorts === 1 && longs === 1) shape = (calls === 2 ? 'Call spread' : puts === 2 ? 'Put spread' : 'Spread');
+
+    return {
+      underlying: g.underlying,
+      expiry: g.expiry,
+      shape,
+      legCount: n,
+      legs: sorted,
+      strikes: sorted.map(l => l.strike),
+      // Suggested ticket fields
+      contracts: Math.min(...sorted.map(l => Math.abs(l.qty))) || 1,
+      netCreditDebit: Math.round(netPerContract * 100) / 100, // + credit, − debit
+      isCredit: netPerContract >= 0
+    };
+  });
+
+  return { structures, raw: legs, count: legs.length };
+}
+
 // Disconnect
 app.post('/api/disconnect', (req, res) => {
   if (ib) { ib.disconnect(); connected = false; }
