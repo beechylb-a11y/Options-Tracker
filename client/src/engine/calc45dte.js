@@ -124,7 +124,12 @@ export function calc45DTE(inputs) {
     const strikes = legs.map(l => l.strike);
     const lowerWing = Math.min(...strikes);
     const upperWing = Math.max(...strikes);
-    const sigma = price * (iv / 100) * Math.sqrt(dte / 365);
+    // Horizon = time actually HELD, not full expiry. 45DTE trades are managed to
+    // a 21 DTE exit, so P(max loss) uses the days-to-exit horizon (dte − 21),
+    // not the full dte. Using full expiry overstated tail risk ~2x because it
+    // priced 24 days of movement the trade is never exposed to.
+    const holdDays = Math.max(dte - 21, 1);
+    const sigma = price * (iv / 100) * Math.sqrt(holdDays / 365);
     if (sigma > 0) {
       pMaxLossLow = normCdf((lowerWing - price) / sigma);
       pMaxLossHigh = 1 - normCdf((upperWing - price) / sigma);
@@ -203,20 +208,6 @@ export function calc45DTE(inputs) {
     }
   }
 
-  // Kelly
-  const halfRisk = risk/2;
-  const wlRatio = halfRisk>0?win/halfRisk:0;
-  const kelly = wlRatio>0?Math.max(0,popFrac-(1-popFrac)/wlRatio):0;
-  const bePop = halfRisk>0?halfRisk/(win+halfRisk):0;
-  const kellyDollar = bankroll>0?Math.min(kelly*bankroll,bankroll*0.30):0;
-  const popMargin = bePop>0&&popFrac>0?popFrac/bePop:0;
-  const riskCap = maxOpen>0?Math.min(kelly*bankroll,maxLoss,maxOpen):Math.min(kelly*bankroll,maxLoss);
-  const fullC = risk>0?Math.max(1,Math.floor(riskCap/risk)):1;
-  const halfC = Math.max(1,Math.floor(fullC/2));
-  const contracts = setup==='B Setup'?halfC:fullC;
-  const maxRisk = contracts*risk;
-  const kellyOverRisk = risk>0&&kellyDollar>0&&risk>kellyDollar;
-
   // ── EV calculation (tiered: estimated capture-fractions → measured history) ──
   // Same model as 0DTE. avgWin/avgLoss come from per-strategy capture fractions
   // until >= 50 closed trades exist for the strategy, then from realized stats.
@@ -262,6 +253,28 @@ export function calc45DTE(inputs) {
     winCap: evWinCap, lossCap: evLossCap,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk
   };
+
+  // ── Kelly (EXPECTED-LOSS, Jul 2026) — same rework as 0DTE ──
+  // W/L ratio uses expected win vs expected loss (driven by P(max loss)) instead
+  // of max win over half-max-loss. Varies naturally per strategy. Contracts are
+  // still capped at TRUE max loss (risk) vs maxLoss/maxOpen for solvency.
+  const lossProbK = 1 - winP;
+  const expectedLossPerLoss = (lossProbK > 0 && lossTerm45 > 0)
+    ? lossTerm45 / lossProbK
+    : (risk / 2);
+  const expectedWin = avgWinUsed > 0 ? avgWinUsed : win;
+  const wlRatio = expectedLossPerLoss > 0 ? expectedWin / expectedLossPerLoss : 0;
+  const kelly = wlRatio > 0 ? Math.max(0, winP - (1 - winP) / wlRatio) : 0;
+  const bePop = (win + risk) > 0 ? risk / (win + risk) : 0;
+  const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
+  const popMargin = bePop > 0 && popFrac > 0 ? popFrac / bePop : 0;
+  // SAFETY RAIL: total position risk at true max loss never exceeds limits.
+  const riskCap = maxOpen > 0 ? Math.min(kelly * bankroll, maxLoss, maxOpen) : Math.min(kelly * bankroll, maxLoss);
+  const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
+  const halfC = Math.max(1, Math.floor(fullC / 2));
+  const contracts = setup === 'B Setup' ? halfC : fullC;
+  const maxRisk = contracts * risk;
+  const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
 
   // Greeks + Directional Edge
   let greeks = null;

@@ -1029,10 +1029,25 @@ export function calc0DTE(inputs) {
   // ═══════════════════════════════════════
   //  SHARPE-ADJUSTED KELLY SIZING
   // ═══════════════════════════════════════
+  // EXPECTED-LOSS Kelly (Jul 2026): the old formula used win / (risk/2) — max
+  // profit over a crude half-max-loss fudge, which over-penalised structures
+  // whose max loss is large but improbable (butterflies, far-winged condors).
+  // Now W/L ratio uses EXPECTED win vs EXPECTED loss, where expected loss is
+  // driven by P(max loss). This varies naturally per strategy (no hand-tuning)
+  // because P(max loss) and capture fractions already differ per structure.
+  // Expected loss per LOSING trade = lossTerm / lossProb (falls back to the old
+  // half-risk when P(max loss) / EV inputs aren't available).
+  const lossProbK = 1 - winP;
+  const expectedLossPerLoss = (lossProbK > 0 && lossTerm > 0)
+    ? lossTerm / lossProbK           // avg $ lost on a losing trade (tail-weighted)
+    : (risk / 2);                    // fallback: old half-risk behaviour
+  const expectedWin = avgWinUsed > 0 ? avgWinUsed : win;
+  const wlRatio = expectedLossPerLoss > 0 ? expectedWin / expectedLossPerLoss : 0;
+  // Kelly on realised win probability (winP already blends POP → realised win%).
+  const rawKelly = wlRatio > 0 ? Math.max(0, winP - (1 - winP) / wlRatio) : 0;
+  // Breakeven POP / margin still reference the true structure economics.
   const halfRisk = risk / 2;
-  const wlRatio = halfRisk > 0 ? win / halfRisk : 0;
-  const rawKelly = wlRatio > 0 ? Math.max(0, popFrac - (1 - popFrac) / wlRatio) : 0;
-  const bePop = halfRisk > 0 ? halfRisk / (win + halfRisk) : 0;
+  const bePop = (win + risk) > 0 ? risk / (win + risk) : 0;
   const popMargin = bePop > 0 && popFrac > 0 ? popFrac / bePop : 0;
 
   // Volatility factor (from VIX1D)
@@ -1059,24 +1074,28 @@ export function calc0DTE(inputs) {
   else if (sharpeProxy > 0) sharpeFactor = 0.35;     // weak edge
   else sharpeFactor = 0.25;                           // negative EV
 
-  // Strategy-specific sizing modifier
-  // Accounts for tail risk, win frequency, and gamma exposure per strategy type
+  // Strategy-specific sizing modifier — SHRUNK (Jul 2026).
+  // Tail risk is now captured in the Kelly W/L ratio via expected loss (P(max
+  // loss)), so this modifier no longer needs to penalise tails — doing so would
+  // double-count. It now only handles RESIDUAL concerns Kelly doesn't see:
+  // gamma/pin risk, fill quality, and behavioural discipline. Values moved
+  // toward 1.0; the steepest (reversed condor) kept lowest for its low POP.
   let stratModifier = 1.0;
   let stratModReason = 'Standard';
   if (legStrat.includes('Iron Condor') || legStrat.includes('Chicken')) {
-    stratModifier = 0.85; stratModReason = 'Credit condor — tail risk';
+    stratModifier = 0.95; stratModReason = 'Credit condor — gamma near shorts';
   } else if (legStrat === 'Iron butterfly') {
-    stratModifier = 0.90; stratModReason = 'Iron fly — steep loss slopes';
+    stratModifier = 0.95; stratModReason = 'Iron fly — pin/gamma risk';
   } else if (legStrat === 'Standard butterfly' || legStrat === 'Asymmetric butterfly') {
-    stratModifier = 1.00; stratModReason = 'Butterfly — capped debit risk';
+    stratModifier = 1.00; stratModReason = 'Butterfly — capped debit';
   } else if (legStrat === 'Broken wing butterfly') {
-    stratModifier = 0.80; stratModReason = 'BWB — asymmetric tail risk';
+    stratModifier = 0.92; stratModReason = 'BWB — fill/gamma';
   } else if (legStrat === 'Long Condor - Reversed') {
-    stratModifier = 0.70; stratModReason = 'Reversed condor — low POP, preserve capital';
+    stratModifier = 0.80; stratModReason = 'Reversed condor — low POP, preserve capital';
   } else if (legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat.includes('Credit')) {
-    stratModifier = 0.85; stratModReason = 'Credit spread — tail risk';
+    stratModifier = 0.95; stratModReason = 'Credit spread — gamma near short';
   } else if (legStrat.includes('Bull call') || legStrat.includes('Bear put') || legStrat.includes('Debit')) {
-    stratModifier = 0.95; stratModReason = 'Debit spread — capped risk';
+    stratModifier = 1.00; stratModReason = 'Debit spread — capped risk';
   }
 
   // Adjusted Kelly = raw Kelly × vol factor × Sharpe factor × strategy modifier
@@ -1084,6 +1103,10 @@ export function calc0DTE(inputs) {
   const kelly = adjustedKelly;
   const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
   const kellyRisk = kelly * bankroll;
+  // SAFETY RAIL: contracts are sized so total position risk at TRUE max loss
+  // (contracts × risk, where risk = full max loss per contract) never exceeds
+  // Kelly $, maxLoss, or maxOpen. Expected-loss Kelly can size larger, but this
+  // cap guarantees solvency on the rare day price blows through a wing.
   const riskCap = maxOpen > 0 ? Math.min(kellyRisk, maxLoss, maxOpen) : Math.min(kellyRisk, maxLoss);
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
   const halfC = Math.max(1, Math.floor(fullC / 2));
