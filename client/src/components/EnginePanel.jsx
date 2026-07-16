@@ -852,15 +852,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Inp label="Delta" value={i0.delta} onChange={v=>set0('delta',v)}/>
               <Inp label="Gamma" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
               <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
-              <Inp label="Lower wing Δ" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
-              <Inp label="Upper wing Δ" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
+              <Inp label="Lower wing Δ (long put)" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
+              <Inp label="Upper wing Δ (long call)" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
             </> : <>
               <Inp label="Theta ($)" value={i45.theta} onChange={v=>set45('theta',v)}/>
               <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
               <Inp label="Delta" value={i45.delta} onChange={v=>set45('delta',v)}/>
               {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
-              <Inp label="Lower wing Δ" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
-              <Inp label="Upper wing Δ" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
+              <Inp label="Lower wing Δ (long put)" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
+              <Inp label="Upper wing Δ (long call)" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
             </>}
           </div>
           {r.pMaxLoss != null && (

@@ -138,7 +138,9 @@ export function calc45DTE(inputs) {
 
       // Delta-proxy cross-check (embeds real IV + skew)
       if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
-        let dLow = wingDeltas.lowerAbsDelta != null ? (1 - Math.abs(wingDeltas.lowerAbsDelta)) : (pMaxLossLow || 0);
+        // Lower wing = PUT (|delta| ≈ P below it). Upper wing = CALL (|delta| ≈
+        // P above it). Both tails use |wing delta| directly — no 1−delta.
+        let dLow = wingDeltas.lowerAbsDelta != null ? Math.abs(wingDeltas.lowerAbsDelta) : (pMaxLossLow || 0);
         let dHigh = wingDeltas.upperAbsDelta != null ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
         if (legStrat === 'Bull call spread' || legStrat === 'Jade lizard') dHigh = 0;
         if (legStrat === 'Bear put spread') dLow = 0;

@@ -442,8 +442,11 @@ export function calc0DTE(inputs) {
         // long put wing directly); P(above upper wing) ≈ |delta of upper call|.
         // Only computed when wingDeltas provided: { lowerAbsDelta, upperAbsDelta }.
         if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
+          // The lower wing is a PUT (its delta is negative; |delta| ≈ P below it
+          // directly). The upper wing is a CALL (|delta| ≈ P above it directly).
+          // So BOTH tails use |wing delta| as-is — do NOT do 1−delta.
           const lowTail = wingDeltas.lowerAbsDelta != null
-            ? (1 - Math.abs(wingDeltas.lowerAbsDelta)) : (pMaxLossLow || 0);
+            ? Math.abs(wingDeltas.lowerAbsDelta) : (pMaxLossLow || 0);
           const highTail = wingDeltas.upperAbsDelta != null
             ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
           // Respect one-sided-risk strategies
