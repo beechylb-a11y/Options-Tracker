@@ -864,20 +864,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             </>}
           </div>
           {r.pMaxLoss != null && (
-            <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:11,lineHeight:1.5,color:'#8b949e'}}>
-              <span style={{color:'#c9d1d9',fontWeight:600}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
-              <span style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:9,fontWeight:600,
+            <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
+              <span style={{color:'#fff',fontWeight:700,fontSize:14}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
+              <span style={{marginLeft:8,padding:'2px 7px',borderRadius:4,fontSize:10,fontWeight:600,
                 background: r.pMaxLossSource==='blend'?'#0d2818':r.pMaxLossSource==='delta'?'#1f1a0d':'#161b22',
                 color: r.pMaxLossSource==='blend'?'#3fb950':r.pMaxLossSource==='delta'?'#d29922':'#8b949e'}}>
                 {r.pMaxLossSource==='blend'?'MODEL + DELTA':r.pMaxLossSource==='delta'?'DELTA (skew)':'MODEL (flat vol)'}
               </span>
-              <div style={{marginTop:4}}>
+              <div style={{marginTop:6,color:'#e6edf3'}}>
                 {r.pMaxLossModel!=null && <>Model {(r.pMaxLossModel*100).toFixed(1)}% ({is0?'VIX1D':`${i45.dte||45}d IV`}, flat)</>}
                 {r.pMaxLossDelta!=null && <> · Delta {(r.pMaxLossDelta*100).toFixed(1)}% (real IV + skew)</>}
                 {r.pMaxLossDelta==null && <> · enter wing Δ above for skew-aware cross-check</>}
               </div>
               {r.pMaxLossLow!=null && r.pMaxLossHigh!=null && (
-                <div style={{marginTop:2,color:'#6e7681'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
+                <div style={{marginTop:3,color:'#8b949e'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
               )}
             </div>
           )}
@@ -987,7 +987,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
                   + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
               {r.evBasis && (
-                <div style={{fontSize:'10px',lineHeight:'1.4',color:'#8b949e',margin:'2px 0 10px',paddingLeft:'2px',whiteSpace:'normal'}}>
+                <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
@@ -1316,12 +1316,12 @@ function ProfitScale({ netCreditDebit, isCredit }) {
               border: `1px solid ${highlight ? '#238636' : '#21262d'}`,
               borderRadius: 6, padding: '6px 4px', textAlign: 'center'
             }}>
-              <div style={{fontSize:10,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
-              <div style={{fontSize:12,fontWeight:700,color:'#e6edf3',fontFamily:'JetBrains Mono,monospace',marginTop:2}}>
+              <div style={{fontSize:12,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
+              <div style={{fontSize:16,fontWeight:700,color:'#fff',fontFamily:'JetBrains Mono,monospace',marginTop:3}}>
                 ${closePrice.toFixed(2)}
               </div>
-              <div style={{fontSize:8,color:'#8b949e',marginTop:1}}>{closeType}</div>
-              <div style={{fontSize:8,color: highlight ? '#3fb950' : '#8b949e',marginTop:1}}>+${profitDollars.toFixed(0)}</div>
+              <div style={{fontSize:10,color:'#8b949e',marginTop:2}}>{closeType}</div>
+              <div style={{fontSize:12,fontWeight:600,color: highlight ? '#3fb950' : '#c9d1d9',marginTop:2}}>+${profitDollars.toFixed(0)}</div>
             </div>
           );
         })}
