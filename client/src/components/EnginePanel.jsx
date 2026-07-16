@@ -20,57 +20,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
 
-  // ── Manual open ticket (paper / non-TWS) ──
-  // Mirrors what a TWS position-load would populate, so a paper open ticket
-  // captures the same structure the close side reconciles against. Each leg:
-  // strike, right (P/C), action (BTO/STO), and per-contract fill price.
-  const blankLeg = () => ({ strike:'', right:'P', action:'STO', price:'' });
-  const [openLegs, setOpenLegs] = useState([
-    { strike:'', right:'P', action:'BTO', price:'' }, // long put wing
-    { strike:'', right:'P', action:'STO', price:'' }, // short put
-    { strike:'', right:'C', action:'STO', price:'' }, // short call
-    { strike:'', right:'C', action:'BTO', price:'' }, // long call wing
-  ]);
-  const [manualTicketOpen, setManualTicketOpen] = useState(false); // toggle for non-paper accounts
-
-  // Detect paper/manual accounts by id or name containing "paper".
-  const acctStr = `${accountConfig?.id||''} ${accountConfig?.name||''}`.toLowerCase();
-  const isPaperAccount = acctStr.includes('paper');
-  // Auto-show for paper; toggle otherwise.
-  const showManualTicket = isPaperAccount || manualTicketOpen;
-
-  // Net credit/debit auto-summed from legs: STO adds premium (credit),
-  // BTO subtracts (debit). Per-contract net → dollars via ×100.
-  const legsNetPerContract = openLegs.reduce((sum, l) => {
-    const p = parseFloat(l.price);
-    if (isNaN(p)) return sum;
-    return sum + (l.action === 'STO' ? p : -p);
-  }, 0);
-  const legsHavePrices = openLegs.some(l => l.price !== '' && !isNaN(parseFloat(l.price)));
-  const legsNetDollars = Math.round(legsNetPerContract * 100);
-
-  const setLeg = (idx, key, val) => setOpenLegs(prev =>
-    prev.map((l, i) => i === idx ? { ...l, [key]: val } : l));
-
-  // Push the auto-summed net into the sizing field (with override still possible).
-  function applyLegsNet() {
-    const v = legsHavePrices ? String(legsNetDollars) : '';
-    if (is0) set0('netCreditDebit', v); else set45('netCreditDebit', v);
-  }
-  // Keep the sizing net in sync when leg prices change (user can still override
-  // by typing directly in the Net credit/debit box afterwards).
-  useEffect(() => {
-    if (!showManualTicket) return;
-    if (!legsHavePrices) return;
-    const target = String(legsNetDollars);
-    if (is0) { if (i0.netCreditDebit !== target) set0('netCreditDebit', target); }
-    else { if (i45.netCreditDebit !== target) set45('netCreditDebit', target); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legsNetDollars, legsHavePrices, showManualTicket]);
-
-  // Manual open-ticket strikes, for logging (falls back to engine legs if blank).
-  const manualStrikes = openLegs.map(l => l.strike).filter(s => s !== '' && !isNaN(parseFloat(s)));
-
   const [i0, setI0] = useState({
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
@@ -574,12 +523,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
-      setupGrade:r.setup, regime:r.regime,
-      // Prefer the manually-entered open-ticket strikes when provided (paper /
-      // non-TWS); otherwise fall back to the engine-computed legs.
-      wingStrikes: (showManualTicket && manualStrikes.length)
-        ? manualStrikes.join(' / ')
-        : r.legs.map(l=>l.strike).join(' / '),
+      setupGrade:r.setup, regime:r.regime, wingStrikes:r.legs.map(l=>l.strike).join(' / '),
       marketBehaviour:r.behaviour,
       notes: [
         isOverride ? `Override: engine=${r.bestStrat}, selected=${effectiveStrat}` : '',
@@ -587,13 +531,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         `Kelly ${(r.adjustedKelly*100).toFixed(1)}% | Vol ${r.volFactor?.toFixed(2)} | Sharpe ${r.sharpeFactor?.toFixed(2)} | Strat ${r.stratModifier?.toFixed(2)}`,
         ncd > 0 ? `Credit $${ncd.toFixed(2)}` : ncd < 0 ? `Debit $${Math.abs(ncd).toFixed(2)}` : '',
         `POP ${inp.pop||'--'}% | Win $${inp.win||'--'} | Risk $${inp.risk||'--'}`,
-        // Open-ticket legs: manual fills if entered, else engine legs.
-        (showManualTicket && manualStrikes.length)
-          ? 'Open fills: ' + openLegs
-              .filter(l => l.strike !== '')
-              .map(l => `${l.strike}${l.right} ${l.action}${l.price!==''?` @${parseFloat(l.price).toFixed(2)}`:''}`)
-              .join(' | ')
-          : r.legs.map(l => `${l.strike} ${l.label}`).join(' | ')
+        r.legs.map(l => `${l.strike} ${l.label}`).join(' | ')
       ].filter(Boolean).join('\n'),
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
@@ -765,80 +703,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 <Inp label={i0.underlying + ' Open'} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
             </>
-          )}
-
-          {/* ── Manual open ticket (paper / non-TWS) ── */}
-          <div className="flex items-center justify-between mt-4">
-            <SectionLabel info="Manual open ticket for paper / non-TWS accounts. Enter each leg exactly as filled — strike, Put/Call, Buy-to-open or Sell-to-open, and the per-contract fill price. Net credit/debit is auto-summed (STO adds, BTO subtracts) and flows into Trade sizing below; you can still override it there. These strikes and fills are stored on the open ticket so the close ticket reconciles against the same structure.">Open ticket{isPaperAccount ? ' (paper)' : ''}</SectionLabel>
-            {!isPaperAccount && (
-              <button onClick={() => setManualTicketOpen(o => !o)}
-                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:'transparent',color:manualTicketOpen?'#3fb950':'#8b949e',fontSize:11,fontWeight:600,cursor:'pointer'}}>
-                {manualTicketOpen ? '− Hide manual ticket' : '+ Manual ticket'}
-              </button>
-            )}
-          </div>
-          {showManualTicket && (
-            <div style={{border:'1px solid #30363d',borderRadius:8,padding:10,marginBottom:8,background:'#0d1117'}}>
-              {isPaperAccount && (
-                <div style={{fontSize:11,color:'#d29922',marginBottom:8,lineHeight:1.5}}>
-                  Paper / non-TWS account — enter the open fills as they appeared on your broker ticket. Net credit/debit auto-fills the sizing field below.
-                </div>
-              )}
-              {/* Column headers */}
-              <div style={{display:'grid',gridTemplateColumns:'20px 1.2fr 0.9fr 1fr 1fr',gap:6,marginBottom:4}}>
-                <span></span>
-                <span style={{fontSize:9,color:'#8b949e',textTransform:'uppercase',letterSpacing:0.5}}>Strike</span>
-                <span style={{fontSize:9,color:'#8b949e',textTransform:'uppercase',letterSpacing:0.5}}>P/C</span>
-                <span style={{fontSize:9,color:'#8b949e',textTransform:'uppercase',letterSpacing:0.5}}>Action</span>
-                <span style={{fontSize:9,color:'#8b949e',textTransform:'uppercase',letterSpacing:0.5}}>Fill price</span>
-              </div>
-              {openLegs.map((leg, idx) => (
-                <div key={idx} style={{display:'grid',gridTemplateColumns:'20px 1.2fr 0.9fr 1fr 1fr',gap:6,marginBottom:5,alignItems:'center'}}>
-                  <span style={{fontSize:11,color:'#484f58',textAlign:'center'}}>{idx+1}</span>
-                  <input type="number" step="any" value={leg.strike} placeholder="—"
-                    onChange={e=>setLeg(idx,'strike',e.target.value)}
-                    style={{width:'100%',padding:'5px 8px',borderRadius:6,border:'1px solid #30363d',background:'#161b22',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace',outline:'none'}}/>
-                  <select value={leg.right} onChange={e=>setLeg(idx,'right',e.target.value)}
-                    style={{width:'100%',padding:'5px 4px',borderRadius:6,border:'1px solid #30363d',background:'#161b22',color:'#e6edf3',fontSize:12,outline:'none'}}>
-                    <option value="P">P</option>
-                    <option value="C">C</option>
-                  </select>
-                  <select value={leg.action} onChange={e=>setLeg(idx,'action',e.target.value)}
-                    style={{width:'100%',padding:'5px 4px',borderRadius:6,border:'1px solid #30363d',fontSize:12,outline:'none',
-                      background: leg.action==='STO'?'#0d2818':'#2d1a0d',
-                      color: leg.action==='STO'?'#3fb950':'#e3b341'}}>
-                    <option value="STO">STO</option>
-                    <option value="BTO">BTO</option>
-                  </select>
-                  <input type="number" step="any" value={leg.price} placeholder="—"
-                    onChange={e=>setLeg(idx,'price',e.target.value)}
-                    style={{width:'100%',padding:'5px 8px',borderRadius:6,border:'1px solid #30363d',background:'#161b22',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace',outline:'none'}}/>
-                </div>
-              ))}
-              {/* Auto-summed net + actions */}
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:8,paddingTop:8,borderTop:'1px solid #21262d'}}>
-                <div style={{fontSize:11,color:'#8b949e'}}>
-                  Net from legs:{' '}
-                  {legsHavePrices ? (
-                    <span style={{fontWeight:700,fontFamily:'JetBrains Mono,monospace',color:legsNetDollars>0?'#3fb950':legsNetDollars<0?'#f85149':'#c9d1d9'}}>
-                      {legsNetDollars>0?'+':''}{legsNetDollars} {legsNetDollars>0?'credit':legsNetDollars<0?'debit':''}
-                    </span>
-                  ) : <span style={{color:'#484f58'}}>— enter fills</span>}
-                </div>
-                <div style={{display:'flex',gap:6}}>
-                  <button onClick={applyLegsNet} disabled={!legsHavePrices}
-                    title="Push the auto-summed net into the Trade sizing field"
-                    style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:'transparent',color:legsHavePrices?'#2f81f7':'#484f58',fontSize:11,fontWeight:600,cursor:legsHavePrices?'pointer':'default'}}>
-                    ↧ Use as net
-                  </button>
-                  <button onClick={()=>setOpenLegs([blankLeg(),blankLeg(),blankLeg(),blankLeg()].map((l,i)=>({...l,right:i<2?'P':'C',action:(i===0||i===3)?'BTO':'STO'})))}
-                    title="Clear all legs"
-                    style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:11,cursor:'pointer'}}>
-                    Clear
-                  </button>
-                </div>
-              </div>
-            </div>
           )}
 
           {/* Sizing */}
@@ -1117,17 +981,30 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 sublabel={r.popMargin>=1.5?'Strong':r.popMargin>=1.0?'Breakeven+':'Below breakeven'} />
               <SpeedTape label="EV / trade" value={Math.max(Math.min(r.ev||0, 500), -200)} min={-200} max={500}
                 zones={[{to:-50,color:'#f85149'},{to:0,color:'#d29922'},{to:100,color:'#e3b341'},{to:500,color:'#3fb950'}]}
-                display={r.ev?`$${r.ev.toFixed(0)}`:'--'} />
+                display={r.ev?`$${r.ev.toFixed(0)}`:'--'}
+                sublabel={(r.evBasis?.mode==='measured'
+                  ? `Measured · ${r.evBasis.historyTrades} trades`
+                  : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
+                  + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
               {r.evBasis && (
                 <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
-                  {(r.evBasis.mode==='measured'
-                    ? `Measured · ${r.evBasis.historyTrades} trades`
-                    : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
-                    + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')}
-                  {' — '}
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
+                  {r.evBasis.pMaxLoss != null && (
+                    <div style={{marginTop:4,color:'#c9d1d9'}}>
+                      P(max loss) used in sizing: <b style={{color:'#fff'}}>{(r.evBasis.pMaxLoss*100).toFixed(1)}%</b>
+                      <span style={{marginLeft:5,fontSize:10,fontWeight:600,color:r.evBasis.pMaxLossSource==='blend'?'#3fb950':r.evBasis.pMaxLossSource==='delta'?'#d29922':'#8b949e'}}>
+                        ({r.evBasis.pMaxLossSource==='blend'?'model+delta':r.evBasis.pMaxLossSource==='delta'?'delta/skew':'model'})
+                      </span>
+                    </div>
+                  )}
+                  {r.evBasis.winBreakeven != null && (
+                    <div style={{marginTop:2,color:'#c9d1d9'}}>
+                      Win needed for EV = 0: <b style={{color: r.ev>=0 ? '#3fb950' : '#e3a008'}}>${r.evBasis.winBreakeven}</b>
+                      {r.ev < 0 && r.evBasis.maxWin>0 && <span style={{color:'#8b949e',fontSize:11}}> (currently ${r.evBasis.maxWin.toFixed(0)} max — need +${Math.max(0, r.evBasis.winBreakeven - r.evBasis.maxWin)})</span>}
+                    </div>
+                  )}
                 </div>
               )}
               <SpeedTape label="W/L ratio" value={Math.min(r.wlRatio||0, 3)} min={0} max={3}
@@ -1546,7 +1423,10 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-text-muted">{label}</span>
-        <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
+          {sublabel && <span className="text-[10px] text-text-faint">{sublabel}</span>}
+        </div>
       </div>
       <div style={{position:'relative',height:8,borderRadius:4,overflow:'hidden',background:'#21262d'}}>
         {/* Zone gradient */}
@@ -1570,10 +1450,6 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
         {/* Marker */}
         <div style={{position:'absolute',top:-1,left:`calc(${pct}% - 1px)`,width:3,height:10,borderRadius:1,background:'#fff',boxShadow:'0 0 4px rgba(0,0,0,0.5)'}} />
       </div>
-      {/* Explanation line — matches the EV / trade explanation line styling */}
-      {sublabel && (
-        <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 0',paddingLeft:'2px',whiteSpace:'normal'}}>{sublabel}</div>
-      )}
     </div>
   );
 }

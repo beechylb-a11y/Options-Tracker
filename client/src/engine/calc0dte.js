@@ -1014,11 +1014,19 @@ export function calc0DTE(inputs) {
     ? (winP * avgWinUsed) - lossTerm
     : 0;
 
+  // Win amount ($ max profit) needed to reach EV = 0, holding winP, loss and
+  // capture fraction fixed. EV=0 when winP × (winBE × winCap) = lossTerm.
+  const winBreakeven = (winP > 0 && winCap > 0)
+    ? lossTerm / (winP * winCap)
+    : null;
+
   // Surface how EV was derived (for the UI to show "estimated" vs "measured").
   const evBasis = {
     mode: hasMeasured ? 'measured' : 'estimated',
     lossModel: evMode2,
     pMaxLoss: pMaxLoss != null ? +(pMaxLoss).toFixed(4) : null,
+    pMaxLossSource: pMaxLossSource,
+    winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades,
     threshold: EV_HISTORY_THRESHOLD,
     winCap, lossCap,

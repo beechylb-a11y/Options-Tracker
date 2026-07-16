@@ -245,10 +245,14 @@ export function calc45DTE(inputs) {
   }
   const ev = (avgWinUsed > 0 && winP > 0)
     ? (winP * avgWinUsed) - lossTerm45 : 0;
+  const winBreakeven = (winP > 0 && evWinCap > 0)
+    ? lossTerm45 / (winP * evWinCap) : null;
   const evBasis = {
     mode: hasMeasured ? 'measured' : 'estimated',
     lossModel: lossModel45,
     pMaxLoss: pMaxLoss != null ? +(pMaxLoss).toFixed(4) : null,
+    pMaxLossSource: pMaxLossSource,
+    winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
     winCap: evWinCap, lossCap: evLossCap,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk
