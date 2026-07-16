@@ -1117,13 +1117,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 sublabel={r.popMargin>=1.5?'Strong':r.popMargin>=1.0?'Breakeven+':'Below breakeven'} />
               <SpeedTape label="EV / trade" value={Math.max(Math.min(r.ev||0, 500), -200)} min={-200} max={500}
                 zones={[{to:-50,color:'#f85149'},{to:0,color:'#d29922'},{to:100,color:'#e3b341'},{to:500,color:'#3fb950'}]}
-                display={r.ev?`$${r.ev.toFixed(0)}`:'--'}
-                sublabel={(r.evBasis?.mode==='measured'
-                  ? `Measured · ${r.evBasis.historyTrades} trades`
-                  : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
-                  + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
+                display={r.ev?`$${r.ev.toFixed(0)}`:'--'} />
               {r.evBasis && (
                 <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
+                  {(r.evBasis.mode==='measured'
+                    ? `Measured · ${r.evBasis.historyTrades} trades`
+                    : `Est. · ${r.evBasis?.historyTrades||0}/${r.evBasis?.threshold||50}`)
+                    + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')}
+                  {' — '}
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
@@ -1545,10 +1546,7 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-text-muted">{label}</span>
-        <div className="flex items-center gap-2">
-          <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
-          {sublabel && <span className="text-[10px] text-text-faint">{sublabel}</span>}
-        </div>
+        <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
       </div>
       <div style={{position:'relative',height:8,borderRadius:4,overflow:'hidden',background:'#21262d'}}>
         {/* Zone gradient */}
@@ -1572,6 +1570,10 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
         {/* Marker */}
         <div style={{position:'absolute',top:-1,left:`calc(${pct}% - 1px)`,width:3,height:10,borderRadius:1,background:'#fff',boxShadow:'0 0 4px rgba(0,0,0,0.5)'}} />
       </div>
+      {/* Explanation line — matches the EV / trade explanation line styling */}
+      {sublabel && (
+        <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 0',paddingLeft:'2px',whiteSpace:'normal'}}>{sublabel}</div>
+      )}
     </div>
   );
 }
