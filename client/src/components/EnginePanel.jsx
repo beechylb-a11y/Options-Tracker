@@ -603,6 +603,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               </div>
             )}
             {(r.wingTxt || r.strikeLine) && <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{r.wingTxt || r.strikeLine}</div>}
+            {r.skewNote && <div style={{fontSize:11,color: r.skewNote.includes('reversal') ? '#d29922' : '#58a6ff',marginTop:3,fontWeight:600}}>{r.skewNote}</div>}
           </div>
         )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>

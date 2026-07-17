@@ -340,21 +340,37 @@ export function calc0DTE(inputs) {
   }
 
   let legs = [];
+  let skewNote = '';
   if (price > 0 && D > 0) {
     const p = price;
+    // ── Reversal-aware skew direction ──
+    // Directionally-skewed structures (BWB, Chicken condor, Asymmetric/Standard
+    // fly) place their body/wide side toward the EXPECTED move. On a CONTINUATION
+    // setup that's the trend direction (dirScore). On a REVERSAL setup the move
+    // is expected to fade and turn, so we FLIP: skew against the raw trend.
+    // skewBull >= 0 → skew to the upside (call-side); < 0 → downside (put-side).
+    const skewBull = trendPattern === 'reversal' ? -dirScore : dirScore;
+    const skewUp = skewBull >= 0;
+    // Human-readable note on WHY the structure skewed the way it did.
+    if (['Broken wing butterfly','Chicken condor','Asymmetric butterfly','Standard butterfly'].includes(legStrat) && dirScore !== 0) {
+      const side = skewUp ? 'upside' : 'downside';
+      skewNote = trendPattern === 'reversal'
+        ? `Skewed ${side} — reversal setup, flipped against ${dirScore<0?'down':'up'}trend`
+        : `Skewed ${side} — ${trendPattern === 'continuation' ? 'continuation with' : 'aligned with'} ${dirScore<0?'down':'up'}trend`;
+    }
     if (legStrat === 'Iron butterfly') {
       legs = [leg('Long put (wing)', p-D), leg('Short put (body)', p), leg('Short call (body)', p), leg('Long call (wing)', p+D)];
     } else if (legStrat === 'Standard butterfly') {
-      legs = dirScore >= 0
+      legs = skewUp
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (mid)', gs), leg('Long call (upper)', gs+D)]
         : [leg('Long put (upper)', gs+D), leg('Short put x2 (mid)', gs), leg('Long put (lower)', gs-D)];
     } else if (legStrat === 'Broken wing butterfly') {
       const nearW = D, farW = Math.round(D * 1.75 / roundTo) * roundTo;
-      legs = dirScore >= 0
+      legs = skewUp
         ? [leg('Long call (lower)', gs-nearW), leg('Short call x2 (body)', gs), leg(`Long call (broken ${farW.toFixed(0)}pt)`, gs+farW)]
         : [leg('Long put (upper)', gs+nearW), leg('Short put x2 (body)', gs), leg(`Long put (broken ${farW.toFixed(0)}pt)`, gs-farW)];
     } else if (legStrat === 'Asymmetric butterfly') {
-      legs = dirScore >= 0
+      legs = skewUp
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (body)', gs), leg('Long call (1.5x upper)', gs+D*1.5)]
         : [leg('Long put (upper)', gs+D), leg('Short put x2 (body)', gs), leg('Long put (1.5x lower)', gs-D*1.5)];
     } else if (legStrat === 'Iron Condor - Normal') {
@@ -365,7 +381,7 @@ export function calc0DTE(inputs) {
       legs = [leg('Short put', p-2*D), leg('Long put', p-D), leg('Long call', p+D), leg('Short call', p+2*D)];
     } else if (legStrat === 'Chicken condor') {
       const tightW = D, wideW = D * 1.5;
-      legs = dirScore >= 0
+      legs = skewUp
         ? [leg('Long put', p-wideW-D), leg('Short put', p-wideW), leg('Short call', p+tightW), leg('Long call', p+tightW+D)]
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
     } else if (legStrat === 'Bull put spread') {
@@ -1295,7 +1311,7 @@ export function calc0DTE(inputs) {
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     // Strikes
-    legs, wingTxt, D, baseDistance, distMult,
+    legs, wingTxt, skewNote, D, baseDistance, distMult,
     // Scoring
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
