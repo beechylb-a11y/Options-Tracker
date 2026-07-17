@@ -511,6 +511,32 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     }
   }
 
+  // Build a condensed plain-text summary of the engine's analysis for the notes
+  // field — captures what the setup looked like at trade time.
+  function buildTradeSummary() {
+    const inp = is0 ? i0 : i45;
+    const ncd = parseFloat(inp.netCreditDebit) || 0;
+    const lines = [];
+    lines.push(`${inp.underlying} — ${effectiveStrat} — ${r.contracts}x  [${is0?'0DTE':'45DTE'}]`);
+    lines.push(`Setup: ${r.setup} ${r.setupScore}/100 · Composite ${compositeScore}/100 · FV ${r.fairValueScore}/100 (${r.fairValueGrade})`);
+    if (isOverride) lines.push(`Override: engine picked ${r.bestStrat}, logged ${effectiveStrat}`);
+    lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
+    if (r.skewNote) lines.push(r.skewNote);
+    lines.push(`${ncd>0?`Credit $${ncd.toFixed(2)}`:ncd<0?`Debit $${Math.abs(ncd).toFixed(2)}`:''} · POP ${inp.pop||'--'}% · Win $${inp.win||'--'} · Risk $${inp.risk||'--'}`);
+    lines.push(`Sizing: Kelly ${(r.adjustedKelly*100).toFixed(1)}% · ${r.contracts} contract${r.contracts!==1?'s':''} · EV $${r.ev?.toFixed(0)||0}${r.ev<0?' (negative)':''}`);
+    if (r.evBasis?.pMaxLoss != null) lines.push(`P(max loss): ${(r.evBasis.pMaxLoss*100).toFixed(1)}% (${r.evBasis.pMaxLossSource||'model'})`);
+    if (r.evBasis?.winBreakeven != null) lines.push(`Win needed for EV=0: $${r.evBasis.winBreakeven}`);
+    // Key signals
+    if (is0) {
+      lines.push(`Signals: ${r.dirLabel} · ${r.trendPattern||'--'} · Regime ${r.regime} · Move ${r.moveConsumed!==undefined?(r.moveConsumed*100).toFixed(0)+'%':'--'} · VIX gap ${(r.vixGap*100).toFixed(1)}%`);
+    } else {
+      lines.push(`Signals: IVR ${r.ivrBand||'--'} · IV/HV ${r.ivhvRatio?r.ivhvRatio.toFixed(2):'--'} · Regime ${r.regime}`);
+    }
+    if (r.greeks) lines.push(`Survivability: Theta edge ${r.greeks.tEdge.toFixed(2)} (${r.greeks.tEdgeSignal}) · Gamma risk ${r.greeks.gRisk.toFixed(2)}`);
+    if (r.warnings?.length) lines.push(`Warnings: ${r.warnings.join('; ')}`);
+    return lines.filter(Boolean).join('\n');
+  }
+
   function handleLog() {
     if (!onLogTrade) return;
     if (!accountConfig?.id) {
@@ -519,20 +545,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     }
     const inp = is0 ? i0 : i45;
     const ncd = parseFloat(inp.netCreditDebit) || 0;
+    const engineSummary = buildTradeSummary();
+    // Prompt for the trader's own comment (rationale, feeling, plan).
+    const userComment = window.prompt('Add a note for this trade (optional) — your rationale, plan, or anything to remember:', '');
+    if (userComment === null) return; // Cancel aborts the whole log
+    const fullNotes = engineSummary
+      + '\n\n--- My notes ---\n'
+      + (userComment.trim() || '(none)');
     onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
       strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
       setupGrade:r.setup, regime:r.regime, wingStrikes:r.legs.map(l=>l.strike).join(' / '),
       marketBehaviour:r.behaviour,
-      notes: [
-        isOverride ? `Override: engine=${r.bestStrat}, selected=${effectiveStrat}` : '',
-        `Score ${compositeScore}/100 | FV ${r.fairValueScore}/100 (${r.fairValueGrade})`,
-        `Kelly ${(r.adjustedKelly*100).toFixed(1)}% | Vol ${r.volFactor?.toFixed(2)} | Sharpe ${r.sharpeFactor?.toFixed(2)} | Strat ${r.stratModifier?.toFixed(2)}`,
-        ncd > 0 ? `Credit $${ncd.toFixed(2)}` : ncd < 0 ? `Debit $${Math.abs(ncd).toFixed(2)}` : '',
-        `POP ${inp.pop||'--'}% | Win $${inp.win||'--'} | Risk $${inp.risk||'--'}`,
-        r.legs.map(l => `${l.strike} ${l.label}`).join(' | ')
-      ].filter(Boolean).join('\n'),
+      notes: fullNotes,
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
       em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
