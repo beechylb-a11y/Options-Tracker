@@ -28,6 +28,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
     lowerWingDelta:'', upperWingDelta:'',
+    emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'0.85',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
 
@@ -119,7 +120,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
             lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
             upperAbsDelta: i0.upperWingDelta !== '' ? Math.abs(parseFloat(i0.upperWingDelta)) : null
-          } : null
+          } : null,
+          emSource: i0.emSource || '',
+          straddleCall: i0.straddleCall !== '' ? parseFloat(i0.straddleCall) : null,
+          straddlePut: i0.straddlePut !== '' ? parseFloat(i0.straddlePut) : null,
+          straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 0.85
         });
       } else {
         return calc45DTE({
@@ -352,6 +357,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
+
+      // Also fetch the ATM straddle EM (market-priced expected move). Preferred
+      // over the VIX-derived EM when available; needs OPRA subscription.
+      let straddle = null;
+      if (is0) {
+        try {
+          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+          const hc = parseFloat(i0.straddleHaircut) || 0.85;
+          const sResp = await fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=' + hc, { headers: { 'ngrok-skip-browser-warning': '1' } });
+          const sData = await sResp.json();
+          if (sData && sData.source === 'straddle' && sData.expectedMove > 0) straddle = sData;
+        } catch (e) { /* straddle optional — fall back to VIX EM */ }
+      }
+
       if (is0) {
         // Calculate hours remaining until 3pm ET (15:00 New York)
         const now = new Date();
@@ -370,7 +389,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           vwap5_30: d.vwap5_30 || prev.vwap5_30,
           vwap15: d.vwap15 || prev.vwap15,
           vwap15_30: d.vwap15_30 || prev.vwap15_30,
-          em: d.em || prev.em,
+          em: straddle ? String(straddle.expectedMove) : (d.em || prev.em),
+          emSource: straddle ? 'straddle' : 'vix',
+          straddleCall: straddle ? String(straddle.callPrice) : '',
+          straddlePut: straddle ? String(straddle.putPrice) : '',
           atr: d.atr || prev.atr,
           atr5: d.atr5 || prev.atr5,
           atr2h: d.atr2h || prev.atr2h,
@@ -716,6 +738,21 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Sel label="Outlook" value={i45.outlook} onChange={v=>set45('outlook',v)} options={OUTLOOKS}/>
             </>}
           </div>
+
+          {/* EM method: straddle (market) vs VIX (model) + editable haircut */}
+          {is0 && r.emDetail && (
+            <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+              <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : '#e3a008'}}>
+                <b>EM {r.emIsStraddle ? '(straddle)' : '(VIX model)'}:</b> {r.emDetail}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <span style={{fontSize:11,color:'#8b949e'}}>Haircut</span>
+                <input type="number" step="0.05" value={i0.straddleHaircut}
+                  onChange={e=>set0('straddleHaircut', e.target.value)}
+                  style={{width:52,padding:'3px 6px',borderRadius:5,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace'}} />
+              </div>
+            </div>
+          )}
 
           {/* ES Overnight (0DTE only) */}
           {is0 && (

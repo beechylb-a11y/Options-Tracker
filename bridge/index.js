@@ -554,8 +554,71 @@ app.get('/api/option-greeks', async (req, res) => {
   }
 });
 
+// ── ATM straddle expected move ──
+// EM ≈ (ATM call mid + ATM put mid) × haircut. This is the market's own priced
+// expected move to the given expiry — bakes in skew, events, term structure —
+// far better than annualised-VIX/√252. Returns the leg prices used so the UI
+// can show them. Needs OPRA option-data subscription (like /api/option-greeks).
+app.get('/api/atm-straddle', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const underlying = (req.query.underlying || 'SPX').toUpperCase();
+    const expiry = req.query.expiry; // YYYYMMDD
+    const haircut = req.query.haircut ? Number(req.query.haircut) : 0.85;
+    if (!expiry) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
+
+    // 1) Spot: use the index/stock snapshot to find the ATM strike.
+    const spotContract = contracts[underlying] || { symbol: underlying, secType: SecType.IND, exchange: 'CBOE', currency: 'USD' };
+    const spotSnap = await getSnapshot(spotContract);
+    const spot = spotSnap.mid || spotSnap.last;
+    if (!spot || spot <= 0) return res.status(502).json({ error: 'Could not read spot price' });
+
+    // 2) Nearest strike. Strike increments differ by product.
+    const inc = (underlying === 'SPX' || underlying === 'NDX') ? 5
+      : (underlying === 'RUT') ? 5
+      : 1; // SPY/QQQ/IWM = 1
+    const atmStrike = Math.round(spot / inc) * inc;
+
+    // 3) Fetch ATM call and put mids for the expiry.
+    const callC = buildOptionContract(underlying, expiry, atmStrike, 'C');
+    const putC  = buildOptionContract(underlying, expiry, atmStrike, 'P');
+    const [callSnap, putSnap] = await Promise.all([getSnapshot(callC), getSnapshot(putC)]);
+    const callPrice = callSnap.mid || callSnap.last;
+    const putPrice  = putSnap.mid  || putSnap.last;
+
+    if (!callPrice || !putPrice || callPrice <= 0 || putPrice <= 0) {
+      return res.json({ notSubscribed: true, error: 'No option prices — check OPRA/options market-data subscription', spot, atmStrike });
+    }
+
+    const straddle = callPrice + putPrice;
+    // For SPX the straddle price IS in index points (EM in points). For ETFs the
+    // option price is in $, which for a $1-multiplier equals points too.
+    const expectedMove = straddle * haircut;
+    res.json({
+      spot: +spot.toFixed(2),
+      atmStrike,
+      expiry,
+      callPrice: +callPrice.toFixed(2),
+      putPrice: +putPrice.toFixed(2),
+      straddle: +straddle.toFixed(2),
+      haircut,
+      expectedMove: +expectedMove.toFixed(2),
+      source: 'straddle'
+    });
+  } catch (err) {
+    console.log('[BRIDGE] atm-straddle error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Fetch today's executions (fills) from TWS ──
 app.get('/api/executions', async (req, res) => {
+  try {
+    await connectTWS();
+  } catch (e) {
+    return res.status(503).json({ error: 'Not connected to TWS' });
+  }
   if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
 
   const reqId = nextReqId++;

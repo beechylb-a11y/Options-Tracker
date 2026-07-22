@@ -124,6 +124,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
 export function calc0DTE(inputs) {
   const { price, high, low, vwap5, vwap5_30, vwap15, vwap15_30, atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop, netCreditDebit,
+    emSource, straddleCall, straddlePut, straddleHaircut,
     theta, delta, gamma, hours, underlying,
     // Overnight inputs
     esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM,
@@ -162,6 +163,11 @@ export function calc0DTE(inputs) {
   const vixHigh = vix > 25;
   const emVIX = price > 0 ? Math.round(price * (vix / 100) / SQRT252) : 0;
   const emV1D = price > 0 ? Math.round(price * (vix1d / 100) / SQRT252) : 0;
+  // EM source: 'straddle' when the ATM straddle EM was fetched (em input is the
+  // market-priced move), else 'vix' (annualised VIX1D/√252 model estimate).
+  // The straddle is the market's own priced move (skew + events baked in) and is
+  // preferred; the VIX method is the fallback when no option-data subscription.
+  const emIsStraddle = emSource === 'straddle' && em > 0;
   const vixGrade = vixGap<-0.10?'Cheap short-term vol':vixGap<=0.10?'Neutral':vixGap<=0.25?'Rich short-term vol':'Extremely rich short-term vol';
   const vixImplic = vixGap<-0.10?'BWB, Asymmetric, Long Condor':vixGap<=0.10?'BWB, Asymmetric, Chicken Condor':vixGap<=0.25?'Iron Condor, Iron Butterfly, Chicken Condor':'Iron Condor, Iron Butterfly (check event risk)';
   const isCompressing = hasComp && comp < 0.50;
@@ -491,6 +497,12 @@ export function calc0DTE(inputs) {
       ? `EM(VIX)=${emVIX>0?emVIX.toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
       : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
     : '';
+
+  // EM method detail for the UI: show the straddle legs when the EM came from the
+  // ATM straddle, else note it's the VIX1D model estimate.
+  const emDetail = emIsStraddle
+    ? `Straddle: ${straddleCall!=null?`${straddleCall.toFixed(2)}C`:'--'} + ${straddlePut!=null?`${straddlePut.toFixed(2)}P`:'--'}${straddleHaircut?` × ${straddleHaircut}`:''} = ${em.toFixed(1)} pts`
+    : (emV1D > 0 ? `VIX1D model: ${vix1d}% ÷ √252 = ${emV1D} pts (no straddle — subscribe for market EM)` : 'VIX model estimate');
 
   // ═══════════════════════════════════════
   //  MERGED SCORING (100 pts)
@@ -1311,7 +1323,7 @@ export function calc0DTE(inputs) {
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
     // Strikes
-    legs, wingTxt, skewNote, D, baseDistance, distMult,
+    legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult,
     // Scoring
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
