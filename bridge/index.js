@@ -71,12 +71,20 @@ function getSnapshot(contract) {
     const reqId = getReqId();
     const data = {};
     let resolved = false;
+    // Data-quality tracking: delayed field IDs (66-76) indicate TWS is serving
+    // delayed (typically ~10 min lagged) data because there's no real-time
+    // subscription for this instrument. marketDataType event confirms it.
+    let sawDelayedField = false;
+    let mdType = null; // 1=realtime, 2=frozen, 3=delayed, 4=delayed-frozen
+
+    const onMdType = (id, type) => { if (id === reqId) mdType = type; };
 
     const onTick = (id, field, value) => {
       if (id !== reqId) return;
       if (value <= 0) return; // ignore -1 placeholders and zero values
       // Real-time field IDs: 1=bid, 2=ask, 4=last, 6=high, 7=low, 9=close, 14=open
       // Delayed field IDs: 66=delayed_bid, 67=delayed_ask, 68=delayed_last, 72=delayed_high, 73=delayed_low, 75=delayed_close, 76=delayed_open
+      if (field >= 66 && field <= 76) sawDelayedField = true;
       if (field === 1 || field === 66) data.bid = value;
       if (field === 2 || field === 67) data.ask = value;
       if (field === 4 || field === 68) data.last = value;
@@ -91,12 +99,16 @@ function getSnapshot(contract) {
       resolved = true;
       ib.removeListener(EventName.tickPrice, onTick);
       ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
+      ib.removeListener(EventName.marketDataType, onMdType);
       data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
+      data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
+      data.frozen = mdType === 2 || mdType === 4;
       resolve(data);
     };
 
     ib.on(EventName.tickPrice, onTick);
     ib.on(EventName.tickSnapshotEnd, onTickEnd);
+    ib.on(EventName.marketDataType, onMdType);
     ib.reqMktData(reqId, contract, '', false, false);
 
     setTimeout(() => {
@@ -104,8 +116,11 @@ function getSnapshot(contract) {
         resolved = true;
         ib.removeListener(EventName.tickPrice, onTick);
         ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
+        ib.removeListener(EventName.marketDataType, onMdType);
         ib.cancelMktData(reqId);
         data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
+        data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
+        data.frozen = mdType === 2 || mdType === 4;
         resolve(data);
       }
     }, 6000);
@@ -354,8 +369,31 @@ app.get('/api/market-data', async (req, res) => {
     const esHigh = esSnap.high || 0;
     const esLow = esSnap.low || 0;
 
-    // 2. Calculate EM
-    const em = price > 0 && vix > 0 ? Math.round(price * (vix / 100) / SQRT252 * 10) / 10 : 0;
+    // 2. Calculate EM — STRADDLE method is the default (market-priced expected
+    // move). Falls back to the VIX/√252 model estimate only if the straddle
+    // can't be fetched (no option-data subscription, or after hours).
+    const emVix = price > 0 && vix > 0 ? Math.round(price * (vix / 100) / SQRT252 * 10) / 10 : 0;
+    let em = emVix;
+    let emSource = 'vix';
+    let straddleInfo = null;
+    if (price > 0) {
+      try {
+        const todayET = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+        const inc = (underlying === 'SPX' || underlying === 'NDX' || underlying === 'RUT') ? 5 : 1;
+        const atmStrike = Math.round(price / inc) * inc;
+        const [cSnap, pSnap] = await Promise.all([
+          getSnapshot(buildOptionContract(underlying, todayET, atmStrike, 'C')),
+          getSnapshot(buildOptionContract(underlying, todayET, atmStrike, 'P'))
+        ]);
+        const cP = cSnap.mid || cSnap.last, pP = pSnap.mid || pSnap.last;
+        if (cP > 0 && pP > 0) {
+          const haircut = 0.85;
+          em = Math.round((cP + pP) * haircut * 10) / 10;
+          emSource = 'straddle';
+          straddleInfo = { atmStrike, callPrice: Math.round(cP*100)/100, putPrice: Math.round(pP*100)/100, haircut, delayed: !!(cSnap.delayed || pSnap.delayed) };
+        }
+      } catch (e) { /* fall back to VIX EM */ }
+    }
     const esEM = esClose > 0 && vix > 0 ? Math.round(esClose * (vix / 100) / SQRT252 * 10) / 10 : 0;
 
     // 3. Get historical bars for ATR calculations
@@ -474,6 +512,16 @@ app.get('/api/market-data', async (req, res) => {
       esOvernightHigh: Math.round(esHigh * 100) / 100,
       esOvernightLow: Math.round(esLow * 100) / 100,
       esEM: Math.round(esEM * 10) / 10,
+      // Data-quality flags: true = TWS served delayed (~10 min) data, meaning no
+      // real-time subscription for that instrument. ES needs CME real-time;
+      // SPX/index needs its own real-time feed.
+      esDelayed: !!esSnap.delayed,
+      priceDelayed: !!mainSnap.delayed,
+      vixDelayed: !!vixSnap.delayed,
+      // EM method: 'straddle' (market-priced, preferred) or 'vix' (model fallback)
+      emSource,
+      emVix, // the VIX estimate, for comparison
+      straddle: straddleInfo, // { atmStrike, callPrice, putPrice, haircut, delayed } or null
       // Meta
       timestamp: new Date().toISOString(),
       source: 'IBKR TWS',

@@ -358,18 +358,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
 
-      // Also fetch the ATM straddle EM (market-priced expected move). Preferred
-      // over the VIX-derived EM when available; needs OPRA subscription.
-      let straddle = null;
-      if (is0) {
-        try {
-          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
-          const hc = parseFloat(i0.straddleHaircut) || 0.85;
-          const sResp = await fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=' + hc, { headers: { 'ngrok-skip-browser-warning': '1' } });
-          const sData = await sResp.json();
-          if (sData && sData.source === 'straddle' && sData.expectedMove > 0) straddle = sData;
-        } catch (e) { /* straddle optional — fall back to VIX EM */ }
-      }
+      // EM now comes straddle-first from the market-data endpoint itself.
+      const straddle = (d.emSource === 'straddle' && d.straddle) ? d.straddle : null;
 
       if (is0) {
         // Calculate hours remaining until 3pm ET (15:00 New York)
@@ -389,10 +379,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           vwap5_30: d.vwap5_30 || prev.vwap5_30,
           vwap15: d.vwap15 || prev.vwap15,
           vwap15_30: d.vwap15_30 || prev.vwap15_30,
-          em: straddle ? String(straddle.expectedMove) : (d.em || prev.em),
-          emSource: straddle ? 'straddle' : 'vix',
+          em: d.em || prev.em,
+          emSource: d.emSource || 'vix',
           straddleCall: straddle ? String(straddle.callPrice) : '',
           straddlePut: straddle ? String(straddle.putPrice) : '',
+          straddleHaircut: straddle && straddle.haircut ? String(straddle.haircut) : prev.straddleHaircut,
           atr: d.atr || prev.atr,
           atr5: d.atr5 || prev.atr5,
           atr2h: d.atr2h || prev.atr2h,
@@ -404,6 +395,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           priorDayClose: d.priorDayClose || prev.priorDayClose,
           cashOpen: d.cashOpen || prev.cashOpen,
           esEM: d.esEM || prev.esEM,
+          esDelayed: !!d.esDelayed,
+          priceDelayed: !!d.priceDelayed,
           hours: hoursRounded > 0 ? hoursRounded : prev.hours
         }));
       }
@@ -758,6 +751,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {is0 && (
             <>
               <SectionLabel info="ES futures data for overnight analysis. Prior Close = yesterday's 4pm settle. Pre-open = current ES price. Overnight High/Low = session range. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection.">ES Overnight</SectionLabel>
+              {i0.esDelayed && (
+                <div style={{margin:'2px 0 8px',padding:'5px 9px',borderRadius:6,background:'#2d1a0d',border:'1px solid #5a3a1a',fontSize:11,color:'#e3a008',lineHeight:1.4}}>
+                  ⚠ ES data is <b>delayed ~10 min</b> — no CME real-time subscription. Overnight range, move-consumed and continuation/reversal detection may be stale. Subscribe to CME Real-Time in IBKR for live ES.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2.5">
                 <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
                 <Inp label="ES Pre-open" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
