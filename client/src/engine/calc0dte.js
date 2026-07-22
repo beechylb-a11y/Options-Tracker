@@ -320,7 +320,14 @@ export function calc0DTE(inputs) {
   const legStrat = overrideStrategy || bestStrat;
 
   // ── Strike engine (with directional gamma) ──
-  const baseDistance = price > 0 ? Math.max(emVIX, emV1D, em * 0.5) : 0;
+  // Wing base distance = the active EM (≈1 standard deviation). The straddle EM
+  // is the market's true 1SD, so it drives the wings directly; a manual EM does
+  // too. VIX1D-derived EM acts as a FLOOR so a suspiciously-low EM can't produce
+  // dangerously tight wings. Falls back to the VIX estimates when no EM is set.
+  let baseDistance;
+  if (price <= 0) baseDistance = 0;
+  else if (em > 0) baseDistance = Math.max(em, emV1D); // EM primary, VIX1D floor
+  else baseDistance = Math.max(emVIX, emV1D);          // no EM → VIX estimates
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
