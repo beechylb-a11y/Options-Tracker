@@ -358,8 +358,21 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
 
-      // EM now comes straddle-first from the market-data endpoint itself.
-      const straddle = (d.emSource === 'straddle' && d.straddle) ? d.straddle : null;
+      // Fetch the straddle EM separately, with a short timeout so a slow/after-
+      // hours option fetch can't hang the essential price+VIX auto-fill.
+      let straddle = null;
+      if (is0) {
+        try {
+          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+          const hc = parseFloat(i0.straddleHaircut) || 0.85;
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 7000);
+          const sResp = await fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=' + hc, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
+          clearTimeout(t);
+          const sData = await sResp.json();
+          if (sData && sData.source === 'straddle' && sData.expectedMove > 0) straddle = sData;
+        } catch (e) { /* straddle optional — VIX EM stands */ }
+      }
 
       if (is0) {
         // Calculate hours remaining until 3pm ET (15:00 New York)
@@ -379,11 +392,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           vwap5_30: d.vwap5_30 || prev.vwap5_30,
           vwap15: d.vwap15 || prev.vwap15,
           vwap15_30: d.vwap15_30 || prev.vwap15_30,
-          em: d.em || prev.em,
-          emSource: d.emSource || 'vix',
+          em: straddle ? String(straddle.expectedMove) : (d.em || prev.em),
+          emSource: straddle ? 'straddle' : 'vix',
           straddleCall: straddle ? String(straddle.callPrice) : '',
           straddlePut: straddle ? String(straddle.putPrice) : '',
-          straddleHaircut: straddle && straddle.haircut ? String(straddle.haircut) : prev.straddleHaircut,
           atr: d.atr || prev.atr,
           atr5: d.atr5 || prev.atr5,
           atr2h: d.atr2h || prev.atr2h,
@@ -1257,8 +1269,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 <KV label="Compression" value={r.comp!==null?r.comp.toFixed(2):'--'}/>
                 <KV label="VWAP distance" value={r.vwapDistPctEM>0?`${(r.vwapDistPctEM*100).toFixed(0)}% EM`:'--'} cls={r.vwapOverextended?'text-amber':''}/>
                 <KV label="Gamma dist" value={r.gamDist!==null?`${r.gamDist.toFixed(2)}x ATR`:'--'}/>
-                <KV label="EM(VIX)" value={`${r.emVIX} pts`}/>
-                <KV label="EM(VIX1D)" value={`${r.emV1D} pts`}/>
+                <KV label={`EM active${r.emIsStraddle?' (straddle)':i0.emSource==='manual'?' (manual)':' (VIX1D)'}`} value={`${fv(i0,'em').toFixed(1)} pts`}/>
+                <KV label="EM(VIX) ref" value={`${r.emVIX} pts`}/>
+                <KV label="EM(VIX1D) ref" value={`${r.emV1D} pts`}/>
               </> : <>
                 <KV label="IVR" value={`${fv(i45,'ivr').toFixed(0)}% — ${r.ivrBand}`}/>
                 <KV label="IV/HV" value={r.ivhvRatio?`${r.ivhvRatio.toFixed(2)} — ${r.ivhvLabel}`:'--'}/>

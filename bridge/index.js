@@ -369,31 +369,12 @@ app.get('/api/market-data', async (req, res) => {
     const esHigh = esSnap.high || 0;
     const esLow = esSnap.low || 0;
 
-    // 2. Calculate EM — STRADDLE method is the default (market-priced expected
-    // move). Falls back to the VIX/√252 model estimate only if the straddle
-    // can't be fetched (no option-data subscription, or after hours).
-    const emVix = price > 0 && vix > 0 ? Math.round(price * (vix / 100) / SQRT252 * 10) / 10 : 0;
-    let em = emVix;
-    let emSource = 'vix';
-    let straddleInfo = null;
-    if (price > 0) {
-      try {
-        const todayET = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
-        const inc = (underlying === 'SPX' || underlying === 'NDX' || underlying === 'RUT') ? 5 : 1;
-        const atmStrike = Math.round(price / inc) * inc;
-        const [cSnap, pSnap] = await Promise.all([
-          getSnapshot(buildOptionContract(underlying, todayET, atmStrike, 'C')),
-          getSnapshot(buildOptionContract(underlying, todayET, atmStrike, 'P'))
-        ]);
-        const cP = cSnap.mid || cSnap.last, pP = pSnap.mid || pSnap.last;
-        if (cP > 0 && pP > 0) {
-          const haircut = 0.85;
-          em = Math.round((cP + pP) * haircut * 10) / 10;
-          emSource = 'straddle';
-          straddleInfo = { atmStrike, callPrice: Math.round(cP*100)/100, putPrice: Math.round(pP*100)/100, haircut, delayed: !!(cSnap.delayed || pSnap.delayed) };
-        }
-      } catch (e) { /* fall back to VIX EM */ }
-    }
+    // 2. Calculate EM — VIX/√252 model estimate (fast, always available).
+    // The straddle EM (market-priced, preferred) is fetched SEPARATELY by the
+    // client via /api/atm-straddle so a slow/after-hours option fetch never
+    // blocks this essential price+VIX response.
+    const em = price > 0 && vix > 0 ? Math.round(price * (vix / 100) / SQRT252 * 10) / 10 : 0;
+    const emVix = em;
     const esEM = esClose > 0 && vix > 0 ? Math.round(esClose * (vix / 100) / SQRT252 * 10) / 10 : 0;
 
     // 3. Get historical bars for ATR calculations
@@ -518,10 +499,7 @@ app.get('/api/market-data', async (req, res) => {
       esDelayed: !!esSnap.delayed,
       priceDelayed: !!mainSnap.delayed,
       vixDelayed: !!vixSnap.delayed,
-      // EM method: 'straddle' (market-priced, preferred) or 'vix' (model fallback)
-      emSource,
-      emVix, // the VIX estimate, for comparison
-      straddle: straddleInfo, // { atmStrike, callPrice, putPrice, haircut, delayed } or null
+      emVix, // VIX-derived EM estimate
       // Meta
       timestamp: new Date().toISOString(),
       source: 'IBKR TWS',
