@@ -719,7 +719,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
               <Inp label={`VWAP 15${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
               <Inp label={`VWAP 15 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
-              <Inp label="EM" value={i0.em} onChange={v=>set0('em',v)}/>
+              <Inp label="EM" value={i0.em} onChange={v=>setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''}))}/>
               <Inp label="ATR 1 Day" value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>
               <Inp label="ATR 2h" value={i0.atr2h} onChange={v=>set0('atr2h',v)}/>
@@ -742,8 +742,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* EM method: straddle (market) vs VIX (model) + editable haircut */}
           {is0 && r.emDetail && (
             <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-              <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : '#e3a008'}}>
-                <b>EM {r.emIsStraddle ? '(straddle)' : '(VIX model)'}:</b> {r.emDetail}
+              <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
+                <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b> {r.emDetail}
               </div>
               <div style={{display:'flex',alignItems:'center',gap:5}}>
                 <span style={{fontSize:11,color:'#8b949e'}}>Haircut</span>

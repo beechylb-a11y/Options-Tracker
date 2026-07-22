@@ -502,7 +502,9 @@ export function calc0DTE(inputs) {
   // ATM straddle, else note it's the VIX1D model estimate.
   const emDetail = emIsStraddle
     ? `Straddle: ${straddleCall!=null?`${straddleCall.toFixed(2)}C`:'--'} + ${straddlePut!=null?`${straddlePut.toFixed(2)}P`:'--'}${straddleHaircut?` × ${straddleHaircut}`:''} = ${em.toFixed(1)} pts`
-    : (emV1D > 0 ? `VIX1D model: ${vix1d}% ÷ √252 = ${emV1D} pts (no straddle — subscribe for market EM)` : 'VIX model estimate');
+    : emSource === 'manual'
+      ? `Manual entry: ${em>0?em.toFixed(1):'--'} pts`
+      : (emV1D > 0 ? `VIX1D model: ${vix1d}% ÷ √252 = ${emV1D} pts (no straddle — subscribe for market EM)` : 'VIX model estimate');
 
   // ═══════════════════════════════════════
   //  MERGED SCORING (100 pts)
