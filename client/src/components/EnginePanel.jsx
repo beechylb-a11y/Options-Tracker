@@ -218,6 +218,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const dcColor = bannerGrade==='strong'?'#3fb950':bannerGrade==='decent'?'#7bc74d':bannerGrade==='marginal'?'#d29922':'#f85149';
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
+  // ── Trade Confidence colours (gated metric from the engine) ──
+  const tc = r.tradeConfidence;
+  const confClr = tc==null?'#8b949e':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
+  const confBg  = tc==null?'#161b22':tc>=70?'#0d1f0d':tc>=50?'#0d1a0d':tc>=30?'#1f1a0d':'#1f0d0d';
 
   // Show VWAP scaling notice (vwapScaled defined above)
 
@@ -485,6 +489,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
       '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
       '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + '</h2>' +
+      (is0 && r.tradeConfidence != null ?
+        '<div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:' + confBg + ';border:1px solid ' + confClr + '">' +
+          '<div style="display:flex;align-items:center;gap:12px">' +
+            '<span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8b949e">Trade Confidence</span>' +
+            '<span style="font-size:22px;font-weight:800;font-family:monospace;color:' + confClr + '">' + r.tradeConfidence + '<span style="font-size:12px;color:#8b949e">/100</span></span>' +
+            '<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:10px;background:' + confClr + ';color:#0d1117;text-transform:uppercase;letter-spacing:0.04em">' + r.confidenceTier + '</span>' +
+          '</div>' +
+          '<div style="font-size:12px;color:#c9d1d9;margin-top:5px">' + r.confidenceDriver + '</div>' +
+          ((r.confConflicts && r.confConflicts.length) ?
+            '<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:6px">' +
+            r.confConflicts.map(function(c){
+              return '<span title="' + c.label.replace(/"/g,'') + '" style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:' + (c.severity==='high'?'#3d1418':'#2a2410') + ';color:' + (c.severity==='high'?'#f85149':'#d29922') + '">\u26a0 ' + c.tag + '</span>';
+            }).join('') + '</div>' : '') +
+        '</div>' : '') +
       '<div style="display:flex;gap:20px;margin-top:8px;font-size:12px">' +
         '<div style="padding:6px 12px;border-radius:6px;background:' + sBg + ';border:1px solid ' + sClr + '">' +
           '<span style="color:#8b949e">Setup Quality</span> <span style="color:' + sClr + ';font-weight:700;font-family:monospace">' + r.setup + ' ' + r.setupScore + '/100</span>' +
@@ -546,6 +564,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     const lines = [];
     lines.push(`${inp.underlying} — ${effectiveStrat} — ${r.contracts}x  [${is0?'0DTE':'45DTE'}]`);
     lines.push(`Setup: ${r.setup} ${r.setupScore}/100 · Composite ${compositeScore}/100 · FV ${r.fairValueScore}/100 (${r.fairValueGrade})`);
+    if (is0 && r.tradeConfidence != null) {
+      lines.push(`Confidence: ${r.tradeConfidence}/100 (${r.confidenceTier}) — ${r.confidenceDriver}`);
+      if (r.confConflicts?.length) lines.push(`Conflicts: ${r.confConflicts.map(c=>c.tag).join(', ')}`);
+    }
     if (isOverride) lines.push(`Override: engine picked ${r.bestStrat}, logged ${effectiveStrat}`);
     lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
     if (r.skewNote) lines.push(r.skewNote);
@@ -616,6 +638,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
                   style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
               })()}
+              {is0 && r.tradeConfidence != null && (
+                <span title={r.confidenceDriver} style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:confBg,border:`1px solid ${confClr}`,color:confClr,letterSpacing:'0.04em'}}>
+                  CONF {r.tradeConfidence} · {r.confidenceTier.toUpperCase()}
+                </span>
+              )}
             </div>
             <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
               {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
@@ -662,6 +689,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
           {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0} — Score ${compositeScore}/100`}
         </div>
+        {is0 && !r.hardBlocker && r.tradeConfidence != null && (
+          <div style={{marginTop:6,fontSize:12,color:'#8b949e'}}>
+            <span style={{color:confClr,fontWeight:600}}>Confidence {r.tradeConfidence}/100 · {r.confidenceTier}</span>
+            {' — '}{r.confidenceDriver}
+            {r.confConflicts && r.confConflicts.length > 0 && (
+              <span style={{display:'inline-flex',flexWrap:'wrap',gap:6,marginLeft:8,verticalAlign:'middle'}}>
+                {r.confConflicts.map((c,i) => (
+                  <span key={i} title={c.label} style={{fontSize:10,fontWeight:600,padding:'1px 7px',borderRadius:4,
+                    background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
+                ))}
+              </span>
+            )}
+          </div>
+        )}
         {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
         {!r.hardBlocker && bannerGrade !== 'weak' && !missingInputs && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>

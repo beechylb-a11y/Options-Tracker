@@ -1308,6 +1308,100 @@ export function calc0DTE(inputs) {
   if (trendPattern === 'continuation' && totalDirConsumed > 0.80) warnings.push('Continuation trend — ' + (totalDirConsumed*100).toFixed(0) + '% consumed directionally — avoid chasing');
   if (trendPattern === 'reversal' && moveConsumedDir > 0.30) warnings.push('Reversal detected — overnight ' + overnightDir + ' but cash ' + cashDir + ' — confirm before directional');
 
+  // ═══════════════════════════════════════
+  //  TRADE CONFIDENCE (0-100) — gated, not additive
+  //  Distinct from Setup Quality ("is this a clean pattern?") and from the
+  //  additive composite Score in the panel. Confidence answers the different
+  //  question: "should I risk money on this NOW?" It multiplies Setup Quality
+  //  by three gates ∈ [0,1] so ONE fatal flaw (negative EV, a direction/
+  //  structure conflict, or a catastrophic reward:risk) SINKS the number
+  //  instead of being averaged away. The additive composite can't do this: a
+  //  near-100 vol-sizing scalar props up a −$1000-EV trade to a middling 48.
+  // ═══════════════════════════════════════
+  const confConflicts = [];  // { tag, label, severity: 'high' | 'low' }
+
+  // Does the structure need price CONTAINED (condors, butterflies) or does it
+  // want a MOVE (reversed condor, debit directional spreads)?
+  const wantsMove = isReversed || isDebitSpread;
+  const wantsContainment = !wantsMove;
+
+  // ── EdgeGate: positive expectancy, scaled by how negative if not ──
+  // EV is normalised by MAX PROFIT (win) so a large-but-improbable tail (chicken
+  // condor: −$1036 vs $335 upside) is punished far harder than a small negative
+  // fly (−$85 vs $228). POP margin alone would rank the condor HIGHER — this
+  // doesn't. Positive EV + Kelly>0 lifts the gate to 0.70–1.00.
+  let edgeGate;
+  if (missingSize || win <= 0) {
+    edgeGate = 0.5;                                              // unknown → neutral
+  } else {
+    const evRatio = ev / win;                                   // + edge, − bleed
+    edgeGate = (ev > 0 && rawKelly > 0)
+      ? Math.min(1, 0.7 + Math.min(0.3, evRatio))               // 0.70–1.00
+      : Math.max(0.06, 0.55 + evRatio * 0.35);                  // ≤0.55, floor 0.06
+  }
+
+  // ── PayoffGate: reward:risk sanity floor (catches the chicken condor) ──
+  let payoffGate = 1;
+  if (win > 0 && risk > 0) {
+    const rr = win / risk;
+    payoffGate = rr >= 0.50 ? 1.00 : rr >= 0.30 ? 0.90 : rr >= 0.20 ? 0.78
+               : rr >= 0.12 ? 0.62 : rr >= 0.06 ? 0.42 : 0.28;
+    if (rr < 0.12) confConflicts.push({ tag: 'Reward:Risk',
+      label: `Reward:risk ${rr.toFixed(2)} — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
+  }
+
+  // ── CoherenceGate: do direction, vol regime and structure agree? ──
+  // The layer the additive Score entirely lacks. Each contradiction the engine
+  // is quietly carrying multiplies confidence down and is surfaced as a chip.
+  let coherenceGate = 1;
+  // (a) Direction ↔ structure — a containment structure fears strong conviction
+  if (wantsContainment && Math.abs(dirScore) >= 2) {
+    coherenceGate *= 0.5;
+    confConflicts.push({ tag: 'Direction↔Structure',
+      label: `${dirLabel} signal, but ${legStrat} needs price contained`, severity: 'high' });
+  } else if (wantsContainment && Math.abs(dirScore) === 1) {
+    coherenceGate *= 0.85;                                       // mild bias on a pin — minor
+  } else if (wantsMove && dirScore === 0) {
+    coherenceGate *= 0.7;
+    confConflicts.push({ tag: 'Direction↔Structure',
+      label: `${legStrat} needs a move, but direction is neutral`, severity: 'low' });
+  }
+  // (b) Vol ↔ structure — the engine's own "cheap VIX1D → favour long gamma"
+  //     warning fires against SELLING premium into cheap short-term vol.
+  if (vixGap < -0.10 && isCredit) {
+    coherenceGate *= 0.6;
+    confConflicts.push({ tag: 'Vol↔Structure',
+      label: `Selling premium into cheap short-term vol (VIX1D ${(vixGap * 100).toFixed(0)}%)`, severity: 'high' });
+  }
+  // (c) Regime ↔ structure — a trend/continuation day undermines containment
+  if (wantsContainment && trendPattern === 'continuation') {
+    coherenceGate *= 0.8;
+    confConflicts.push({ tag: 'Regime↔Structure',
+      label: 'Continuation/trend day vs a containment structure', severity: 'low' });
+  }
+
+  // ── Composite (gated, multiplicative) ──
+  const confRaw = setupScore * edgeGate * coherenceGate * payoffGate;
+  const tradeConfidence = missingSize ? null : Math.max(0, Math.min(100, Math.round(confRaw)));
+  const confidenceTier = tradeConfidence == null ? '--'
+    : tradeConfidence >= 70 ? 'High'
+    : tradeConfidence >= 50 ? 'Moderate'
+    : tradeConfidence >= 30 ? 'Low'
+    : tradeConfidence >= 15 ? 'Weak' : 'Avoid';
+
+  // Binding gate → the single reason confidence is capped (for the UI one-liner).
+  const confGates = [
+    { v: edgeGate, msg: (win > 0 && ev < 0) ? `Negative EV ($${Math.round(ev)})` : 'Thin edge' },
+    { v: coherenceGate, msg: confConflicts.find(c => c.tag.includes('↔'))?.label || 'Signal conflict' },
+    { v: payoffGate, msg: (win > 0 && risk > 0) ? `Reward:risk ${(win / risk).toFixed(2)}` : 'Payoff' }
+  ];
+  const bindingGate = confGates.reduce((a, b) => (b.v < a.v ? b : a));
+  const confidenceDriver = missingSize
+    ? 'Enter sizing to score confidence'
+    : tradeConfidence >= 50
+      ? `Carried by ${ev > 0 ? `EV +$${Math.round(ev)}` : 'a clean setup'} · coherent signals`
+      : `Limited by ${bindingGate.msg}`;
+
   // ── Decision ──
   let decision, decisionClass;
   if (hardBlocker) { decision = 'No trade'; decisionClass = 'nogo'; }
@@ -1347,6 +1441,9 @@ export function calc0DTE(inputs) {
     regimeScore, regimeGrade, ivHvRatio, fvWeightVol, fvWeightStruct, fvWeightRegime,
     // Greeks
     greeks,
+    // Trade Confidence (gated — see block above)
+    tradeConfidence, confidenceTier, confidenceDriver, confConflicts,
+    edgeGate, coherenceGate, payoffGate,
     // Decision
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
     behaviour: MARKET_BEHAVIOUR_0DTE[legStrat] || ''
