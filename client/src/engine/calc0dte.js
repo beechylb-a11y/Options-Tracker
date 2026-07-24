@@ -447,6 +447,25 @@ export function calc0DTE(inputs) {
     const strikes = legs.map(l => l.strike);
     const lowerWing = Math.min(...strikes);
     const upperWing = Math.max(...strikes);
+    // ── Broken-wing geometry: which side carries the TRUE max-loss tail ──
+    // A BWB / asymmetric fly loses its full max loss only under the WIDER (broken)
+    // wing; the narrow side loses just the debit, not the max loss. Compute the
+    // risk side so both the model and delta tail methods can zero the non-risk
+    // side. (Fix Jul 2026 — previously both tails were counted.)
+    const uniqStrikes = [...new Set(strikes)].sort((a, b) => a - b);
+    const bodyK = uniqStrikes.length >= 3 ? uniqStrikes[Math.floor(uniqStrikes.length / 2)] : null;
+    const lowerWidth = bodyK != null ? bodyK - uniqStrikes[0] : null;
+    const upperWidth = bodyK != null ? uniqStrikes[uniqStrikes.length - 1] - bodyK : null;
+    const isBWB = legStrat === 'Broken wing butterfly' || legStrat === 'Asymmetric butterfly';
+    // 'high' = full-max-loss tail is ABOVE the upper wing; 'low' = below the lower wing.
+    const bwbRiskSide = (isBWB && lowerWidth != null && upperWidth != null && lowerWidth !== upperWidth)
+      ? (upperWidth > lowerWidth ? 'high' : 'low') : null;
+    // Right (call/put) of each OUTER wing, read from the leg labels — the delta
+    // cross-check needs it because P(beyond a strike) differs for a call vs a put.
+    const wingRightAt = (k) => {
+      const lg = legs.find(l => l.strike === k);
+      return (lg && lg.label && lg.label.toLowerCase().includes('put')) ? 'put' : 'call';
+    };
     const hoursLeft = hours > 0 ? hours : 5.5;
     // Sigma from the best available 0DTE vol proxy. VIX1D (1-day vol index) is
     // closest to actual ATM 0DTE IV, so prefer its EM when present; else fall
@@ -463,6 +482,9 @@ export function calc0DTE(inputs) {
         else if (legStrat === 'Bear call spread') { pMaxLossLow = 0; } // risk only on upside
         else if (legStrat === 'Bull call spread') { pMaxLossHigh = 0; pMaxLossLow = normCdf((Math.min(...strikes) - price) / sigma); }
         else if (legStrat === 'Bear put spread') { pMaxLossLow = 0; pMaxLossHigh = 1 - normCdf((Math.max(...strikes) - price) / sigma); }
+        // Broken-wing / asymmetric fly: max loss is one-sided (the wider wing).
+        else if (isBWB && bwbRiskSide === 'high') { pMaxLossLow = 0; }  // safe side is the downside
+        else if (isBWB && bwbRiskSide === 'low')  { pMaxLossHigh = 0; } // safe side is the upside
         pMaxLossModel = Math.min(1, (pMaxLossLow || 0) + (pMaxLossHigh || 0));
 
         // ── Delta-proxy cross-check (embeds real IV level + skew) ──
@@ -471,25 +493,44 @@ export function calc0DTE(inputs) {
         // long put wing directly); P(above upper wing) ≈ |delta of upper call|.
         // Only computed when wingDeltas provided: { lowerAbsDelta, upperAbsDelta }.
         if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
-          // The lower wing is a PUT (its delta is negative; |delta| ≈ P below it
-          // directly). The upper wing is a CALL (|delta| ≈ P above it directly).
-          // So BOTH tails use |wing delta| as-is — do NOT do 1−delta.
+          // Right-aware tail probabilities (Fix Jul 2026). An OTM PUT's |delta| gives
+          // P(below its strike) directly; a CALL's |delta| gives P(ABOVE) — so P(below
+          // a call strike) = 1 − |delta|. Convert by each wing's ACTUAL right instead
+          // of assuming lower=put / upper=call. The old code assumed put-lower and fed
+          // an all-call fly's deep-ITM lower call delta (~0.77) into the "P below" slot,
+          // inflating P(max loss) to ~50%.
+          const lowerRight = wingRightAt(lowerWing);
+          const upperRight = wingRightAt(upperWing);
           const lowTail = wingDeltas.lowerAbsDelta != null
-            ? Math.abs(wingDeltas.lowerAbsDelta) : (pMaxLossLow || 0);
+            ? (lowerRight === 'call'
+                ? Math.max(0, 1 - Math.abs(wingDeltas.lowerAbsDelta))  // P(below a call strike)
+                : Math.abs(wingDeltas.lowerAbsDelta))                  // P(below a put strike)
+            : (pMaxLossLow || 0);
           const highTail = wingDeltas.upperAbsDelta != null
-            ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
-          // Respect one-sided-risk strategies
+            ? (upperRight === 'put'
+                ? Math.max(0, 1 - Math.abs(wingDeltas.upperAbsDelta))  // P(above a put strike)
+                : Math.abs(wingDeltas.upperAbsDelta))                  // P(above a call strike)
+            : (pMaxLossHigh || 0);
+          // Respect one-sided-risk strategies (verticals + broken-wing flies).
           let dLow = lowTail, dHigh = highTail;
           if (legStrat === 'Bull put spread' || legStrat === 'Bull call spread') dHigh = 0;
           if (legStrat === 'Bear call spread' || legStrat === 'Bear put spread') dLow = 0;
+          if (isBWB && bwbRiskSide === 'high') dLow = 0;
+          if (isBWB && bwbRiskSide === 'low')  dHigh = 0;
           pMaxLossDelta = Math.min(1, dLow + dHigh);
         }
 
         // Blend: when both exist, average them (delta embeds skew, model is
         // smooth/stable). When only one exists, use it.
         if (pMaxLossModel != null && pMaxLossDelta != null) {
-          pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2;
-          pMaxLossSource = 'blend';
+          // Divergence guardrail (Fix Jul 2026): a large gap between the two methods
+          // means one input is malformed (e.g. a mis-entered / mis-slotted wing delta).
+          // Prefer the smooth model rather than averaging a bad number into the score.
+          if (Math.abs(pMaxLossModel - pMaxLossDelta) > 0.35) {
+            pMaxLoss = pMaxLossModel; pMaxLossSource = 'model (delta rejected)';
+          } else {
+            pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2; pMaxLossSource = 'blend';
+          }
         } else if (pMaxLossDelta != null) {
           pMaxLoss = pMaxLossDelta; pMaxLossSource = 'delta';
         } else {
@@ -525,9 +566,19 @@ export function calc0DTE(inputs) {
   // 1. Compression signal (15)
   const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(bestStrat);
   const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
+  // A narrow, near-the-money broken-wing / asymmetric fly behaves like a PINNING
+  // (centred) structure for Compression + Move-consumed scoring, even though it
+  // keeps a mild directional tilt in the VWAP/overnight logic. Gate on behaviour,
+  // not the symmetric-vs-asymmetric label (Fix Jul 2026): body within ~0.5x ATR of
+  // spot. A far-OTM directional BWB stays directional.
+  const _flyStrikes = [...new Set(legs.map(l => l.strike))].sort((a, b) => a - b);
+  const _bodyK = _flyStrikes.length >= 3 ? _flyStrikes[Math.floor(_flyStrikes.length / 2)] : null;
+  const _nearThresh = atr > 0 ? 0.5 * atr : roundTo * 2;
+  const pinLike = ['Broken wing butterfly','Asymmetric butterfly'].includes(legStrat)
+    && _bodyK != null && Math.abs(price - _bodyK) <= _nearThresh;
   let compPts;
   if (!hasComp) compPts = 5;
-  else if (isCentred) compPts = comp<0.35?15:comp<0.50?12:comp<0.80?6:2;
+  else if (isCentred || pinLike) compPts = comp<0.35?15:comp<0.50?12:comp<0.80?6:2;
   else if (isDirectional) compPts = comp>0.80?14:comp>0.50?11:comp>0.35?8:5;
   else compPts = comp<0.50?11:comp<0.80?8:4;
   setupScore += compPts;
@@ -536,8 +587,8 @@ export function calc0DTE(inputs) {
   // 2. Expected move consumed (15)
   let movePts;
   if (em <= 0) movePts = 5;
-  else if (isCentred) {
-    // Butterflies want high move consumed
+  else if (isCentred || pinLike) {
+    // Butterflies (incl. near-money broken-wing flies) want high move consumed
     movePts = moveConsumed>0.80?15:moveConsumed>0.60?12:moveConsumed>0.40?8:moveConsumed>0.25?4:2;
   } else {
     // Spreads want low move consumed (room to run)
@@ -1289,7 +1340,7 @@ export function calc0DTE(inputs) {
   if (vixHigh) warnings.push('VIX >25 — half-size override');
   if (setup === 'B Setup') warnings.push('B setup — half Kelly');
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
-  if (moveConsumed > 0.90 && isDirectional) warnings.push('Move >90% consumed — avoid chasing directional');
+  if (moveConsumed > 0.90 && isDirectional && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');

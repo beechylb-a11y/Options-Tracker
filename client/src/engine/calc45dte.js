@@ -124,6 +124,22 @@ export function calc45DTE(inputs) {
     const strikes = legs.map(l => l.strike);
     const lowerWing = Math.min(...strikes);
     const upperWing = Math.max(...strikes);
+    // ── Broken-wing geometry: which side carries the TRUE max-loss tail ──
+    // A BWB / asymmetric fly loses its full max loss only under the WIDER (broken)
+    // wing; the narrow side loses just the debit. Compute the risk side so both the
+    // model and delta tail methods can zero the non-risk side. (Fix Jul 2026.)
+    const uniqStrikes = [...new Set(strikes)].sort((a, b) => a - b);
+    const bodyK = uniqStrikes.length >= 3 ? uniqStrikes[Math.floor(uniqStrikes.length / 2)] : null;
+    const lowerWidth = bodyK != null ? bodyK - uniqStrikes[0] : null;
+    const upperWidth = bodyK != null ? uniqStrikes[uniqStrikes.length - 1] - bodyK : null;
+    const isBWB = legStrat === 'Broken wing butterfly' || legStrat === 'Asymmetric butterfly';
+    const bwbRiskSide = (isBWB && lowerWidth != null && upperWidth != null && lowerWidth !== upperWidth)
+      ? (upperWidth > lowerWidth ? 'high' : 'low') : null;
+    // Right (call/put) of each OUTER wing, read from the leg labels.
+    const wingRightAt = (k) => {
+      const lg = legs.find(l => l.strike === k);
+      return (lg && lg.label && lg.label.toLowerCase().includes('put')) ? 'put' : 'call';
+    };
     // Horizon = time actually HELD, not full expiry. 45DTE trades are managed to
     // a 21 DTE exit, so P(max loss) uses the days-to-exit horizon (dte − 21),
     // not the full dte. Using full expiry overstated tail risk ~2x because it
@@ -139,21 +155,39 @@ export function calc45DTE(inputs) {
       } else if (legStrat === 'Bull call spread') { pMaxLossHigh = 0; }
       else if (legStrat === 'Bear put spread') { pMaxLossLow = 0; }
       else if (legStrat === 'Jade lizard') { pMaxLossHigh = 0; } // no upside risk by design
+      // Broken-wing / asymmetric fly: max loss is one-sided (the wider wing).
+      else if (isBWB && bwbRiskSide === 'high') { pMaxLossLow = 0; }  // safe side is the downside
+      else if (isBWB && bwbRiskSide === 'low')  { pMaxLossHigh = 0; } // safe side is the upside
       pMaxLossModel = Math.min(1, (pMaxLossLow || 0) + (pMaxLossHigh || 0));
 
       // Delta-proxy cross-check (embeds real IV + skew)
       if (wingDeltas && (wingDeltas.lowerAbsDelta != null || wingDeltas.upperAbsDelta != null)) {
-        // Lower wing = PUT (|delta| ≈ P below it). Upper wing = CALL (|delta| ≈
-        // P above it). Both tails use |wing delta| directly — no 1−delta.
-        let dLow = wingDeltas.lowerAbsDelta != null ? Math.abs(wingDeltas.lowerAbsDelta) : (pMaxLossLow || 0);
-        let dHigh = wingDeltas.upperAbsDelta != null ? Math.abs(wingDeltas.upperAbsDelta) : (pMaxLossHigh || 0);
+        // Right-aware (Fix Jul 2026): P(below a CALL strike) = 1 − |delta|; a PUT's
+        // |delta| gives P(below) directly. Convert by each wing's ACTUAL right instead
+        // of assuming lower=put / upper=call — an all-call fly's deep-ITM lower call
+        // delta (~0.77) fed into the "P below" slot otherwise inflates P(max loss).
+        const lowerRight = wingRightAt(lowerWing);
+        const upperRight = wingRightAt(upperWing);
+        let dLow = wingDeltas.lowerAbsDelta != null
+          ? (lowerRight === 'call' ? Math.max(0, 1 - Math.abs(wingDeltas.lowerAbsDelta)) : Math.abs(wingDeltas.lowerAbsDelta))
+          : (pMaxLossLow || 0);
+        let dHigh = wingDeltas.upperAbsDelta != null
+          ? (upperRight === 'put' ? Math.max(0, 1 - Math.abs(wingDeltas.upperAbsDelta)) : Math.abs(wingDeltas.upperAbsDelta))
+          : (pMaxLossHigh || 0);
         if (legStrat === 'Bull call spread' || legStrat === 'Jade lizard') dHigh = 0;
         if (legStrat === 'Bear put spread') dLow = 0;
         if (legStrat === 'Credit spread') { if (isBull || !isBear) dHigh = 0; else dLow = 0; }
+        if (isBWB && bwbRiskSide === 'high') dLow = 0;
+        if (isBWB && bwbRiskSide === 'low')  dHigh = 0;
         pMaxLossDelta = Math.min(1, dLow + dHigh);
       }
 
-      if (pMaxLossModel != null && pMaxLossDelta != null) { pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2; pMaxLossSource = 'blend'; }
+      if (pMaxLossModel != null && pMaxLossDelta != null) {
+        // Divergence guardrail (Fix Jul 2026): a large gap means one input is malformed;
+        // prefer the smooth model over blending a bad delta into the score.
+        if (Math.abs(pMaxLossModel - pMaxLossDelta) > 0.35) { pMaxLoss = pMaxLossModel; pMaxLossSource = 'model (delta rejected)'; }
+        else { pMaxLoss = (pMaxLossModel + pMaxLossDelta) / 2; pMaxLossSource = 'blend'; }
+      }
       else if (pMaxLossDelta != null) { pMaxLoss = pMaxLossDelta; pMaxLossSource = 'delta'; }
       else { pMaxLoss = pMaxLossModel; pMaxLossSource = 'model'; }
     }
