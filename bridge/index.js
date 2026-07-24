@@ -103,6 +103,7 @@ function getSnapshot(contract) {
       data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
       data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
       data.frozen = mdType === 2 || mdType === 4;
+      console.log(`[BRIDGE] snap ${contract.symbol}/${contract.secType}: bid=${data.bid||0} ask=${data.ask||0} last=${data.last||0} close=${data.prevClose||0} delayed=${data.delayed}`);
       resolve(data);
     };
 
@@ -121,6 +122,7 @@ function getSnapshot(contract) {
         data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
         data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
         data.frozen = mdType === 2 || mdType === 4;
+        console.log(`[BRIDGE] snap ${contract.symbol}/${contract.secType} (timeout): bid=${data.bid||0} ask=${data.ask||0} last=${data.last||0} close=${data.prevClose||0} delayed=${data.delayed}`);
         resolve(data);
       }
     }, 6000);
@@ -356,7 +358,16 @@ app.get('/api/market-data', async (req, res) => {
       getSnapshot(esContract)
     ]);
 
-    const price = (mainSnap.mid && mainSnap.mid > 0) ? mainSnap.mid : (mainSnap.last > 0 ? mainSnap.last : 0);
+    // Price chain: mid → last → session close (prevClose). ETFs on a delayed-
+    // frozen feed (reqMarketDataType 3) often deliver ONLY the close tick with no
+    // streaming bid/ask/last, so without the close fallback price came back 0 for
+    // SPY/QQQ/IWM. SPX was masked from this because it also derives price from
+    // SPY bars ×10 below.
+    let priceSource = 'mid';
+    let price = (mainSnap.mid && mainSnap.mid > 0) ? mainSnap.mid : 0;
+    if (!price && mainSnap.last > 0) { price = mainSnap.last; priceSource = 'last'; }
+    if (!price && mainSnap.prevClose > 0) { price = mainSnap.prevClose; priceSource = 'close(prevClose — stale)'; }
+    if (price) console.log(`[BRIDGE] ${underlying} price=${price} via ${priceSource}`);
     const high = mainSnap.high > 0 ? mainSnap.high : 0;
     const low = mainSnap.low > 0 ? mainSnap.low : 0;
     const cashOpen = mainSnap.open > 0 ? mainSnap.open : 0;
@@ -597,8 +608,11 @@ app.get('/api/atm-straddle', async (req, res) => {
     // 1) Spot: use the index/stock snapshot to find the ATM strike.
     const spotContract = contracts[underlying] || { symbol: underlying, secType: SecType.IND, exchange: 'CBOE', currency: 'USD' };
     const spotSnap = await getSnapshot(spotContract);
-    const spot = spotSnap.mid || spotSnap.last;
-    if (!spot || spot <= 0) return res.status(502).json({ error: 'Could not read spot price' });
+    const spot = spotSnap.mid || spotSnap.last || spotSnap.prevClose;  // close = last-resort anchor
+    if (!spot || spot <= 0) {
+      console.log(`[BRIDGE] atm-straddle ${underlying}: no spot (mid=${spotSnap.mid||0} last=${spotSnap.last||0} close=${spotSnap.prevClose||0})`);
+      return res.status(502).json({ error: 'Could not read spot price' });
+    }
 
     // 2) Nearest strike. Strike increments differ by product.
     const inc = (underlying === 'SPX' || underlying === 'NDX') ? 5
@@ -610,8 +624,9 @@ app.get('/api/atm-straddle', async (req, res) => {
     const callC = buildOptionContract(underlying, expiry, atmStrike, 'C');
     const putC  = buildOptionContract(underlying, expiry, atmStrike, 'P');
     const [callSnap, putSnap] = await Promise.all([getSnapshot(callC), getSnapshot(putC)]);
-    const callPrice = callSnap.mid || callSnap.last;
-    const putPrice  = putSnap.mid  || putSnap.last;
+    const callPrice = callSnap.mid || callSnap.last || callSnap.prevClose;  // close = prior settle
+    const putPrice  = putSnap.mid  || putSnap.last  || putSnap.prevClose;
+    console.log(`[BRIDGE] atm-straddle ${underlying} spot=${spot} atm=${atmStrike} inc=${inc}: call=${callPrice||0} put=${putPrice||0}`);
 
     if (!callPrice || !putPrice || callPrice <= 0 || putPrice <= 0) {
       return res.json({ notSubscribed: true, error: 'No option prices — check OPRA/options market-data subscription', spot, atmStrike });
