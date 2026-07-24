@@ -758,6 +758,34 @@ function MultiScanPanel({ mode, onSelect }) {
             mergedData[underlying] = merged;
           }
         });
+
+        // Straddle EM per underlying (0DTE only). The market-data endpoint returns
+        // the VIX/√252 model EM; the ATM straddle is the market-priced move and is
+        // preferred. Fetched separately (like the single-underlying auto-fill) with
+        // a short timeout so a slow/after-hours option fetch can't hang the scan.
+        if (is0) {
+          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+          const sFetches = underlyings.filter(u => u).map(underlying => {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 7000);
+            return fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=0.85',
+              { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+              .then(r => r.json()).then(sd => { clearTimeout(t); return { underlying, sd }; })
+              .catch(() => ({ underlying, sd: null }));
+          });
+          const straddles = await Promise.all(sFetches);
+          straddles.forEach(({ underlying, sd }) => {
+            if (sd && sd.source === 'straddle' && sd.expectedMove > 0 && mergedData[underlying]) {
+              mergedData[underlying] = {
+                ...mergedData[underlying],
+                em: String(sd.expectedMove),
+                emSource: 'straddle',
+                straddleCall: String(sd.callPrice),
+                straddlePut: String(sd.putPrice),
+              };
+            }
+          });
+        }
         setManualData(mergedData);
       }
     } catch (e) {
@@ -781,10 +809,16 @@ function MultiScanPanel({ mode, onSelect }) {
         };
         const inp = {
           price: parseFloat(m.price) || 0,
-          high: parseFloat(m.high) || 0,
-          low: parseFloat(m.low) || 0,
-          cashOpen: parseFloat(m.cashOpen) || 0,
+          // high/low/open are returned in SPY-scale for SPX (bridge uses SPY bars);
+          // scaleV lifts them ×10 so the range/rm calc isn't broken (was: raw → SPX
+          // showed high 742 against price 7408).
+          high: scaleV(parseFloat(m.high) || 0),
+          low: scaleV(parseFloat(m.low) || 0),
+          cashOpen: scaleV(parseFloat(m.cashOpen) || 0),
           em: parseFloat(m.em) || 0,
+          emSource: m.emSource || (m.em ? 'vix' : undefined),
+          straddleCall: parseFloat(m.straddleCall) || undefined,
+          straddlePut: parseFloat(m.straddlePut) || undefined,
           atr: parseFloat(m.atr) || 0,
           atr5: parseFloat(m.atr5) || 0,
           atr2h: parseFloat(m.atr2h) || 0,
@@ -800,6 +834,14 @@ function MultiScanPanel({ mode, onSelect }) {
           esOvernightLow: parseFloat(m.esOvernightLow) || 0,
           esEM: parseFloat(m.esEM) || 0,
         };
+        // Price fallback: when the bridge returns no spot but VWAP is present,
+        // use VWAP (≈ intraday price) so the scan still runs. SPX VWAP is SPY-scale
+        // so lift it ×10; SPY/QQQ use it as-is.
+        if (!inp.price) {
+          let vp = parseFloat(m.vwap5) || 0;
+          if (underlying === 'SPX' && vp > 0 && vp < 3000) vp *= 10;
+          if (vp > 0) inp.price = vp;
+        }
         if (!inp.price) return { underlying, error: 'No price', result: null, data: inp };
         try {
           const result = is0 ? calc0DTE({
