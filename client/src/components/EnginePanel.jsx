@@ -954,7 +954,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Greeks */}
           <div className="flex items-center justify-between">
-            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge).">Greeks (optional)</SectionLabel>
+            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
             <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
               title="Fetch model Greeks for the computed strikes from TWS via the bridge"
               style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
@@ -967,15 +967,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <Inp label="Delta" value={i0.delta} onChange={v=>set0('delta',v)}/>
               <Inp label="Gamma" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
               <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
-              <Inp label="Lower wing Δ (long put)" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
-              <Inp label="Upper wing Δ (long call)" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
+              <Inp label="Lower wing |Δ| (lowest strike)" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
+              <Inp label="Upper wing |Δ| (highest strike)" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
             </> : <>
               <Inp label="Theta ($)" value={i45.theta} onChange={v=>set45('theta',v)}/>
               <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
               <Inp label="Delta" value={i45.delta} onChange={v=>set45('delta',v)}/>
               {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
-              <Inp label="Lower wing Δ (long put)" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
-              <Inp label="Upper wing Δ (long call)" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
+              <Inp label="Lower wing |Δ| (lowest strike)" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
+              <Inp label="Upper wing |Δ| (highest strike)" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
             </>}
           </div>
           {r.pMaxLoss != null && (
@@ -989,7 +989,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <div style={{marginTop:6,color:'#e6edf3'}}>
                 {r.pMaxLossModel!=null && <>Model {(r.pMaxLossModel*100).toFixed(1)}% ({is0?'VIX1D':`${i45.dte||45}d IV`}, flat)</>}
                 {r.pMaxLossDelta!=null && <> · Delta {(r.pMaxLossDelta*100).toFixed(1)}% (real IV + skew)</>}
-                {r.pMaxLossDelta==null && <> · enter wing Δ above for skew-aware cross-check</>}
+                {r.pMaxLossDelta==null && <> · enter |Δ| of each outer long leg above (put or call — the engine converts by right) for the skew-aware cross-check</>}
               </div>
               {r.pMaxLossLow!=null && r.pMaxLossHigh!=null && (
                 <div style={{marginTop:3,color:'#8b949e'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
