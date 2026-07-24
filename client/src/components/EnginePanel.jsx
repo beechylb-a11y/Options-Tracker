@@ -949,7 +949,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Profit target scale */}
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
-            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0} />
+            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0} win={parseFloat(is0?i0.win:i45.win) || 0} />
           )}
 
           {/* Greeks */}
@@ -1406,10 +1406,16 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   );
 }
 
-function ProfitScale({ netCreditDebit, isCredit }) {
+function ProfitScale({ netCreditDebit, isCredit, win }) {
   const ncd = Math.abs(netCreditDebit);
   const pcts = [25, 30, 40, 50, 75, 100];
   const multiplier = 100; // options multiplier
+  // Profit targets are a % of MAX PROFIT (the Win amount), NOT a % of the entry
+  // debit/credit. For credit trades max profit ≈ the credit, so the two coincide;
+  // for debit butterflies they diverge — 100% must mean the FULL max profit
+  // (close at the wing width), not a 100% return on the debit. Falls back to the
+  // old entry-based figure only when no Win amount has been entered.
+  const maxProfit = win > 0 ? win : ncd * multiplier;
 
   // For credit trades: profit target = close for LESS than credit received
   //   e.g. sold for $2.00 credit, 50% profit = buy back at $1.00 (debit $1.00)
@@ -1427,8 +1433,8 @@ function ProfitScale({ netCreditDebit, isCredit }) {
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(6, 1fr)',gap:4}}>
         {pcts.map(pct => {
-          const profitPerShare = ncd * (pct / 100);
-          const profitDollars = profitPerShare * multiplier;
+          const profitDollars = maxProfit * (pct / 100);
+          const profitPerShare = profitDollars / multiplier;
           let closePrice, closeType;
           if (isCredit || netCreditDebit > 0) {
             // Credit: buy back cheaper — close price = credit - profit
