@@ -759,16 +759,41 @@ function MultiScanPanel({ mode, onSelect }) {
           }
         });
 
-        // Straddle EM per underlying (0DTE only). The market-data endpoint returns
-        // the VIX/√252 model EM; the ATM straddle is the market-priced move and is
-        // preferred. Fetched separately (like the single-underlying auto-fill) with
-        // a short timeout so a slow/after-hours option fetch can't hang the scan.
+        // ── Normalize merged inputs FIRST so the table and the engine agree, and
+        // so we have a resolved spot to hand to the straddle fetch below. Scaling +
+        // the VWAP price fallback previously lived only in runEngine's local `inp`,
+        // so the table still showed blanks (ETF price) and SPY-scale SPX bars.
+        underlyings.filter(u => u).forEach(u => {
+          const md = mergedData[u];
+          if (!md) return;
+          const num = k => parseFloat(md[k]) || 0;
+          // SPX bridge fields come in SPY-scale; lift ×10 only when clearly unscaled
+          // (< 3000). Idempotent: already-index-scale values (7408, 7393) are left.
+          const scale = v => (u === 'SPX' && v > 0 && v < 3000) ? v * 10 : v;
+          const price = num('price') || scale(num('vwap5'));  // bridge spot, else VWAP
+          if (price) md.price = String(+price.toFixed(2));
+          ['high', 'low', 'cashOpen', 'vwap5', 'vwap5_30', 'vwap15', 'vwap15_30'].forEach(k => {
+            const v = num(k);
+            if (v) md[k] = String(+scale(v).toFixed(2));
+          });
+          // VIX/√252 model EM from the resolved price (a real straddle overrides below).
+          const vix = num('vix');
+          if (price && vix) md.em = String(Math.round(price * (vix / 100) / Math.sqrt(252) * 10) / 10);
+        });
+
+        // ── Straddle EM per underlying (0DTE) — the market-priced move, preferred
+        // over the VIX model. Pass the resolved spot so the bridge SKIPS its own
+        // (slow, ETF-failing) spot snapshot and only needs option prices. Timeout is
+        // generous (13s) because each bridge getSnapshot waits its full ~6s window,
+        // so spot+legs can approach ~12s — a 7s timeout was aborting even SPX.
         if (is0) {
           const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
           const sFetches = underlyings.filter(u => u).map(underlying => {
+            const spot = parseFloat(mergedData[underlying]?.price) || 0;
+            const spotQ = spot > 0 ? '&spot=' + spot : '';
             const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 7000);
-            return fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=0.85',
+            const t = setTimeout(() => ctrl.abort(), 13000);
+            return fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=0.85' + spotQ,
               { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
               .then(r => r.json()).then(sd => { clearTimeout(t); return { underlying, sd }; })
               .catch(() => ({ underlying, sd: null }));
@@ -786,33 +811,6 @@ function MultiScanPanel({ mode, onSelect }) {
             }
           });
         }
-
-        // ── Normalize merged inputs so the DISPLAYED table and the engine agree ──
-        // Previously scaling + the VWAP price fallback lived only in runEngine's
-        // local `inp`, so the input table still showed blanks (ETF price) and
-        // SPY-scale SPX bars (high 742 vs price 7408). Write the resolved values
-        // back to manualData so both the table and the engine read the same thing.
-        underlyings.filter(u => u).forEach(u => {
-          const md = mergedData[u];
-          if (!md) return;
-          const num = k => parseFloat(md[k]) || 0;
-          // SPX bridge fields come in SPY-scale; lift ×10 only when clearly unscaled
-          // (< 3000). Idempotent: already-index-scale values (7408, 7393) are left.
-          const scale = v => (u === 'SPX' && v > 0 && v < 3000) ? v * 10 : v;
-          // Price: bridge spot, else VWAP (≈ intraday price), scaled for SPX.
-          let price = num('price') || scale(num('vwap5'));
-          if (price) md.price = String(+price.toFixed(2));
-          ['high', 'low', 'cashOpen', 'vwap5', 'vwap5_30', 'vwap15', 'vwap15_30'].forEach(k => {
-            const v = num(k);
-            if (v) md[k] = String(+scale(v).toFixed(2));
-          });
-          // EM: keep a real straddle EM; otherwise recompute the VIX/√252 model EM
-          // from the resolved price so ETFs stop showing blank (bridge had price=0).
-          if (md.emSource !== 'straddle') {
-            const vix = num('vix');
-            if (price && vix) md.em = String(Math.round(price * (vix / 100) / Math.sqrt(252) * 10) / 10);
-          }
-        });
         setManualData(mergedData);
       }
     } catch (e) {

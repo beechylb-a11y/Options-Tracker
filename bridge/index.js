@@ -605,13 +605,20 @@ app.get('/api/atm-straddle', async (req, res) => {
     const haircut = req.query.haircut ? Number(req.query.haircut) : 0.85;
     if (!expiry) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
 
-    // 1) Spot: use the index/stock snapshot to find the ATM strike.
+    // 1) Spot: use a caller-supplied hint when present, else the index/stock
+    // snapshot. The multi-scan passes its resolved VWAP-fallback price as ?spot=,
+    // which lets the straddle price even when the live STK snapshot returns nothing
+    // (SPY/QQQ/IWM) and skips a ~6s snapshot when spot is already known.
     const spotContract = contracts[underlying] || { symbol: underlying, secType: SecType.IND, exchange: 'CBOE', currency: 'USD' };
-    const spotSnap = await getSnapshot(spotContract);
-    const spot = spotSnap.mid || spotSnap.last || spotSnap.prevClose;  // close = last-resort anchor
-    if (!spot || spot <= 0) {
-      console.log(`[BRIDGE] atm-straddle ${underlying}: no spot (mid=${spotSnap.mid||0} last=${spotSnap.last||0} close=${spotSnap.prevClose||0})`);
-      return res.status(502).json({ error: 'Could not read spot price' });
+    const spotHint = req.query.spot ? Number(req.query.spot) : 0;
+    let spot = spotHint > 0 ? spotHint : 0;
+    if (!spot) {
+      const spotSnap = await getSnapshot(spotContract);
+      spot = spotSnap.mid || spotSnap.last || spotSnap.prevClose;  // close = last-resort anchor
+      if (!spot || spot <= 0) {
+        console.log(`[BRIDGE] atm-straddle ${underlying}: no spot (mid=${spotSnap.mid||0} last=${spotSnap.last||0} close=${spotSnap.prevClose||0})`);
+        return res.status(502).json({ error: 'Could not read spot price' });
+      }
     }
 
     // 2) Nearest strike. Strike increments differ by product.
