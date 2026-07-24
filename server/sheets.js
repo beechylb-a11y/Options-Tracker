@@ -449,9 +449,23 @@ export async function getTradeTracker() {
 export async function getStrategyHistory(account = null) {
   const rows = await getTradeTracker();
   const out = {};
+  // Canonicalize broker (OIC) strategy names to the engine's archetype names so
+  // real imported trades accumulate under the same key the engine queries
+  // (historyByStrategy[legStrat]). Without this, a TastyTrade "Long Call Butterfly"
+  // never joins the engine's "Standard butterfly" bucket, so MEASURED-mode EV can
+  // never fire from real trades and the model is stuck on estimated capture fractions.
+  // Only the UNAMBIGUOUS case is mapped: a long debit single-name (call/put) butterfly
+  // IS a standard debit fly. Short flies, iron flies and condors carry broker-dependent
+  // long/short semantics and are left as-is until confirmed. (Fix Jul 2026.)
+  const canonicalStrategy = (name) => {
+    const n = name.toLowerCase();
+    if (n.includes('butterfly') && !n.includes('iron') && !n.includes('short')
+        && (n.includes('call') || n.includes('put'))) return 'Standard butterfly';
+    return name; // engine names + ambiguous structures pass through unchanged
+  };
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
-    const strategy = (r[4] || '').trim();
+    const strategy = canonicalStrategy((r[4] || '').trim());
     const qty = Math.abs(parseFloat(r[6])) || 1;
     const pnl = parseFloat(r[8]);
     const status = (r[11] || '').trim();

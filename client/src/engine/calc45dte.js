@@ -200,8 +200,11 @@ export function calc45DTE(inputs) {
   setupScore += ivrPts; criteria.push({label:`IV Rank ${ivr>0?ivr.toFixed(0)+'%':'--'}`, pts:ivrPts, max:25});
   const ivhvPts = ivhvRatio>1.2?20:ivhvRatio>=1.0?12:ivhvRatio>0?4:0;
   setupScore += ivhvPts; criteria.push({label:`IV/HV ${ivhvRatio>0?ivhvRatio.toFixed(2):'--'}`, pts:ivhvPts, max:20});
-  const stratFit = bestRating==='EXCELLENT'?15:bestRating==='GOOD'?10:bestRating==='MARGINAL'?5:0;
-  setupScore += stratFit; criteria.push({label:`Strategy fit (${bestRating})`, pts:stratFit, max:15});
+  // Use the scored structure's OWN rating so a manual override scores its pick, not
+  // the auto-pick (identical when no override). (Fix Jul 2026.)
+  const scoreRating = (sorted.find(s => s.name === legStrat)?.rating) || bestRating;
+  const stratFit = scoreRating==='EXCELLENT'?15:scoreRating==='GOOD'?10:scoreRating==='MARGINAL'?5:0;
+  setupScore += stratFit; criteria.push({label:`Strategy fit (${scoreRating})`, pts:stratFit, max:15});
   const tEff = hasGreeks ? theta/bpr : 0;
   const tEffPts = !hasGreeks?8:tEff>0.02?15:tEff>0.01?10:tEff>0.005?5:0;
   setupScore += tEffPts; criteria.push({label:`Theta efficiency ${hasGreeks?tEff.toFixed(4):'--'}`, pts:tEffPts, max:15});

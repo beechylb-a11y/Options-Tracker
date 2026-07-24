@@ -564,8 +564,13 @@ export function calc0DTE(inputs) {
   const criteria = [];
 
   // 1. Compression signal (15)
-  const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(bestStrat);
-  const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(bestStrat);
+  // Scoring keys off legStrat (= overrideStrategy || bestStrat) so a manual override
+  // scores the structure the user actually chose, not the auto-pick. Identical to
+  // bestStrat when there is no override. (Fix Jul 2026 — was bestStrat, making the
+  // scorecard inconsistent with the legs/EV/P(max loss) whenever an override was set.)
+  const scoreStrat = legStrat;
+  const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(scoreStrat);
+  const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(scoreStrat);
   // A narrow, near-the-money broken-wing / asymmetric fly behaves like a PINNING
   // (centred) structure for Compression + Move-consumed scoring, even though it
   // keeps a mild directional tilt in the VWAP/overnight logic. Gate on behaviour,
@@ -612,10 +617,11 @@ export function calc0DTE(inputs) {
   setupScore += tailPts;
   criteria.push({ label: tailLabel, pts: tailPts, max: 10 });
 
-  // 3. Strategy fit (15)
-  const stratFit = bestRating==='EXCELLENT'?15:bestRating==='GOOD'?10:bestRating==='MARGINAL'?5:0;
+  // 3. Strategy fit (15) — use the scored structure's OWN rating (honours override).
+  const scoreRating = (sorted.find(s => s.name === scoreStrat)?.rating) || bestRating;
+  const stratFit = scoreRating==='EXCELLENT'?15:scoreRating==='GOOD'?10:scoreRating==='MARGINAL'?5:0;
   setupScore += stratFit;
-  criteria.push({ label: `Strategy fit (${bestRating})`, pts: stratFit, max: 15 });
+  criteria.push({ label: `Strategy fit (${scoreRating})`, pts: stratFit, max: 15 });
 
   // 4. VWAP slope + 15m confirmation (10)
   let slopePts;
@@ -631,11 +637,11 @@ export function calc0DTE(inputs) {
   criteria.push({ label: slopeLabel, pts: slopePts, max: 10 });
 
   // 5. VIX1D/VIX gap (10)
-  const vixGapRatings = VIX_GAP_RATINGS[bestStrat] || [3,5,7,10];
+  const vixGapRatings = VIX_GAP_RATINGS[scoreStrat] || [3,5,7,10];
   let vixPts = vixGap===0&&vix===0 ? 5 : vixGapRatings[gapBandIdx];
   if (vixHigh) vixPts = Math.floor(vixPts * 0.5);
   setupScore += vixPts;
-  criteria.push({ label: `VIX gap for ${bestStrat}`, pts: vixPts, max: 10 });
+  criteria.push({ label: `VIX gap for ${scoreStrat}`, pts: vixPts, max: 10 });
 
   // 6. ES overnight trend alignment (10)
   let overnightPts;
