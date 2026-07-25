@@ -385,6 +385,94 @@ export function calc45DTE(inputs) {
   else if (warnings.length) { decision='Trade with caution'; decisionClass='warn'; }
   else { decision='Trade'; decisionClass='go'; }
 
+  // ═══════════════════════════════════════
+  //  TRADE CONFIDENCE (gated, multiplicative) — 45DTE parity with 0DTE.
+  //  Setup Quality answers "clean pattern?"; Confidence answers "risk money NOW?".
+  //  One fatal flaw (negative EV, edge/structure conflict, bad reward:risk) SINKS
+  //  the number instead of being averaged away by the additive setup. The 45DTE
+  //  direction coherence keys off the purpose-built Directional Edge (already
+  //  structure-aware: credit wants theta-dominant, debit wants move-dominant),
+  //  not the coarse `outlook`. (Jul 2026)
+  // ═══════════════════════════════════════
+  const confConflicts = [];
+  // Premium axis (name-based; calc45 has no net credit/debit input): sellers want
+  // RICH vol, buyers want CHEAP vol. 'Iron butterfly' is a credit seller; the plain
+  // /butterfly/ flies are debit buyers — order the tests so iron is caught first.
+  const isCreditSell = /Iron Condor|Iron butterfly|Credit spread|Jade lizard/i.test(legStrat);
+  const isDebitBuy = /Broken wing|Asymmetric|Standard butterfly|Calendar|Diagonal|Bull call|Bear put|Ratio/i.test(legStrat);
+
+  // ── edgeGate: positive expectancy (EV normalised by max profit) ──
+  let edgeGate45;
+  if (missingSize || win <= 0) {
+    edgeGate45 = 0.5;
+  } else {
+    const evRatio = ev / win;
+    edgeGate45 = (ev > 0 && kelly > 0)
+      ? Math.min(1, 0.7 + Math.min(0.3, evRatio))
+      : Math.max(0.06, 0.55 + evRatio * 0.35);
+  }
+
+  // ── payoffGate: reward:risk sanity floor ──
+  let payoffGate45 = 1;
+  if (win > 0 && risk > 0) {
+    const rr = win / risk;
+    payoffGate45 = rr >= 0.50 ? 1.00 : rr >= 0.30 ? 0.90 : rr >= 0.20 ? 0.78
+                 : rr >= 0.12 ? 0.62 : rr >= 0.06 ? 0.42 : 0.28;
+    if (rr < 0.12) confConflicts.push({ tag: 'Reward:Risk',
+      label: `Reward:risk ${rr.toFixed(2)} — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
+  }
+
+  // ── coherenceGate: Directional Edge + IV regime vs structure ──
+  let coherenceGate45 = 1;
+  // (a) Direction↔Structure via the 45DTE Directional Edge (structure-aware). Skipped
+  //     when greeks are missing (edgeSignal null → can't judge → neutral).
+  const eSig = greeks?.edgeSignal || null;
+  if (eSig === 'marginal') {
+    coherenceGate45 *= 0.75;
+    confConflicts.push({ tag: 'Direction↔Structure',
+      label: `Directional Edge marginal for ${legStrat} — ${greeks.edgeAction}`, severity: 'low' });
+  } else if (eSig === 'poor') {
+    coherenceGate45 *= 0.55;
+    confConflicts.push({ tag: 'Direction↔Structure',
+      label: `Directional Edge poor for ${legStrat} — ${greeks.edgeAction}`, severity: 'high' });
+  }
+  // (b) Vol↔Structure — sellers into cheap vol / buyers into rich vol.
+  if (isCreditSell && ivr > 0 && ivr < 25) {
+    coherenceGate45 *= 0.65;
+    confConflicts.push({ tag: 'Vol↔Structure',
+      label: `Selling premium into low IV rank (${ivr.toFixed(0)}%)`, severity: 'high' });
+  } else if (isDebitBuy && ivr > 60) {
+    coherenceGate45 *= 0.75;
+    confConflicts.push({ tag: 'Vol↔Structure',
+      label: `Buying premium into rich IV rank (${ivr.toFixed(0)}%)`, severity: 'low' });
+  }
+  // (c) Regime↔Structure (mild) — IV below realised undermines a premium sale.
+  if (isCreditSell && ivhvRatio > 0 && ivhvRatio < 1.0) {
+    coherenceGate45 *= 0.9;
+    confConflicts.push({ tag: 'Regime↔Structure',
+      label: `IV below realised (IV/HV ${ivhvRatio.toFixed(2)}) — thin premium edge`, severity: 'low' });
+  }
+
+  // ── Composite (gated, multiplicative) ──
+  const confRaw45 = setupScore * edgeGate45 * coherenceGate45 * payoffGate45;
+  const tradeConfidence = missingSize ? null : Math.max(0, Math.min(100, Math.round(confRaw45)));
+  const confidenceTier = tradeConfidence == null ? '--'
+    : tradeConfidence >= 70 ? 'High'
+    : tradeConfidence >= 50 ? 'Moderate'
+    : tradeConfidence >= 30 ? 'Low'
+    : tradeConfidence >= 15 ? 'Weak' : 'Avoid';
+  const confGates45 = [
+    { v: edgeGate45, msg: (win > 0 && ev < 0) ? `Negative EV ($${Math.round(ev)})` : 'Thin edge' },
+    { v: coherenceGate45, msg: confConflicts.find(c => c.tag.includes('↔'))?.label || 'Signal conflict' },
+    { v: payoffGate45, msg: (win > 0 && risk > 0) ? `Reward:risk ${(win / risk).toFixed(2)}` : 'Payoff' }
+  ];
+  const bindingGate45 = confGates45.reduce((a, b) => (b.v < a.v ? b : a));
+  const confidenceDriver = missingSize
+    ? 'Enter sizing to score confidence'
+    : tradeConfidence >= 50
+      ? `Carried by ${ev > 0 ? `EV +$${Math.round(ev)}` : 'a clean setup'} · coherent signals`
+      : `Limited by ${bindingGate45.msg}`;
+
   // Management targets
   const sdRange = (hasPrice && hasVol) ? { oneSD: em45, halfSD: em45*0.5 } : null;
 
@@ -402,6 +490,7 @@ export function calc45DTE(inputs) {
     fullC, halfC, contracts, maxRisk, tEff,
     greeks, sdRange, deltaGuide: DELTA_GUIDE,
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
+    tradeConfidence, confidenceTier, confidenceDriver, confConflicts,
     behaviour: MARKET_BEHAVIOUR_45DTE[legStrat] || '',
     outlook
   };

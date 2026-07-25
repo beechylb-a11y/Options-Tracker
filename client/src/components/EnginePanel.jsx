@@ -489,7 +489,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
       '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
       '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + '</h2>' +
-      (is0 && r.tradeConfidence != null ?
+      (r.tradeConfidence != null ?
         '<div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:' + confBg + ';border:1px solid ' + confClr + '">' +
           '<div style="display:flex;align-items:center;gap:12px">' +
             '<span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8b949e">Trade Confidence</span>' +
@@ -564,7 +564,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     const lines = [];
     lines.push(`${inp.underlying} — ${effectiveStrat} — ${r.contracts}x  [${is0?'0DTE':'45DTE'}]`);
     lines.push(`Setup: ${r.setup} ${r.setupScore}/100 · Composite ${compositeScore}/100 · FV ${r.fairValueScore}/100 (${r.fairValueGrade})`);
-    if (is0 && r.tradeConfidence != null) {
+    if (r.tradeConfidence != null) {
       lines.push(`Confidence: ${r.tradeConfidence}/100 (${r.confidenceTier}) — ${r.confidenceDriver}`);
       if (r.confConflicts?.length) lines.push(`Conflicts: ${r.confConflicts.map(c=>c.tag).join(', ')}`);
     }
@@ -638,7 +638,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
                   style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
               })()}
-              {is0 && r.tradeConfidence != null && (
+              {r.tradeConfidence != null && (
                 <span title={r.confidenceDriver} style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:confBg,border:`1px solid ${confClr}`,color:confClr,letterSpacing:'0.04em'}}>
                   CONF {r.tradeConfidence} · {r.confidenceTier.toUpperCase()}
                 </span>
@@ -689,7 +689,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
           {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0} — Score ${compositeScore}/100`}
         </div>
-        {is0 && !r.hardBlocker && r.tradeConfidence != null && (
+        {!r.hardBlocker && r.tradeConfidence != null && (
           <div style={{marginTop:6,fontSize:12,color:'#8b949e'}}>
             <span style={{color:confClr,fontWeight:600}}>Confidence {r.tradeConfidence}/100 · {r.confidenceTier}</span>
             {' — '}{r.confidenceDriver}
