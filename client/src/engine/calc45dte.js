@@ -61,8 +61,31 @@ export function calc45DTE(inputs) {
   }
 
   const order = {EXCELLENT:0,GOOD:1,MARGINAL:2,'NO TRADE':3};
-  const sorted = STRATS_45DTE.map((s,i) => ({name:s, rating:ratings45[i]})).sort((a,b) => order[a.rating]-order[b.rating]);
-  const best = sorted.find(s => s.rating==='EXCELLENT'||s.rating==='GOOD');
+  const sorted = STRATS_45DTE.map((s,i) => ({name:s, rating:ratings45[i], idx:i})).sort((a,b) => order[a.rating]-order[b.rating] || a.idx-b.idx);
+  // ── Tiebreak (Jul 2026): when ≥2 structures tie at the top rating, break by DIRECTION
+  // FIT to the outlook instead of the arbitrary array order (which fires in ~90% of
+  // 45DTE cells and always picked Credit spread / Calendar / IC by list position).
+  // A directional outlook should express through a structure that leans that way; a
+  // neutral outlook through a neutral/range structure. Ties fall back to array order.
+  // (Regime ratings already gate premium-buy/sell by IV rank, so the residual choice
+  // among tied survivors is mostly directional character.)
+  const _neutral45 = s => /Iron Condor|Iron butterfly|Standard butterfly|Calendar/i.test(s);
+  const _directional45 = s => /Credit spread|Broken wing|Bull call|Bear put|Diagonal|Ratio|Jade/i.test(s);
+  const _dirOutlook = outlook === 'bullish' || outlook === 'bearish';
+  const coh45 = (s) => _dirOutlook
+    ? (_directional45(s) ? 1.0 : _neutral45(s) ? 0.8 : 0.9)
+    : (_neutral45(s) ? 1.0 : _directional45(s) ? 0.8 : 0.9);
+  const tradeable = sorted.filter(s => s.rating==='EXCELLENT'||s.rating==='GOOD');
+  let best = null, runnerUp = null, tiebreakApplied = false;
+  if (tradeable.length) {
+    const topTied = tradeable.filter(s => s.rating === tradeable[0].rating);
+    const ranked = topTied.slice().sort((a,b) => coh45(b.name)-coh45(a.name) || a.idx-b.idx);
+    best = ranked[0];
+    if (ranked.length > 1) {
+      runnerUp = { name: ranked[1].name, rating: ranked[1].rating };
+      tiebreakApplied = ranked[0].name !== topTied[0].name;
+    }
+  }
   const bestStrat = best ? best.name : 'No suitable structure';
   const bestRating = best ? best.rating : 'NO TRADE';
 
@@ -480,7 +503,7 @@ export function calc45DTE(inputs) {
     em45, ivhvRatio, ivhvLabel, ivrBand, ivrStructures,
     termDiff, termLabel, skew,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
-    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
+    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, strikeLine,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,

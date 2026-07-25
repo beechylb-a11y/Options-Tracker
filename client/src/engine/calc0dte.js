@@ -82,6 +82,11 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   if (isStrong) {
     [3,4,5,6].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
   }
+  // Reversed condor (idx 5) is an EXPANSION structure — its ~2-EM-wide central loss
+  // band only pays on a >1-EM move by expiry. In compression / high move-consumed a
+  // move that large is unlikely, so downgrade it hard there — it should not rate
+  // EXCELLENT in a pinning tape. (Jul 2026)
+  if (isCompressing || moveConsumed > 0.60) ratings[5] = degrade(ratings[5], 2);
 
   // Spreads: enhanced logic using move consumed and direction
   // Bull Put Spread — prefer when bullish breakout + move < 60%
@@ -318,17 +323,29 @@ export function calc0DTE(inputs) {
   // structure (reversed condor / debit directional) when direction is absent — so the
   // tie resolves toward the structure whose nature fits the read. Ties on coherence
   // fall back to array order. Uses the non-circular direction slice of Trade Confidence.
-  const _wantsMove = s => s === 'Long Condor - Reversed' || s === 'Bull call spread' || s === 'Bear put spread';
   const _skewedFly = s => s === 'Broken wing butterfly' || s === 'Asymmetric butterfly';
   const _reversal = trendPattern === 'reversal';
+  const _isReversedCondor = s => s === 'Long Condor - Reversed';
+  const _isDebitDir = s => s === 'Bull call spread' || s === 'Bear put spread';
   const dirCoherence = (s) => {
     const ad = Math.abs(dirScore);
-    if (!_wantsMove(s)) {                              // containment fears strong conviction
-      if (ad >= 2) return (_skewedFly(s) && _reversal) ? 0.70 : 0.50;
-      if (ad === 1) return (_skewedFly(s) && _reversal) ? 0.92 : 0.85;
-      return 1.0;
+    // Reversed condor is a MAGNITUDE play — its ~2-EM-wide central loss band only pays
+    // if price travels >1 EM by expiry. It needs ROOM (expansion / low move-consumed),
+    // NOT a direction. Punish it in compression / high move-consumed where that move is
+    // unlikely, so it can't win a tie against a fly in a pinning tape. (Jul 2026 — was
+    // lumped with directional spreads at coherence 1.0 whenever dirScore ≠ 0.)
+    if (_isReversedCondor(s)) {
+      if (moveConsumed > 0.60 || isCompressing) return 0.45;
+      if (isExpanding) return 1.0;
+      return 0.72;
     }
-    return dirScore === 0 ? 0.70 : 1.0;               // a move structure needs a direction to fuel it
+    // Debit directional spread: genuinely wants a directional move — fine when present.
+    if (_isDebitDir(s)) return dirScore === 0 ? 0.60 : 1.0;
+    // Everything else is a containment structure: fears strong conviction unless a
+    // skewed fly's skew already fades that direction (reversal setup).
+    if (ad >= 2) return (_skewedFly(s) && _reversal) ? 0.70 : 0.50;
+    if (ad === 1) return (_skewedFly(s) && _reversal) ? 0.92 : 0.85;
+    return 1.0;
   };
   const tradeable = sorted.filter(s => s.rating === 'EXCELLENT' || s.rating === 'GOOD');
   let best = null, runnerUp = null, tiebreakApplied = false;
@@ -598,8 +615,12 @@ export function calc0DTE(inputs) {
   // bestStrat when there is no override. (Fix Jul 2026 — was bestStrat, making the
   // scorecard inconsistent with the legs/EV/P(max loss) whenever an override was set.)
   const scoreStrat = legStrat;
-  const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly','Long Condor - Reversed'].includes(scoreStrat);
+  const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly'].includes(scoreStrat);
   const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(scoreStrat);
+  // Reversed condor is a MAGNITUDE / breakout play — it wants EXPANSION (high comp)
+  // and LOW move-consumed (room for a big move), the opposite of a pin. It was wrongly
+  // in isCentred (which rewards low comp + high move-consumed). Score it explicitly.
+  const wantsExpansion = scoreStrat === 'Long Condor - Reversed';
   // A narrow, near-the-money broken-wing / asymmetric fly behaves like a PINNING
   // (centred) structure for Compression + Move-consumed scoring, even though it
   // keeps a mild directional tilt in the VWAP/overnight logic. Gate on behaviour,
@@ -612,6 +633,7 @@ export function calc0DTE(inputs) {
     && _bodyK != null && Math.abs(price - _bodyK) <= _nearThresh;
   let compPts;
   if (!hasComp) compPts = 5;
+  else if (wantsExpansion) compPts = comp>0.80?15:comp>0.50?10:comp>0.35?6:3;  // reversed wants expansion
   else if (isCentred || pinLike) compPts = comp<0.35?15:comp<0.50?12:comp<0.80?6:2;
   else if (isDirectional) compPts = comp>0.80?14:comp>0.50?11:comp>0.35?8:5;
   else compPts = comp<0.50?11:comp<0.80?8:4;
@@ -625,7 +647,7 @@ export function calc0DTE(inputs) {
     // Butterflies (incl. near-money broken-wing flies) want high move consumed
     movePts = moveConsumed>0.80?15:moveConsumed>0.60?12:moveConsumed>0.40?8:moveConsumed>0.25?4:2;
   } else {
-    // Spreads want low move consumed (room to run)
+    // Spreads AND the reversed condor want low move consumed (room to run)
     movePts = moveConsumed<0.30?15:moveConsumed<0.50?12:moveConsumed<0.60?8:moveConsumed<0.80?4:0;
   }
   setupScore += movePts;
