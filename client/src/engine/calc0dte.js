@@ -1411,13 +1411,31 @@ export function calc0DTE(inputs) {
   // The layer the additive Score entirely lacks. Each contradiction the engine
   // is quietly carrying multiplies confidence down and is surfaced as a chip.
   let coherenceGate = 1;
-  // (a) Direction ↔ structure — a containment structure fears strong conviction
+  // A SKEWED fly (BWB / Asymmetric) puts its max-loss (broken/wide) wing on ONE
+  // side. When the strong directional signal points at the fly's CHEAP side — i.e.
+  // AWAY from the broken wing — the skew has ALREADY leaned to fade that move, so
+  // the raw-direction containment penalty double-counts a risk the structure prices
+  // in. Soften it. Full penalty still applies when the signal points AT the risk
+  // wing (continuation) or for symmetric flies (both tails exposed). (Jul 2026)
+  const isSkewedFly = ['Broken wing butterfly', 'Asymmetric butterfly'].includes(legStrat);
+  let skewFadesSignal = false;
+  if (isSkewedFly && dirScore !== 0 && legs.length >= 3) {
+    const ks = [...new Set(legs.map(l => l.strike))].sort((a, b) => a - b);
+    const bodyK = ks[Math.floor(ks.length / 2)];
+    const riskWingUp = (ks[ks.length - 1] - bodyK) > (bodyK - ks[0]); // broken/wide wing up?
+    skewFadesSignal = riskWingUp !== (dirScore > 0);                  // signal points away from it
+  }
+  // (a) Direction ↔ structure — a containment structure fears strong conviction,
+  //     UNLESS the fly's skew already fades that direction (partial conflict only).
   if (wantsContainment && Math.abs(dirScore) >= 2) {
-    coherenceGate *= 0.5;
+    coherenceGate *= skewFadesSignal ? 0.70 : 0.50;
     confConflicts.push({ tag: 'Direction↔Structure',
-      label: `${dirLabel} signal, but ${legStrat} needs price contained`, severity: 'high' });
+      label: skewFadesSignal
+        ? `${dirLabel}, but ${legStrat} skews to fade it — partial conflict`
+        : `${dirLabel} signal, but ${legStrat} needs price contained`,
+      severity: skewFadesSignal ? 'low' : 'high' });
   } else if (wantsContainment && Math.abs(dirScore) === 1) {
-    coherenceGate *= 0.85;                                       // mild bias on a pin — minor
+    coherenceGate *= skewFadesSignal ? 0.92 : 0.85;             // mild bias on a pin — minor
   } else if (wantsMove && dirScore === 0) {
     coherenceGate *= 0.7;
     confConflicts.push({ tag: 'Direction↔Structure',
