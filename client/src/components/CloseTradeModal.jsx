@@ -71,6 +71,21 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
     setFetchingTWS(false);
   }
 
+  // Best-effort snapshot of the volatility environment at close (VIX). Works for
+  // any account without OPRA option-data permissions and needs no leg info, so
+  // it's safe to call on every close. Any failure → blank, close proceeds.
+  async function captureCloseVix() {
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) return null;
+      const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + encodeURIComponent(underlying),
+        { headers: { 'ngrok-skip-browser-warning': '1' } });
+      const d = await resp.json();
+      const v = d?.vix ?? d?.VIX;
+      return (v != null && !isNaN(parseFloat(v))) ? parseFloat(v) : null;
+    } catch { return null; }
+  }
+
   async function handleClose() {
     setClosing(true);
     try {
@@ -84,11 +99,13 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           partialQty: partial ? form.partialQty : null
         });
       } else {
+        const closeVix = await captureCloseVix();
         await api.closeTicket(trade._rowIndex, {
           closeDate: form.closeDate,
           closePrice: form.closePrice,
           actualPnl: form.closePnl,
-          account: trade.Account || ''
+          account: trade.Account || '',
+          closeVix
         });
       }
       if (onClosed) onClosed();

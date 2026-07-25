@@ -107,7 +107,8 @@ const REQUIRED_TABS = {
     'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
     'Wing Strikes', 'Market Behaviour', 'Notes',
     'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade',
-    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes', 'Account']],
+    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes', 'Account',
+    'Delta', 'Theta', 'Gamma', 'Vega', 'Close IV', 'Close VIX']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -595,7 +596,13 @@ export async function logDecision(decision) {
     '',  // Close Price
     '',  // Actual P&L
     '',  // Trade Notes
-    decision.account || ''  // Account
+    decision.account || '',  // Account
+    decision.delta ?? '',   // Delta  (open, net position delta)
+    decision.theta ?? '',   // Theta  (open)
+    decision.gamma ?? '',   // Gamma  (open)
+    decision.vega ?? '',    // Vega   (open)
+    '',  // Close IV  -- filled at close
+    ''   // Close VIX -- filled at close
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -610,7 +617,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:AA'  // include col 27 (Account); A:Z truncated it before
+    range: 'Decisions!A:AG'  // 33 cols: through Account (AA) + open greeks + Close IV/VIX (AB:AG)
   });
   return res.data.values || [];
 }
@@ -698,6 +705,18 @@ export async function closeTradeTicket(rowIndex, closeData) {
       closeData.actualPnl || 0
     ]] }
   });
+  // Close IV (AF) + Close VIX (AG) -- optional, written only if captured at close
+  if (closeData.closeIV != null || closeData.closeVix != null) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(),
+      range: `Decisions!AF${rowIndex}:AG${rowIndex}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[
+        closeData.closeIV ?? '',
+        closeData.closeVix ?? ''
+      ]] }
+    });
+  }
 }
 
 export async function updateTradeNotes(rowIndex, notes) {

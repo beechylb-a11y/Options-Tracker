@@ -612,6 +612,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
       em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
       account: accountConfig?.id || '',
+      // Open position greeks (already populated by Fetch Greeks or entered manually)
+      delta:fv(inp,'delta'), theta:fv(inp,'theta'),
+      gamma:fv(inp,'gamma'), vega:fv(inp,'vega'),
       // Expiry info for tracking
       dte: is0 ? '0DTE' : '45DTE',
       expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today
