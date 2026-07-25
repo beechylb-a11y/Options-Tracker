@@ -45,8 +45,11 @@ function connectTWS() {
     ib.on(EventName.connected, () => {
       console.log('[BRIDGE] Connected to TWS');
       connected = true;
-      // Request delayed data when real-time not subscribed
-      ib.reqMarketDataType(3); // 3 = delayed-frozen (best available)
+      // FROZEN (2): with the OPRA live options subscription active, this delivers
+      // REAL-TIME data during market hours and the LAST snapshot when the market is
+      // closed — so model greeks / IV keep resolving after hours (delayed type 3 only
+      // ticks during RTH, which is why greeks came back null after the close). (Jul 2026)
+      ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
       resolve();
     });
 
