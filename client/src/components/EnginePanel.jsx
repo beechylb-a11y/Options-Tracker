@@ -1028,6 +1028,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <SectionLabel white info="Each strategy rated EXCELLENT, GOOD, MARGINAL, or NO TRADE based on current regime, direction strength, and move consumed. Click any MARGINAL+ strategy to override the engine recommendation. BWB preferred for strong direction, Asymmetric for mild, Standard butterfly for neutral.">Strategy ratings — {r.regime}</SectionLabel>
               {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
             </div>
+            {r.runnerUp && !isOverride && (
+              <div style={{fontSize:11,color:'#8b949e',marginBottom:6,lineHeight:1.5}}>
+                {r.tiebreakApplied ? <>Tiebreak: chose <b style={{color:'#c9d1d9'}}>{r.bestStrat}</b> over </> : <>Also {r.runnerUp.rating.toLowerCase()}: </>}
+                <span onClick={()=>setOverrideStrat(r.runnerUp.name)} title="Switch to this structure"
+                  style={{color:'#58a6ff',cursor:'pointer',textDecoration:'underline'}}>{r.runnerUp.name}</span>
+                {r.tiebreakApplied ? <> (closer regime fit) · click to switch</> : <> · click to switch</>}
+              </div>
+            )}
             <div className="space-y-0.5">
               {r.ratings.map((s,i) => {
                 const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';

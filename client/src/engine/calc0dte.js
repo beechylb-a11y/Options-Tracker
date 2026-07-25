@@ -308,10 +308,39 @@ export function calc0DTE(inputs) {
 
   // ── Strategy ratings ──
   const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed);
-  const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i] }));
+  const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i], idx: i }));
   const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'NO TRADE': 3 };
-  sorted.sort((a, b) => order[a.rating] - order[b.rating]);
-  const best = sorted.find(s => s.rating === 'EXCELLENT' || s.rating === 'GOOD');
+  sorted.sort((a, b) => order[a.rating] - order[b.rating] || a.idx - b.idx);
+  // ── Tiebreak (Jul 2026): when ≥2 structures share the TOP rating, the old code
+  // took the first-listed (array order) — an arbitrary, containment-biased coin-flip
+  // that decided ~59% of picks. Break it by DIRECTION-COHERENCE instead: a containment
+  // structure (fly/condor/credit) is penalised in a strong directional regime; a MOVE
+  // structure (reversed condor / debit directional) when direction is absent — so the
+  // tie resolves toward the structure whose nature fits the read. Ties on coherence
+  // fall back to array order. Uses the non-circular direction slice of Trade Confidence.
+  const _wantsMove = s => s === 'Long Condor - Reversed' || s === 'Bull call spread' || s === 'Bear put spread';
+  const _skewedFly = s => s === 'Broken wing butterfly' || s === 'Asymmetric butterfly';
+  const _reversal = trendPattern === 'reversal';
+  const dirCoherence = (s) => {
+    const ad = Math.abs(dirScore);
+    if (!_wantsMove(s)) {                              // containment fears strong conviction
+      if (ad >= 2) return (_skewedFly(s) && _reversal) ? 0.70 : 0.50;
+      if (ad === 1) return (_skewedFly(s) && _reversal) ? 0.92 : 0.85;
+      return 1.0;
+    }
+    return dirScore === 0 ? 0.70 : 1.0;               // a move structure needs a direction to fuel it
+  };
+  const tradeable = sorted.filter(s => s.rating === 'EXCELLENT' || s.rating === 'GOOD');
+  let best = null, runnerUp = null, tiebreakApplied = false;
+  if (tradeable.length) {
+    const topTied = tradeable.filter(s => s.rating === tradeable[0].rating);
+    const ranked = topTied.slice().sort((a, b) => dirCoherence(b.name) - dirCoherence(a.name) || a.idx - b.idx);
+    best = ranked[0];
+    if (ranked.length > 1) {
+      runnerUp = { name: ranked[1].name, rating: ranked[1].rating };
+      tiebreakApplied = ranked[0].name !== topTied[0].name; // coherence changed the array-order pick
+    }
+  }
   const bestStrat = best ? best.name : 'No suitable structure';
   const bestRating = best ? best.rating : 'NO TRADE';
 
@@ -1499,7 +1528,7 @@ export function calc0DTE(inputs) {
     totalDirConsumed, totalRangeConsumed,
     trendPattern, trendStrength,
     // Strategy
-    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy,
+    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes
     legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult,
     // Scoring
