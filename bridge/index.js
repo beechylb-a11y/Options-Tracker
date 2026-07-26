@@ -1,6 +1,6 @@
 // ================================================================
 //  IBKR TWS BRIDGE — Local market data server for Options Tracker
-//  Connects to TWS on localhost:7496, serves REST API on :3333
+//  Connects to TWS or IB Gateway on localhost (auto-detect), serves REST API on :3333
 //  Expose via ngrok for Railway app to call
 // ================================================================
 import express from 'express';
@@ -27,7 +27,20 @@ app.use(express.json());
 
 const PORT = process.env.BRIDGE_PORT || 3333;
 const TWS_HOST = process.env.TWS_HOST || '127.0.0.1';
-const TWS_PORT = parseInt(process.env.TWS_PORT || '7496');
+// Which IBKR endpoint to reach. TWS and IB Gateway speak the IDENTICAL API — only the
+// socket port differs (TWS live 7496 / paper 7497; IB Gateway live 4001 / paper 4002).
+//   • TWS_PORT set → use exactly that one port (explicit; no fallback, so a deliberate
+//     paper port is never crossed over to live).
+//   • otherwise    → try the live port for IB_TARGET (tws|gateway, default tws), then
+//     fall back to the OTHER app's live port, so the bridge connects to whichever of TWS /
+//     IB Gateway is actually running with no config change (set IB_TARGET=gateway to make
+//     4001 the primary).
+const TWS_LIVE = 7496, GATEWAY_LIVE = 4001;
+function candidatePorts() {
+  if (process.env.TWS_PORT) return [parseInt(process.env.TWS_PORT)];
+  const target = (process.env.IB_TARGET || 'tws').toLowerCase();
+  return target === 'gateway' ? [GATEWAY_LIVE, TWS_LIVE] : [TWS_LIVE, GATEWAY_LIVE];
+}
 const CLIENT_ID = parseInt(process.env.CLIENT_ID || '99');
 
 let ib = null;
@@ -36,35 +49,58 @@ let nextReqId = 1000;
 
 function getReqId() { return nextReqId++; }
 
-// ── Connect to TWS ──
+// ── Connect to TWS / IB Gateway ──
 function connectTWS() {
   return new Promise((resolve, reject) => {
     if (connected && ib) { resolve(); return; }
-    ib = new IBApi({ host: TWS_HOST, port: TWS_PORT, clientId: CLIENT_ID });
+    const ports = candidatePorts();
 
-    ib.on(EventName.connected, () => {
-      console.log('[BRIDGE] Connected to TWS');
-      connected = true;
-      // FROZEN (2): with the OPRA live options subscription active, this delivers
-      // REAL-TIME data during market hours and the LAST snapshot when the market is
-      // closed — so model greeks / IV keep resolving after hours (delayed type 3 only
-      // ticks during RTH, which is why greeks came back null after the close). (Jul 2026)
-      ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
-      resolve();
-    });
+    const tryPort = (idx) => {
+      if (idx >= ports.length) {
+        reject(new Error('IBKR connection failed on port(s) ' + ports.join(', ')
+          + ' — is TWS or IB Gateway running with the API enabled?'));
+        return;
+      }
+      const port = ports[idx];
+      let settled = false;
+      ib = new IBApi({ host: TWS_HOST, port, clientId: CLIENT_ID });
 
-    ib.on(EventName.disconnected, () => {
-      console.log('[BRIDGE] Disconnected from TWS');
-      connected = false;
-    });
+      ib.on(EventName.connected, () => {
+        if (settled) return;
+        settled = true;
+        connected = true;
+        const app = port === GATEWAY_LIVE ? 'IB Gateway' : port === TWS_LIVE ? 'TWS' : 'IBKR';
+        console.log(`[BRIDGE] Connected to ${app} on ${TWS_HOST}:${port}`);
+        // FROZEN (2): with the OPRA live options subscription active, this delivers
+        // REAL-TIME data during market hours and the LAST snapshot when the market is
+        // closed — so model greeks / IV keep resolving after hours (delayed type 3 only
+        // ticks during RTH, which is why greeks came back null after the close). (Jul 2026)
+        ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
+        resolve();
+      });
 
-    ib.on(EventName.error, (err, code, reqId) => {
-      if (code === 2104 || code === 2106 || code === 2158) return; // info messages
-      console.error('[BRIDGE] TWS Error:', code, err?.message || err);
-    });
+      ib.on(EventName.disconnected, () => {
+        console.log('[BRIDGE] Disconnected from IBKR');
+        connected = false;
+      });
 
-    ib.connect();
-    setTimeout(() => { if (!connected) reject(new Error('TWS connection timeout')); }, 5000);
+      ib.on(EventName.error, (err, code, reqId) => {
+        if (code === 2104 || code === 2106 || code === 2158) return; // info messages
+        console.error('[BRIDGE] IBKR Error:', code, err?.message || err);
+      });
+
+      ib.connect();
+      // No connect on this port shortly → drop it and try the next candidate.
+      setTimeout(() => {
+        if (settled || connected) return;
+        settled = true;
+        try { ib.disconnect(); } catch (e) {}
+        if (idx + 1 < ports.length) console.log(`[BRIDGE] No response on ${port}, trying ${ports[idx + 1]}...`);
+        tryPort(idx + 1);
+      }, 4000);
+    };
+
+    tryPort(0);
   });
 }
 
@@ -939,6 +975,6 @@ app.post('/api/disconnect', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[BRIDGE] IB Bridge running on http://localhost:${PORT}`);
-  console.log(`[BRIDGE] Connecting to TWS at ${TWS_HOST}:${TWS_PORT}...`);
+  console.log(`[BRIDGE] Target: ${TWS_HOST} ports ${candidatePorts().join('/')} (TWS/IB Gateway auto-detect)...`);
   connectTWS().catch(e => console.error('[BRIDGE] Initial connect failed:', e.message));
 });
