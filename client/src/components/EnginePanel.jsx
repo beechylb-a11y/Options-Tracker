@@ -15,6 +15,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const defMaxOpen = acfg.maxOpenRisk || 450;
   const [overrideStrat, setOverrideStrat] = useState(null);
   const [autoFilling, setAutoFilling] = useState(false);
+  const [dataFresh, setDataFresh] = useState(null); // market-data freshness (live vs last close)
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
@@ -361,6 +362,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
+      // Data-freshness flag from the bridge (realtime | frozen | delayed | ...)
+      setDataFresh(d.dataType ? { isLive: !!d.isLive, label: d.dataTypeLabel || '', dataType: d.dataType, asOf: d.asOf || d.timestamp } : null);
 
       // Fetch the straddle EM separately, with a short timeout so a slow/after-
       // hours option fetch can't hang the essential price+VIX auto-fill.
@@ -732,6 +735,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           <div className="flex items-center justify-between">
             <SectionLabel info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 and 15 with 30-min ago values for slope calculation. SPX uses SPY VWAP ×10 automatically.">Market data</SectionLabel>
             <div className="flex items-center gap-2">
+              {dataFresh && (
+                <span title={dataFresh.label + (dataFresh.asOf ? ' \u00b7 ' + new Date(dataFresh.asOf).toLocaleTimeString() : '')}
+                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',
+                    background: dataFresh.isLive ? '#0d2818' : '#161b22',
+                    color: dataFresh.isLive ? '#3fb950' : '#8b949e',
+                    border: '1px solid ' + (dataFresh.isLive ? '#238636' : '#30363d')}}>
+                  {dataFresh.isLive ? '\u25cf LIVE' : '\u25cb LAST CLOSE'}
+                </span>
+              )}
               <button onClick={handleLoadFromTWS} disabled={loadingTws}
                 title="Load an open option position from TWS into the ticket, then pull market data"
                 style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:loadingTws?'#161b22':'transparent',color:loadingTws?'#8b949e':'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
