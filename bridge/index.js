@@ -6,6 +6,7 @@
 import express from 'express';
 import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
+import net from 'net';
 
 const app = express();
 app.use(cors({
@@ -49,28 +50,47 @@ let nextReqId = 1000;
 
 function getReqId() { return nextReqId++; }
 
+// Fast TCP preflight: is anything actually listening on this port? Lets us fail over
+// between TWS/Gateway quickly when one is down, and — crucially — never abandon a port
+// that IS up just because the API handshake is slow.
+function probePort(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; try { sock.destroy(); } catch (e) {} resolve(ok); };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => finish(true));
+    sock.once('timeout', () => finish(false));
+    sock.once('error', () => finish(false));
+    sock.connect(port, host);
+  });
+}
+
 // ── Connect to TWS / IB Gateway ──
 function connectTWS() {
   return new Promise((resolve, reject) => {
     if (connected && ib) { resolve(); return; }
     const ports = candidatePorts();
 
-    const tryPort = (idx) => {
-      if (idx >= ports.length) {
-        reject(new Error('IBKR connection failed on port(s) ' + ports.join(', ')
-          + ' — is TWS or IB Gateway running with the API enabled?'));
+    (async () => {
+      // Find the first candidate port with something listening.
+      let openPort = null;
+      for (const p of ports) { if (await probePort(TWS_HOST, p)) { openPort = p; break; } }
+      if (openPort == null) {
+        reject(new Error('IBKR connection failed — nothing listening on port(s) ' + ports.join(', ')
+          + '. Is TWS or IB Gateway running and logged in, with the API enabled?'));
         return;
       }
-      const port = ports[idx];
+
       let settled = false;
-      ib = new IBApi({ host: TWS_HOST, port, clientId: CLIENT_ID });
+      ib = new IBApi({ host: TWS_HOST, port: openPort, clientId: CLIENT_ID });
+      const appName = openPort === GATEWAY_LIVE ? 'IB Gateway' : openPort === TWS_LIVE ? 'TWS' : 'IBKR';
 
       ib.on(EventName.connected, () => {
         if (settled) return;
         settled = true;
         connected = true;
-        const app = port === GATEWAY_LIVE ? 'IB Gateway' : port === TWS_LIVE ? 'TWS' : 'IBKR';
-        console.log(`[BRIDGE] Connected to ${app} on ${TWS_HOST}:${port}`);
+        console.log(`[BRIDGE] Connected to ${appName} on ${TWS_HOST}:${openPort}`);
         // FROZEN (2): with the OPRA live options subscription active, this delivers
         // REAL-TIME data during market hours and the LAST snapshot when the market is
         // closed — so model greeks / IV keep resolving after hours (delayed type 3 only
@@ -90,17 +110,15 @@ function connectTWS() {
       });
 
       ib.connect();
-      // No connect on this port shortly → drop it and try the next candidate.
+      // Port is confirmed open, so give the API handshake a generous window before failing.
       setTimeout(() => {
-        if (settled || connected) return;
+        if (connected || settled) return;
         settled = true;
-        try { ib.disconnect(); } catch (e) {}
-        if (idx + 1 < ports.length) console.log(`[BRIDGE] No response on ${port}, trying ${ports[idx + 1]}...`);
-        tryPort(idx + 1);
-      }, 4000);
-    };
-
-    tryPort(0);
+        reject(new Error(`IBKR API handshake timeout on ${TWS_HOST}:${openPort} — ${appName} is `
+          + 'listening but did not complete the API handshake. Check "Enable ActiveX and Socket '
+          + 'Clients", the trusted-IP / localhost setting, and that client id ' + CLIENT_ID + ' is free.'));
+      }, 8000);
+    })();
   });
 }
 
@@ -519,6 +537,19 @@ app.get('/api/market-data', async (req, res) => {
       console.error('[BRIDGE] VWAP calc error:', e.message);
     }
 
+    // Data freshness, derived from the main price snapshot's IBKR market-data type
+    // (1=real-time, 2=frozen, 3/4=delayed). Lets a caller tell at a glance whether
+    // `price` is a live tick or the last close (e.g. outside US market hours).
+    const _frozen = !!mainSnap.frozen, _delayed = !!mainSnap.delayed;
+    const _gotPrice = (Math.round(finalPrice * 100) / 100) > 0;
+    let dataType, dataTypeLabel;
+    if (_delayed && _frozen) { dataType = 'delayed-frozen'; dataTypeLabel = 'Delayed, frozen (last close)'; }
+    else if (_delayed)       { dataType = 'delayed';        dataTypeLabel = 'Delayed (~10-15 min lag)'; }
+    else if (_frozen)        { dataType = 'frozen';         dataTypeLabel = 'Frozen \u2014 last close (market closed)'; }
+    else if (_gotPrice)      { dataType = 'realtime';       dataTypeLabel = 'Real-time'; }
+    else                     { dataType = 'unknown';        dataTypeLabel = 'No live tick (market closed / no data)'; }
+    const isLive = dataType === 'realtime';
+
     // 6. Return all data
     const result = {
       underlying,
@@ -553,6 +584,11 @@ app.get('/api/market-data', async (req, res) => {
       // Meta
       timestamp: new Date().toISOString(),
       source: 'IBKR TWS',
+      // Data-freshness indicator (see derivation above)
+      dataType,        // realtime | frozen | delayed | delayed-frozen | unknown
+      dataTypeLabel,   // human-readable
+      isLive,          // true only when price is a live real-time tick
+      asOf: new Date().toISOString(),
       spyVwap: usesSPYVwap
     };
 
