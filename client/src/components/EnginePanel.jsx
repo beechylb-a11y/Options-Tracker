@@ -418,6 +418,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           priceDelayed: !!d.priceDelayed,
           hours: hoursRounded > 0 ? hoursRounded : prev.hours
         }));
+      } else {
+        // 45DTE: fill the market fields the feed provides (price, VIX). IV/skew come
+        // from Fetch Greeks. Freshness tag (dataFresh) is set above for both engines.
+        setI45(prev => ({ ...prev, price: d.price || prev.price, vix: d.vix || prev.vix }));
       }
     } catch (e) {
       alert('Auto-fill failed: ' + e.message);
@@ -749,12 +753,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:loadingTws?'#161b22':'transparent',color:loadingTws?'#8b949e':'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
                 {loadingTws ? 'Loading…' : '📥 Load position (TWS)'}
               </button>
-              {is0 && (
-                <button onClick={handleAutoFill} disabled={autoFilling}
-                  style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
-                  {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
-                </button>
-              )}
+              <button onClick={handleAutoFill} disabled={autoFilling}
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
+              </button>
             </div>
           </div>
           {twsStructures && twsStructures.length > 1 && (
