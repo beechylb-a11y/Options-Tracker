@@ -574,6 +574,9 @@ app.get('/api/market-data', async (req, res) => {
       esOvernightHigh: Math.round(esHigh * 100) / 100,
       esOvernightLow: Math.round(esLow * 100) / 100,
       esEM: Math.round(esEM * 10) / 10,
+      // Which ES futures contract these overnight values come from (e.g. "Sep 2026")
+      esContractMonth: esContract.lastTradeDateOrContractMonth || '',
+      esContractLabel: (() => { const _y = esContract.lastTradeDateOrContractMonth || ''; const _M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return _y.length === 6 ? (_M[parseInt(_y.slice(4,6),10)-1] + ' ' + _y.slice(0,4)) : _y; })(),
       // Data-quality flags: true = TWS served delayed (~10 min) data, meaning no
       // real-time subscription for that instrument. ES needs CME real-time;
       // SPX/index needs its own real-time feed.

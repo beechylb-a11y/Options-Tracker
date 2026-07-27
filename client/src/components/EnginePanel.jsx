@@ -16,6 +16,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [overrideStrat, setOverrideStrat] = useState(null);
   const [autoFilling, setAutoFilling] = useState(false);
   const [dataFresh, setDataFresh] = useState(null); // market-data freshness (live vs last close)
+  const [esContract, setEsContract] = useState(''); // ES front-month label from bridge
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
@@ -364,6 +365,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
       // Data-freshness flag from the bridge (realtime | frozen | delayed | ...)
       setDataFresh(d.dataType ? { isLive: !!d.isLive, label: d.dataTypeLabel || '', dataType: d.dataType, asOf: d.asOf || d.timestamp } : null);
+      if (d.esContractLabel || d.esContractMonth) setEsContract(d.esContractLabel || d.esContractMonth);
 
       // Fetch the straddle EM separately, with a short timeout so a slow/after-
       // hours option fetch can't hang the essential price+VIX auto-fill.
@@ -628,6 +630,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     });
   }
 
+  // ES overnight reference-date labels (ET). ES trades ~23h, so "close"/"open" are
+  // reference times, not real session boundaries: prior close = prior weekday 16:00,
+  // pre-open = today 08:45.
+  const _nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const _esPreDate = _nowET;
+  const _esPriorDate = new Date(_nowET);
+  _esPriorDate.setDate(_esPriorDate.getDate() - 1);
+  const _pdow = _esPriorDate.getDay();
+  if (_pdow === 0) _esPriorDate.setDate(_esPriorDate.getDate() - 2);
+  else if (_pdow === 6) _esPriorDate.setDate(_esPriorDate.getDate() - 1);
+  const _fmtDM = (dt) => dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  const esPriorCloseLabel = `ES ${_fmtDM(_esPriorDate)} 16:00`;
+  const esPreOpenLabel = `ES ${_fmtDM(_esPreDate)} 08:45`;
+
   return (
     <div className="space-y-4">
       {/* Decision Block */}
@@ -820,15 +836,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* ES Overnight (0DTE only) */}
           {is0 && (
             <>
-              <SectionLabel info="ES futures data for overnight analysis. Prior Close = yesterday's 4pm settle. Pre-open = current ES price. Overnight High/Low = session range. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection.">ES Overnight</SectionLabel>
+              <SectionLabel info="ES futures data for overnight analysis. Prior Close = yesterday's 4pm settle. Pre-open = current ES price. Overnight High/Low = session range. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection.">ES Overnight{esContract && ` \u00b7 ${esContract}`}</SectionLabel>
               {i0.esDelayed && (
                 <div style={{margin:'2px 0 8px',padding:'5px 9px',borderRadius:6,background:'#2d1a0d',border:'1px solid #5a3a1a',fontSize:11,color:'#e3a008',lineHeight:1.4}}>
                   ⚠ ES data is <b>delayed ~10 min</b> — no CME real-time subscription. Overnight range, move-consumed and continuation/reversal detection may be stale. Subscribe to CME Real-Time in IBKR for live ES.
                 </div>
               )}
               <div className="grid grid-cols-2 gap-2.5">
-                <Inp label="ES Prior Close" value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
-                <Inp label="ES Pre-open" value={i0.esClose} onChange={v=>set0('esClose',v)}/>
+                <Inp label={esPriorCloseLabel} value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label={esPreOpenLabel} value={i0.esClose} onChange={v=>set0('esClose',v)}/>
                 <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)}/>
                 <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
                 <Inp label="ES EM" value={i0.esEM} onChange={v=>set0('esEM',v)}/>
