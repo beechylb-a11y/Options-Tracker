@@ -857,13 +857,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           <SectionLabel info="Net credit/debit from your broker order preview — positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width.">Trade sizing</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="text-xs text-text-muted block mb-1">{(() => {
+              <label className="text-xs block mb-1" style={{ fontWeight: 600, color: (() => {
                 const v = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit);
-                if (v > 0) return 'Net credit ($)';
-                if (v < 0) return 'Net debit ($)';
-                // No value yet — hint from the strategy's expected type.
-                return cashType === 'credit' ? 'Net credit ($) — expected'
-                  : cashType === 'debit' ? 'Net debit ($) — expected'
+                const t = (!isNaN(v) && v !== 0) ? (v > 0 ? 'credit' : 'debit') : cashType;
+                return t === 'credit' ? '#3fb950' : t === 'debit' ? '#f85149' : '#8b949e';
+              })() }}>{(() => {
+                const v = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit);
+                const t = (!isNaN(v) && v !== 0) ? (v > 0 ? 'credit' : 'debit') : cashType;
+                return t === 'credit' ? 'Net credit ($) — expected'
+                  : t === 'debit' ? 'Net debit ($) — expected'
                   : 'Net credit/debit ($)';
               })()}</label>
               <input type="number" step="any"
