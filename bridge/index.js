@@ -195,66 +195,49 @@ function getOptionGreeks(contract) {
     const reqId = getReqId();
     let resolved = false;
     let notSubscribed = false;
+    let mdType = null; // IBKR feed type: 1 real-time, 2 frozen, 3 delayed, 4 delayed-frozen
     const done = (data) => {
       if (resolved) return;
       resolved = true;
       ib.removeListener(EventName.tickOptionComputation, onGreeks);
-      ib.removeListener(EventName.tickOptionComputation, rawDump);
       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
+      ib.removeListener(EventName.marketDataType, onMdType);
       ib.removeListener(EventName.error, onErr);
       try { ib.cancelMktData(reqId); } catch (e) {}
       resolve(data);
     };
-    // Confirmed from live RAW args dump on @stoqey/ib 1.3.x: 10 arguments,
-    // (reqId, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega,
-    // theta, undPrice). No tickAttrib/field arg. tickType 10-13 = the various
-    // IV/greek computations; model greeks arrive as 13 (or 10-12 for bid/ask/last).
+    // @stoqey/ib 1.3.x tickOptionComputation args (10):
+    // (reqId, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice)
+    // tickType 13 = model greeks (10-12 = bid/ask/last computations).
     const onGreeks = (id, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice) => {
       if (id !== reqId) return;
-      // Require a usable delta; skip the null-filled ticks that arrive when the
-      // options feed isn't subscribed (TWS still emits empty computations).
-      if (delta == null || Number.isNaN(delta)) return;
+      if (delta == null || Number.isNaN(delta)) return; // skip empty ticks (feed not subscribed)
       done({
         iv: impliedVol && impliedVol > 0 ? +(impliedVol * 100).toFixed(2) : null,
         delta: delta != null ? +Number(delta).toFixed(4) : null,
         gamma: gamma != null ? +Number(gamma).toFixed(5) : null,
         theta: theta != null ? +Number(theta).toFixed(4) : null,
         vega: vega != null ? +Number(vega).toFixed(4) : null,
+        optPrice: optPrice != null && optPrice > 0 ? +Number(optPrice).toFixed(2) : null,
         undPrice: undPrice != null && undPrice > 0 ? +Number(undPrice).toFixed(2) : null,
-        tickType
+        tickType, mdType
       });
     };
     const onEnd = (id) => { if (id === reqId) done(null); };
-
-    // Detect market-data-not-subscribed errors (10089/10090/10167/10168/354)
-    // scoped to THIS request, so the endpoint can tell the user clearly.
+    const onMdType = (id, type) => { if (id === reqId) mdType = type; };
+    // Market-data-not-subscribed errors (scoped to THIS request).
     const onErr = (err, code, id) => {
       if (id !== reqId) return;
-      if ([10089, 10090, 10091, 10167, 10168, 354, 10197].includes(code)) {
-        notSubscribed = true;
-      }
+      if ([10089, 10090, 10091, 10167, 10168, 354, 10197].includes(code)) notSubscribed = true;
     };
     ib.on(EventName.error, onErr);
-
     ib.on(EventName.tickOptionComputation, onGreeks);
-    // TEMP one-time raw-args dump to verify signature; remove once confirmed.
-    const rawDump = (...args) => {
-      console.log('[BRIDGE] tickOptionComputation RAW args:', JSON.stringify(args.map(a =>
-        (typeof a === 'number' ? +a.toFixed(5) : a))));
-      ib.removeListener(EventName.tickOptionComputation, rawDump);
-    };
-    ib.on(EventName.tickOptionComputation, rawDump);
-    // genericTickList '106' = option implied vol / model greeks; snapshot=false
-    // because greeks stream after a short delay; we time out ourselves.
-    ib.reqMktData(reqId, contract, '106', false, false);
-
-    setTimeout(() => done(notSubscribed ? { notSubscribed: true } : null), 7000);
     ib.on(EventName.tickSnapshotEnd, onEnd);
-    // genericTickList '106' = option implied vol / model greeks; snapshot=false
-    // because greeks stream after a short delay; we time out ourselves.
+    ib.on(EventName.marketDataType, onMdType);
+    // genericTickList '106' = implied vol / model greeks; snapshot=false because
+    // greeks stream after a short delay, so we time out ourselves.
     ib.reqMktData(reqId, contract, '106', false, false);
-
-    setTimeout(() => done(null), 7000);
+    setTimeout(() => done(notSubscribed ? { notSubscribed: true } : null), 7000);
   });
 }
 
@@ -664,7 +647,16 @@ app.get('/api/option-greeks', async (req, res) => {
       vega: +net.vega.toFixed(2)
     } : null;
 
+    // Feed freshness: which IBKR data type actually served these greeks, plus the
+    // underlying price the model used — lets the app show real-time vs delayed.
+    const _leg0 = results.find(r => r.greeks);
+    const _md = _leg0 && _leg0.greeks ? _leg0.greeks.mdType : null;
+    const _MDLBL = { 1: 'Real-time', 2: 'Frozen (last)', 3: 'Delayed ~15m', 4: 'Delayed-frozen' };
+    const dataType = _md === 1 ? 'realtime' : _md === 2 ? 'frozen' : _md === 3 ? 'delayed' : _md === 4 ? 'delayed-frozen' : 'unknown';
     res.json({ underlying, expiry, legs: results, net: netOut,
+      dataType, dataTypeLabel: _MDLBL[_md] || 'Unknown',
+      undPrice: _leg0 && _leg0.greeks ? _leg0.greeks.undPrice : null,
+      asOf: new Date().toISOString(),
       notSubscribed: anyNotSubscribed && !netOut,
       message: (anyNotSubscribed && !netOut)
         ? 'TWS returned no Greeks — your IBKR account is not subscribed to options market data for ' + underlying + '. Enable the OPRA / US options data subscription in IBKR Account Management, or enter Greeks manually.'

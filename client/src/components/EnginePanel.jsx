@@ -18,6 +18,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [dataFresh, setDataFresh] = useState(null); // market-data freshness (live vs last close)
   const [esContract, setEsContract] = useState(''); // ES front-month label from bridge
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
+  const [greeksFresh, setGreeksFresh] = useState(null); // option-feed freshness (real-time/delayed) + asOf
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -268,6 +269,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       }
       if (!d.net) { alert('No Greeks returned — TWS may lack option data permissions, or the expiry/strikes are invalid. You can enter Greeks manually.'); setFetchingGreeks(false); return; }
 
+      // Feed freshness (real-time / delayed / frozen) + the underlying price the model used.
+      setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice } : null);
+      const freshPx = (d.undPrice != null && d.undPrice > 0) ? String(d.undPrice) : null;
+
       // Net position greeks. gamStrike (pin magnet) ~ the body strike for flies.
       const bodyLeg = legsSrc.find(l => (l.label || '').toLowerCase().includes('body'));
       // Outer wing deltas for the skew-aware P(max loss) cross-check: pick the
@@ -284,6 +289,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       if (is0) {
         setI0(prev => ({
           ...prev,
+          price: freshPx || prev.price,
           theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
@@ -294,6 +300,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       } else {
         setI45(prev => ({
           ...prev,
+          price: freshPx || prev.price,
           theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
@@ -990,11 +997,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Greeks */}
           <div className="flex items-center justify-between">
             <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
-            <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
-              title="Fetch model Greeks for the computed strikes from TWS via the bridge"
-              style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
-              {fetchingGreeks ? 'Fetching…' : '⚡ Fetch Greeks (TWS)'}
-            </button>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              {greeksFresh && (() => {
+                const rt = greeksFresh.dataType === 'realtime';
+                const dl = greeksFresh.dataType === 'delayed';
+                const age = greeksFresh.asOf ? Math.max(0, Math.round((Date.now() - new Date(greeksFresh.asOf).getTime()) / 1000)) : null;
+                const txt = rt ? 'REAL-TIME' : dl ? 'DELAYED ~15m' : greeksFresh.dataType === 'frozen' ? 'FROZEN' : (greeksFresh.label || '—').toUpperCase();
+                const ageTxt = age == null ? '' : age < 60 ? ' \u00b7 ' + age + 's ago' : ' \u00b7 ' + Math.round(age/60) + 'm ago';
+                return <span title={(greeksFresh.label || '') + (greeksFresh.undPrice ? ' \u00b7 model px ' + greeksFresh.undPrice : '')}
+                  style={{fontSize:10,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
+                    background: rt ? '#0d2818' : '#161b22',
+                    color: rt ? '#3fb950' : dl ? '#e3a008' : '#8b949e',
+                    border: '1px solid ' + (rt ? '#238636' : '#30363d')}}>{txt}{ageTxt}</span>;
+              })()}
+              <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
+                title="Pull fresh model Greeks + underlying price for the current strikes — use right before entry"
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                {fetchingGreeks ? 'Fetching…' : '🔄 Refresh (live)'}
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2.5">
             {is0 ? <>
