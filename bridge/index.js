@@ -399,6 +399,10 @@ const SQRT252 = Math.sqrt(252);
 app.get('/api/market-data', async (req, res) => {
   try {
     await connectTWS();
+    // Delayed(3): keeps real-time where we're entitled but falls back to delayed for
+    // instruments we're NOT subscribed to (VIX/VIX1D indices, ES futures). Frozen(2)
+    // returns nothing for those, which is why VIX and the ES rows came back blank.
+    try { ib.reqMarketDataType(3); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const usesSPYVwap = underlying === 'SPX';
     const usesIWMVwap = underlying === 'RUT';
@@ -616,6 +620,8 @@ app.get('/api/option-greeks', async (req, res) => {
   try {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    // Frozen(2) for options: real-time via OPRA in RTH, last snapshot after hours.
+    try { ib.reqMarketDataType(2); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const expiry = req.query.expiry; // YYYYMMDD
     if (!expiry) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
@@ -678,6 +684,8 @@ app.get('/api/atm-straddle', async (req, res) => {
   try {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    // Frozen(2) for options: real-time via OPRA in RTH, last snapshot after hours.
+    try { ib.reqMarketDataType(2); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const expiry = req.query.expiry; // YYYYMMDD
     const haircut = req.query.haircut ? Number(req.query.haircut) : 0.85;
