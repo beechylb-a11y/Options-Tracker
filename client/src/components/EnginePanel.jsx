@@ -186,7 +186,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const volNorm = Math.min(100, (r.volFactor || 0) * 100); // 1.0 = perfect
   const sharpeNorm = Math.min(100, (r.sharpeFactor || 0) * 100); // 1.0 = perfect
   const popNorm = Math.min(100, ((r.popMargin || 0) / 2.0) * 100); // 2.0x = perfect
-  const evNorm = r.ev > 0 ? Math.min(100, (r.ev / 200) * 100) : 0; // $200 = perfect
+  // EV normalised by CAPITAL AT RISK, not absolute dollars (Jul 2026). The old
+  // "$200 = perfect" anchor was scale-blind — $200 on a $772 fly is a 26% return
+  // while $200 on a $5k 45DTE condor is 4% — and cliffed every negative EV to 0,
+  // so −$1 and −$500 scored identically. Now two-sided: +8% of risk = 100,
+  // 0 = 40, −5.3% = 0.
+  const evRiskBase = r.evBasis?.maxLoss || 0;
+  const evPerRisk = evRiskBase > 0 ? (r.ev || 0) / evRiskBase : 0;
+  const evNorm = evRiskBase > 0
+    ? Math.max(0, Math.min(100, 40 + (evPerRisk / 0.08) * 60))
+    : (r.ev > 0 ? Math.min(100, (r.ev / 200) * 100) : 0); // fallback: old anchor
 
   // Composite: 40% setup quality + 60% sizing (Kelly, Vol, Sharpe, POP, EV)
   const sizingAvg = missingInputs ? 50 : (kellyNorm + volNorm + sharpeNorm + popNorm + evNorm) / 5;

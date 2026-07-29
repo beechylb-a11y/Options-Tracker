@@ -424,23 +424,22 @@ export function calc45DTE(inputs) {
   const isCreditSell = /Iron Condor|Iron butterfly|Credit spread|Jade lizard/i.test(legStrat);
   const isDebitBuy = /Broken wing|Asymmetric|Standard butterfly|Calendar|Diagonal|Bull call|Bear put|Ratio/i.test(legStrat);
 
-  // ── edgeGate: positive expectancy (EV normalised by max profit) ──
+  // ── edgeGate: positive expectancy, EV normalised by CAPITAL AT RISK ──
+  // Mirrors the 0DTE rework (Jul 2026): ev/risk not ev/win, and one continuous
+  // line through 0.75 at EV = 0 instead of a 0.55 → 0.70 cliff.
   let edgeGate45;
-  if (missingSize || win <= 0) {
+  if (missingSize || risk <= 0) {
     edgeGate45 = 0.5;
   } else {
-    const evRatio = ev / win;
-    edgeGate45 = (ev > 0 && kelly > 0)
-      ? Math.min(1, 0.7 + Math.min(0.3, evRatio))
-      : Math.max(0.06, 0.55 + evRatio * 0.35);
+    const evRatio = ev / risk;
+    edgeGate45 = Math.max(0.06, Math.min(1, 0.75 + evRatio * 1.6));
   }
 
-  // ── payoffGate: reward:risk sanity floor ──
+  // ── payoffGate: broken-geometry floor only — EV already prices reward:risk ──
   let payoffGate45 = 1;
   if (win > 0 && risk > 0) {
     const rr = win / risk;
-    payoffGate45 = rr >= 0.50 ? 1.00 : rr >= 0.30 ? 0.90 : rr >= 0.20 ? 0.78
-                 : rr >= 0.12 ? 0.62 : rr >= 0.06 ? 0.42 : 0.28;
+    payoffGate45 = rr >= 0.20 ? 1.00 : rr >= 0.12 ? 0.90 : rr >= 0.06 ? 0.72 : 0.55;
     if (rr < 0.12) confConflicts.push({ tag: 'Reward:Risk',
       label: `Reward:risk ${rr.toFixed(2)} — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
   }

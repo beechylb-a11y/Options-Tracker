@@ -1433,27 +1433,33 @@ export function calc0DTE(inputs) {
   const wantsMove = isReversed || isDebitSpread;
   const wantsContainment = !wantsMove;
 
-  // ── EdgeGate: positive expectancy, scaled by how negative if not ──
-  // EV is normalised by MAX PROFIT (win) so a large-but-improbable tail (chicken
-  // condor: −$1036 vs $335 upside) is punished far harder than a small negative
-  // fly (−$85 vs $228). POP margin alone would rank the condor HIGHER — this
-  // doesn't. Positive EV + Kelly>0 lifts the gate to 0.70–1.00.
+  // ── EdgeGate: positive expectancy, on a single continuous curve ──
+  // EV is normalised by CAPITAL AT RISK, not by max profit (Jul 2026). The old
+  // ev/win form amplified any bleed on structures with a small max profit — i.e.
+  // every butterfly — so a −$40 EV on $403 of risk (a 10% bleed) read like −13.5%
+  // and nearly halved confidence. risk is the invariant; win is not.
+  // Also removes the cliff: the old form jumped 0.55 → 0.70 as EV crossed zero,
+  // a 28% confidence swing on a $1 move in a number built from estimated capture
+  // fractions. Now one straight line through 0.75 at EV = 0.
+  //   EV = +16% of risk → 1.00 · EV = 0 → 0.75 · EV = −16% of risk → 0.50
   let edgeGate;
-  if (missingSize || win <= 0) {
+  if (missingSize || risk <= 0) {
     edgeGate = 0.5;                                              // unknown → neutral
   } else {
-    const evRatio = ev / win;                                   // + edge, − bleed
-    edgeGate = (ev > 0 && rawKelly > 0)
-      ? Math.min(1, 0.7 + Math.min(0.3, evRatio))               // 0.70–1.00
-      : Math.max(0.06, 0.55 + evRatio * 0.35);                  // ≤0.55, floor 0.06
+    const evRatio = ev / risk;                                   // + edge, − bleed
+    edgeGate = Math.max(0.06, Math.min(1, 0.75 + evRatio * 1.6));
   }
 
-  // ── PayoffGate: reward:risk sanity floor (catches the chicken condor) ──
+  // ── PayoffGate: broken-geometry floor only (NOT a second edge charge) ──
+  // EV — and therefore edgeGate — already prices reward:risk against probability;
+  // that is the whole point of an expectancy number. The old ladder charged for
+  // low reward:risk a second time, so a high-POP structure paid twice for the same
+  // fact (edge 0.47 × payoff 0.78 = 0.37 before coherence). This now only bites
+  // when the geometry is genuinely broken (rr < 0.20). (Jul 2026)
   let payoffGate = 1;
   if (win > 0 && risk > 0) {
     const rr = win / risk;
-    payoffGate = rr >= 0.50 ? 1.00 : rr >= 0.30 ? 0.90 : rr >= 0.20 ? 0.78
-               : rr >= 0.12 ? 0.62 : rr >= 0.06 ? 0.42 : 0.28;
+    payoffGate = rr >= 0.20 ? 1.00 : rr >= 0.12 ? 0.90 : rr >= 0.06 ? 0.72 : 0.55;
     if (rr < 0.12) confConflicts.push({ tag: 'Reward:Risk',
       label: `Reward:risk ${rr.toFixed(2)} — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
   }
