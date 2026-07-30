@@ -148,6 +148,18 @@ export function calc0DTE(inputs) {
   const hasGreeks = theta > 0 && Math.abs(delta) > 0;
   const popFrac = pop / 100;
   const hasOvernight = esOvernightHigh > 0 && esOvernightLow > 0 && priorDayClose > 0;
+
+  // ── ES overnight High/Low validation (Jul 2026) ──
+  // A swapped High/Low used to flow straight through the engine. It made
+  // `overnightRange` NEGATIVE, which then (a) scored 5/5 on the "Overnight range"
+  // criterion — a negative ratio passes every `pct < 0.30` test — and, far worse,
+  // (b) SUBTRACTED from totalRangeConsumed, deflating moveConsumed, which selects
+  // the regime and therefore the whole strategy matrix. A two-field data-entry slip
+  // could pick the structure. Normalise by orientation so the maths is right, and
+  // raise a warning so the input actually gets fixed.
+  const onSwapped = esOvernightHigh > 0 && esOvernightLow > 0 && esOvernightHigh < esOvernightLow;
+  const onHigh = Math.max(esOvernightHigh, esOvernightLow);
+  const onLow  = Math.min(esOvernightHigh, esOvernightLow);
   const hasCashOpen = cashOpen > 0;
   const hasESEM = esEM > 0;
 
@@ -185,7 +197,7 @@ export function calc0DTE(inputs) {
   // Overnight directional move (signed)
   const overnightDirMove = hasOvernight ? esClose - priorDayClose : 0;
   const overnightMove = Math.abs(overnightDirMove);
-  const overnightRange = hasOvernight ? esOvernightHigh - esOvernightLow : 0;
+  const overnightRange = hasOvernight ? Math.max(0, onHigh - onLow) : 0;
   const overnightDir = hasOvernight ? (overnightDirMove > 0 ? 'bullish' : overnightDirMove < 0 ? 'bearish' : 'flat') : 'unknown';
 
   // Overnight range consumed (vs ES EM if available, else vs cash EM)
@@ -1401,6 +1413,7 @@ export function calc0DTE(inputs) {
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
+  if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
   if (isDebitBfly && D > 0 && netCreditDebit < 0) {
@@ -1551,6 +1564,7 @@ export function calc0DTE(inputs) {
     gamDist, regime, regimeConds, regimeCommentary,
     // Overnight
     overnightMove, overnightDirMove, overnightRange, overnightDir, overnightRangePct, overnightMovePct,
+    onSwapped, onHigh, onLow,
     cashMove, cashDirMove, cashDir, gapAtOpen,
     moveConsumed, moveConsumedDir, moveConsumedRange, volRemaining,
     totalDirConsumed, totalRangeConsumed,

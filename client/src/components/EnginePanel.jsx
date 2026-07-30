@@ -861,11 +861,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
               <div className="grid grid-cols-2 gap-2.5">
                 <Inp label={esPriorCloseLabel} value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
                 <Inp label={esPreOpenLabel} value={i0.esClose} onChange={v=>set0('esClose',v)}/>
-                <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)}/>
-                <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)}/>
+                <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)} bad={r.onSwapped}/>
+                <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)} bad={r.onSwapped}/>
                 <Inp label="ES EM" value={i0.esEM} onChange={v=>set0('esEM',v)}/>
                 <Inp label={i0.underlying + ' Open'} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
+              {r.onSwapped && (
+                <div style={{margin:'8px 0 0',padding:'5px 9px',borderRadius:6,background:'#3d1418',border:'1px solid #7d2b2b',fontSize:11,color:'#f85149',lineHeight:1.4}}>
+                  ⚠ <b>High is below Low</b> — these two look swapped. Scoring has been corrected to a {(r.onHigh-r.onLow).toFixed(1)} pt range, but fix the inputs: an inverted range distorts move-consumed, the regime and the strategy pick.
+                  <button type="button" onClick={()=>setI0(prev=>({...prev, esOvernightHigh:prev.esOvernightLow, esOvernightLow:prev.esOvernightHigh}))}
+                    style={{marginLeft:8,padding:'1px 7px',borderRadius:4,border:'1px solid #7d2b2b',background:'#5a1e22',color:'#ffb4b4',cursor:'pointer'}}>Swap</button>
+                </div>
+              )}
             </>
           )}
 
@@ -1703,10 +1710,10 @@ function SectionLabel({ children, white, info }) {
   );
 }
 
-function Inp({label,value,onChange,type}) {
-  return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
+function Inp({label,value,onChange,type,bad}) {
+  return (<div><label className={`text-[11px] block mb-1 ${bad?'text-[#f85149]':'text-[#c9d1d9]'}`}>{label}</label>
     <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—"
-      className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7]"/></div>);
+      className={`w-full px-3 py-2 bg-[#0d1117] border rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7] ${bad?'border-[#f85149]':'border-[#30363d]'}`}/></div>);
 }
 function Sel({label,value,onChange,options}) {
   return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
