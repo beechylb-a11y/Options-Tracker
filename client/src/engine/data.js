@@ -19,6 +19,36 @@ export const STRATS_45DTE = [
   'Iron butterfly', 'Standard butterfly'
 ];
 
+// ── Profit locus (Jul 2026) ──
+// WHERE a structure makes its money, which is not the same question as what shape
+// its risk is:
+//   'pin'    price stops at the body            (flies, iron fly, calendars)
+//   'range'  price stays inside a band          (condors, credit spreads)
+//   'move'   price travels                      (debit verticals, reversed condor)
+// A broken wing butterfly is asymmetric in where its RISK sits and is still a pin:
+// it needs price to stop. Treating asymmetry as directionality is what let a
+// strong directional read promote a pin structure. Risk shape decides which SIDE
+// of a chosen structure carries the risk; it never decides the class.
+export const PROFIT_LOCUS = {
+  'Chicken condor':          'range',
+  'Broken wing butterfly':   'pin',
+  'Asymmetric butterfly':    'pin',
+  'Standard butterfly':      'pin',
+  'Iron Condor - Normal':    'range',
+  'Long Condor - Reversed':  'move',
+  'Iron butterfly':          'pin',
+  'Bull put spread':         'range',
+  'Bear call spread':        'range',
+  'Bull call spread':        'move',
+  'Bear put spread':         'move',
+  // 45DTE-only names
+  'Credit spread':           'range',
+  'Calendar spread':         'pin',
+  'Diagonal spread':         'pin',
+  'Jade lizard':             'range',
+  'Ratio spread':            'range',
+};
+
 // Single source of truth for whether a strategy is a net CREDIT (you collect
 // premium) or net DEBIT (you pay). 'varies' = depends on how it's structured;
 // resolve from the ticket's net credit/debit at runtime.

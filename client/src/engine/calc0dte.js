@@ -2,7 +2,11 @@
 //  0DTE CALCULATION ENGINE v2
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
-import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE } from './data.js';
+import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS } from './data.js';
+
+// Indices into the first seven entries of STRATS_0DTE (the non-spread block that
+// `base` covers) whose profit locus is a PIN — they need price to stop.
+const PIN_IDX = STRATS_0DTE.slice(0, 7).map((s, i) => PROFIT_LOCUS[s] === 'pin' ? i : -1).filter(i => i >= 0);
 
 function degrade(rating, levels) {
   const order = ['EXCELLENT','GOOD','MARGINAL','NO TRADE'];
@@ -10,12 +14,17 @@ function degrade(rating, levels) {
   return order[Math.min(idx + levels, 3)];
 }
 
-export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed) {
+export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern) {
   const isBull = dirScore > 0, isBear = dirScore < 0, isNeutral = dirScore === 0;
   const isStrong = Math.abs(dirScore) >= 2;
   const isMild = Math.abs(dirScore) === 1;
   const butterflyZone = moveConsumed > 0.60 && isCompressing;
   const spreadZone = moveConsumed < 0.60 && !isCompressing;
+  // A trend day is precisely the day that consumes a lot of EM and keeps going, so
+  // a flat `moveConsumed >= 0.60 -> NO TRADE` blocked the aligned vertical exactly
+  // when it was most likely to be right. trendPattern was already computed upstream;
+  // it just never reached this function. (Jul 2026)
+  const trendDay = isStrong && trendPattern === 'continuation';
 
   // Base ratings: [Chicken, BWB, Asymmetric, Standard, IronCondor, LongCondor, IronButterfly]
   let base;
@@ -78,9 +87,16 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   }
 
   const ratings = base.slice();
-  // Strong direction still downgrades centred structures
+  // ── Strong conviction downgrades PIN structures (Jul 2026) ──
+  // See PROFIT_LOCUS in data.js. The old list was [3,4,5,6] — it degraded the
+  // symmetric fly, the condors and the iron fly, but left the BWB and asymmetric
+  // fly untouched, because the matrix promoted them *because* direction was strong,
+  // "for max asymmetry". That answers "price will travel" with "price will stop
+  // right here". A broken wing is a risk shape, not a direction. Indices 1 and 2
+  // are pins and now degrade with every other pin; 4 (range) and 5 (reversed
+  // condor, handled explicitly below) keep their existing treatment.
   if (isStrong) {
-    [3,4,5,6].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
+    [...PIN_IDX, 4, 5].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
   }
   // Reversed condor (idx 5) is an EXPANSION structure — its ~2-EM-wide central loss
   // band only pays on a >1-EM move by expiry. In compression / high move-consumed a
@@ -111,6 +127,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bullCall;
   if (isBull && moveConsumed < 0.40 && !isCompressing) bullCall = 'EXCELLENT';
   else if (isBull && moveConsumed < 0.50) bullCall = 'GOOD';
+  else if (isBull && trendDay) bullCall = 'GOOD';        // trend day — exhaustion gate lifted
   else if (isBull && moveConsumed < 0.60) bullCall = 'MARGINAL';
   else bullCall = 'NO TRADE';
   ratings.push(bullCall);
@@ -119,6 +136,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bearPut;
   if (isBear && moveConsumed < 0.40 && !isCompressing) bearPut = 'EXCELLENT';
   else if (isBear && moveConsumed < 0.50) bearPut = 'GOOD';
+  else if (isBear && trendDay) bearPut = 'GOOD';         // trend day — exhaustion gate lifted
   else if (isBear && moveConsumed < 0.60) bearPut = 'MARGINAL';
   else bearPut = 'NO TRADE';
   ratings.push(bearPut);
@@ -168,18 +186,75 @@ export function calc0DTE(inputs) {
 
   // ── Core derived metrics ──
   const rm = high - low;
-  const rmRatio = em > 0 ? rm / em : 0;
+
+  // ── Expected move: two rulers, named separately (Jul 2026) ──
+  // One `em` used to serve two incompatible purposes, fed from three sources on
+  // three different scales:
+  //   emVIX / emV1D   price × vol/100 ÷ √252   = 1.0 SD of a FULL session
+  //   ATM straddle    (C+P) × 0.85            = 0.68 SD of the time LEFT
+  //   manual          whatever was typed
+  //
+  // Two errors were stacked in the straddle path. The Black-Scholes ATM identity
+  // is straddle = 0.7979 × S·σ√T, so 1 SD = straddle × 1.2533 — the straddle
+  // UNDERSTATES 1 SD by 20%, and the 0.85 "haircut" pushed it down to 0.68 SD.
+  // Its time base also floats: at an 11:30 entry only 4.5 of 6.5 hours remain, so
+  // it is already √(4.5/6.5) = 0.83× a full-day figure and keeps shrinking all
+  // afternoon regardless of price. Combined: ~0.56× the VIX1D number.
+  //
+  // That mattered because EM is the DENOMINATOR of move-consumed. A short ruler
+  // inflates it — a true 50% reads 74%, a true 60% reads 88% — pushing ordinary
+  // days over the 0.60 line that opens `butterflyZone` and hard-gates every
+  // vertical to NO TRADE. A units bug was biasing the engine into pin structures
+  // and locking out directional ones.
+  //
+  //   emRemaining  how far price can still travel FROM HERE — strike placement,
+  //                body displacement, breakeven bands. Market-priced.
+  //   emSession    the size of the DAY's budget, stamped at the open so it does
+  //                not shrink with the clock — move-consumed, regime, every
+  //                "% EM" score.
+  //
+  // P(max loss) is deliberately untouched: it already ran on the session ruler
+  // (emV1D) scaled by √(hours/5.5), which is the correct construction.
+  const SD_PER_STRADDLE = 1.2533;                       // 1/√(2/π)
+  const sessionFrac = Math.min(1, Math.max(0.02, (hours > 0 ? hours : 5.5) / 5.5));
+  const emVIX = price > 0 ? Math.round(price * (vix / 100) / SQRT252) : 0;
+  const emV1D = price > 0 ? Math.round(price * (vix1d / 100) / SQRT252) : 0;
+  const emOpenRef = cashOpen > 0 ? cashOpen : price;    // stamp the session base at the open
+  const emSessionModel = (emOpenRef > 0 && vix1d > 0) ? emOpenRef * (vix1d / 100) / SQRT252 : 0;
+  const straddleTotal = (straddleCall > 0 && straddlePut > 0) ? straddleCall + straddlePut : 0;
+  const emStraddleSD = straddleTotal > 0 ? straddleTotal * SD_PER_STRADDLE : 0;
+  const emSession = (emSource === 'manual' && em > 0) ? em
+    : emSessionModel > 0 ? emSessionModel
+    : emStraddleSD > 0 ? emStraddleSD / Math.sqrt(sessionFrac)
+    : (emVIX > 0 ? emVIX : em);
+  const emRemaining = emStraddleSD > 0 ? emStraddleSD
+    : (emSession > 0 ? emSession * Math.sqrt(sessionFrac) : 0);
+  // Like-for-like agreement check. Put the straddle back on the SESSION ruler and
+  // compare implied session vol against VIX1D. The old display compared a
+  // remaining-session straddle with a full-session model and reported a pure
+  // scale artefact as a 46% "disagreement".
+  const emStraddleSessionVol = (emStraddleSD > 0 && price > 0)
+    ? (emStraddleSD / Math.sqrt(sessionFrac)) / price * SQRT252 * 100 : null;
+  const emVolGap = (emStraddleSessionVol != null && vix1d > 0)
+    ? (emStraddleSessionVol - vix1d) / vix1d : null;
+  const emManualGap = (emSource === 'manual' && em > 0 && emSessionModel > 0)
+    ? (em - emSessionModel) / emSessionModel : null;
+  const emDisagree = (emVolGap != null && Math.abs(emVolGap) > 0.15)
+    || (emManualGap != null && Math.abs(emManualGap) > 0.15);
+  // Old single-ruler EM — kept only so the UI can show what a score used to read.
+  const emLegacy = em > 0 ? em : (emV1D > 0 ? emV1D : emVIX);
+  const emScaleShift = emLegacy > 0 && emSession > 0 ? emLegacy / emSession : 1;
+
+  const rmRatio = emSession > 0 ? rm / emSession : 0;
   const comp = hasComp ? atr5 / atr2h : null;
   const gamDist = hasGam ? Math.abs(price - gamStrike) / atr : null;
   const aboveVWAP = hasPrice && vwap > 0 && price >= vwap;
   const vwapDiff = vwap > 0 ? price - vwap : 0;
-  const vwapDistPctEM = (em > 0 && vwap > 0) ? Math.abs(price - vwap) / em : 0;
+  const vwapDistPctEM = (emSession > 0 && vwap > 0) ? Math.abs(price - vwap) / emSession : 0;
   const vwapOverextended = vwapDistPctEM > 0.75;
   const vixGap = vix > 0 ? (vix1d - vix) / vix : 0;
   const gapBandIdx = vixGap < -0.10 ? 0 : vixGap <= 0.10 ? 1 : vixGap <= 0.25 ? 2 : 3;
   const vixHigh = vix > 25;
-  const emVIX = price > 0 ? Math.round(price * (vix / 100) / SQRT252) : 0;
-  const emV1D = price > 0 ? Math.round(price * (vix1d / 100) / SQRT252) : 0;
   // EM source: 'straddle' when the ATM straddle EM was fetched (em input is the
   // market-priced move), else 'vix' (annualised VIX1D/√252 model estimate).
   // The straddle is the market's own priced move (skew + events baked in) and is
@@ -201,7 +276,7 @@ export function calc0DTE(inputs) {
   const overnightDir = hasOvernight ? (overnightDirMove > 0 ? 'bullish' : overnightDirMove < 0 ? 'bearish' : 'flat') : 'unknown';
 
   // Overnight range consumed (vs ES EM if available, else vs cash EM)
-  const overnightRangeEM = hasESEM ? esEM : em;
+  const overnightRangeEM = hasESEM ? esEM : emSession;
   const overnightRangePct = overnightRangeEM > 0 ? overnightRange / overnightRangeEM : 0;
   const overnightMovePct = overnightRangeEM > 0 ? overnightMove / overnightRangeEM : 0;
 
@@ -216,15 +291,15 @@ export function calc0DTE(inputs) {
   // Total directional consumed: combine overnight and cash as % of their respective EMs
   // NOT cross-instrument (ES prior close vs SPX current price would be nonsensical)
   const overnightDirPct = overnightRangeEM > 0 ? overnightMove / overnightRangeEM : 0;
-  const cashDirPct = em > 0 ? cashMove / em : 0;
+  const cashDirPct = emSession > 0 ? cashMove / emSession : 0;
   // Weighted blend: overnight dir + cash dir
   const totalDirConsumed = hasOvernight
     ? (overnightDirPct * 0.4 + cashDirPct * 0.6)  // cash session weighted more
     : cashDirPct;
 
   // Total range consumed: overnight range + cash range vs combined EM
-  const combinedEM = (hasESEM ? esEM : em) + (em > 0 ? em : 0);
-  const totalRangeConsumed = combinedEM > 0 ? (overnightRange + cashRange) / combinedEM : (em > 0 ? rmRatio : 0);
+  const combinedEM = (hasESEM ? esEM : emSession) + (emSession > 0 ? emSession : 0);
+  const totalRangeConsumed = combinedEM > 0 ? (overnightRange + cashRange) / combinedEM : (emSession > 0 ? rmRatio : 0);
 
   // Primary move consumed metric
   const moveConsumedDir = Math.min(totalDirConsumed, 1.5);
@@ -324,7 +399,7 @@ export function calc0DTE(inputs) {
     : 'Transition zone: assess compression and direction before committing.');
 
   // ── Strategy ratings ──
-  const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed);
+  const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern);
   const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i], idx: i }));
   const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'NO TRADE': 3 };
   sorted.sort((a, b) => order[a.rating] - order[b.rating] || a.idx - b.idx);
@@ -378,14 +453,17 @@ export function calc0DTE(inputs) {
   const legStrat = overrideStrategy || bestStrat;
 
   // ── Strike engine (with directional gamma) ──
-  // Wing base distance = the active EM (≈1 standard deviation). The straddle EM
-  // is the market's true 1SD, so it drives the wings directly; a manual EM does
-  // too. VIX1D-derived EM acts as a FLOOR so a suspiciously-low EM can't produce
-  // dangerously tight wings. Falls back to the VIX estimates when no EM is set.
+  // Wing base distance = 1 SD of the move still available FROM HERE, floored by
+  // the model's own remaining-session estimate so a suspiciously cheap straddle
+  // cannot produce dangerously tight wings.
+  // Was: Math.max(em, emV1D) — a remaining-session straddle floored by a
+  // FULL-session VIX1D number, i.e. two different rulers in one comparison. The
+  // floor therefore bound on essentially every ticket: wings were placed on the
+  // model while every "% EM" score divided by the straddle. Both sides of this
+  // max() are now remaining-session quantities.
   let baseDistance;
   if (price <= 0) baseDistance = 0;
-  else if (em > 0) baseDistance = Math.max(em, emV1D); // EM primary, VIX1D floor
-  else baseDistance = Math.max(emVIX, emV1D);          // no EM → VIX estimates
+  else baseDistance = Math.max(emRemaining, emSession * Math.sqrt(sessionFrac));
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
@@ -394,8 +472,26 @@ export function calc0DTE(inputs) {
   const R = n => roundTo > 0 ? Math.round(n / roundTo) * roundTo : Math.round(n * 2) / 2;
   const leg = (label, strike) => ({ label, strike: R(strike) });
 
+  // ── Reversal-aware skew direction (hoisted — the body needs it) ──
+  // Directionally-skewed structures (BWB, Chicken condor, Asymmetric/Standard fly)
+  // place their body / wide side toward the EXPECTED move. On a CONTINUATION setup
+  // that's the trend direction (dirScore). On a REVERSAL setup the move is expected
+  // to fade and turn, so we FLIP: skew against the raw trend.
+  // skewBull >= 0 → skew to the upside (call-side); < 0 → downside (put-side).
+  const skewBull = trendPattern === 'reversal' ? -dirScore : dirScore;
+  const skewUp = skewBull >= 0;
+
+  // ── Body displacement on strong conviction (Jul 2026) ──
+  // A pin structure used to plant its body at spot even on a Strong read — it
+  // expressed "price will travel" as "price will stop right here", and only landed
+  // off spot by luck, when a gamma strike happened to sit in the right place.
+  // Displace the body toward the projected close by 0.40 × emRemaining whenever
+  // conviction is Strong. Gamma still wins when a gamma strike is within reach.
+  const bodyShift = (Math.abs(skewBull) >= 2 && emRemaining > 0)
+    ? Math.sign(skewBull) * 0.40 * emRemaining : 0;
+
   // Gamma strike: use directionally. Bullish → look at gamma above price. Bearish → below.
-  let gs = price;
+  let gs = price + bodyShift;
   if (price > 0 && D > 0) {
     if (hasGam && gamStrike > 0) {
       const gamDelta = gamStrike - price;
@@ -406,28 +502,21 @@ export function calc0DTE(inputs) {
         if (Math.abs(gamDelta) <= maxMove) gs = gamStrike;
         else gs = price + Math.sign(gamDelta) * maxMove;
       }
-      gs = R(gs);
     }
+    gs = R(gs);
   }
 
   let legs = [];
   let skewNote = '';
   if (price > 0 && D > 0) {
     const p = price;
-    // ── Reversal-aware skew direction ──
-    // Directionally-skewed structures (BWB, Chicken condor, Asymmetric/Standard
-    // fly) place their body/wide side toward the EXPECTED move. On a CONTINUATION
-    // setup that's the trend direction (dirScore). On a REVERSAL setup the move
-    // is expected to fade and turn, so we FLIP: skew against the raw trend.
-    // skewBull >= 0 → skew to the upside (call-side); < 0 → downside (put-side).
-    const skewBull = trendPattern === 'reversal' ? -dirScore : dirScore;
-    const skewUp = skewBull >= 0;
     // Human-readable note on WHY the structure skewed the way it did.
     if (['Broken wing butterfly','Chicken condor','Asymmetric butterfly','Standard butterfly'].includes(legStrat) && dirScore !== 0) {
       const side = skewUp ? 'upside' : 'downside';
       skewNote = trendPattern === 'reversal'
         ? `Skewed ${side} — reversal setup, flipped against ${dirScore<0?'down':'up'}trend`
         : `Skewed ${side} — ${trendPattern === 'continuation' ? 'continuation with' : 'aligned with'} ${dirScore<0?'down':'up'}trend`;
+      if (bodyShift !== 0) skewNote += `; body displaced ${bodyShift>0?'+':''}${bodyShift.toFixed(0)} pt (0.40 × EM remaining) — strong conviction`;
     }
     if (legStrat === 'Iron butterfly') {
       legs = [leg('Long put (wing)', p-D), leg('Short put (body)', p), leg('Short call (body)', p), leg('Long call (wing)', p+D)];
@@ -607,10 +696,22 @@ export function calc0DTE(inputs) {
   // EM method detail for the UI: show the straddle legs when the EM came from the
   // ATM straddle, else note it's the VIX1D model estimate.
   const emDetail = emIsStraddle
-    ? `Straddle: ${straddleCall!=null?`${straddleCall.toFixed(2)}C`:'--'} + ${straddlePut!=null?`${straddlePut.toFixed(2)}P`:'--'}${straddleHaircut?` × ${straddleHaircut}`:''} = ${em.toFixed(1)} pts`
+    ? `Straddle: ${straddleCall!=null?`${straddleCall.toFixed(2)}C`:'--'} + ${straddlePut!=null?`${straddlePut.toFixed(2)}P`:'--'} × 1.2533 = ${emRemaining.toFixed(1)} pts remaining`
     : emSource === 'manual'
-      ? `Manual entry: ${em>0?em.toFixed(1):'--'} pts`
-      : (emV1D > 0 ? `VIX1D model: ${vix1d}% ÷ √252 = ${emV1D} pts (no straddle — subscribe for market EM)` : 'VIX model estimate');
+      ? `Manual entry: ${em>0?em.toFixed(1):'--'} pts (read as a SESSION EM)`
+      : (emSessionModel > 0 ? `VIX1D model: ${vix1d}% ÷ √252 = ${emSessionModel.toFixed(1)} pts session (no straddle — subscribe for market EM)` : 'VIX model estimate');
+
+  // Both rulers, always, with the only comparison that means anything: the
+  // straddle's IMPLIED SESSION VOL against VIX1D. Comparing a remaining-session
+  // straddle with a full-session model is what made a 0.56× scale factor look like
+  // a 46% disagreement about the market.
+  const emRemainingDetail = `${emRemaining.toFixed(1)} pts · ${(sessionFrac*5.5).toFixed(1)}h left · ${emStraddleSD>0?'market (straddle × 1.2533)':'model'}`;
+  const emSessionDetail = `${emSession.toFixed(1)} pts · full session${emSource==='manual'&&em>0?' · manual override':emSessionModel>0?` · VIX1D ${vix1d}% ÷ √252`:''}`;
+  const emAgreeDetail = emStraddleSessionVol != null && vix1d > 0
+    ? `straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% — ${Math.abs(emVolGap)<=0.15?'agree':'DISAGREE'} (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%)`
+    : emManualGap != null
+      ? `manual ${em.toFixed(1)} vs VIX1D session ${emSessionModel.toFixed(1)} — ${Math.abs(emManualGap)<=0.15?'agree':'DISAGREE'} (${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}%)`
+      : 'single source — no cross-check available';
 
   // ═══════════════════════════════════════
   //  MERGED SCORING (100 pts)
@@ -628,7 +729,14 @@ export function calc0DTE(inputs) {
   // scorecard inconsistent with the legs/EV/P(max loss) whenever an override was set.)
   const scoreStrat = legStrat;
   const isCentred = ['Iron Condor - Normal','Iron butterfly','Standard butterfly'].includes(scoreStrat);
-  const isDirectional = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(scoreStrat);
+  // Renamed from `isDirectional` (Jul 2026). It never meant "profits from a move" —
+  // it means NON-CENTRED: the structure is tilted to one side, so it tolerates price
+  // sitting away from VWAP and rewards a slope. A BWB is on this list and is still a
+  // PIN (see PROFIT_LOCUS in data.js); calling it directional is the conflation that
+  // let a strong directional read promote a structure that needs price to stop. This
+  // flag is scoring tolerance only — locus decides selection.
+  const isSkewed = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(scoreStrat);
+  const profitLocus = PROFIT_LOCUS[scoreStrat] || 'pin';
   // Reversed condor is a MAGNITUDE / breakout play — it wants EXPANSION (high comp)
   // and LOW move-consumed (room for a big move), the opposite of a pin. It was wrongly
   // in isCentred (which rewards low comp + high move-consumed). Score it explicitly.
@@ -647,7 +755,7 @@ export function calc0DTE(inputs) {
   if (!hasComp) compPts = 5;
   else if (wantsExpansion) compPts = comp>0.80?15:comp>0.50?10:comp>0.35?6:3;  // reversed wants expansion
   else if (isCentred || pinLike) compPts = comp<0.35?15:comp<0.50?12:comp<0.80?6:2;
-  else if (isDirectional) compPts = comp>0.80?14:comp>0.50?11:comp>0.35?8:5;
+  else if (isSkewed) compPts = comp>0.80?14:comp>0.50?11:comp>0.35?8:5;
   else compPts = comp<0.50?11:comp<0.80?8:4;
   setupScore += compPts;
   criteria.push({ label: `Compression ${hasComp?comp.toFixed(2):'--'}`, pts: compPts, max: 15 });
@@ -688,13 +796,13 @@ export function calc0DTE(inputs) {
 
   // 4. VWAP slope + 15m confirmation (10)
   let slopePts;
-  if (slope === 'flat') slopePts = isCentred?10:isDirectional?5:7;
-  else if (slope === 'mild') slopePts = isDirectional?10:isCentred?5:7;
-  else slopePts = isDirectional?8:isCentred?2:5;
-  if (confirmed && isDirectional) slopePts = Math.min(10, slopePts + 2);
-  if (diverges && isDirectional) slopePts = Math.max(0, slopePts - 3);
+  if (slope === 'flat') slopePts = isCentred?10:isSkewed?5:7;
+  else if (slope === 'mild') slopePts = isSkewed?10:isCentred?5:7;
+  else slopePts = isSkewed?8:isCentred?2:5;
+  if (confirmed && isSkewed) slopePts = Math.min(10, slopePts + 2);
+  if (diverges && isSkewed) slopePts = Math.max(0, slopePts - 3);
   if (diverges && isCentred) slopePts = Math.min(10, slopePts + 1);
-  if (vwapOverextended && isDirectional) slopePts = Math.max(0, slopePts - 2);
+  if (vwapOverextended && isSkewed) slopePts = Math.max(0, slopePts - 2);
   setupScore += slopePts;
   const slopeLabel = `VWAP ${slope} (${slopeDirection})${confirmed?' ✓15m':diverges?' ✗15m':''}`;
   criteria.push({ label: slopeLabel, pts: slopePts, max: 10 });
@@ -712,7 +820,7 @@ export function calc0DTE(inputs) {
   else {
     const dirAligned = (overnightDir === 'bullish' && dirScore >= 1) || (overnightDir === 'bearish' && dirScore <= -1);
     const dirConflict = (overnightDir === 'bullish' && dirScore <= -1) || (overnightDir === 'bearish' && dirScore >= 1);
-    if (dirAligned && isDirectional) overnightPts = 10;
+    if (dirAligned && isSkewed) overnightPts = 10;
     else if (dirAligned) overnightPts = 7;
     else if (overnightDir === 'flat' && isCentred) overnightPts = 8;
     else if (dirConflict) overnightPts = 2;
@@ -723,7 +831,7 @@ export function calc0DTE(inputs) {
 
   // 7. Overnight range utilization (5)
   let rangePts;
-  if (!hasOvernight || em <= 0) rangePts = 3;
+  if (!hasOvernight || emSession <= 0) rangePts = 3;
   else if (isCentred) rangePts = overnightRangePct>0.60?5:overnightRangePct>0.30?3:1;
   else rangePts = overnightRangePct<0.30?5:overnightRangePct<0.60?3:1;
   setupScore += rangePts;
@@ -731,8 +839,8 @@ export function calc0DTE(inputs) {
 
   // 8. VWAP distance (5)
   let vwapDistPts;
-  if (em <= 0 || vwap <= 0) vwapDistPts = 3;
-  else if (isDirectional) vwapDistPts = vwapDistPctEM<0.25?5:vwapDistPctEM<0.50?4:vwapDistPctEM<0.75?2:0;
+  if (emSession <= 0 || vwap <= 0) vwapDistPts = 3;
+  else if (isSkewed) vwapDistPts = vwapDistPctEM<0.25?5:vwapDistPctEM<0.50?4:vwapDistPctEM<0.75?2:0;
   else vwapDistPts = vwapDistPctEM<0.15?5:vwapDistPctEM<0.30?3:1;
   setupScore += vwapDistPts;
   criteria.push({ label: `VWAP distance ${vwap>0?(vwapDistPctEM*100).toFixed(0)+'% EM':'--'}`, pts: vwapDistPts, max: 5 });
@@ -1409,10 +1517,12 @@ export function calc0DTE(inputs) {
   if (vixHigh) warnings.push('VIX >25 — half-size override');
   if (setup === 'B Setup') warnings.push('B setup — half Kelly');
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
-  if (moveConsumed > 0.90 && isDirectional && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
+  if (moveConsumed > 0.90 && isSkewed && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
+  if (emDisagree && emVolGap != null) warnings.push(`EM sources disagree on a like-for-like basis: straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%) — check the feed or an event`);
+  else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number`);
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -1425,7 +1535,7 @@ export function calc0DTE(inputs) {
     }
   }
   if (overextendedWarning) warnings.push('Strong direction + overextended — consider pullback');
-  if (hasOvernight && overnightMovePct > 0.60 && isDirectional) warnings.push(`Overnight consumed ${(overnightMovePct*100).toFixed(0)}% EM — limited room`);
+  if (hasOvernight && overnightMovePct > 0.60 && isSkewed) warnings.push(`Overnight consumed ${(overnightMovePct*100).toFixed(0)}% EM — limited room`);
   if (trendPattern === 'continuation' && totalDirConsumed > 0.80) warnings.push('Continuation trend — ' + (totalDirConsumed*100).toFixed(0) + '% consumed directionally — avoid chasing');
   if (trendPattern === 'reversal' && moveConsumedDir > 0.30) warnings.push('Reversal detected — overnight ' + overnightDir + ' but cash ' + cashDir + ' — confirm before directional');
 
@@ -1572,7 +1682,15 @@ export function calc0DTE(inputs) {
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes
-    legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult,
+    legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
+    // Expected move — two rulers, presented separately (Jul 2026)
+    emRemaining, emSession, emSessionModel, emStraddleSD, emStraddleSessionVol,
+    emVolGap, emManualGap, emDisagree, emLegacy, emScaleShift, sessionFrac,
+    emRemainingDetail, emSessionDetail, emAgreeDetail,
+    // What move-consumed WOULD have read on the old single-ruler EM (approximate:
+    // linear in 1/EM, and the ES leg of combinedEM is not rescaled).
+    moveConsumedLegacy: Math.min(1.5, moveConsumed * emScaleShift),
+    profitLocus,
     // Scoring
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,

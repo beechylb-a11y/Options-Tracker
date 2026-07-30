@@ -680,7 +680,10 @@ app.get('/api/atm-straddle', async (req, res) => {
     try { ib.reqMarketDataType(2); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const expiry = req.query.expiry; // YYYYMMDD
-    const haircut = req.query.haircut ? Number(req.query.haircut) : 0.85;
+    // Straddle -> 1 SD. Black-Scholes ATM identity: straddle ~= 0.7979 * S * sigma * sqrt(T),
+    // so 1 SD = straddle * 1/0.7979 = straddle * 1.2533. The old 0.85 default was an
+    // inverted haircut that landed on 0.68 SD, roughly half the true expected move.
+    const haircut = req.query.haircut ? Number(req.query.haircut) : 1.2533;
     if (!expiry) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
 
     // 1) Spot: use a caller-supplied hint when present, else the index/stock

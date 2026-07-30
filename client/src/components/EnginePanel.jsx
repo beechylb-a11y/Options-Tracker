@@ -31,7 +31,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
     lowerWingDelta:'', upperWingDelta:'',
-    emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'0.85',
+    emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'1.2533',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
   });
 
@@ -127,7 +127,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           emSource: i0.emSource || '',
           straddleCall: i0.straddleCall !== '' ? parseFloat(i0.straddleCall) : null,
           straddlePut: i0.straddlePut !== '' ? parseFloat(i0.straddlePut) : null,
-          straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 0.85
+          straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533
         });
       } else {
         return calc45DTE({
@@ -389,7 +389,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       if (is0) {
         try {
           const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
-          const hc = parseFloat(i0.straddleHaircut) || 0.85;
+          const hc = parseFloat(i0.straddleHaircut) || 1.2533;  // 1 SD = straddle x 1.2533
           const ctrl = new AbortController();
           const t = setTimeout(() => ctrl.abort(), 7000);
           const sResp = await fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=' + hc, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
@@ -834,18 +834,38 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             </>}
           </div>
 
-          {/* EM method: straddle (market) vs VIX (model) + editable haircut */}
+          {/* EM: source + BOTH rulers. Remaining drives strikes/POP; session drives
+              move-consumed, regime and every "% EM" score. One number used to do both. */}
           {is0 && r.emDetail && (
-            <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-              <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
-                <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b> {r.emDetail}
+            <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:`1px solid ${r.emDisagree ? '#5a3a1a' : '#21262d'}`}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
+                  <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b> {r.emDetail}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:5}}>
+                  <span style={{fontSize:11,color:'#8b949e'}} title="Straddle to 1 SD. Black-Scholes ATM identity: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave at 1.2533 unless you know why you're changing it.">SD mult</span>
+                  <input type="number" step="0.01" value={i0.straddleHaircut}
+                    onChange={e=>set0('straddleHaircut', e.target.value)}
+                    style={{width:60,padding:'3px 6px',borderRadius:5,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace'}} />
+                </div>
               </div>
-              <div style={{display:'flex',alignItems:'center',gap:5}}>
-                <span style={{fontSize:11,color:'#8b949e'}}>Haircut</span>
-                <input type="number" step="0.05" value={i0.straddleHaircut}
-                  onChange={e=>set0('straddleHaircut', e.target.value)}
-                  style={{width:52,padding:'3px 6px',borderRadius:5,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace'}} />
-              </div>
+              {(r.emRemainingDetail || r.emSessionDetail) && (
+                <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:6,fontSize:11,lineHeight:1.5,fontFamily:'JetBrains Mono,monospace',color:'#e6edf3'}}>
+                  <div><span style={{color:'#8b949e'}}>Remaining</span> (strikes, POP, breakevens): {r.emRemainingDetail}</div>
+                  <div><span style={{color:'#8b949e'}}>Session</span> (move-consumed, regime, % EM): {r.emSessionDetail}</div>
+                </div>
+              )}
+              {r.emAgreeDetail && (
+                <div style={{marginTop:4,fontSize:11,lineHeight:1.4,color: r.emDisagree ? '#e3a008' : '#8b949e'}}>
+                  {r.emDisagree ? '\u26a0 ' : ''}{r.emAgreeDetail}
+                </div>
+              )}
+              {r.emScaleShift != null && Math.abs(r.emScaleShift - 1) > 0.08 && r.moveConsumedLegacy != null && (
+                <div style={{marginTop:4,fontSize:11,lineHeight:1.4,color:'#8b949e'}}>
+                  Scale fix: move-consumed reads {(r.moveConsumed*100).toFixed(0)}% on the session ruler
+                  (old build showed {(r.moveConsumedLegacy*100).toFixed(0)}%).
+                </div>
+              )}
             </div>
           )}
 
