@@ -157,16 +157,28 @@ function classifyOrder(legs) {
   }
 
   // Butterfly (3 legs, same type, 3 strikes)
+  // Wing symmetry decides the archetype, not just the leg pattern. A symmetric fly,
+  // an asymmetric fly and a broken wing fly are all buy/sell/buy - they differ only
+  // in the ratio of the two wing widths. Splitting them here is what lets realised
+  // history land in the right bucket; without it every BWB was logged as a standard
+  // butterfly. Thresholds sit at the midpoints of the engine's own constructions
+  // (asymmetric ~1.5x, broken wing ~1.75x). (Fix Jul 2026.)
   if (n === 3 && nStr === 3) {
     const sorted = legs.slice().sort((a, b) => a.strike - b.strike);
     const dirs = sorted.map(l => l.dir);
+    const wLow = sorted[1].strike - sorted[0].strike;
+    const wHigh = sorted[2].strike - sorted[1].strike;
+    const ratio = (wLow > 0 && wHigh > 0) ? Math.max(wLow, wHigh) / Math.min(wLow, wHigh) : 1;
+    const kind = ratio < 1.15 ? 'Butterfly'
+      : ratio < 1.625 ? 'Asymmetric Butterfly'
+      : 'Broken Wing Butterfly';
     if (allCalls) {
-      if (dirs[0] === 'buy' && dirs[1] === 'sell' && dirs[2] === 'buy') return 'Long Call Butterfly';
-      if (dirs[0] === 'sell' && dirs[1] === 'buy' && dirs[2] === 'sell') return 'Short Call Butterfly';
+      if (dirs[0] === 'buy' && dirs[1] === 'sell' && dirs[2] === 'buy') return `Long Call ${kind}`;
+      if (dirs[0] === 'sell' && dirs[1] === 'buy' && dirs[2] === 'sell') return `Short Call ${kind}`;
     }
     if (allPuts) {
-      if (dirs[0] === 'buy' && dirs[1] === 'sell' && dirs[2] === 'buy') return 'Long Put Butterfly';
-      if (dirs[0] === 'sell' && dirs[1] === 'buy' && dirs[2] === 'sell') return 'Short Put Butterfly';
+      if (dirs[0] === 'buy' && dirs[1] === 'sell' && dirs[2] === 'buy') return `Long Put ${kind}`;
+      if (dirs[0] === 'sell' && dirs[1] === 'buy' && dirs[2] === 'sell') return `Short Put ${kind}`;
     }
   }
 
@@ -201,9 +213,12 @@ function classifyOrder(legs) {
       if (srt[0].dir === 'buy' && srt[1].dir === 'sell') return 'Bull Call Spread';
       if (srt[0].dir === 'sell' && srt[1].dir === 'buy') return 'Bear Call Spread';
     }
+    // Puts: a BULL put spread is short the HIGHER strike and long the lower (credit);
+    // a BEAR put spread is long the higher and short the lower (debit). srt is sorted
+    // ascending, so srt[1] is the higher strike. These two were reversed. (Fix Jul 2026.)
     if (allPuts) {
-      if (srt[0].dir === 'sell' && srt[1].dir === 'buy') return 'Bull Put Spread';
-      if (srt[0].dir === 'buy' && srt[1].dir === 'sell') return 'Bear Put Spread';
+      if (srt[1].dir === 'sell' && srt[0].dir === 'buy') return 'Bull Put Spread';
+      if (srt[1].dir === 'buy' && srt[0].dir === 'sell') return 'Bear Put Spread';
     }
   }
 

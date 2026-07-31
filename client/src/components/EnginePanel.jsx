@@ -19,6 +19,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const [esContract, setEsContract] = useState(''); // ES front-month label from bridge
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
   const [greeksFresh, setGreeksFresh] = useState(null); // option-feed freshness (real-time/delayed) + asOf
+  const [showWhatIf, setShowWhatIf] = useState(false);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -101,10 +102,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
   const vwapScaled = is0 && i0.underlying === 'SPX';
   const vwapFromIWM = is0 && i0.underlying === 'RUT';
 
-  const r = useMemo(() => {
-    try {
-      if (is0) {
-        return calc0DTE({
+  // The 0DTE argument object, built once so the what-if toggle can re-run the whole
+  // engine at the OTHER vol estimate without duplicating twenty input mappings.
+  const mk0 = (over) => ({
           price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
           vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
           vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
@@ -127,8 +127,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           emSource: i0.emSource || '',
           straddleCall: i0.straddleCall !== '' ? parseFloat(i0.straddleCall) : null,
           straddlePut: i0.straddlePut !== '' ? parseFloat(i0.straddlePut) : null,
-          straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533
-        });
+          straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
+          ...(over || {})
+  });
+
+  const r = useMemo(() => {
+    try {
+      if (is0) {
+        return calc0DTE(mk0());
       } else {
         return calc45DTE({
           price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
@@ -164,6 +170,42 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         regimeScore:0, regimeGrade:'', ivHvRatio:0 };
     }
   }, [is0, i0, i45, overrideStrat, strategyHistory]);
+
+  // What-if vol: re-run the engine on the other vol estimate and show the delta.
+  // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
+  // manual -> the VIX1D model; model-only -> plain VIX (the 30-day number) instead
+  // of VIX1D. Nothing here changes the live result; it is a second, parallel run.
+  const altVol = useMemo(() => {
+    if (!is0 || r.decision === 'Error') return null;
+    let over = null, label = '', short = '';
+    if (r.emIsStraddle) {
+      over = { straddleCall: null, straddlePut: null, emSource: 'vix', em: 0 };
+      label = 'the VIX1D model'; short = 'VIX1D';
+    } else if (i0.emSource === 'manual') {
+      over = { em: 0, emSource: 'vix', straddleCall: null, straddlePut: null };
+      label = 'the VIX1D model'; short = 'VIX1D';
+    } else if (fv(i0, 'vix') > 0 && fv(i0, 'vix1d') > 0) {
+      over = { vix1d: fv(i0, 'vix') };
+      label = `VIX ${fv(i0,'vix').toFixed(1)} (30-day) rather than VIX1D`; short = 'VIX 30d';
+    }
+    if (!over) return null;
+    let a;
+    try { a = calc0DTE(mk0(over)); } catch (e) { return null; }
+    const pct = v => v == null ? '--' : `${(v*100).toFixed(0)}%`;
+    const p1  = v => v == null ? '--' : `${(v*100).toFixed(1)}%`;
+    const num = v => v == null || !isFinite(v) ? '--' : v.toFixed(1);
+    const dol = v => v == null || !isFinite(v) ? '--' : `$${Math.round(v)}`;
+    const rows = [
+      { k:'EM session',     now:`${num(r.emSession)} pts`, alt:`${num(a.emSession)} pts` },
+      { k:'Move consumed',  now:pct(r.moveConsumed),       alt:pct(a.moveConsumed) },
+      { k:'Regime',         now:r.regime || '--',          alt:a.regime || '--' },
+      { k:'Best strategy',  now:r.bestStrat || '--',       alt:a.bestStrat || '--' },
+      { k:'P(max loss)',    now:p1(r.pMaxLoss),            alt:p1(a.pMaxLoss) },
+      { k:'EV / contract',  now:dol(r.ev),                 alt:dol(a.ev) },
+      { k:'Confidence',     now:num(r.tradeConfidence),    alt:num(a.tradeConfidence) }
+    ];
+    return { label, short, rows, changed: rows.filter(x => x.now !== x.alt).length };
+  }, [is0, i0, r, overrideStrat, strategyHistory]);
 
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
@@ -864,6 +906,40 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 <div style={{marginTop:4,fontSize:11,lineHeight:1.4,color:'#8b949e'}}>
                   Scale fix: move-consumed reads {(r.moveConsumed*100).toFixed(0)}% on the session ruler
                   (old build showed {(r.moveConsumedLegacy*100).toFixed(0)}%).
+                </div>
+              )}
+              {altVol && (
+                <div style={{marginTop:7,paddingTop:6,borderTop:'1px solid #21262d'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+                    <div style={{fontSize:11,color:'#8b949e',lineHeight:1.4}}>
+                      What if EM came from <b style={{color:'#e6edf3'}}>{altVol.label}</b>?
+                      {altVol.changed === 0
+                        ? ' \u2014 nothing changes.'
+                        : ` \u2014 ${altVol.changed} of ${altVol.rows.length} readings move.`}
+                    </div>
+                    <button onClick={()=>setShowWhatIf(v=>!v)}
+                      style={{padding:'3px 9px',borderRadius:5,border:'1px solid #30363d',background:showWhatIf?'#1f2937':'#0d1117',
+                        color:'#8b949e',fontSize:11,cursor:'pointer',whiteSpace:'nowrap'}}>
+                      {showWhatIf ? 'Hide' : 'Show'} what-if
+                    </button>
+                  </div>
+                  {showWhatIf && (
+                    <div style={{marginTop:6,display:'grid',gridTemplateColumns:'auto 1fr 1fr',gap:'3px 12px',
+                      fontSize:11,fontFamily:'JetBrains Mono,monospace',alignItems:'baseline'}}>
+                      <div style={{color:'#8b949e'}} />
+                      <div style={{color:'#8b949e',textAlign:'right'}}>now</div>
+                      <div style={{color:'#8b949e',textAlign:'right'}}>{altVol.short}</div>
+                      {altVol.rows.flatMap((row, ix) => {
+                        const moved = row.now !== row.alt;
+                        return [
+                          <div key={ix+'k'} style={{color:'#8b949e'}}>{row.k}</div>,
+                          <div key={ix+'n'} style={{textAlign:'right',color:'#e6edf3'}}>{row.now}</div>,
+                          <div key={ix+'a'} style={{textAlign:'right',color:moved?'#e3a008':'#484f58',
+                            fontWeight:moved?600:400}}>{row.alt}</div>
+                        ];
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

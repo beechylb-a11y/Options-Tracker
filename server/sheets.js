@@ -452,18 +452,42 @@ export async function getStrategyHistory(account = null) {
   const out = {};
   // Canonicalize broker (OIC) strategy names to the engine's archetype names so
   // real imported trades accumulate under the same key the engine queries
-  // (historyByStrategy[legStrat]). Without this, a TastyTrade "Long Call Butterfly"
-  // never joins the engine's "Standard butterfly" bucket, so MEASURED-mode EV can
-  // never fire from real trades and the model is stuck on estimated capture fractions.
-  // Only the UNAMBIGUOUS case is mapped: a long debit single-name (call/put) butterfly
-  // IS a standard debit fly. Short flies, iron flies and condors carry broker-dependent
-  // long/short semantics and are left as-is until confirmed. (Fix Jul 2026.)
-  const canonicalStrategy = (name) => {
-    const n = name.toLowerCase();
-    if (n.includes('butterfly') && !n.includes('iron') && !n.includes('short')
-        && (n.includes('call') || n.includes('put'))) return 'Standard butterfly';
-    return name; // engine names + ambiguous structures pass through unchanged
+  // (historyByStrategy[legStrat] is an exact string lookup). Without this a
+  // "Bull Call Spread" from the importer never joins the engine's "Bull call spread"
+  // bucket - a capitalisation difference alone is enough to keep MEASURED-mode EV
+  // switched off forever, leaving the model stuck on estimated capture fractions.
+  //
+  // Only structures whose engine archetype is unambiguous are mapped. Deliberately
+  // NOT mapped, because the CSV geometry cannot tell them apart from something else:
+  //   - Chicken condor (asymmetry lives in short-strike placement vs spot, not in
+  //     the leg pattern, so it is indistinguishable from a plain condor on paper)
+  //   - long call/put condors, short flies, Long Iron Butterfly (debit reversed fly)
+  //
+  // Legacy rows imported before the csvParser wing-symmetry fix say
+  // "Long Call Butterfly" for every fly including BWBs; those keep mapping to
+  // Standard butterfly. Re-importing the broker CSV re-classifies them correctly.
+  // (Fix Jul 2026.)
+  const STRATEGY_ALIASES = {
+    'long call butterfly':             'Standard butterfly',
+    'long put butterfly':              'Standard butterfly',
+    'long call asymmetric butterfly':  'Asymmetric butterfly',
+    'long put asymmetric butterfly':   'Asymmetric butterfly',
+    'long call broken wing butterfly': 'Broken wing butterfly',
+    'long put broken wing butterfly':  'Broken wing butterfly',
+    'short iron butterfly':            'Iron butterfly',
+    'long iron condor':                'Iron Condor - Normal',
+    'short iron condor':               'Long Condor - Reversed',
+    'bull call spread':                'Bull call spread',
+    'bear call spread':                'Bear call spread',
+    'bull put spread':                 'Bull put spread',
+    'bear put spread':                 'Bear put spread',
+    'long call calendar spread':       'Calendar spread',
+    'long put calendar spread':        'Calendar spread',
+    'short ratio call spread':         'Ratio spread',
+    'short ratio put spread':          'Ratio spread'
   };
+  const canonicalStrategy = (name) =>
+    STRATEGY_ALIASES[name.trim().toLowerCase()] || name;
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const strategy = canonicalStrategy((r[4] || '').trim());
