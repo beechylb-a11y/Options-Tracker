@@ -4,9 +4,14 @@
 // ================================================================
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS } from './data.js';
 
-// Indices into the first seven entries of STRATS_0DTE (the non-spread block that
-// `base` covers) whose profit locus is a PIN — they need price to stop.
-const PIN_IDX = STRATS_0DTE.slice(0, 7).map((s, i) => PROFIT_LOCUS[s] === 'pin' ? i : -1).filter(i => i >= 0);
+// Index sets over the first seven entries of STRATS_0DTE (the non-spread block
+// that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
+// body; a 'range' needs it to stay inside a band. Neither is what a strong
+// conviction continuation day delivers, so both degrade together.
+const locusIdx = (...loci) => STRATS_0DTE.slice(0, 7)
+  .map((s, i) => loci.includes(PROFIT_LOCUS[s]) ? i : -1).filter(i => i >= 0);
+const PIN_IDX = locusIdx('pin');
+const STILL_IDX = locusIdx('pin', 'range');
 
 function degrade(rating, levels) {
   const order = ['EXCELLENT','GOOD','MARGINAL','NO TRADE'];
@@ -87,16 +92,20 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   }
 
   const ratings = base.slice();
-  // ── Strong conviction downgrades PIN structures (Jul 2026) ──
-  // See PROFIT_LOCUS in data.js. The old list was [3,4,5,6] — it degraded the
-  // symmetric fly, the condors and the iron fly, but left the BWB and asymmetric
-  // fly untouched, because the matrix promoted them *because* direction was strong,
-  // "for max asymmetry". That answers "price will travel" with "price will stop
-  // right here". A broken wing is a risk shape, not a direction. Indices 1 and 2
-  // are pins and now degrade with every other pin; 4 (range) and 5 (reversed
-  // condor, handled explicitly below) keep their existing treatment.
+  // ── Strong conviction downgrades everything that needs price to STOP or STAY ──
+  // See PROFIT_LOCUS in data.js. History: the original list was the hand-written
+  // [3,4,5,6] — it degraded the symmetric fly, the iron condor, the reversed condor
+  // and the iron fly, but left the BWB and asymmetric fly untouched, because the
+  // matrix promoted them *because* direction was strong, "for max asymmetry". That
+  // answers "price will travel" with "price will stop right here". Jul 2026 moved
+  // it to every PIN, which fixed the flies — but left index 0 (Chicken condor,
+  // locus 'range') alone, so on a strong bull continuation the top pick was still a
+  // condor: short call ~1 EM up, on the day the engine has just said price travels.
+  // The list is now every 'pin' AND every 'range', plus 5 (reversed condor, 'move',
+  // kept for its existing treatment below). On a conviction day the only structures
+  // that do not degrade are the directional verticals, which is the point.
   if (isStrong) {
-    [...PIN_IDX, 4, 5].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
+    [...STILL_IDX, 5].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
   }
   // Reversed condor (idx 5) is an EXPANSION structure — its ~2-EM-wide central loss
   // band only pays on a >1-EM move by expiry. In compression / high move-consumed a
@@ -506,6 +515,17 @@ export function calc0DTE(inputs) {
     gs = R(gs);
   }
 
+  // ── Vertical widths run on the REMAINING session, not the full one (Jul 2026) ──
+  // emVIX / emV1D are 1 SD of a FULL session. Every other builder sizes off D,
+  // which runs on emRemaining — the verticals were the one place the EM split did
+  // not reach. At an 11:30 entry a full-session ruler is ~1.2x too wide: credit
+  // spreads got short strikes so far OTM they collected almost no premium (3 pt on
+  // a 70 pt width), and debit spreads got a short leg the day could not reach.
+  // Same √(hours/5.5) scaling that produces emRemaining.
+  const remScale = Math.sqrt(sessionFrac);
+  const dVixRem = emVIX > 0 ? Math.max(emVIX * remScale, roundTo * 2) : D;
+  const dV1dRem = emV1D > 0 ? Math.max(emV1D * remScale, roundTo * 2) : D;
+
   let legs = [];
   let skewNote = '';
   if (price > 0 && D > 0) {
@@ -546,32 +566,24 @@ export function calc0DTE(inputs) {
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
     } else if (legStrat === 'Bull put spread') {
       // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based
-      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
-      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
-        leg('Short put (VIX)', p - dVix), leg('Long put (VIX)', p - dVix * 2),
-        leg('Short put (VIX1D)', p - dV1d), leg('Long put (VIX1D)', p - dV1d * 2)
+        leg('Short put (VIX)', p - dVixRem), leg('Long put (VIX)', p - dVixRem * 2),
+        leg('Short put (VIX1D)', p - dV1dRem), leg('Long put (VIX1D)', p - dV1dRem * 2)
       ];
     } else if (legStrat === 'Bear call spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
-      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
-        leg('Short call (VIX)', p + dVix), leg('Long call (VIX)', p + dVix * 2),
-        leg('Short call (VIX1D)', p + dV1d), leg('Long call (VIX1D)', p + dV1d * 2)
+        leg('Short call (VIX)', p + dVixRem), leg('Long call (VIX)', p + dVixRem * 2),
+        leg('Short call (VIX1D)', p + dV1dRem), leg('Long call (VIX1D)', p + dV1dRem * 2)
       ];
     } else if (legStrat === 'Bull call spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
-      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
-        leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVix * 0.5),
-        leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1d * 0.5)
+        leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVixRem * 0.5),
+        leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1dRem * 0.5)
       ];
     } else if (legStrat === 'Bear put spread') {
-      const dVix = emVIX > 0 ? Math.max(emVIX, roundTo * 2) : D;
-      const dV1d = emV1D > 0 ? Math.max(emV1D, roundTo * 2) : D;
       legs = [
-        leg('Long put (VIX)', p), leg('Short put (VIX)', p - dVix * 0.5),
-        leg('Long put (VIX1D)', p), leg('Short put (VIX1D)', p - dV1d * 0.5)
+        leg('Long put (VIX)', p), leg('Short put (VIX)', p - dVixRem * 0.5),
+        leg('Long put (VIX1D)', p), leg('Short put (VIX1D)', p - dV1dRem * 0.5)
       ];
     }
   }
@@ -689,7 +701,7 @@ export function calc0DTE(inputs) {
 
   const wingTxt = D > 0
     ? isSpread
-      ? `EM(VIX)=${emVIX>0?emVIX.toFixed(1):'--'} | EM(VIX1D)=${emV1D>0?emV1D.toFixed(1):'--'}`
+      ? `EM rem(VIX)=${dVixRem.toFixed(1)} | EM rem(VIX1D)=${dV1dRem.toFixed(1)} · ${(sessionFrac*5.5).toFixed(1)}h left (session ${emVIX>0?emVIX.toFixed(0):'--'}/${emV1D>0?emV1D.toFixed(0):'--'})`
       : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
     : '';
 
