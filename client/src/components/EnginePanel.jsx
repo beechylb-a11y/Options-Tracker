@@ -321,7 +321,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       if (!d.net) { alert('No Greeks returned — TWS may lack option data permissions, or the expiry/strikes are invalid. You can enter Greeks manually.'); setFetchingGreeks(false); return; }
 
       // Feed freshness (real-time / delayed / frozen) + the underlying price the model used.
-      setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice } : null);
+      setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice,
+        greekSource: d.greekSource, greeksMixed: !!d.greeksMixed } : null);
       const freshPx = (d.undPrice != null && d.undPrice > 0) ? String(d.undPrice) : null;
 
       // Net position greeks. gamStrike (pin magnet) ~ the body strike for flies.
@@ -1116,11 +1117,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 const age = greeksFresh.asOf ? Math.max(0, Math.round((Date.now() - new Date(greeksFresh.asOf).getTime()) / 1000)) : null;
                 const txt = rt ? 'REAL-TIME' : dl ? 'DELAYED ~15m' : greeksFresh.dataType === 'frozen' ? 'FROZEN' : (greeksFresh.label || '—').toUpperCase();
                 const ageTxt = age == null ? '' : age < 60 ? ' \u00b7 ' + age + 's ago' : ' \u00b7 ' + Math.round(age/60) + 'm ago';
-                return <span title={(greeksFresh.label || '') + (greeksFresh.undPrice ? ' \u00b7 model px ' + greeksFresh.undPrice : '')}
+                // Net greeks are only a valid sum when every leg came off the same
+                // computation. Amber the badge and name the source when they did not.
+                const mixed = !!greeksFresh.greeksMixed;
+                const srcTxt = mixed ? ' \u00b7 ' + String(greeksFresh.greekSource || 'non-model').toUpperCase() : '';
+                return <span title={(greeksFresh.label || '') + (greeksFresh.undPrice ? ' \u00b7 model px ' + greeksFresh.undPrice : '')
+                    + (mixed ? ' \u00b7 not model greeks: legs served by ' + greeksFresh.greekSource + ' computation, so the net sum is unreliable - refetch' : '')}
                   style={{fontSize:10,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
-                    background: rt ? '#0d2818' : '#161b22',
-                    color: rt ? '#3fb950' : dl ? '#e3a008' : '#8b949e',
-                    border: '1px solid ' + (rt ? '#238636' : '#30363d')}}>{txt}{ageTxt}</span>;
+                    background: mixed ? '#2d1e0a' : rt ? '#0d2818' : '#161b22',
+                    color: mixed ? '#e3a008' : rt ? '#3fb950' : dl ? '#e3a008' : '#8b949e',
+                    border: '1px solid ' + (mixed ? '#9e6a03' : rt ? '#238636' : '#30363d')}}>{txt}{ageTxt}{srcTxt}</span>;
               })()}
               <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
                 title="Pull fresh model Greeks + underlying price for the current strikes — use right before entry"

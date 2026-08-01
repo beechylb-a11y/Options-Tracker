@@ -196,9 +196,14 @@ function getOptionGreeks(contract) {
     let resolved = false;
     let notSubscribed = false;
     let mdType = null; // IBKR feed type: 1 real-time, 2 frozen, 3 delayed, 4 delayed-frozen
+    let fallback = null;   // best non-model computation seen, used only if 13 never lands
+    let graceTimer = null; // short wait for the model tick once a fallback exists
+    let hardTimer = null;
     const done = (data) => {
       if (resolved) return;
       resolved = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      if (hardTimer) clearTimeout(hardTimer);
       ib.removeListener(EventName.tickOptionComputation, onGreeks);
       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
       ib.removeListener(EventName.marketDataType, onMdType);
@@ -208,22 +213,40 @@ function getOptionGreeks(contract) {
     };
     // @stoqey/ib 1.3.x tickOptionComputation args (10):
     // (reqId, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice)
-    // tickType 13 = model greeks (10-12 = bid/ask/last computations).
+    // tickType 13 = MODEL greeks; 10/11/12 = bid/ask/last computations.
+    //
+    // Only 13 comes off IB's own model with one consistent vol surface. The bid and
+    // ask computations back an IV out of a single side of the quote, so they are not
+    // comparable with each other or with the model - and this handler used to resolve
+    // on whichever tick arrived first. Legs of the same structure could therefore be
+    // served by different computations, which makes the SUM meaningless: on a butterfly
+    // the body is weighted x2 and net delta sits near zero, so one bid-computation leg
+    // is enough to flip the sign of the whole structure. That is exactly the engine-vs-TWS
+    // disagreement seen on the 738/742/746 fly.
+    //
+    // So: take 13 the moment it lands. If a one-sided computation arrives first, hold it
+    // aside and give the model tick a 1.5s grace period before settling for it - bounded
+    // extra latency, and the payload says which computation actually served the leg.
+    // (Jul 2026.)
+    const TICK_RANK = { 13: 3, 12: 2, 11: 1, 10: 1 };
     const onGreeks = (id, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice) => {
       if (id !== reqId) return;
       if (delta == null || Number.isNaN(delta)) return; // skip empty ticks (feed not subscribed)
-      done({
+      const g = {
         iv: impliedVol && impliedVol > 0 ? +(impliedVol * 100).toFixed(2) : null,
-        delta: delta != null ? +Number(delta).toFixed(4) : null,
+        delta: +Number(delta).toFixed(4),
         gamma: gamma != null ? +Number(gamma).toFixed(5) : null,
         theta: theta != null ? +Number(theta).toFixed(4) : null,
         vega: vega != null ? +Number(vega).toFixed(4) : null,
         optPrice: optPrice != null && optPrice > 0 ? +Number(optPrice).toFixed(2) : null,
         undPrice: undPrice != null && undPrice > 0 ? +Number(undPrice).toFixed(2) : null,
         tickType, mdType
-      });
+      };
+      if (tickType === 13) { done(g); return; }
+      if (!fallback || (TICK_RANK[tickType] || 0) > (TICK_RANK[fallback.tickType] || 0)) fallback = g;
+      if (!graceTimer) graceTimer = setTimeout(() => done(fallback), 1500);
     };
-    const onEnd = (id) => { if (id === reqId) done(null); };
+    const onEnd = (id) => { if (id === reqId) done(fallback); };
     const onMdType = (id, type) => { if (id === reqId) mdType = type; };
     // Market-data-not-subscribed errors (scoped to THIS request).
     const onErr = (err, code, id) => {
@@ -237,7 +260,7 @@ function getOptionGreeks(contract) {
     // genericTickList '106' = implied vol / model greeks; snapshot=false because
     // greeks stream after a short delay, so we time out ourselves.
     ib.reqMktData(reqId, contract, '106', false, false);
-    setTimeout(() => done(notSubscribed ? { notSubscribed: true } : null), 7000);
+    hardTimer = setTimeout(() => done(fallback || (notSubscribed ? { notSubscribed: true } : null)), 7000);
   });
 }
 
@@ -649,11 +672,22 @@ app.get('/api/option-greeks', async (req, res) => {
 
     // Feed freshness: which IBKR data type actually served these greeks, plus the
     // underlying price the model used — lets the app show real-time vs delayed.
+    // Which computation actually served each leg. A net position greek is only a
+    // valid sum when every leg came off the same one; say so when it did not.
+    const _tt = results.filter(r => r.greeks).map(r => r.greeks.tickType);
+    const _TTLBL = { 13: 'model', 12: 'last', 11: 'ask', 10: 'bid' };
+    const greekSource = _tt.length === 0 ? null
+      : _tt.every(t => t === 13) ? 'model'
+      : new Set(_tt).size > 1 ? 'mixed'
+      : (_TTLBL[_tt[0]] || 'non-model');
+    const greeksMixed = greekSource != null && greekSource !== 'model';
+
     const _leg0 = results.find(r => r.greeks);
     const _md = _leg0 && _leg0.greeks ? _leg0.greeks.mdType : null;
     const _MDLBL = { 1: 'Real-time', 2: 'Frozen (last)', 3: 'Delayed ~15m', 4: 'Delayed-frozen' };
     const dataType = _md === 1 ? 'realtime' : _md === 2 ? 'frozen' : _md === 3 ? 'delayed' : _md === 4 ? 'delayed-frozen' : 'unknown';
     res.json({ underlying, expiry, legs: results, net: netOut,
+      greekSource, greeksMixed,
       dataType, dataTypeLabel: _MDLBL[_md] || 'Unknown',
       undPrice: _leg0 && _leg0.greeks ? _leg0.greeks.undPrice : null,
       asOf: new Date().toISOString(),
