@@ -172,7 +172,15 @@ export function calc0DTE(inputs) {
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
   const hasGam = gamStrike > 0 && atr > 0;
-  const hasGreeks = theta > 0 && Math.abs(delta) > 0;
+  // Theta arrives signed: positive = the structure COLLECTS decay, negative = it
+  // PAYS it. Both are real positions and both deserve the survivability read, so the
+  // gate is on magnitude. thetaAbs is the dollars-per-day size, thetaPaid is the
+  // direction. Every ratio below divides by the size; the interpretation branches on
+  // the direction. Previously theta was absed twice upstream and this gate demanded
+  // theta > 0, so a position paying decay was credited with decay earned. (Jul 2026.)
+  const thetaAbs = Math.abs(theta);
+  const thetaPaid = theta < 0;
+  const hasGreeks = thetaAbs > 0 && Math.abs(delta) > 0;
   const popFrac = pop / 100;
   const hasOvernight = esOvernightHigh > 0 && esOvernightLow > 0 && priorDayClose > 0;
 
@@ -1026,9 +1034,14 @@ export function calc0DTE(inputs) {
   }
 
   // Greeks adjustments (apply to all strategies)
-  if (hasGreeks && theta > 0 && Math.abs(delta) > 0 && atr5 > 0) {
-    const tEdge = theta / (Math.abs(delta) * atr5);
-    if (isCredit) {
+  if (hasGreeks && thetaAbs > 0 && Math.abs(delta) > 0 && atr5 > 0) {
+    const tEdge = thetaAbs / (Math.abs(delta) * atr5);
+    if (thetaPaid) {
+      // Decay runs against the position, so a large tEdge is a large BILL per unit of
+      // directional risk - the same number the credit branch rewards, inverted.
+      if (tEdge > 0.30) structScore = Math.max(0, structScore - 10);
+      else if (tEdge > 0.15) structScore = Math.max(0, structScore - 5);
+    } else if (isCredit) {
       // Credit sellers want high theta edge
       if (tEdge > 0.30) structScore = Math.min(100, structScore + 10);
       else if (tEdge > 0.15) structScore = Math.min(100, structScore + 5);
@@ -1038,15 +1051,16 @@ export function calc0DTE(inputs) {
       if (tEdge < 0.03) structScore = Math.max(0, structScore - 5);
     }
   }
-  if (hasGreeks && gamma > 0 && theta > 0 && atr5 > 0) {
-    const gRisk = gamma * atr5 / theta;
-    if (isCredit) {
+  if (hasGreeks && gamma > 0 && thetaAbs > 0 && atr5 > 0) {
+    const gRisk = gamma * atr5 / thetaAbs;
+    if (isCredit && !thetaPaid) {
       // Credit sellers fear gamma
       if (gRisk > 1.20) structScore = Math.max(0, structScore - 15);
       else if (gRisk > 0.70) structScore = Math.max(0, structScore - 5);
       else if (gRisk < 0.30) structScore = Math.min(100, structScore + 5);
-    } else if (isReversed) {
-      // Reversed condor WANTS gamma — high gamma is good
+    } else if (isReversed || thetaPaid) {
+      // Reversed condor WANTS gamma — high gamma is good. So does anything paying
+      // decay: convexity is the only thing buying back what theta takes.
       if (gRisk > 1.20) structScore = Math.min(100, structScore + 10);
       else if (gRisk > 0.70) structScore = Math.min(100, structScore + 5);
     }
@@ -1424,47 +1438,70 @@ export function calc0DTE(inputs) {
   let greeks = null;
   if (hasGreeks && atr > 0) {
     const absDelta = Math.abs(delta);
-    const tEdge = absDelta * atr > 0 ? theta / (absDelta * atr) : 0;
-    const gRisk = theta > 0 ? (gamma * atr) / theta : 0;
+    const tEdge = absDelta * atr > 0 ? thetaAbs / (absDelta * atr) : 0;
+    const gRisk = thetaAbs > 0 ? (gamma * atr) / thetaAbs : 0;
     // Max tolerable move: how far price can move before theta earned is consumed
     // theta is daily ($), hours is actual hours remaining to 4pm ET
     // Theta earned in remaining time = theta × (hours / 5.5)
     // 0DTE target close at 3pm ET = 5.5 trading hours from 9:30am
+    // thetaRemaining is a MAGNITUDE - thetaPaid says whether it is a cushion or a bill.
     const hoursUsed = hours > 0 ? hours : 5.5; // fallback to full 0DTE session
-    const thetaRemaining = theta * (hoursUsed / 5.5);
-    const dsMax = absDelta > 0 ? thetaRemaining / absDelta : 0;
+    const thetaRemaining = thetaAbs * (hoursUsed / 5.5);
+    // A max tolerable move only exists when decay is accumulating to absorb one. A
+    // position paying decay has no cushion, so the gauge is not applicable, not zero-ish.
+    const dsMax = absDelta > 0 && !thetaPaid ? thetaRemaining / absDelta : 0;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
     // Theta edge interpretation
-    const tEdgeSignal = tEdge < 0.05 ? 'weak' : tEdge < 0.15 ? 'marginal' : tEdge < 0.30 ? 'solid' : tEdge < 0.50 ? 'strong' : 'pinning';
-    const tEdgeAction = tEdge < 0.05 ? 'Do not trade — one candle erases hours of theta'
+    let tEdgeSignal = tEdge < 0.05 ? 'weak' : tEdge < 0.15 ? 'marginal' : tEdge < 0.30 ? 'solid' : tEdge < 0.50 ? 'strong' : 'pinning';
+    let tEdgeAction = tEdge < 0.05 ? 'Do not trade — one candle erases hours of theta'
       : tEdge < 0.15 ? 'Use only on A+ setup with low realised vol'
       : tEdge < 0.30 ? 'Preferred zone — good reward-to-gamma-risk'
       : tEdge < 0.50 ? 'Excellent if Gamma Risk < 0.7'
       : 'Check Gamma Risk — looks great until it explodes';
 
     // Gamma risk interpretation
-    const gRiskSignal = gRisk < 0.30 ? 'low' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'elevated' : 'high';
-    const gRiskAction = gRisk < 0.30 ? 'Safe to hold — minimal whipsaw risk'
+    let gRiskSignal = gRisk < 0.30 ? 'low' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'elevated' : 'high';
+    let gRiskAction = gRisk < 0.30 ? 'Safe to hold — minimal whipsaw risk'
       : gRisk < 0.70 ? 'Acceptable — watch if IV spikes'
       : gRisk < 1.20 ? 'Reduce size or tighten profit target'
       : 'Avoid or exit — gamma cliff risk';
 
     // Max tolerable move interpretation
-    const dsSignal = dsATR > 1.0 ? 'strong' : dsATR > 0.50 ? 'good' : dsATR > 0.25 ? 'marginal' : 'thin';
-    const dsAction = dsATR > 1.0 ? 'Theta dominates under normal movement'
+    let dsSignal = dsATR > 1.0 ? 'strong' : dsATR > 0.50 ? 'good' : dsATR > 0.25 ? 'marginal' : 'thin';
+    let dsAction = dsATR > 1.0 ? 'Theta dominates under normal movement'
       : dsATR > 0.50 ? 'Theta holds unless vol expands significantly'
       : dsATR > 0.25 ? 'A+ setup only, low realised vol, tighten target'
       : 'Avoid or cut size sharply — theta cannot compensate';
 
-    // Sweet spot check
-    const sweetSpot = tEdge >= 0.15 && tEdge <= 0.40 && gRisk < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
+    // ── Sign-aware relabel ──
+    // Every band above reads these ratios as decay COLLECTED. The arithmetic is
+    // identical when theta is negative but the meaning inverts: tEdge becomes the
+    // decay bill per unit of directional risk (small is good), gamma stops being the
+    // enemy and becomes the compensation, and there is no max tolerable move at all.
+    // Relabel rather than let the panel congratulate a position on a cost. (Jul 2026.)
+    if (thetaPaid) {
+      tEdgeSignal = tEdge < 0.05 ? 'cheap' : tEdge < 0.15 ? 'moderate' : tEdge < 0.30 ? 'expensive' : 'punitive';
+      tEdgeAction = tEdge < 0.05 ? 'Time is nearly free — decay is small against directional risk'
+        : tEdge < 0.15 ? 'Decay costs a modest share of the move you need'
+        : tEdge < 0.30 ? 'Paying meaningfully for time — the move has to arrive soon'
+        : 'Decay bill rivals the directional risk — this has to move now or not at all';
+      gRiskSignal = gRisk < 0.30 ? 'thin' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'strong' : 'very strong';
+      gRiskAction = gRisk < 0.30 ? 'Little convexity to offset the decay being paid'
+        : gRisk < 0.70 ? 'Some gamma working against the decay bill'
+        : 'Gamma is buying back the decay — this is what you paid for';
+      dsSignal = 'n/a';
+      dsAction = 'No theta cushion — the position pays decay, so there is no move it can absorb for free';
+    }
+
+    // Sweet spot check — defined for decay collection only.
+    const sweetSpot = !thetaPaid && tEdge >= 0.15 && tEdge <= 0.40 && gRisk < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
 
     // ── Directional Edge Framework ──
     // Measures whether price movement or time decay will dominate
     const remainingMove = Math.max(0, em - (moveConsumed * em)); // Expected remaining move in points
     const directionalGain = Math.abs(delta) * remainingMove; // $ directional P&L potential
-    const thetaPressure = thetaRemaining; // $ theta earned until planned exit
+    const thetaPressure = thetaRemaining; // $ decay magnitude to planned exit — earned if collecting, owed if thetaPaid
 
     // Edge Ratio = Directional Gain / Theta Pressure
     const edgeRatio = thetaPressure > 0 ? directionalGain / thetaPressure : directionalGain > 0 ? 99 : 0;
@@ -1485,7 +1522,16 @@ export function calc0DTE(inputs) {
       || legStrat.includes('BWB') || legStrat.includes('Broken') || legStrat.includes('Reversed');
 
     let edgeSignal, edgeAction, edgePhase;
-    if (isCreditStrat) {
+    if (thetaPaid) {
+      // The position pays decay. Whatever the strategy label says, the only thing that
+      // can cover the bill is the move, so a HIGH ratio is the requirement - the
+      // credit-seller reading below would be exactly backwards here.
+      if (edgeRatio > 2.0) { edgeSignal = 'excellent'; edgeAction = 'Remaining move comfortably covers the decay being paid'; }
+      else if (edgeRatio > 1.3) { edgeSignal = 'good'; edgeAction = 'Move should outpace the decay bill'; }
+      else if (edgeRatio > 1.0) { edgeSignal = 'marginal'; edgeAction = 'Move barely covers decay — it needs to arrive early'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Decay outruns the move still available — this bleeds'; }
+      edgePhase = 'paying decay';
+    } else if (isCreditStrat) {
       // Credit sellers WANT low ratio — theta should dominate
       if (edgeRatio < 0.7) { edgeSignal = 'excellent'; edgeAction = 'Theta dominates — ideal for premium selling'; }
       else if (edgeRatio < 1.0) { edgeSignal = 'good'; edgeAction = 'Theta still stronger — favourable'; }
@@ -1528,7 +1574,7 @@ export function calc0DTE(inputs) {
       edgePhase = 'neutral';
     }
 
-    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot,
+    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
       // Directional Edge
       directionalGain, thetaPressure, edgeRatio, edgeThreshold, edgeSignal, edgeAction, edgePhase,
       remainingMove, isCreditStrat, isDebitDir, isBflyCondor
@@ -1542,8 +1588,10 @@ export function calc0DTE(inputs) {
   let hardBlocker = '';
   if (!hasPrice) hardBlocker = 'Enter underlying price to generate a decision';
 
-  if (greeks && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
-  if (greeks && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
+  // Both of these read a collected-decay position. Inverted for a paying one - a low
+  // tEdge means time is cheap, and high gamma is the compensation you bought.
+  if (greeks && !greeks.thetaPaid && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
+  if (greeks && !greeks.thetaPaid && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
   if (vixHigh) warnings.push('VIX >25 — half-size override');

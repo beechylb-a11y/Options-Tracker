@@ -342,7 +342,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         setI0(prev => ({
           ...prev,
           price: freshPx || prev.price,
-          theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
+          theta: d.net.theta ? String(d.net.theta) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
           gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike,
@@ -353,7 +353,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         setI45(prev => ({
           ...prev,
           price: freshPx || prev.price,
-          theta: d.net.theta ? String(Math.abs(d.net.theta)) : prev.theta,
+          theta: d.net.theta ? String(d.net.theta) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
@@ -649,7 +649,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     } else {
       lines.push(`Signals: IVR ${r.ivrBand||'--'} · IV/HV ${r.ivhvRatio?r.ivhvRatio.toFixed(2):'--'} · Regime ${r.regime}`);
     }
-    if (r.greeks) lines.push(`Survivability: Theta edge ${r.greeks.tEdge.toFixed(2)} (${r.greeks.tEdgeSignal}) · Gamma risk ${r.greeks.gRisk.toFixed(2)}`);
+    if (r.greeks) lines.push(`Survivability: ${r.greeks.thetaPaid ? 'Decay cost' : 'Theta edge'} ${r.greeks.tEdge.toFixed(2)} (${r.greeks.tEdgeSignal}) · Gamma ${r.greeks.gRisk.toFixed(2)}${r.greeks.thetaPaid ? ' · PAYS decay' : ''}`);
     if (r.warnings?.length) lines.push(`Warnings: ${r.warnings.join('; ')}`);
     return lines.filter(Boolean).join('\n');
   }
@@ -1109,7 +1109,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
 
           {/* Greeks */}
           <div className="flex items-center justify-between">
-            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
+            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay, SIGNED: positive if the position collects decay, negative if it pays it (a long butterfly or debit spread before the body is reached). Fetching from TWS fills the sign for you; entering by hand, keep the minus sign - the survivability read inverts on it. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               {greeksFresh && (() => {
                 const rt = greeksFresh.dataType === 'realtime';
@@ -1339,22 +1339,36 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {is0 && r.greeks && (
             <div className="card">
               <div className="flex items-center justify-between mb-2">
-                <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Gamma Risk = how fast delta changes vs theta (< 0.70 safe). Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates.">Trade survivability</SectionLabel>
+                <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Gamma Risk = how fast delta changes vs theta (< 0.70 safe). Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates. SIGNED THETA: if the position PAYS decay (negative theta - a long butterfly before the body is reached, a debit spread) every gauge inverts. Theta Edge becomes Decay Cost and small is good, Gamma Risk becomes Gamma Offset and large is good, Max Tolerable Move disappears because there is no theta cushion to consume, and Edge Ratio wants to be HIGH whatever the strategy name says - only the move can pay the decay bill.">Trade survivability</SectionLabel>
                 {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
-                <SpeedTape label="Theta Edge (Θ ÷ |Δ| × ATR)" value={Math.min(r.greeks.tEdge, 0.6)} min={0} max={0.6}
-                  zones={[{to:0.05,color:'#f85149'},{to:0.15,color:'#d29922'},{to:0.30,color:'#e3b341'},{to:0.6,color:'#3fb950'}]}
+                {/* Both gauges invert when the position PAYS decay: a small theta ratio
+                    means time is cheap rather than that theta cannot defend you, and gamma
+                    is the compensation you bought rather than the thing that kills you. Same
+                    numbers, mirrored colour zones, renamed labels. (Jul 2026.) */}
+                <SpeedTape label={r.greeks.thetaPaid ? 'Decay cost (|Θ| ÷ |Δ| × ATR)' : 'Theta Edge (Θ ÷ |Δ| × ATR)'} value={Math.min(r.greeks.tEdge, 0.6)} min={0} max={0.6}
+                  zones={r.greeks.thetaPaid
+                    ? [{to:0.05,color:'#3fb950'},{to:0.15,color:'#e3b341'},{to:0.30,color:'#d29922'},{to:0.6,color:'#f85149'}]
+                    : [{to:0.05,color:'#f85149'},{to:0.15,color:'#d29922'},{to:0.30,color:'#e3b341'},{to:0.6,color:'#3fb950'}]}
                   display={r.greeks.tEdge.toFixed(3)}
                   sublabel={r.greeks.tEdgeSignal + ' — ' + r.greeks.tEdgeAction} />
-                <SpeedTape label="Gamma Risk (Γ × ATR ÷ Θ)" value={Math.min(r.greeks.gRisk, 1.5)} min={0} max={1.5}
-                  zones={[{to:0.30,color:'#3fb950'},{to:0.70,color:'#e3b341'},{to:1.20,color:'#d29922'},{to:1.5,color:'#f85149'}]}
+                <SpeedTape label={r.greeks.thetaPaid ? 'Gamma offset (Γ × ATR ÷ |Θ|)' : 'Gamma Risk (Γ × ATR ÷ Θ)'} value={Math.min(r.greeks.gRisk, 1.5)} min={0} max={1.5}
+                  zones={r.greeks.thetaPaid
+                    ? [{to:0.30,color:'#f85149'},{to:0.70,color:'#d29922'},{to:1.20,color:'#e3b341'},{to:1.5,color:'#3fb950'}]
+                    : [{to:0.30,color:'#3fb950'},{to:0.70,color:'#e3b341'},{to:1.20,color:'#d29922'},{to:1.5,color:'#f85149'}]}
                   display={r.greeks.gRisk.toFixed(3)}
                   sublabel={r.greeks.gRiskSignal + ' — ' + r.greeks.gRiskAction} />
+                {r.greeks.thetaPaid ? (
+                  <div className="text-[10px] text-[#8b949e]" style={{padding:'6px 8px',borderRadius:4,background:'#0d1117',border:'1px solid #21262d'}}>
+                    <b style={{color:'#e3a008'}}>Position pays decay</b> · {r.greeks.dsAction}
+                  </div>
+                ) : (
                 <SpeedTape label="Max tolerable move (ΔS_max)" value={Math.min(r.greeks.dsATR * 100, 200)} min={0} max={200}
                   zones={[{to:25,color:'#f85149'},{to:50,color:'#d29922'},{to:100,color:'#e3b341'},{to:200,color:'#3fb950'}]}
                   display={`${r.greeks.dsMax.toFixed(1)} pts (${(r.greeks.dsATR*100).toFixed(0)}% ATR)`}
                   sublabel={r.greeks.dsSignal + ' — ' + r.greeks.dsAction} />
+                )}
 
                 {/* Directional Edge */}
                 {r.greeks.edgeRatio !== undefined && (
@@ -1373,8 +1387,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                         <div className="text-[8px] text-[#484f58]">{r.greeks.remainingMove?.toFixed(1)} pts left</div>
                       </div>
                       <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                        <div className="text-[9px] text-[#8b949e]">Theta $</div>
-                        <div className="mono text-sm font-bold text-white">${r.greeks.thetaPressure?.toFixed(0)}</div>
+                        <div className="text-[9px] text-[#8b949e]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'}</div>
+                        <div className="mono text-sm font-bold" style={{color: r.greeks.thetaPaid ? '#e3a008' : '#fff'}}>{r.greeks.thetaPaid ? '-' : ''}${r.greeks.thetaPressure?.toFixed(0)}</div>
                         <div className="text-[8px] text-[#484f58]">to planned exit</div>
                       </div>
                       <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d'}}>
@@ -1382,14 +1396,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                         <div className="mono text-lg font-bold" style={{color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'}}>{r.greeks.edgeRatio?.toFixed(2)}</div>
                       </div>
                     </div>
+                    {/* A position paying decay always wants the move to dominate, whatever
+                        its strategy label says - so it takes the higher-is-better zones. */}
                     <SpeedTape label="Move / Theta" value={Math.min(r.greeks.edgeRatio, 4)} min={0} max={4}
-                      zones={r.greeks.isCreditStrat
+                      zones={r.greeks.isCreditStrat && !r.greeks.thetaPaid
                         ? [{to:0.7,color:'#3fb950'},{to:1.0,color:'#e3b341'},{to:1.5,color:'#d29922'},{to:4,color:'#f85149'}]
                         : [{to:0.7,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:4,color:'#3fb950'}]
                       }
                       display={r.greeks.edgeRatio?.toFixed(2)}
                       sublabel={r.greeks.edgeAction} />
-                    <div className="text-[9px] text-[#484f58] mt-1">Time threshold: {r.greeks.edgeThreshold?.toFixed(1)} | {r.greeks.isCreditStrat ? 'Credit: lower = better' : r.greeks.isBflyCondor ? 'Butterfly: transitions through phases' : 'Debit: higher = better'}</div>
+                    <div className="text-[9px] text-[#484f58] mt-1">Time threshold: {r.greeks.edgeThreshold?.toFixed(1)} | {r.greeks.thetaPaid ? 'Paying decay: higher = better' : r.greeks.isCreditStrat ? 'Credit: lower = better' : r.greeks.isBflyCondor ? 'Butterfly: transitions through phases' : 'Debit: higher = better'}</div>
                   </div>
                 )}
               </div>
@@ -1399,7 +1415,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* 45DTE Directional Edge */}
           {!is0 && r.greeks && r.greeks.edgeRatio !== undefined && (
             <div className="card">
-              <SectionLabel white info="Directional Edge for 45DTE trades. Compares expected directional P&L (delta × remaining expected move) against total theta earned over the holding period to 21 DTE exit. Remaining EM = price × IV × √(remaining DTE / 365). Credit sellers (IC, spreads): want Edge Ratio < 0.5 (theta strongly dominates over the holding period). Debit directional (bull call, calendars): want Edge Ratio > 2.0 (move potential exceeds decay). Theta efficiency = daily theta as % of buying power reduction. Vega/Theta = IV sensitivity per unit of decay — high ratio means IV changes matter more than time.">Directional Edge (45DTE)</SectionLabel>
+              <SectionLabel white info="Directional Edge for 45DTE trades. Compares expected directional P&L (delta × remaining expected move) against total theta earned over the holding period to 21 DTE exit. Remaining EM = price × IV × √(remaining DTE / 365). Credit sellers (IC, spreads): want Edge Ratio < 0.5 (theta strongly dominates over the holding period). Debit directional (bull call, calendars): want Edge Ratio > 2.0 (move potential exceeds decay). Theta efficiency = daily theta as % of buying power reduction. Vega/Theta = IV sensitivity per unit of decay — high ratio means IV changes matter more than time. If theta is NEGATIVE the position pays decay over the hold, and the Edge Ratio wants to be high regardless of strategy class — only the move can cover the bill.">Directional Edge (45DTE)</SectionLabel>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-[#8b949e]">Holding: {r.greeks.daysToExit} days to 21 DTE exit | Remaining EM: {r.greeks.remainingEM?.toFixed(1)} pts</span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
@@ -1413,8 +1429,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                   <div className="mono text-sm font-bold text-white">${r.greeks.directionalGain?.toFixed(0)}</div>
                 </div>
                 <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                  <div className="text-[9px] text-[#8b949e]">Theta $ ({r.greeks.daysToExit}d)</div>
-                  <div className="mono text-sm font-bold text-white">${r.greeks.thetaPressure?.toFixed(0)}</div>
+                  <div className="text-[9px] text-[#8b949e]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'} ({r.greeks.daysToExit}d)</div>
+                  <div className="mono text-sm font-bold" style={{color: r.greeks.thetaPaid ? '#e3a008' : '#fff'}}>{r.greeks.thetaPaid ? '-' : ''}${r.greeks.thetaPressure?.toFixed(0)}</div>
                 </div>
                 <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':'#0d1117'}}>
                   <div className="text-[9px] text-[#8b949e]">Edge Ratio</div>
@@ -1422,7 +1438,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 </div>
               </div>
               <SpeedTape label="Move / Theta" value={Math.min(r.greeks.edgeRatio, 4)} min={0} max={4}
-                zones={r.greeks.isCreditStrat
+                zones={r.greeks.isCreditStrat && !r.greeks.thetaPaid
                   ? [{to:0.5,color:'#3fb950'},{to:0.8,color:'#e3b341'},{to:1.2,color:'#d29922'},{to:4,color:'#f85149'}]
                   : [{to:0.8,color:'#f85149'},{to:1.2,color:'#d29922'},{to:2.0,color:'#e3b341'},{to:4,color:'#3fb950'}]
                 }

@@ -662,11 +662,16 @@ app.get('/api/option-greeks', async (req, res) => {
       net.theta += (r.greeks.theta || 0) * q * 100; // per-day position theta ($)
       net.vega  += (r.greeks.vega  || 0) * q * 100;
     }
-    // Deliver theta as a positive daily-decay magnitude (engine convention).
+    // Theta keeps its sign. q above is signed (+ long, - short) and IB reports
+    // per-contract theta negative, so the sum is already in the engine's convention:
+    // POSITIVE = the structure collects decay, NEGATIVE = it pays decay. Absing it
+    // here handed the engine a decay-EARNED number for every position, including the
+    // ones bleeding theta every hour - which is how a long fly came back looking like
+    // a premium seller. (Jul 2026.)
     const netOut = haveAny ? {
       delta: +net.delta.toFixed(2),
       gamma: +net.gamma.toFixed(2),
-      theta: +Math.abs(net.theta).toFixed(2),
+      theta: +net.theta.toFixed(2),
       vega: +net.vega.toFixed(2)
     } : null;
 

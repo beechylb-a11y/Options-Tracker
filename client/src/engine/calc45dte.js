@@ -15,7 +15,12 @@ export function calc45DTE(inputs) {
     // wingDeltas: { lowerAbsDelta, upperAbsDelta } for skew-aware P(max loss).
     history: historyInput, historyByStrategy, wingDeltas } = inputs;
 
-  const hasPrice = price > 0, hasVol = iv > 0, hasGreeks = theta > 0 && bpr > 0;
+  // Signed theta: positive collects decay, negative pays it. Gate on magnitude so a
+  // debit structure still gets scored, and let the signed tEff below score it honestly
+  // (a negative theta efficiency earns zero points, which is the correct answer).
+  const thetaAbs = Math.abs(theta);
+  const thetaPaid = theta < 0;
+  const hasPrice = price > 0, hasVol = iv > 0, hasGreeks = thetaAbs > 0 && bpr > 0;
   const hasTerm = ivFront > 0 && ivBack > 0;
   const popFrac = pop / 100;
 
@@ -342,8 +347,8 @@ export function calc45DTE(inputs) {
 
   // Greeks + Directional Edge
   let greeks = null;
-  if (theta>0||vega>0||Math.abs(delta)>0) {
-    const tvRatio = (theta>0&&vega>0)?vega/theta:0;
+  if (thetaAbs>0||vega>0||Math.abs(delta)>0) {
+    const tvRatio = (thetaAbs>0&&vega>0)?vega/thetaAbs:0;
 
     // 45DTE Directional Edge
     // Remaining EM = IV × √(remaining DTE / 365) × price
@@ -351,7 +356,7 @@ export function calc45DTE(inputs) {
     const daysToExit = dte - 21; // days until planned exit
     const remainingEM = iv > 0 && price > 0 ? price * (iv / 100) * Math.sqrt(remainingDTE / 365) : 0;
     const directionalGain = Math.abs(delta) * remainingEM;
-    const thetaPressure = theta * Math.max(daysToExit, 1);
+    const thetaPressure = thetaAbs * Math.max(daysToExit, 1); // magnitude — thetaPaid says which way it flows
     const edgeRatio = thetaPressure > 0 ? directionalGain / thetaPressure : directionalGain > 0 ? 99 : 0;
 
     // Strategy interpretation for 45DTE
@@ -362,7 +367,15 @@ export function calc45DTE(inputs) {
       || legStrat.includes('Calendar') || legStrat.includes('Diagonal');
 
     let edgeSignal, edgeAction, edgePhase;
-    if (isCreditStrat) {
+    if (thetaPaid) {
+      // Paying decay over the holding period: only the move can cover it, so high is
+      // the requirement regardless of what the strategy name suggests.
+      if (edgeRatio > 2.0) { edgeSignal = 'excellent'; edgeAction = 'Move covers the decay paid over ' + daysToExit + ' days'; }
+      else if (edgeRatio > 1.3) { edgeSignal = 'good'; edgeAction = 'Move should outpace the decay bill'; }
+      else if (edgeRatio > 1.0) { edgeSignal = 'marginal'; edgeAction = 'Move barely covers decay — needs to arrive early in the hold'; }
+      else { edgeSignal = 'poor'; edgeAction = 'Decay outruns the available move — this bleeds over the hold'; }
+      edgePhase = 'paying decay';
+    } else if (isCreditStrat) {
       if (edgeRatio < 0.5) { edgeSignal = 'excellent'; edgeAction = 'Theta strongly dominates over ' + daysToExit + ' days'; }
       else if (edgeRatio < 0.8) { edgeSignal = 'good'; edgeAction = 'Theta advantage holds — favourable premium sale'; }
       else if (edgeRatio < 1.2) { edgeSignal = 'marginal'; edgeAction = 'Directional risk meaningful — tighten strikes or reduce size'; }
@@ -382,7 +395,7 @@ export function calc45DTE(inputs) {
     }
 
     greeks = { tEff, tvRatio, vega: vega||0, delta: delta||0,
-      directionalGain, thetaPressure, edgeRatio, edgeSignal, edgeAction, edgePhase,
+      directionalGain, thetaPressure, edgeRatio, edgeSignal, edgeAction, edgePhase, thetaPaid, thetaAbs,
       remainingEM, remainingDTE, daysToExit, isCreditStrat, isDebitDir
     };
   }
