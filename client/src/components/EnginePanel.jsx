@@ -157,7 +157,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       console.error('Calc engine error:', e);
       return { decision:'Error', decisionClass:'nogo', hardBlocker:'Calculation error: ' + e.message,
         setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], warnings:[], blockers:[],
-        bestStrat:'', bestRating:'NO TRADE', legStrat:'', kelly:0, rawKelly:0, adjustedKelly:0,
+        bestStrat:'', bestRating:'POOR', legStrat:'', kelly:0, rawKelly:0, adjustedKelly:0,
         kellyDollar:0, contracts:1, maxRisk:0, popMargin:0, bePop:0, wlRatio:0, ev:0,
         volFactor:1, sharpeFactor:1, sharpeProxy:0, kellyOverRisk:false, missingSize:true,
         vixGap:0, vixGrade:'', dirScore:0, dirLabel:'', regime:'', behaviour:'',
@@ -882,7 +882,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:`1px solid ${r.emDisagree ? '#5a3a1a' : '#21262d'}`}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
                 <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
-                  <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b> {r.emDetail}
+                  <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b><Info text="Expected move - how far the market is priced to travel, in points. The engine keeps TWO rulers and uses both. REMAINING (now to the close) sets strikes, breakevens and POP. SESSION (open to close) sets move-consumed, regime and every '% EM' score. They differ by sqrt(fraction of session left), so Remaining is always the smaller number - that is scale, not disagreement. SOURCE: straddle (green) = ATM call + put x 1.2533, the market's own priced move with skew and events baked in - preferred. VIX model (amber) = VIX1D / sqrt(252) x the cash open, the fallback when option data is not subscribed. Manual (blue) = your number, always read as a SESSION EM. SD mult converts a straddle to 1 SD: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave it at 1.2533. The line underneath cross-checks the two sources like-for-like by putting the straddle back on the session ruler and comparing its implied session vol against VIX1D; more than 15% apart reads DISAGREE and raises a warning. 'Single source - no cross-check available' means only one source is live, so nothing is validating it. What-if re-runs every EM-driven reading off the other volatility input, so you can see which numbers actually depend on the EM source and which do not." /> {r.emDetail}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:5}}>
                   <span style={{fontSize:11,color:'#8b949e'}} title="Straddle to 1 SD. Black-Scholes ATM identity: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave at 1.2533 unless you know why you're changing it.">SD mult</span>
@@ -1193,7 +1193,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           {/* Strategy ratings */}
           <div className="card">
             <div className="flex items-center justify-between mb-1">
-              <SectionLabel white info="Each strategy rated EXCELLENT, GOOD, MARGINAL, or NO TRADE based on current regime, direction strength, and move consumed. Click any MARGINAL+ strategy to override the engine recommendation. BWB preferred for strong direction, Asymmetric for mild, Standard butterfly for neutral.">Strategy ratings — {r.regime}</SectionLabel>
+              <SectionLabel white info="Each strategy rated EXCELLENT, GOOD, MARGINAL, or POOR based on current regime, direction strength, and move consumed. Every row is clickable - including POOR - so you can override the engine and push any structure through; the rating stays on the ticket as information, not as a gate. BWB preferred for strong direction, Asymmetric for mild, Standard butterfly for neutral.">Strategy ratings — {r.regime}</SectionLabel>
               {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
             </div>
             {r.runnerUp && !isOverride && (
@@ -1207,7 +1207,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <div className="space-y-0.5">
               {r.ratings.map((s,i) => {
                 const cls = s.rating==='EXCELLENT'?'badge-green':s.rating==='GOOD'?'badge-blue':s.rating==='MARGINAL'?'badge-amber':'badge-red';
-                const clickable = s.rating !== 'NO TRADE';
+                // Every strategy is selectable, POOR included. The rating is
+                // information about the structure, not permission to trade it -
+                // a discretionary ticket can always be pushed through and logged
+                // against its real rating. (Jul 2026.)
+                const clickable = true;
                 const isSelected = overrideStrat === s.name;
                 return (<div key={i}
                   onClick={() => { if (clickable) setOverrideStrat(isSelected ? null : s.name); }}

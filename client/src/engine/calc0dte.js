@@ -14,7 +14,7 @@ const PIN_IDX = locusIdx('pin');
 const STILL_IDX = locusIdx('pin', 'range');
 
 function degrade(rating, levels) {
-  const order = ['EXCELLENT','GOOD','MARGINAL','NO TRADE'];
+  const order = ['EXCELLENT','GOOD','MARGINAL','POOR'];
   const idx = order.indexOf(rating);
   return order[Math.min(idx + levels, 3)];
 }
@@ -47,12 +47,12 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
       base = ['MARGINAL','MARGINAL','MARGINAL','EXCELLENT','MARGINAL','GOOD','EXCELLENT'];
     }
   } else if (rmRatio < 0.25) {
-    base = ['GOOD','MARGINAL','GOOD','NO TRADE','EXCELLENT','NO TRADE','MARGINAL'];
+    base = ['GOOD','MARGINAL','GOOD','POOR','EXCELLENT','POOR','MARGINAL'];
   } else if (rmRatio < 0.50) {
     if (isStrong) {
-      base = ['EXCELLENT','MARGINAL','MARGINAL','NO TRADE','GOOD','NO TRADE','MARGINAL'];
+      base = ['EXCELLENT','MARGINAL','MARGINAL','POOR','GOOD','POOR','MARGINAL'];
     } else {
-      base = ['EXCELLENT','MARGINAL','MARGINAL','NO TRADE','EXCELLENT','GOOD','MARGINAL'];
+      base = ['EXCELLENT','MARGINAL','MARGINAL','POOR','EXCELLENT','GOOD','MARGINAL'];
     }
   } else if (rmRatio < 0.75) {
     if (isStrong) {
@@ -85,9 +85,9 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   } else {
     // RM >100% expanding — dangerous, only directional structures
     if (isStrong) {
-      base = ['GOOD','GOOD','MARGINAL','NO TRADE','NO TRADE','NO TRADE','NO TRADE'];
+      base = ['GOOD','GOOD','MARGINAL','POOR','POOR','POOR','POOR'];
     } else {
-      base = ['GOOD','MARGINAL','MARGINAL','NO TRADE','NO TRADE','NO TRADE','NO TRADE'];
+      base = ['GOOD','MARGINAL','MARGINAL','POOR','POOR','POOR','POOR'];
     }
   }
 
@@ -105,7 +105,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   // kept for its existing treatment below). On a conviction day the only structures
   // that do not degrade are the directional verticals, which is the point.
   if (isStrong) {
-    [...STILL_IDX, 5].forEach(i => { if (ratings[i] !== 'NO TRADE') ratings[i] = degrade(ratings[i], 1); });
+    [...STILL_IDX, 5].forEach(i => { if (ratings[i] !== 'POOR') ratings[i] = degrade(ratings[i], 1); });
   }
   // Reversed condor (idx 5) is an EXPANSION structure — its ~2-EM-wide central loss
   // band only pays on a >1-EM move by expiry. In compression / high move-consumed a
@@ -118,18 +118,18 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bps;
   if (isBull && spreadZone) bps = 'EXCELLENT';
   else if (isBull && moveConsumed < 0.60) bps = (gapBandIdx>=2)?'EXCELLENT':'GOOD';
-  else if (isBull) bps = moveConsumed > 0.80 ? 'NO TRADE' : 'MARGINAL';
+  else if (isBull) bps = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bps = 'MARGINAL';
-  else bps = 'NO TRADE';
+  else bps = 'POOR';
   ratings.push(bps);
 
   // Bear Call Spread
   let bcs;
   if (isBear && spreadZone) bcs = 'EXCELLENT';
   else if (isBear && moveConsumed < 0.60) bcs = (gapBandIdx>=2)?'EXCELLENT':'GOOD';
-  else if (isBear) bcs = moveConsumed > 0.80 ? 'NO TRADE' : 'MARGINAL';
+  else if (isBear) bcs = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bcs = 'MARGINAL';
-  else bcs = 'NO TRADE';
+  else bcs = 'POOR';
   ratings.push(bcs);
 
   // Bull Call Spread (debit)
@@ -138,7 +138,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   else if (isBull && moveConsumed < 0.50) bullCall = 'GOOD';
   else if (isBull && trendDay) bullCall = 'GOOD';        // trend day — exhaustion gate lifted
   else if (isBull && moveConsumed < 0.60) bullCall = 'MARGINAL';
-  else bullCall = 'NO TRADE';
+  else bullCall = 'POOR';
   ratings.push(bullCall);
 
   // Bear Put Spread (debit)
@@ -147,7 +147,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   else if (isBear && moveConsumed < 0.50) bearPut = 'GOOD';
   else if (isBear && trendDay) bearPut = 'GOOD';         // trend day — exhaustion gate lifted
   else if (isBear && moveConsumed < 0.60) bearPut = 'MARGINAL';
-  else bearPut = 'NO TRADE';
+  else bearPut = 'POOR';
   ratings.push(bearPut);
 
   return ratings;
@@ -410,7 +410,7 @@ export function calc0DTE(inputs) {
   // ── Strategy ratings ──
   const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern);
   const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i], idx: i }));
-  const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'NO TRADE': 3 };
+  const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'POOR': 3 };
   sorted.sort((a, b) => order[a.rating] - order[b.rating] || a.idx - b.idx);
   // ── Tiebreak (Jul 2026): when ≥2 structures share the TOP rating, the old code
   // took the first-listed (array order) — an arbitrary, containment-biased coin-flip
@@ -455,7 +455,7 @@ export function calc0DTE(inputs) {
     }
   }
   const bestStrat = best ? best.name : 'No suitable structure';
-  const bestRating = best ? best.rating : 'NO TRADE';
+  const bestRating = best ? best.rating : 'POOR';
 
   // Override: if caller specifies a strategy, use that for legs
   const overrideStrategy = inputs.overrideStrategy || null;
@@ -1693,7 +1693,7 @@ export function calc0DTE(inputs) {
   let decision, decisionClass;
   if (hardBlocker) { decision = 'No trade'; decisionClass = 'nogo'; }
   else if (setup === 'No setup') { decision = 'No trade'; decisionClass = 'nogo'; }
-  else if (missingSize || bestRating === 'NO TRADE' || blockers.length) { decision = missingSize ? 'Enter sizing' : 'Review signals'; decisionClass = 'nogo'; }
+  else if (missingSize || bestRating === 'POOR' || blockers.length) { decision = missingSize ? 'Enter sizing' : 'Review signals'; decisionClass = 'nogo'; }
   else if (warnings.length) { decision = 'Trade with caution'; decisionClass = 'warn'; }
   else { decision = 'Trade'; decisionClass = 'go'; }
 

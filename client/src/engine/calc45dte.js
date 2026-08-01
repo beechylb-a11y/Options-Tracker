@@ -4,7 +4,7 @@
 // ================================================================
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE } from './data.js';
 
-function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','NO TRADE']; return o[Math.min(o.indexOf(r)+1,3)]; }
+function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
 export function calc45DTE(inputs) {
   const { underlying, price, ivr, iv, hv, vix, ivFront, ivBack, skew,
@@ -48,19 +48,19 @@ export function calc45DTE(inputs) {
   else regime = 'Neutral';
 
   // Ratings
-  const ratingLevels = ['NO TRADE','MARGINAL','GOOD','EXCELLENT'];
+  const ratingLevels = ['POOR','MARGINAL','GOOD','EXCELLENT'];
   let ratings45 = (REGIME_RATINGS45[regime] || [1,1,1,1,1,1,1,1,1,1,1]).map(i => ratingLevels[i]);
   const isBull = outlook === 'bullish', isBear = outlook === 'bearish';
 
   if (isBull) {
-    ratings45[8] = 'NO TRADE'; if (ivr < 25) ratings45[7] = 'EXCELLENT';
+    ratings45[8] = 'POOR'; if (ivr < 25) ratings45[7] = 'EXCELLENT';
     ratings45[0] = degrade(ratings45[0]); ratings45[9] = degrade(ratings45[9]);
   } else if (isBear) {
-    ratings45[7] = 'NO TRADE'; if (ivr < 25) ratings45[8] = 'EXCELLENT';
+    ratings45[7] = 'POOR'; if (ivr < 25) ratings45[8] = 'EXCELLENT';
     ratings45[0] = degrade(ratings45[0]); ratings45[9] = degrade(ratings45[9]);
   }
 
-  const order = {EXCELLENT:0,GOOD:1,MARGINAL:2,'NO TRADE':3};
+  const order = {EXCELLENT:0,GOOD:1,MARGINAL:2,'POOR':3};
   const sorted = STRATS_45DTE.map((s,i) => ({name:s, rating:ratings45[i], idx:i})).sort((a,b) => order[a.rating]-order[b.rating] || a.idx-b.idx);
   // ── Tiebreak (Jul 2026): when ≥2 structures tie at the top rating, break by DIRECTION
   // FIT to the outlook instead of the arbitrary array order (which fires in ~90% of
@@ -87,7 +87,7 @@ export function calc45DTE(inputs) {
     }
   }
   const bestStrat = best ? best.name : 'No suitable structure';
-  const bestRating = best ? best.rating : 'NO TRADE';
+  const bestRating = best ? best.rating : 'POOR';
 
   // Override: if caller specifies a strategy, use that for legs
   const overrideStrategy = inputs.overrideStrategy || null;
@@ -404,7 +404,7 @@ export function calc45DTE(inputs) {
   let decision, decisionClass;
   if (hardBlocker) { decision='No trade'; decisionClass='nogo'; }
   else if (setup === 'No setup') { decision='No trade'; decisionClass='nogo'; }
-  else if (missingSize||bestRating==='NO TRADE'||blockers.length) { decision=missingSize?'Enter sizing':'Review signals'; decisionClass='nogo'; }
+  else if (missingSize||bestRating==='POOR'||blockers.length) { decision=missingSize?'Enter sizing':'Review signals'; decisionClass='nogo'; }
   else if (warnings.length) { decision='Trade with caution'; decisionClass='warn'; }
   else { decision='Trade'; decisionClass='go'; }
 
