@@ -115,6 +115,7 @@ function legFromRow(r) {
     cp: normCp,
     dir: isBuy ? 'buy' : 'sell',
     strike: parseFloat(r[COL.STRIKE]) || 0,
+    price: Math.abs(parseFloat(r[COL.AVG_PRICE]) || 0),
     qty: Math.abs(parseFloat(r[COL.QUANTITY]) || 1),
     subcode: col(r, COL.SUBCODE),
     sub2: sub2,
@@ -209,16 +210,32 @@ function classifyOrder(legs) {
   // Vertical Spreads (2 legs, same type, 2 strikes)
   if (n === 2 && nStr === 2) {
     const srt = legs.slice().sort((a, b) => a.strike - b.strike);
+    // Moneyness band. Net premium as a fraction of the width tells you where the
+    // spread sits relative to spot without needing the spot price at all: a 2.00-wide
+    // call spread bought for 1.75 is 0.875 of the width and therefore deep ITM, while
+    // a 2.00-wide put spread sold for 0.29 is 0.145 and well OTM. ATM sits near 0.50
+    // either way. Banding matters because an ITM vertical wins far more often for far
+    // less than an ATM one - pooling them teaches the measured-EV bucket that debit
+    // spreads win 85% of the time with tiny winners. Left blank when the CSV has no
+    // fill prices, so unbanded rows simply fall back to the old bucket. (Jul 2026.)
+    const vWidth = srt[1].strike - srt[0].strike;
+    const vNetPrem = Math.abs(srt.reduce(
+      (s, l) => s + (l.dir === 'buy' ? 1 : -1) * (l.price || 0), 0));
+    const vFrac = (vWidth > 0 && vNetPrem > 0) ? vNetPrem / vWidth : NaN;
+    const band = !isFinite(vFrac) || vFrac > 1.5 ? ''
+      : vFrac < 0.35 ? ' (OTM)'
+      : vFrac < 0.65 ? ' (ATM)'
+      : ' (ITM)';
     if (allCalls) {
-      if (srt[0].dir === 'buy' && srt[1].dir === 'sell') return 'Bull Call Spread';
-      if (srt[0].dir === 'sell' && srt[1].dir === 'buy') return 'Bear Call Spread';
+      if (srt[0].dir === 'buy' && srt[1].dir === 'sell') return `Bull Call Spread${band}`;
+      if (srt[0].dir === 'sell' && srt[1].dir === 'buy') return `Bear Call Spread${band}`;
     }
     // Puts: a BULL put spread is short the HIGHER strike and long the lower (credit);
     // a BEAR put spread is long the higher and short the lower (debit). srt is sorted
     // ascending, so srt[1] is the higher strike. These two were reversed. (Fix Jul 2026.)
     if (allPuts) {
-      if (srt[1].dir === 'sell' && srt[0].dir === 'buy') return 'Bull Put Spread';
-      if (srt[1].dir === 'buy' && srt[0].dir === 'sell') return 'Bear Put Spread';
+      if (srt[1].dir === 'sell' && srt[0].dir === 'buy') return `Bull Put Spread${band}`;
+      if (srt[1].dir === 'buy' && srt[0].dir === 'sell') return `Bear Put Spread${band}`;
     }
   }
 

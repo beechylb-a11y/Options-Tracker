@@ -486,8 +486,18 @@ export async function getStrategyHistory(account = null) {
     'short ratio call spread':         'Ratio spread',
     'short ratio put spread':          'Ratio spread'
   };
-  const canonicalStrategy = (name) =>
-    STRATEGY_ALIASES[name.trim().toLowerCase()] || name;
+  // Strategy names may carry a moneyness band suffix on verticals, e.g.
+  // 'Bull Call Spread (ITM)'. Strip it for the alias lookup and put it back on the
+  // canonical name, so the alias table stays 17 entries instead of 17 x 3 and any
+  // future band comes through for free. (Jul 2026.)
+  const canonicalStrategy = (name) => {
+    const raw = name.trim();
+    const m = raw.match(/^(.*?)\s*\((ITM|ATM|OTM)\)$/i);
+    const base = m ? m[1] : raw;
+    const band = m ? ` (${m[2].toUpperCase()})` : '';
+    const mapped = STRATEGY_ALIASES[base.toLowerCase()];
+    return mapped ? mapped + band : raw;
+  };
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const strategy = canonicalStrategy((r[4] || '').trim());

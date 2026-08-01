@@ -1227,8 +1227,28 @@ export function calc0DTE(inputs) {
   //   POP term: blend model POP early → realized win% as data accumulates.
   const EV_HISTORY_THRESHOLD = 50;
 
+  // Moneyness band for the ticket in hand, mirroring the band that server/csvParser.js
+  // stamps onto imported verticals. Net premium as a fraction of the strike width says
+  // where the spread sits relative to spot: ~0.875 is deep ITM, ~0.15 is well OTM,
+  // ~0.50 is ATM. Only 2-leg structures get a band; anything else looks up unbanded.
+  const histBand = (() => {
+    // Same leg selection the payoff uses: a 4-leg dual-EM suggestion is really two
+    // alternative strike pairs, so band off the first pair rather than bailing out.
+    const bl = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
+    if (bl.length !== 2) return null;
+    const w = Math.abs(bl[0].strike - bl[1].strike);
+    if (!(w > 0) || !isFinite(ncd) || ncd === 0) return null;
+    const f = Math.abs(ncd) / w;
+    if (!isFinite(f) || f > 1.5) return null;
+    return f < 0.35 ? 'OTM' : f < 0.65 ? 'ATM' : 'ITM';
+  })();
+
   // Resolve the realized-history slice for this strategy (if a map was passed).
-  const history = historyInput || (historyByStrategy ? historyByStrategy[legStrat] : null);
+  // Prefer the banded bucket; fall back to the unbanded one so the history logged
+  // before the split still counts rather than dropping the ticket to ESTIMATE.
+  const history = historyInput || (historyByStrategy
+    ? ((histBand && historyByStrategy[`${legStrat} (${histBand})`]) || historyByStrategy[legStrat] || null)
+    : null);
 
   // Per-strategy capture fractions { winCap, lossCap } as a share of max.
   // winCap  = typical fraction of MAX PROFIT actually realized on winners.

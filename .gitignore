@@ -7,3 +7,4 @@ client/dist/
 # Cowork device-bridge mount forbids unlink, so git lock files and leftover
 # temp objects get renamed here instead of deleted. Safe to remove from Finder.
 _to_delete/
+patchwork/
