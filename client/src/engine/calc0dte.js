@@ -23,7 +23,7 @@ function degrade(rating, levels) {
   return order[Math.min(idx + levels, 3)];
 }
 
-export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern) {
+export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern, bodyFar = false) {
   const isBull = dirScore > 0, isBear = dirScore < 0, isNeutral = dirScore === 0;
   const isStrong = Math.abs(dirScore) >= 2;
   const isMild = Math.abs(dirScore) === 1;
@@ -34,6 +34,18 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   // when it was most likely to be right. trendPattern was already computed upstream;
   // it just never reached this function. (Jul 2026)
   const trendDay = isStrong && trendPattern === 'continuation';
+  // ── Continuation ramp (Aug 2026) ──
+  // trendDay required |dirScore| >= 2, so a MILD-direction continuation day got no lift
+  // at all on any vertical — a cliff at exactly 2, on a score that a single diverging
+  // 15-minute VWAP already clamps back to 1. A mild continuation is a weaker version of
+  // the same read, not a different one, so it gets the same lift one notch lower.
+  // ONE notch, not two. Gap band 0 (cheap short-term vol) and a mild dirScore are each
+  // an argument for less conviction, but stacking them landed BELOW the branch the lift
+  // replaces — the un-lifted fallback is MARGINAL up to 80% move consumed — so a
+  // continuation day rated WORSE than a nothing day. Take the worse reason once.
+  // Strong reads outside gap band 0 are numerically unchanged.
+  const contDay = trendPattern === 'continuation' && Math.abs(dirScore) >= 1;
+  const contWeak = !trendDay || gapBandIdx === 0;
 
   // Base ratings: [Chicken, BWB, Asymmetric, Standard, IronCondor, LongCondor, IronButterfly]
   let base;
@@ -117,6 +129,14 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   // EXCELLENT in a pinning tape. (Jul 2026)
   if (isCompressing || moveConsumed > 0.60) ratings[5] = degrade(ratings[5], 2);
 
+  // ── A far-body fly is not a pin (Aug 2026) ──
+  // See the bodyFar computation in calc0DTE. Indices 1 and 2 are the Broken wing and
+  // Asymmetric butterfly — the two structures whose body the builder is free to move.
+  // When it moves the body more than 0.5 x ATR from spot the structure has stopped
+  // being a pin and become a target-price bet, so it loses a notch. Selection and
+  // scoring now agree on what it is.
+  if (bodyFar) [1, 2].forEach(i => { ratings[i] = degrade(ratings[i], 1); });
+
   // Spreads: enhanced logic using move consumed and direction
   // Bull Put Spread — prefer when bullish breakout + move < 60%
   let bps;
@@ -132,7 +152,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   // consulted, so the honest argument against selling here (cheap short-term vol) never
   // got a vote. Now it does: the lift lands a notch lower in band 0, where you would be
   // selling something the market has already marked down.
-  else if (isBull && trendDay) bps = gapBandIdx === 0 ? 'MARGINAL' : 'GOOD';
+  else if (isBull && contDay) bps = contWeak ? 'MARGINAL' : 'GOOD';
   else if (isBull) bps = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bps = 'MARGINAL';
   else bps = 'POOR';
@@ -142,7 +162,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bcs;
   if (isBear && spreadZone) bcs = 'EXCELLENT';
   else if (isBear && moveConsumed < 0.60) bcs = (gapBandIdx>=2)?'EXCELLENT':'GOOD';
-  else if (isBear && trendDay) bcs = gapBandIdx === 0 ? 'MARGINAL' : 'GOOD';   // mirror of the bull put lift above
+  else if (isBear && contDay) bcs = contWeak ? 'MARGINAL' : 'GOOD';   // mirror of the bull put lift above
   else if (isBear) bcs = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bcs = 'MARGINAL';
   else bcs = 'POOR';
@@ -152,7 +172,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bullCall;
   if (isBull && moveConsumed < 0.40 && !isCompressing) bullCall = 'EXCELLENT';
   else if (isBull && moveConsumed < 0.50) bullCall = 'GOOD';
-  else if (isBull && trendDay) bullCall = 'GOOD';        // trend day — exhaustion gate lifted
+  else if (isBull && contDay) bullCall = trendDay ? 'GOOD' : 'MARGINAL';  // continuation day — exhaustion gate lifted
   else if (isBull && moveConsumed < 0.60) bullCall = 'MARGINAL';
   else bullCall = 'POOR';
   ratings.push(bullCall);
@@ -161,7 +181,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bearPut;
   if (isBear && moveConsumed < 0.40 && !isCompressing) bearPut = 'EXCELLENT';
   else if (isBear && moveConsumed < 0.50) bearPut = 'GOOD';
-  else if (isBear && trendDay) bearPut = 'GOOD';         // trend day — exhaustion gate lifted
+  else if (isBear && contDay) bearPut = trendDay ? 'GOOD' : 'MARGINAL';   // continuation day — exhaustion gate lifted
   else if (isBear && moveConsumed < 0.60) bearPut = 'MARGINAL';
   else bearPut = 'POOR';
   ratings.push(bearPut);
@@ -431,60 +451,6 @@ export function calc0DTE(inputs) {
     ? 'Spread zone: volatility budget remaining with expansion. Directional credit spreads if direction clear.'
     : 'Transition zone: assess compression and direction before committing.');
 
-  // ── Strategy ratings ──
-  const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern);
-  const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i], idx: i }));
-  const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'POOR': 3 };
-  sorted.sort((a, b) => order[a.rating] - order[b.rating] || a.idx - b.idx);
-  // ── Tiebreak (Jul 2026): when ≥2 structures share the TOP rating, the old code
-  // took the first-listed (array order) — an arbitrary, containment-biased coin-flip
-  // that decided ~59% of picks. Break it by DIRECTION-COHERENCE instead: a containment
-  // structure (fly/condor/credit) is penalised in a strong directional regime; a MOVE
-  // structure (reversed condor / debit directional) when direction is absent — so the
-  // tie resolves toward the structure whose nature fits the read. Ties on coherence
-  // fall back to array order. Uses the non-circular direction slice of Trade Confidence.
-  const _skewedFly = s => s === 'Broken wing butterfly' || s === 'Asymmetric butterfly';
-  const _reversal = trendPattern === 'reversal';
-  const _isReversedCondor = s => s === 'Long Condor - Reversed';
-  const _isDebitDir = s => s === 'Bull call spread' || s === 'Bear put spread';
-  const dirCoherence = (s) => {
-    const ad = Math.abs(dirScore);
-    // Reversed condor is a MAGNITUDE play — its ~2-EM-wide central loss band only pays
-    // if price travels >1 EM by expiry. It needs ROOM (expansion / low move-consumed),
-    // NOT a direction. Punish it in compression / high move-consumed where that move is
-    // unlikely, so it can't win a tie against a fly in a pinning tape. (Jul 2026 — was
-    // lumped with directional spreads at coherence 1.0 whenever dirScore ≠ 0.)
-    if (_isReversedCondor(s)) {
-      if (moveConsumed > 0.60 || isCompressing) return 0.45;
-      if (isExpanding) return 1.0;
-      return 0.72;
-    }
-    // Debit directional spread: genuinely wants a directional move — fine when present.
-    if (_isDebitDir(s)) return dirScore === 0 ? 0.60 : 1.0;
-    // Everything else is a containment structure: fears strong conviction unless a
-    // skewed fly's skew already fades that direction (reversal setup).
-    if (ad >= 2) return (_skewedFly(s) && _reversal) ? 0.70 : 0.50;
-    if (ad === 1) return (_skewedFly(s) && _reversal) ? 0.92 : 0.85;
-    return 1.0;
-  };
-  const tradeable = sorted.filter(s => s.rating === 'EXCELLENT' || s.rating === 'GOOD');
-  let best = null, runnerUp = null, tiebreakApplied = false;
-  if (tradeable.length) {
-    const topTied = tradeable.filter(s => s.rating === tradeable[0].rating);
-    const ranked = topTied.slice().sort((a, b) => dirCoherence(b.name) - dirCoherence(a.name) || a.idx - b.idx);
-    best = ranked[0];
-    if (ranked.length > 1) {
-      runnerUp = { name: ranked[1].name, rating: ranked[1].rating };
-      tiebreakApplied = ranked[0].name !== topTied[0].name; // coherence changed the array-order pick
-    }
-  }
-  const bestStrat = best ? best.name : 'No suitable structure';
-  const bestRating = best ? best.rating : 'POOR';
-
-  // Override: if caller specifies a strategy, use that for legs
-  const overrideStrategy = inputs.overrideStrategy || null;
-  const legStrat = overrideStrategy || bestStrat;
-
   // ── Strike engine (with directional gamma) ──
   // Wing base distance = 1 SD of the move still available FROM HERE, floored by
   // the model's own remaining-session estimate so a suspiciously cheap straddle
@@ -538,6 +504,75 @@ export function calc0DTE(inputs) {
     }
     gs = R(gs);
   }
+
+  // ── Where the fly BODY will actually land (Aug 2026) ──
+  // One definition, two consumers. Selection read PROFIT_LOCUS, a name-keyed table that
+  // calls every BWB and asymmetric fly a 'pin' whatever the strike builder does with it.
+  // Scoring never believed that — it derived its own flag from the built body distance —
+  // and the two disagreed. A fly whose body lands far from spot was rated EXCELLENT by
+  // the butterfly branch and then scored as a directional structure, losing both the
+  // compression and the move-consumed criteria: 25 of the 30 points that selected it.
+  // The geometry is right and the table is wrong. A body more than 0.5 x ATR from spot
+  // is a bet on a TARGET PRICE, not on price stopping where it already is. Computed
+  // once, here, from the body the builder will actually use; read by the rating pass
+  // below and by the scorecard further down.
+  const bodyNearThresh = atr > 0 ? 0.5 * atr : roundTo * 2;
+  const bodyFar = price > 0 && D > 0 && Math.abs(price - gs) > bodyNearThresh;
+
+  // ── Strategy ratings ──
+  const ratings = getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing, moveConsumed, trendPattern, bodyFar);
+  const sorted = STRATS_0DTE.map((s, i) => ({ name: s, rating: ratings[i], idx: i }));
+  const order = { EXCELLENT: 0, GOOD: 1, MARGINAL: 2, 'POOR': 3 };
+  sorted.sort((a, b) => order[a.rating] - order[b.rating] || a.idx - b.idx);
+  // ── Tiebreak (Jul 2026): when ≥2 structures share the TOP rating, the old code
+  // took the first-listed (array order) — an arbitrary, containment-biased coin-flip
+  // that decided ~59% of picks. Break it by DIRECTION-COHERENCE instead: a containment
+  // structure (fly/condor/credit) is penalised in a strong directional regime; a MOVE
+  // structure (reversed condor / debit directional) when direction is absent — so the
+  // tie resolves toward the structure whose nature fits the read. Ties on coherence
+  // fall back to array order. Uses the non-circular direction slice of Trade Confidence.
+  const _skewedFly = s => s === 'Broken wing butterfly' || s === 'Asymmetric butterfly';
+  const _reversal = trendPattern === 'reversal';
+  const _isReversedCondor = s => s === 'Long Condor - Reversed';
+  const _isDebitDir = s => s === 'Bull call spread' || s === 'Bear put spread';
+  const dirCoherence = (s) => {
+    const ad = Math.abs(dirScore);
+    // Reversed condor is a MAGNITUDE play — its ~2-EM-wide central loss band only pays
+    // if price travels >1 EM by expiry. It needs ROOM (expansion / low move-consumed),
+    // NOT a direction. Punish it in compression / high move-consumed where that move is
+    // unlikely, so it can't win a tie against a fly in a pinning tape. (Jul 2026 — was
+    // lumped with directional spreads at coherence 1.0 whenever dirScore ≠ 0.)
+    if (_isReversedCondor(s)) {
+      if (moveConsumed > 0.60 || isCompressing) return 0.45;
+      if (isExpanding) return 1.0;
+      return 0.72;
+    }
+    // Debit directional spread: genuinely wants a directional move — fine when present.
+    if (_isDebitDir(s)) return dirScore === 0 ? 0.60 : 1.0;
+    // Everything else is a containment structure: fears strong conviction unless a
+    // skewed fly's skew already fades that direction (reversal setup).
+    if (ad >= 2) return (_skewedFly(s) && _reversal) ? 0.70 : 0.50;
+    if (ad === 1) return (_skewedFly(s) && _reversal) ? 0.92 : 0.85;
+    return 1.0;
+  };
+  const tradeable = sorted.filter(s => s.rating === 'EXCELLENT' || s.rating === 'GOOD');
+  let best = null, runnerUp = null, tiebreakApplied = false;
+  if (tradeable.length) {
+    const topTied = tradeable.filter(s => s.rating === tradeable[0].rating);
+    const ranked = topTied.slice().sort((a, b) => dirCoherence(b.name) - dirCoherence(a.name) || a.idx - b.idx);
+    best = ranked[0];
+    if (ranked.length > 1) {
+      runnerUp = { name: ranked[1].name, rating: ranked[1].rating };
+      tiebreakApplied = ranked[0].name !== topTied[0].name; // coherence changed the array-order pick
+    }
+  }
+  const bestStrat = best ? best.name : 'No suitable structure';
+  const bestRating = best ? best.rating : 'POOR';
+
+  // Override: if caller specifies a strategy, use that for legs
+  const overrideStrategy = inputs.overrideStrategy || null;
+  const legStrat = overrideStrategy || bestStrat;
+
 
   // ── Vertical widths run on the REMAINING session, not the full one (Jul 2026) ──
   // emVIX / emV1D are 1 SD of a FULL session. Every other builder sizes off D,
@@ -595,7 +630,18 @@ export function calc0DTE(inputs) {
       if (bodyShift !== 0) skewNote += `; body displaced ${bodyShift>0?'+':''}${bodyShift.toFixed(0)} pt (0.40 × EM remaining) — strong conviction`;
     }
     if (legStrat === 'Iron butterfly') {
-      legs = [leg('Long put (wing)', p-D), leg('Short put (body)', p), leg('Short call (body)', p), leg('Long call (wing)', p+D)];
+      // Built on gs, not raw spot (Aug 2026). It was the one pin structure centred on
+      // spot while every other one centred on the gamma strike with the conviction
+      // displacement. An iron fly is a short straddle: its whole value is an opinion
+      // about WHERE price stops, so it of all structures should be built where the
+      // rest of the engine thinks that is. In the neutral butterfly zone — the only
+      // place this structure rates EXCELLENT — dirScore is 0 and gs is just the gamma
+      // strike, so in practice this means selling the straddle where dealers are
+      // pinned rather than wherever the last print happened to land. It also picks up
+      // the conviction shift when one is taken on a directional tape (bodyShift is
+      // non-zero from |dirScore| >= 2), which is the same displacement the standard
+      // and broken-wing flies already get. Same body, same reasoning, all four.
+      legs = [leg('Long put (wing)', gs-D), leg('Short put (body)', gs), leg('Short call (body)', gs), leg('Long call (wing)', gs+D)];
     } else if (legStrat === 'Standard butterfly') {
       legs = skewUp
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (mid)', gs), leg('Long call (upper)', gs+D)]
@@ -658,6 +704,9 @@ export function calc0DTE(inputs) {
     }
   }
   const isSpread = VERTICALS.includes(legStrat);
+  // Hoisted out of the scorecard (Aug 2026) — hold-to-expiry needs it too, and one
+  // structure should not have two locus lookups.
+  const profitLocus = PROFIT_LOCUS[legStrat] || 'pin';
 
   // ── Hold to expiry (Aug 2026, 0DTE only) ──
   // Closing a 0DTE costs the exit spread plus commission on every leg, and on a structure
@@ -679,7 +728,23 @@ export function calc0DTE(inputs) {
     const isCashSettled = CASH_SETTLED_0DTE.includes(underlying);
     const rightOf = l => (l.label && l.label.toLowerCase().includes('put')) ? 'put' : 'call';
     const itmLegs = legs.filter(l => rightOf(l) === 'call' ? l.strike < price : l.strike > price);
-    const nearestDist = Math.min(...legs.map(l => Math.abs(l.strike - price)));
+    // Not every strike decides the outcome. On a PIN structure the body is where you
+    // WANT price to be — a fly sitting exactly on its body is at MAX PROFIT — and
+    // measuring the cushion to it returned "Close it, expiry is close to a coin flip"
+    // on the best outcome the trade has. Losses on a pin structure live outside the
+    // WINGS, and outside them the structure is already worth zero, so a large distance
+    // to the wings means "decided" in both directions. On a RANGE structure the first
+    // strike that costs money is the near SHORT. On a MOVE structure every leg matters.
+    // (Aug 2026 — was the nearest strike of any kind.)
+    const _allK = legs.map(l => l.strike);
+    const _shorts = legs.filter(l => /short/i.test(l.label || '')).map(l => l.strike);
+    const lossStrikes =
+      profitLocus === 'pin'   ? [Math.min(..._allK), Math.max(..._allK)] :
+      profitLocus === 'range' ? (_shorts.length ? _shorts : _allK) : _allK;
+    const boundaryLabel = profitLocus === 'pin' ? 'Nearest wing'
+      : profitLocus === 'range' ? 'Nearest short strike' : 'Nearest strike';
+    const nearestDist = Math.min(...lossStrikes.map(k => Math.abs(k - price)));
+    const nearestAnyDist = Math.min(..._allK.map(k => Math.abs(k - price)));
     const cushionEM = nearestDist / emRemaining;
     // Physical settlement needs more room because the penalty for being wrong is a stock
     // position rather than a capped cash debit.
@@ -694,7 +759,7 @@ export function calc0DTE(inputs) {
         + `the cheap side of this trade.`;
     } else if (cushionEM >= needed && !closingHour) {
       verdict = 'hold'; label = 'Can run to expiry';
-      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away with `
+      note = `${boundaryLabel} is ${cushionEM.toFixed(2)} EM away with `
         + `${hours > 0 ? hours.toFixed(1) + 'h' : 'the session'} left — the outcome is effectively `
         + `decided. Letting it expire saves the exit spread and commission on ${legs.length} legs.`
         + (isCashSettled ? ' Cash settlement, so even a surprise finish is a capped cash debit.'
@@ -706,16 +771,17 @@ export function calc0DTE(inputs) {
         + `only if you are actually watching it.`;
     } else if (cushionEM >= needed * 0.6) {
       verdict = 'watch'; label = 'Too close to leave alone';
-      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away; ${needed.toFixed(2)}+ is the bar for `
+      note = `${boundaryLabel} is ${cushionEM.toFixed(2)} EM away; ${needed.toFixed(2)}+ is the bar for `
         + `${isCashSettled ? 'cash' : 'physical'} settlement. Manage it rather than assuming it expires clean.`;
     } else {
       verdict = 'close'; label = 'Close it';
-      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away — well inside the move still `
+      note = `${boundaryLabel} is ${cushionEM.toFixed(2)} EM away — well inside the move still `
         + `available. Expiry is close to a coin flip from here, and the saved commission does `
         + `not pay for that.`;
     }
     holdToExpiry = { verdict, label, note, cushionEM, nearestDist, needed,
-      isCashSettled, itmCount: itmLegs.length, closingHour, legCount: legs.length };
+      isCashSettled, itmCount: itmLegs.length, closingHour, legCount: legs.length,
+      boundaryLabel, nearestAnyDist, locus: profitLocus };
   }
 
   // ── P(max loss): probability price settles in a max-loss tail by close ──
@@ -877,21 +943,18 @@ export function calc0DTE(inputs) {
   // let a strong directional read promote a structure that needs price to stop. This
   // flag is scoring tolerance only — locus decides selection.
   const isSkewed = ['Chicken condor','Broken wing butterfly','Asymmetric butterfly','Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(scoreStrat);
-  const profitLocus = PROFIT_LOCUS[scoreStrat] || 'pin';
   // Reversed condor is a MAGNITUDE / breakout play — it wants EXPANSION (high comp)
   // and LOW move-consumed (room for a big move), the opposite of a pin. It was wrongly
   // in isCentred (which rewards low comp + high move-consumed). Score it explicitly.
   const wantsExpansion = scoreStrat === 'Long Condor - Reversed';
   // A narrow, near-the-money broken-wing / asymmetric fly behaves like a PINNING
-  // (centred) structure for Compression + Move-consumed scoring, even though it
-  // keeps a mild directional tilt in the VWAP/overnight logic. Gate on behaviour,
-  // not the symmetric-vs-asymmetric label (Fix Jul 2026): body within ~0.5x ATR of
-  // spot. A far-OTM directional BWB stays directional.
-  const _flyStrikes = [...new Set(legs.map(l => l.strike))].sort((a, b) => a - b);
-  const _bodyK = _flyStrikes.length >= 3 ? _flyStrikes[Math.floor(_flyStrikes.length / 2)] : null;
-  const _nearThresh = atr > 0 ? 0.5 * atr : roundTo * 2;
-  const pinLike = ['Broken wing butterfly','Asymmetric butterfly'].includes(legStrat)
-    && _bodyK != null && Math.abs(price - _bodyK) <= _nearThresh;
+  // (centred) structure for Compression + Move-consumed scoring, even though it keeps
+  // a mild directional tilt in the VWAP/overnight logic. Gate on behaviour, not the
+  // symmetric-vs-asymmetric label. This used to re-derive the body from the built legs
+  // with its own threshold, which is how selection and scoring came to hold two
+  // different opinions of the same structure; it now reads the single bodyFar flag the
+  // rating pass was given. (Aug 2026 — flag hoisted; the test is unchanged.)
+  const pinLike = ['Broken wing butterfly','Asymmetric butterfly'].includes(legStrat) && !bodyFar;
   let compPts;
   if (!hasComp) compPts = 5;
   else if (wantsExpansion) compPts = comp>0.80?15:comp>0.50?10:comp>0.35?6:3;  // reversed wants expansion
@@ -1398,7 +1461,13 @@ export function calc0DTE(inputs) {
   // Butterflies: pin is rare, so winCap is low; managed exits keep lossCap < 1.
   // Condors/credit spreads: take-profit at ~50% credit, stops cap the loss.
   function captureFractions(s) {
-    if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
+    if (s === 'Standard butterfly') return { winCap: 0.28, lossCap: 0.45 };
+    // Split from Standard (Aug 2026). The 1.5x far wing means the payoff does NOT
+    // return to zero beyond that wing — it settles at a constant −0.5 x D — so this is
+    // a mild broken-wing fly, not a symmetric one. Its losing tail is wider and
+    // one-sided, so losers give back more than a standard fly's. Sits between Standard
+    // (0.45) and BWB (0.50); winCap matches BWB because the same tilt is what pays.
+    if (s === 'Asymmetric butterfly') return { winCap: 0.30, lossCap: 0.48 };
     if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
     if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
     if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
