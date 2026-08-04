@@ -555,14 +555,32 @@ export function calc0DTE(inputs) {
   // of pullback and the structure is OTM and bleeding the whole debit. On a day the engine
   // has itself flagged as overextended that is the wrong place to stand — it is what made
   // the 3 Aug SPX ticket read "pullback risk" in its warnings and then place every strike
-  // above spot. Slide the WHOLE structure against the trade direction, so the width, and
-  // therefore max loss, is unchanged. What you buy is room; what you pay is intrinsic on
-  // the long leg. Ramp: nothing until 40% of the expected move is consumed, then linear to
+  // above spot. Slide the WHOLE structure against the trade direction, so the WIDTH is
+  // unchanged. Ramp: nothing until 40% of the expected move is consumed, then linear to
   // 0.40 × EM remaining by 100% — a day that has not moved yet has nothing to give back.
   // 45DTE deliberately does not get this: there the move has weeks to arrive.
+  //
+  // CAP (Aug 2026, second pass). The ramp above is measured in EM, but the two structures
+  // it feeds have DIFFERENT widths in EM: a credit vertical is dRem wide, a debit vertical
+  // only 0.5 × dRem. Uncapped, the full ramp slid the debit spread 0.80 × its own width —
+  // long leg 86% of the way through the structure, debit ≈ the full width, max profit
+  // ≈ nothing (reward/risk fell from ~1.1 to ~0.13). Cap the slide at PULLBACK_CAP of the
+  // structure's OWN width so both sides get the same proportional room. The credit pair is
+  // already at exactly 0.40 × width, so this changes nothing there; it binds on the debit
+  // pair whenever move-consumed exceeds ~70%.
+  //
+  // Max loss is NOT invariant under the slide and the note no longer claims it is:
+  //   debit vertical  — max loss IS the debit; an ITM long leg raises it and cuts max profit.
+  //   credit vertical — max loss is width − credit; a further-OTM short collects less, so it
+  //                     rises slightly (~10% on a typical ticket, vs ~2× on the debit side).
+  // What is bought is a lower breakeven and a smaller P(max loss); what is paid is premium.
+  const PULLBACK_CAP = 0.40;   // of the structure's own width
   const pullbackFrac = 0.40 * Math.max(0, Math.min(1, (moveConsumed - 0.40) / 0.60));
-  const vBufVix = dVixRem * pullbackFrac;
-  const vBufV1d = dV1dRem * pullbackFrac;
+  // Vertical width as a multiple of dRem: credit legs sit at 1×/2×, debit legs at 0×/0.5×.
+  const vWidthMult = (legStrat === 'Bull call spread' || legStrat === 'Bear put spread') ? 0.5 : 1.0;
+  const vBufFrac = Math.min(pullbackFrac, vWidthMult * PULLBACK_CAP);
+  const vBufVix = dVixRem * vBufFrac;
+  const vBufV1d = dV1dRem * vBufFrac;
 
   let legs = [];
   let skewNote = '';
@@ -627,10 +645,16 @@ export function calc0DTE(inputs) {
         leg('Long put (VIX1D)', p + vBufV1d), leg('Short put (VIX1D)', p - dV1dRem * 0.5 + vBufV1d)
       ];
     }
-    if (VERTICALS.includes(legStrat) && pullbackFrac > 0) {
+    if (VERTICALS.includes(legStrat) && vBufFrac > 0) {
       const bufSide = (legStrat === 'Bull put spread' || legStrat === 'Bull call spread') ? 'below' : 'above';
-      skewNote = `Strikes buffered ${(pullbackFrac * 100).toFixed(0)}% of EM remaining ${bufSide} spot — `
-        + `${(moveConsumed * 100).toFixed(0)}% of the expected move already consumed; width and max loss unchanged`;
+      const isDebitVert = (legStrat === 'Bull call spread' || legStrat === 'Bear put spread');
+      const wasCapped = pullbackFrac > vBufFrac + 1e-9;
+      skewNote = `Strikes buffered ${(vBufFrac * 100).toFixed(0)}% of EM remaining ${bufSide} spot `
+        + `(${(PULLBACK_CAP * 100).toFixed(0)}% of the spread's own width${wasCapped ? ', capped' : ''}) — `
+        + `${(moveConsumed * 100).toFixed(0)}% of the expected move already consumed. Width unchanged; `
+        + (isDebitVert
+          ? `the long leg starts ITM, so the debit — and therefore max loss — rises and max profit falls by the same amount`
+          : `the short leg is further OTM, so the credit is smaller and max loss (width − credit) rises slightly`);
     }
   }
   const isSpread = VERTICALS.includes(legStrat);
@@ -978,7 +1002,14 @@ export function calc0DTE(inputs) {
   let targetLow = 0, targetHigh = 0, targetMax = 0;
   let targetIsCredit = true;
   if (D > 0) {
-    const width = D;
+    // Verticals are built on dVixRem, not on D — those are different rulers (D floors an
+    // emRemaining straddle against a scaled session model; dVixRem is the VIX EM scaled to
+    // the remaining session). Using D here produced a debit band whose TOP END exceeded the
+    // spread's own width, i.e. an unfillable target. Use the width actually constructed.
+    // (Aug 2026. Flies/condors keep D — their wings genuinely are D wide.)
+    const vertWidth = (isSpread && legs.length >= 2)
+      ? Math.abs(legs[1].strike - legs[0].strike) : 0;
+    const width = vertWidth > 0 ? vertWidth : D;
     targetMax = width; // max possible credit/debit = wing width
     if (legStrat.includes('Iron Condor') || legStrat === 'Chicken condor') {
       targetLow = width * 0.25; targetHigh = width * 0.40;
@@ -1860,7 +1891,7 @@ export function calc0DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes
     legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
-    holdToExpiry, pullbackFrac,
+    holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)
     emRemaining, emSession, emSessionModel, emStraddleSD, emStraddleSessionVol,
     emVolGap, emManualGap, emDisagree, emLegacy, emScaleShift, sessionFrac,
