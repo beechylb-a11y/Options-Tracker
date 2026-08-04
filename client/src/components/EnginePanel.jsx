@@ -588,6 +588,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       (warningsHtml ? '<div style="margin-top:10px;padding:8px 12px;background:#1f1a0d;border:1px solid #9e6a03;border-radius:6px">' + warningsHtml + '</div>' : '') +
       '<div style="margin-top:12px">' + legsHtml + '</div>' +
       (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
+      (is0 && r.holdToExpiry ? '<div style="font-size:11px;color:#8b949e;margin-top:4px"><b>Expiry:</b> ' + r.holdToExpiry.label + ' — ' + r.holdToExpiry.note + '</div>' : '') +
       (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
       '<div class="section"><div class="section-title">Setup Quality</div>' + criteriaHtml + '</div>' +
       (r.payoff ? '<div class="section"><div class="section-title">Payoff at Expiry</div>' +
@@ -639,6 +640,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     if (isOverride) lines.push(`Override: engine picked ${r.bestStrat}, logged ${effectiveStrat}`);
     lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
     if (r.skewNote) lines.push(r.skewNote);
+    if (is0 && r.holdToExpiry) lines.push(`Expiry: ${r.holdToExpiry.label} — ${r.holdToExpiry.note}`);
     lines.push(`${ncd>0?`Credit $${ncd.toFixed(2)}`:ncd<0?`Debit $${Math.abs(ncd).toFixed(2)}`:''} · POP ${inp.pop||'--'}% · Win $${inp.win||'--'} · Risk $${inp.risk||'--'}`);
     lines.push(`Sizing: Kelly ${(r.adjustedKelly*100).toFixed(1)}% · ${r.contracts} contract${r.contracts!==1?'s':''} · EV $${r.ev?.toFixed(0)||0}${r.ev<0?' (negative)':''}`);
     if (r.evBasis?.pMaxLoss != null) lines.push(`P(max loss): ${(r.evBasis.pMaxLoss*100).toFixed(1)}% (${r.evBasis.pMaxLossSource||'model'})`);
@@ -769,6 +771,19 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             )}
             {(r.wingTxt || r.strikeLine) && <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{r.wingTxt || r.strikeLine}</div>}
             {r.skewNote && <div style={{fontSize:11,color: r.skewNote.includes('reversal') ? '#d29922' : '#58a6ff',marginTop:3,fontWeight:600}}>{r.skewNote}</div>}
+            {is0 && r.holdToExpiry && (
+              <div style={{marginTop:6,padding:'6px 10px',borderRadius:8,fontSize:11,lineHeight:1.55,
+                background: r.holdToExpiry.verdict === 'hold' ? '#0d2818' : r.holdToExpiry.verdict === 'watch' ? '#1f1a0d' : '#2d0f11',
+                border: '1px solid ' + (r.holdToExpiry.verdict === 'hold' ? '#238636' : r.holdToExpiry.verdict === 'watch' ? '#9e6a03' : '#8b2025')}}>
+                <span style={{fontWeight:700,color: r.holdToExpiry.verdict === 'hold' ? '#3fb950' : r.holdToExpiry.verdict === 'watch' ? '#d29922' : '#f85149'}}>
+                  Expiry · {r.holdToExpiry.label}
+                </span>
+                <span style={{color:'#8b949e'}}>
+                  {'  '}{r.holdToExpiry.isCashSettled ? 'cash-settled' : 'settles into shares'} · cushion {r.holdToExpiry.cushionEM.toFixed(2)} EM (need {r.holdToExpiry.needed.toFixed(2)})
+                </span>
+                <div style={{color:'#c9d1d9',marginTop:3}}>{r.holdToExpiry.note}</div>
+              </div>
+            )}
           </div>
         )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>

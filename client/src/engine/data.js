@@ -128,6 +128,15 @@ export const MARKET_BEHAVIOUR_45DTE = {
   'Standard butterfly':     'Price gradually moves toward the body strike and stays near it. Low realised vol.'
 };
 
+// ── Settlement class (0DTE) ──
+// Cash-settled index options resolve at the close into a cash debit or credit that a
+// defined-risk structure already caps. Everything else is physically settled: an ITM leg
+// at the bell becomes 100 actual shares per contract — assigned on a short leg,
+// auto-exercised on a long one — and that is an unhedged overnight position, not a
+// bounded loss. It is the whole reason "can I just let this expire?" is a different
+// question per underlying. (Aug 2026)
+export const CASH_SETTLED_0DTE = ['SPX', 'RUT', 'NDX', 'XSP', 'VIX'];
+
 export const VIX_GAP_RATINGS = {
   'Chicken condor':         [  3,  7, 10, 10 ],
   'Broken wing butterfly':  [ 10, 10,  7,  3 ],

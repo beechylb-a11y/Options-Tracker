@@ -2,7 +2,7 @@
 //  0DTE CALCULATION ENGINE v2
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
-import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS } from './data.js';
+import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE } from './data.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -12,6 +12,10 @@ const locusIdx = (...loci) => STRATS_0DTE.slice(0, 7)
   .map((s, i) => loci.includes(PROFIT_LOCUS[s]) ? i : -1).filter(i => i >= 0);
 const PIN_IDX = locusIdx('pin');
 const STILL_IDX = locusIdx('pin', 'range');
+
+// The four two-leg directional structures. Named once so the strike builder, the
+// pullback buffer and the spread test cannot drift apart.
+const VERTICALS = ['Bull put spread', 'Bear call spread', 'Bull call spread', 'Bear put spread'];
 
 function degrade(rating, levels) {
   const order = ['EXCELLENT','GOOD','MARGINAL','POOR'];
@@ -118,6 +122,17 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bps;
   if (isBull && spreadZone) bps = 'EXCELLENT';
   else if (isBull && moveConsumed < 0.60) bps = (gapBandIdx>=2)?'EXCELLENT':'GOOD';
+  // ── Trend-day lift, credit side (Aug 2026) ──
+  // The debit verticals got this in Jul 2026 and the credit verticals did not, which is
+  // backwards. A bull put's profit locus is 'range': it needs NO further travel, only for
+  // the trend not to reverse. A strong continuation day is precisely that, and it was the
+  // one structure hard-POOR'd on exactly those days — see the 3 Aug SPX ticket, where the
+  // engine warned about exhaustion and pullback risk and then bought a structure that
+  // needed more upside. Worse, the move-consumed branch fired before gapBandIdx was ever
+  // consulted, so the honest argument against selling here (cheap short-term vol) never
+  // got a vote. Now it does: the lift lands a notch lower in band 0, where you would be
+  // selling something the market has already marked down.
+  else if (isBull && trendDay) bps = gapBandIdx === 0 ? 'MARGINAL' : 'GOOD';
   else if (isBull) bps = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bps = 'MARGINAL';
   else bps = 'POOR';
@@ -127,6 +142,7 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   let bcs;
   if (isBear && spreadZone) bcs = 'EXCELLENT';
   else if (isBear && moveConsumed < 0.60) bcs = (gapBandIdx>=2)?'EXCELLENT':'GOOD';
+  else if (isBear && trendDay) bcs = gapBandIdx === 0 ? 'MARGINAL' : 'GOOD';   // mirror of the bull put lift above
   else if (isBear) bcs = moveConsumed > 0.80 ? 'POOR' : 'MARGINAL';
   else if (isNeutral) bcs = 'MARGINAL';
   else bcs = 'POOR';
@@ -534,6 +550,20 @@ export function calc0DTE(inputs) {
   const dVixRem = emVIX > 0 ? Math.max(emVIX * remScale, roundTo * 2) : D;
   const dV1dRem = emV1D > 0 ? Math.max(emV1D * remScale, roundTo * 2) : D;
 
+  // ── Pullback buffer on 0DTE verticals (Aug 2026) ──
+  // A debit vertical put its long leg at spot, so its cliff was zero points away: one tick
+  // of pullback and the structure is OTM and bleeding the whole debit. On a day the engine
+  // has itself flagged as overextended that is the wrong place to stand — it is what made
+  // the 3 Aug SPX ticket read "pullback risk" in its warnings and then place every strike
+  // above spot. Slide the WHOLE structure against the trade direction, so the width, and
+  // therefore max loss, is unchanged. What you buy is room; what you pay is intrinsic on
+  // the long leg. Ramp: nothing until 40% of the expected move is consumed, then linear to
+  // 0.40 × EM remaining by 100% — a day that has not moved yet has nothing to give back.
+  // 45DTE deliberately does not get this: there the move has weeks to arrive.
+  const pullbackFrac = 0.40 * Math.max(0, Math.min(1, (moveConsumed - 0.40) / 0.60));
+  const vBufVix = dVixRem * pullbackFrac;
+  const vBufV1d = dV1dRem * pullbackFrac;
+
   let legs = [];
   let skewNote = '';
   if (price > 0 && D > 0) {
@@ -573,29 +603,96 @@ export function calc0DTE(inputs) {
         ? [leg('Long put', p-wideW-D), leg('Short put', p-wideW), leg('Short call', p+tightW), leg('Long call', p+tightW+D)]
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
     } else if (legStrat === 'Bull put spread') {
-      // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based
+      // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based. Both slide DOWN by the
+      // pullback buffer — a bull structure fears a pullback, so the room goes below.
       legs = [
-        leg('Short put (VIX)', p - dVixRem), leg('Long put (VIX)', p - dVixRem * 2),
-        leg('Short put (VIX1D)', p - dV1dRem), leg('Long put (VIX1D)', p - dV1dRem * 2)
+        leg('Short put (VIX)', p - dVixRem - vBufVix), leg('Long put (VIX)', p - dVixRem * 2 - vBufVix),
+        leg('Short put (VIX1D)', p - dV1dRem - vBufV1d), leg('Long put (VIX1D)', p - dV1dRem * 2 - vBufV1d)
       ];
     } else if (legStrat === 'Bear call spread') {
       legs = [
-        leg('Short call (VIX)', p + dVixRem), leg('Long call (VIX)', p + dVixRem * 2),
-        leg('Short call (VIX1D)', p + dV1dRem), leg('Long call (VIX1D)', p + dV1dRem * 2)
+        leg('Short call (VIX)', p + dVixRem + vBufVix), leg('Long call (VIX)', p + dVixRem * 2 + vBufVix),
+        leg('Short call (VIX1D)', p + dV1dRem + vBufV1d), leg('Long call (VIX1D)', p + dV1dRem * 2 + vBufV1d)
       ];
     } else if (legStrat === 'Bull call spread') {
+      // Long leg no longer sits at spot: the whole spread drops by the buffer, so the
+      // 0.5 EM width survives and the long has room beneath it before it goes OTM.
       legs = [
-        leg('Long call (VIX)', p), leg('Short call (VIX)', p + dVixRem * 0.5),
-        leg('Long call (VIX1D)', p), leg('Short call (VIX1D)', p + dV1dRem * 0.5)
+        leg('Long call (VIX)', p - vBufVix), leg('Short call (VIX)', p + dVixRem * 0.5 - vBufVix),
+        leg('Long call (VIX1D)', p - vBufV1d), leg('Short call (VIX1D)', p + dV1dRem * 0.5 - vBufV1d)
       ];
     } else if (legStrat === 'Bear put spread') {
       legs = [
-        leg('Long put (VIX)', p), leg('Short put (VIX)', p - dVixRem * 0.5),
-        leg('Long put (VIX1D)', p), leg('Short put (VIX1D)', p - dV1dRem * 0.5)
+        leg('Long put (VIX)', p + vBufVix), leg('Short put (VIX)', p - dVixRem * 0.5 + vBufVix),
+        leg('Long put (VIX1D)', p + vBufV1d), leg('Short put (VIX1D)', p - dV1dRem * 0.5 + vBufV1d)
       ];
     }
+    if (VERTICALS.includes(legStrat) && pullbackFrac > 0) {
+      const bufSide = (legStrat === 'Bull put spread' || legStrat === 'Bull call spread') ? 'below' : 'above';
+      skewNote = `Strikes buffered ${(pullbackFrac * 100).toFixed(0)}% of EM remaining ${bufSide} spot — `
+        + `${(moveConsumed * 100).toFixed(0)}% of the expected move already consumed; width and max loss unchanged`;
+    }
   }
-  const isSpread = ['Bull put spread','Bear call spread','Bull call spread','Bear put spread'].includes(legStrat);
+  const isSpread = VERTICALS.includes(legStrat);
+
+  // ── Hold to expiry (Aug 2026, 0DTE only) ──
+  // Closing a 0DTE costs the exit spread plus commission on every leg, and on a structure
+  // whose outcome is already decided that is pure leakage. Whether you can let it run is
+  // two questions, not one.
+  //   1. How far is the nearest strike in units of the move STILL AVAILABLE? That already
+  //      carries the clock — emRemaining shrinks as the day burns down, so the same strike
+  //      is "close" at 11am and "unreachable" at 2pm without any explicit time rule.
+  //   2. What does an ITM finish actually do to you? On a cash-settled index it is a cash
+  //      debit the width already caps. On anything physically settled it is 100 shares per
+  //      contract — assigned on a short leg, auto-exercised on a long one — carried
+  //      unhedged overnight. That is not a bounded loss, and it is not worth the
+  //      commission you saved by not closing.
+  // Gamma is largest into settlement, so a cushion that clears the bar still gets flagged
+  // in the closing hour. Guidance only: this touches no score, no blocker, and not
+  // P(max loss).
+  let holdToExpiry = null;
+  if (legs.length > 0 && price > 0 && emRemaining > 0) {
+    const isCashSettled = CASH_SETTLED_0DTE.includes(underlying);
+    const rightOf = l => (l.label && l.label.toLowerCase().includes('put')) ? 'put' : 'call';
+    const itmLegs = legs.filter(l => rightOf(l) === 'call' ? l.strike < price : l.strike > price);
+    const nearestDist = Math.min(...legs.map(l => Math.abs(l.strike - price)));
+    const cushionEM = nearestDist / emRemaining;
+    // Physical settlement needs more room because the penalty for being wrong is a stock
+    // position rather than a capped cash debit.
+    const needed = isCashSettled ? 1.00 : 1.50;
+    const closingHour = hours > 0 && hours <= 1.0;
+    let verdict, label, note;
+    if (itmLegs.length > 0 && !isCashSettled) {
+      verdict = 'close'; label = 'Close before the bell';
+      note = `${underlying || 'This underlying'} settles into shares and ${itmLegs.length} leg`
+        + `${itmLegs.length > 1 ? 's are' : ' is'} already ITM. Held to 4pm that is `
+        + `${itmLegs.length * 100} shares per contract, unhedged overnight. The exit cost is `
+        + `the cheap side of this trade.`;
+    } else if (cushionEM >= needed && !closingHour) {
+      verdict = 'hold'; label = 'Can run to expiry';
+      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away with `
+        + `${hours > 0 ? hours.toFixed(1) + 'h' : 'the session'} left — the outcome is effectively `
+        + `decided. Letting it expire saves the exit spread and commission on ${legs.length} legs.`
+        + (isCashSettled ? ' Cash settlement, so even a surprise finish is a capped cash debit.'
+                         : ' Physically settled — re-check moneyness near the close.');
+    } else if (cushionEM >= needed) {
+      verdict = 'watch'; label = 'Runnable, but this is the gamma hour';
+      note = `Cushion is ${cushionEM.toFixed(2)} EM, which clears the bar, but gamma is at its `
+        + `largest into settlement and a small move now repositions the whole structure. Hold `
+        + `only if you are actually watching it.`;
+    } else if (cushionEM >= needed * 0.6) {
+      verdict = 'watch'; label = 'Too close to leave alone';
+      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away; ${needed.toFixed(2)}+ is the bar for `
+        + `${isCashSettled ? 'cash' : 'physical'} settlement. Manage it rather than assuming it expires clean.`;
+    } else {
+      verdict = 'close'; label = 'Close it';
+      note = `Nearest strike is ${cushionEM.toFixed(2)} EM away — well inside the move still `
+        + `available. Expiry is close to a coin flip from here, and the saved commission does `
+        + `not pay for that.`;
+    }
+    holdToExpiry = { verdict, label, note, cushionEM, nearestDist, needed,
+      isCashSettled, itmCount: itmLegs.length, closingHour, legCount: legs.length };
+  }
 
   // ── P(max loss): probability price settles in a max-loss tail by close ──
   // Max loss on a defined-risk structure occurs OUTSIDE the outer wings. Using
@@ -1763,6 +1860,7 @@ export function calc0DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes
     legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
+    holdToExpiry, pullbackFrac,
     // Expected move — two rulers, presented separately (Jul 2026)
     emRemaining, emSession, emSessionModel, emStraddleSD, emStraddleSessionVol,
     emVolGap, emManualGap, emDisagree, emLegacy, emScaleShift, sessionFrac,
