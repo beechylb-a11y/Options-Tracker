@@ -109,6 +109,24 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     return t;
   }
 
+  // Wipe every tab back to one fresh ticket. Two-step: the first click arms it,
+  // the second within 4s does it — tabs now survive a reload, so an accidental
+  // click here would throw away work that used to be unrecoverable.
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => {
+    if (!confirmClear) return;
+    const h = setTimeout(() => setConfirmClear(false), 4000);
+    return () => clearTimeout(h);
+  }, [confirmClear]);
+  function clearAllTabs() {
+    const t = newTab(mode, null);
+    panelStateRef.current = {};
+    try { localStorage.removeItem(TABS_KEY); } catch (e) { /* private mode */ }
+    setTabs([t]);
+    setActiveId(t.id);
+    setConfirmClear(false);
+  }
+
   // Persist on every tab change and on a slow timer (panel edits live in the
   // ref, so they would otherwise never reach storage).
   useEffect(() => {
@@ -813,6 +831,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         <button onClick={() => addTab(null)} title="New blank ticket"
           className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors">
           + Trade
+        </button>
+        <button onClick={() => (confirmClear ? clearAllTabs() : setConfirmClear(true))}
+          title="Close every tab and start one fresh ticket"
+          className={`ml-auto px-2.5 py-1.5 border rounded-lg text-xs transition-colors ${confirmClear
+            ? 'border-red text-red bg-red/10'
+            : 'border-bg-border text-text-faint hover:text-white hover:border-red'}`}>
+          {confirmClear ? 'Clear all tabs?' : 'Clear all'}
         </button>
       </div>
 
