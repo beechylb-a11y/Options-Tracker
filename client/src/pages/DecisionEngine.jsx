@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Zap, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
@@ -6,8 +6,127 @@ import EnginePanel from '../components/EnginePanel';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 
+// ── Trade tabs (Aug 2026) ──
+// One mounted EnginePanel per tab, inactive ones hidden with display:none so
+// their state survives a switch. Snapshots are kept in a ref and written to
+// localStorage so a browser refresh does not lose a half-built ticket.
+const TABS_KEY = 'ot-engine-tabs-v1';
+// 0DTE inputs go stale overnight; restoring yesterday's numbers under today's
+// date would be worse than starting clean.
+const TABS_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+const clockOf = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+};
+const agoOf = (ts, now) => {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (!isFinite(t)) return '';
+  const sec = Math.max(0, Math.round((now - t) / 1000));
+  return sec < 60 ? sec + 's ago' : sec < 3600 ? Math.round(sec / 60) + 'm ago' : Math.round(sec / 3600) + 'h ago';
+};
+
+// Ticker + expiry. 0DTE expires the day the tab was opened; 45DTE is that day
+// plus whatever DTE the panel is carrying.
+function tabLabel(mode, underlying, createdAt, dte) {
+  const u = underlying || 'SPX';
+  const d = new Date(createdAt || Date.now());
+  if (mode !== '0dte') {
+    const n = parseFloat(dte);
+    d.setDate(d.getDate() + (isFinite(n) && n > 0 ? Math.round(n) : 45));
+  }
+  return u + ' ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
+
+function newTab(mode, seed) {
+  const createdAt = Date.now();
+  const und = seed && seed.underlying;
+  const id = 'tab' + createdAt + '-' + Math.round(Math.random() * 10000);
+  return { id, mode: mode || '0dte', createdAt, seed: seed || null, state: null,
+           label: tabLabel(mode || '0dte', und, createdAt, seed && seed.dte) };
+}
+
+function loadTabs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) || 'null');
+    if (!raw || !Array.isArray(raw.tabs) || !raw.tabs.length) return null;
+    if (!raw.savedAt || Date.now() - raw.savedAt > TABS_MAX_AGE_MS) return null;
+    const tabs = raw.tabs.filter(t => t && t.id);
+    if (!tabs.length) return null;
+    return { tabs, activeId: raw.activeId && tabs.some(t => t.id === raw.activeId) ? raw.activeId : tabs[0].id };
+  } catch (e) { return null; }
+}
+
 export default function DecisionEngine({ authenticated, account, accounts }) {
-  const [mode, setMode] = useState('0dte');
+  const restored = React.useMemo(() => loadTabs(), []);
+  const [tabs, setTabs] = useState(() => (restored ? restored.tabs : [newTab('0dte', null)]));
+  const [activeId, setActiveId] = useState(() => (restored ? restored.activeId : null));
+  const activeTab = tabs.find(t => t.id === activeId) || tabs[0];
+  const mode = activeTab ? activeTab.mode : '0dte';
+  const setMode = m => setTabs(prev => prev.map(t => (t.id === (activeTab && activeTab.id) ? { ...t, mode: m, label: tabLabel(m, labelUnderlyingOf(t, m), t.createdAt, dteOf(t)) } : t)));
+
+  // Live panel state, held in a ref: a keystroke in one tab must not re-render
+  // the others. Only the tab LABEL is promoted into React state.
+  const panelStateRef = useRef({});
+  function labelUnderlyingOf(t, m) {
+    const st = panelStateRef.current[t.id] || t.state;
+    const inp = st && (m === '0dte' ? st.i0 : st.i45);
+    return (inp && inp.underlying) || (t.seed && t.seed.underlying) || null;
+  }
+  function dteOf(t) {
+    const st = panelStateRef.current[t.id] || t.state;
+    return st && st.i45 ? st.i45.dte : undefined;
+  }
+  function handlePanelState(id, st) {
+    panelStateRef.current[id] = st;
+    setTabs(prev => {
+      const i = prev.findIndex(t => t.id === id);
+      if (i < 0) return prev;
+      const t = prev[i];
+      const inp = t.mode === '0dte' ? st.i0 : st.i45;
+      const lab = tabLabel(t.mode, inp && inp.underlying, t.createdAt, st.i45 && st.i45.dte);
+      if (lab === t.label) return prev;
+      const next = prev.slice();
+      next[i] = { ...t, label: lab };
+      return next;
+    });
+  }
+  function closeTab(id) {
+    if (tabs.length <= 1) return;
+    const i = tabs.findIndex(t => t.id === id);
+    if (i < 0) return;
+    const next = tabs.filter(t => t.id !== id);
+    delete panelStateRef.current[id];
+    if (id === (activeTab && activeTab.id)) setActiveId(next[Math.min(i, next.length - 1)].id);
+    setTabs(next);
+  }
+  function addTab(seed, m) {
+    const t = newTab(m || mode, seed || null);
+    setTabs(prev => [...prev, t]);
+    setActiveId(t.id);
+    return t;
+  }
+
+  // Persist on every tab change and on a slow timer (panel edits live in the
+  // ref, so they would otherwise never reach storage).
+  useEffect(() => {
+    const save = () => {
+      try {
+        localStorage.setItem(TABS_KEY, JSON.stringify({
+          savedAt: Date.now(),
+          activeId: activeId || (tabs[0] && tabs[0].id) || null,
+          tabs: tabs.map(t => ({ id: t.id, mode: t.mode, label: t.label, createdAt: t.createdAt,
+                                 seed: t.seed, state: panelStateRef.current[t.id] || t.state || null })),
+        }));
+      } catch (e) { /* private mode / quota — not worth breaking the page over */ }
+    };
+    save();
+    const h = setInterval(save, 5000);
+    return () => clearInterval(h);
+  }, [tabs, activeId]);
+
   const [decisions, setDecisions] = useState([]);
   const [strategyHistory, setStrategyHistory] = useState(null);
   const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
@@ -191,10 +310,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const openTickets = accountDecisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
   const closedTickets = accountDecisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
 
-  const [prefillData, setPrefillData] = useState(null);
-  function handleSelectFromScan(underlying, data) {
-    setPrefillData({ underlying, ...data });
-    setPanel(null);
+  // A scan pick opens its OWN tab and leaves the scan panel up, so you can take
+  // one candidate, then another, without losing the first.
+  function handleSelectFromScan(underlying, data, meta) {
+    addTab({ underlying, ...(data || {}), _meta: meta || null });
   }
 
   return (
@@ -673,11 +792,41 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         </div>
       )}
 
-      {/* Native Decision Engine */}
-      <EnginePanel mode={mode} onLogTrade={handleEngineLog}
-        accountConfig={accounts?.find(a => a.id === account) || {}}
-        prefillData={prefillData} onPrefillConsumed={() => setPrefillData(null)}
-        strategyHistory={strategyHistory} />
+      {/* Trade tabs */}
+      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+        {tabs.map(t => {
+          const on = t.id === (activeTab && activeTab.id);
+          return (
+            <div key={t.id} onClick={() => setActiveId(t.id)} title={t.seed ? 'Seeded from multi-scan' : 'Manual ticket'}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+              <span className="font-medium">{t.label}</span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
+                {t.mode === '0dte' ? '0DTE' : '45D'}
+              </span>
+              {tabs.length > 1 && (
+                <span onClick={e => { e.stopPropagation(); closeTab(t.id); }}
+                  className="text-text-faint hover:text-red text-sm leading-none">×</span>
+              )}
+            </div>
+          );
+        })}
+        <button onClick={() => addTab(null)} title="New blank ticket"
+          className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors">
+          + Trade
+        </button>
+      </div>
+
+      {/* Native Decision Engine — one panel per tab, hidden panels stay mounted
+          so switching tabs never discards a half-entered ticket. */}
+      {tabs.map(t => (
+        <div key={t.id} style={{ display: t.id === (activeTab && activeTab.id) ? 'block' : 'none' }}>
+          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog}
+            accountConfig={accounts?.find(a => a.id === account) || {}}
+            strategyHistory={strategyHistory}
+            seed={t.seed} initialState={t.state}
+            onStateChange={st => handlePanelState(t.id, st)} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -699,6 +848,14 @@ function MultiScanPanel({ mode, onSelect }) {
   const [error, setError] = useState('');
   const [manualData, setManualData] = useState({});
   const [showInputs, setShowInputs] = useState(false);
+  // When the scan last pulled, and what each ticker's feed said about itself.
+  const [scannedAt, setScannedAt] = useState(null);
+  const [scanMeta, setScanMeta] = useState({});
+  const [scanNow, setScanNow] = useState(() => Date.now());
+  useEffect(() => {
+    const h = setInterval(() => setScanNow(Date.now()), 15000);
+    return () => clearInterval(h);
+  }, []);
 
   const inputFields = [
     { key: 'price', label: 'Price' },
@@ -737,6 +894,8 @@ function MultiScanPanel({ mode, onSelect }) {
     setScanning(true);
     setError('');
     const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+    const pulledAt = new Date().toISOString();
+    const meta = {};
     let mergedData = { ...manualData };
 
     try {
@@ -750,6 +909,14 @@ function MultiScanPanel({ mode, onSelect }) {
         const marketData = await Promise.all(fetches);
         marketData.forEach(({ underlying, data }) => {
           if (data && !data.error) {
+            // Freshness metadata is not an engine input, so it never survives the
+            // inputFields merge below — capture it here and carry it to the tab.
+            meta[underlying] = {
+              isLive: !!data.isLive,
+              label: data.dataTypeLabel || (data.isLive ? 'Live' : 'Last close'),
+              asOf: data.asOf || data.timestamp || null,
+              pulledAt,
+            };
             const existing = mergedData[underlying] || {};
             const merged = {};
             inputFields.forEach(f => {
@@ -817,6 +984,8 @@ function MultiScanPanel({ mode, onSelect }) {
       console.error('Bridge fetch error:', e);
     }
 
+    setScanMeta(meta);
+    setScannedAt(pulledAt);
     // Run engine with the merged data directly (not from state)
     runEngine(mergedData);
     setScanning(false);
@@ -902,6 +1071,11 @@ function MultiScanPanel({ mode, onSelect }) {
         <div>
           <h3 className="text-sm font-medium text-white">Multi-Underlying Scan</h3>
           <p className="text-xs text-text-muted mt-0.5">Compare setups across underlyings — pick the best trade of the day</p>
+          {scannedAt && (
+            <p className="text-[11px] mono mt-1" style={{ color: '#8b949e' }}>
+              Scanned {clockOf(scannedAt)} · {agoOf(scannedAt, scanNow)}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowInputs(!showInputs)}
@@ -987,6 +1161,13 @@ function MultiScanPanel({ mode, onSelect }) {
                   <th key={i} className="text-center py-2 px-3" style={{minWidth:140}}>
                     <span className="text-white text-sm font-bold">{r.underlying}</span>
                     {i === 0 && r.result && r.result.setupScore > 0 && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-green/10 text-green font-semibold">BEST</span>}
+                    {scanMeta[r.underlying] && (
+                      <div className="text-[9px] mono font-normal mt-0.5 normal-case tracking-normal"
+                        style={{ color: scanMeta[r.underlying].isLive ? '#3fb950' : '#8b949e' }}
+                        title={scanMeta[r.underlying].label + (scanMeta[r.underlying].asOf ? ' · quote ' + clockOf(scanMeta[r.underlying].asOf) : '')}>
+                        {scanMeta[r.underlying].isLive ? '● live' : '○ close'} {clockOf(scanMeta[r.underlying].pulledAt)}
+                      </div>
+                    )}
                   </th>
                 ))}
               </tr>
@@ -1017,9 +1198,9 @@ function MultiScanPanel({ mode, onSelect }) {
                 }},
                 { label: '', render: (r, underlying) => {
                   if (!r.result || !r.data?.price) return null;
-                  return <button onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data); }}
+                  return <button onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data, scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null)); }}
                     style={{padding:'4px 12px',borderRadius:6,border:'1px solid #238636',background:'transparent',color:'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
-                    Use →
+                    Open tab →
                   </button>;
                 }},
               ].map((row, ri) => (

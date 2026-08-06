@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
@@ -7,24 +7,81 @@ import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillData, onPrefillConsumed, strategyHistory }) {
+// ── Fields the TWS auto-fill owns (Aug 2026) ──
+// Anything here can arrive from the bridge, so it is also something you can
+// override by hand and expect the override to SURVIVE the next pull. Sizing
+// fields (bankroll, max loss, win/risk, net credit) are never fed and so are
+// deliberately absent: typing one of those is not an override of anything.
+const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwap15','vwap15_30','em',
+  'atr','atr5','atr2h','vix','vix1d','esOvernightHigh','esOvernightLow','esClose',
+  'priorDayClose','cashOpen','esEM'];
+const MKT_45 = ['price','vix'];
+
+const clockOf = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+};
+const agoOf = (ts, now) => {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (!isFinite(t)) return '';
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago';
+};
+
+// Seed a fresh input bag from a multi-scan row. Only the market fields the scan
+// actually resolved are taken; sizing and defaults are left as they are.
+function applySeed(base, seed, keys) {
+  if (!seed) return base;
+  const out = { ...base };
+  if (seed.underlying) out.underlying = seed.underlying;
+  keys.forEach(k => {
+    const v = seed[k];
+    if (v != null && v !== '' && v !== 0) out[k] = String(v);
+  });
+  if (seed.emSource) out.emSource = seed.emSource;
+  if (seed.straddleCall) out.straddleCall = String(seed.straddleCall);
+  if (seed.straddlePut) out.straddlePut = String(seed.straddlePut);
+  return out;
+}
+
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   const defBankroll = acfg.bankroll || 3000;
   const defMaxLoss = acfg.maxDailyLoss || 300;
   const defMaxOpen = acfg.maxOpenRisk || 450;
-  const [overrideStrat, setOverrideStrat] = useState(null);
+  const init = initialState || null;
+  const [overrideStrat, setOverrideStrat] = useState(init?.overrideStrat ?? null);
   const [autoFilling, setAutoFilling] = useState(false);
-  const [dataFresh, setDataFresh] = useState(null); // market-data freshness (live vs last close)
-  const [esContract, setEsContract] = useState(''); // ES front-month label from bridge
+  const [dataFresh, setDataFresh] = useState(init?.dataFresh ?? (seed?._meta || null)); // market-data freshness (live vs last close) + when it was pulled
+  const [esContract, setEsContract] = useState(init?.esContract ?? ''); // ES front-month label from bridge
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
-  const [greeksFresh, setGreeksFresh] = useState(null); // option-feed freshness (real-time/delayed) + asOf
+  const [greeksFresh, setGreeksFresh] = useState(init?.greeksFresh ?? null); // option-feed freshness (real-time/delayed) + asOf
+  // Market fields you have typed by hand. Auto-fill will not overwrite these;
+  // they render amber with the feed's value alongside so the override is visible.
+  const [held, setHeld] = useState(init?.held ?? {});
+  // The last raw bridge pull: what it gave us, what it did not, and when. This is
+  // what lets a re-fill say "these three did not come back" instead of quietly
+  // leaving stale numbers behind a LIVE badge.
+  const [feed, setFeed] = useState(init?.feed ?? null);
+  const [justRefreshed, setJustRefreshed] = useState(false);
+  const [tick, setTick] = useState(() => Date.now());
+
+  // One slow clock for every relative age on the panel, so "2m ago" is true
+  // rather than however old the last keystroke was.
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
   const [showWhatIf, setShowWhatIf] = useState(false);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
 
-  const [i0, setI0] = useState({
+  const [i0, setI0] = useState(() => {
+    const base = {
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'',
@@ -34,6 +91,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     lowerWingDelta:'', upperWingDelta:'',
     emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'1.2533',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen
+    };
+    if (init?.i0) return { ...base, ...init.i0 };
+    return applySeed(base, seed, MKT_0);
   });
 
   // Auto-calculate hours remaining on mount
@@ -50,47 +110,64 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
     }
   }, [is0]);
 
-  // Apply prefillData from multi-scan
-  useEffect(() => {
-    if (!prefillData || !is0) return;
-    setI0(prev => ({
-      ...prev,
-      underlying: prefillData.underlying || prev.underlying,
-      price: prefillData.price || prev.price,
-      high: prefillData.high || prev.high,
-      low: prefillData.low || prev.low,
-      vwap5: prefillData.vwap5 || prev.vwap5,
-      vwap5_30: prefillData.vwap5_30 || prev.vwap5_30,
-      vwap15: prefillData.vwap15 || prev.vwap15,
-      vwap15_30: prefillData.vwap15_30 || prev.vwap15_30,
-      em: prefillData.em || prev.em,
-      atr: prefillData.atr || prev.atr,
-      atr5: prefillData.atr5 || prev.atr5,
-      atr2h: prefillData.atr2h || prev.atr2h,
-      vix: prefillData.vix || prev.vix,
-      vix1d: prefillData.vix1d || prev.vix1d,
-      esOvernightHigh: prefillData.esOvernightHigh || prev.esOvernightHigh,
-      esOvernightLow: prefillData.esOvernightLow || prev.esOvernightLow,
-      esClose: prefillData.esClose || prev.esClose,
-      priorDayClose: prefillData.priorDayClose || prev.priorDayClose,
-      cashOpen: prefillData.cashOpen || prev.cashOpen,
-      esEM: prefillData.esEM || prev.esEM,
-    }));
-    setOverrideStrat(null);
-    if (onPrefillConsumed) onPrefillConsumed();
-  }, [prefillData]);
+  // A multi-scan pick no longer merges into whatever ticket happens to be open —
+  // it opens its own tab, and this panel is seeded at mount (see applySeed above).
 
-  const [i45, setI45] = useState({
+  const [i45, setI45] = useState(() => {
+    const base = {
     underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
     outlook:'neutral', pop:'', win:'', risk:'', netCreditDebit:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
     bpr:'', theta:'', vega:'', delta:'', lowerWingDelta:'', upperWingDelta:''
+    };
+    if (init?.i45) return { ...base, ...init.i45 };
+    return applySeed(base, seed, MKT_45);
   });
 
-  const set0 = (k,v) => setI0(p => ({...p,[k]:v}));
-  const set45 = (k,v) => setI45(p => ({...p,[k]:v}));
+  // ── Manual holds ──
+  // Typing into a market field marks it held for THIS engine (0DTE and 45DTE keep
+  // separate holds — they share field names but not meaning). Held fields survive
+  // auto-fill; everything else is genuinely refetched.
+  const bag = is0 ? '0' : '45';
+  const markHeld = (b, k) => setHeld(h => (h[b + ':' + k] ? h : { ...h, [b + ':' + k]: true }));
+  const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k)) markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
+
+  const isHeld = k => !!held[bag + ':' + k];
+  const feedValOf = k => (feed && feed.values ? feed.values[k] : undefined);
+  const notFed = k => !!feed && Array.isArray(feed.missing) && feed.missing.indexOf(k) >= 0;
+  const heldKeys = Object.keys(held).filter(x => x.indexOf(bag + ':') === 0);
+  // Render props for one market input.
+  const mk = k => ({ manual: isHeld(k), feedVal: feedValOf(k), stale: notFed(k) && !isHeld(k) });
+
+  // Drop every hold on this engine and take the feed's value back where we have
+  // one. The escape hatch for "I typed that by mistake" — without it a held field
+  // could never return to the feed short of reloading the page.
+  function releaseHolds() {
+    if (!heldKeys.length) return;
+    setHeld(h => { const o = { ...h }; heldKeys.forEach(k => { delete o[k]; }); return o; });
+    if (feed && feed.values) {
+      const apply = prev => {
+        const out = { ...prev };
+        heldKeys.forEach(x => {
+          const k = x.slice(bag.length + 1);
+          if (feed.values[k] !== undefined) out[k] = feed.values[k];
+        });
+        return out;
+      };
+      if (is0) setI0(apply); else setI45(apply);
+    }
+  }
+
+  // Hand the whole candidate up so the parent can label its tab and persist it.
+  // Through a ref so an unstable parent callback cannot re-trigger the effect.
+  const oscRef = useRef(onStateChange);
+  oscRef.current = onStateChange;
+  useEffect(() => {
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, dataFresh, esContract, greeksFresh, held, feed });
+  }, [i0, i45, overrideStrat, dataFresh, esContract, greeksFresh, held, feed]);
 
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
@@ -422,8 +499,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
       const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
       if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
-      // Data-freshness flag from the bridge (realtime | frozen | delayed | ...)
-      setDataFresh(d.dataType ? { isLive: !!d.isLive, label: d.dataTypeLabel || '', dataType: d.dataType, asOf: d.asOf || d.timestamp } : null);
+      // Data-freshness flag from the bridge (realtime | frozen | delayed | ...).
+      // pulledAt is OUR clock at the moment of the pull; asOf is the feed's own
+      // stamp. They answer different questions — "how old is this screen" vs
+      // "how old is the quote" — so both are kept.
+      const pulledAt = new Date().toISOString();
+      setDataFresh({ isLive: !!d.isLive, label: d.dataTypeLabel || d.dataType || '', dataType: d.dataType || '', asOf: d.asOf || d.timestamp || pulledAt, pulledAt });
       if (d.esContractLabel || d.esContractMonth) setEsContract(d.esContractLabel || d.esContractMonth);
 
       // Fetch the straddle EM separately, with a short timeout so a slow/after-
@@ -442,6 +523,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         } catch (e) { /* straddle optional — VIX EM stands */ }
       }
 
+      // ── What the feed actually returned ──
+      // A field the bridge answers with 0, null or '' has NOT been refreshed — it
+      // has failed. The old code wrote `d.x || prev.x`, which silently kept the
+      // stale number under a fresh LIVE badge and looked identical to a successful
+      // pull. Now the failures are recorded and shown on the field itself.
+      const fields = is0 ? MKT_0 : MKT_45;
+      const vals = {}, missing = [];
+      fields.forEach(k => {
+        let v = d[k];
+        if (is0 && k === 'em' && straddle) v = straddle.expectedMove; // straddle beats the VIX model
+        if (v == null || v === '' || v === 0) missing.push(k); else vals[k] = String(v);
+      });
+      setFeed({ at: pulledAt, values: vals, missing });
+      setJustRefreshed(true);
+      setTimeout(() => setJustRefreshed(false), 6000);
+
       if (is0) {
         // Calculate hours remaining until 3pm ET (15:00 New York)
         const now = new Date();
@@ -451,38 +548,28 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
         const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
         const hoursRounded = Math.round(hoursLeft * 10) / 10;
 
-        setI0(prev => ({
-          ...prev,
-          price: d.price || prev.price,
-          high: d.high || prev.high,
-          low: d.low || prev.low,
-          vwap5: d.vwap5 || prev.vwap5,
-          vwap5_30: d.vwap5_30 || prev.vwap5_30,
-          vwap15: d.vwap15 || prev.vwap15,
-          vwap15_30: d.vwap15_30 || prev.vwap15_30,
-          em: straddle ? String(straddle.expectedMove) : (d.em || prev.em),
-          emSource: straddle ? 'straddle' : 'vix',
-          straddleCall: straddle ? String(straddle.callPrice) : '',
-          straddlePut: straddle ? String(straddle.putPrice) : '',
-          atr: d.atr || prev.atr,
-          atr5: d.atr5 || prev.atr5,
-          atr2h: d.atr2h || prev.atr2h,
-          vix: d.vix || prev.vix,
-          vix1d: d.vix1d || prev.vix1d,
-          esOvernightHigh: d.esOvernightHigh || prev.esOvernightHigh,
-          esOvernightLow: d.esOvernightLow || prev.esOvernightLow,
-          esClose: d.esClose || prev.esClose,
-          priorDayClose: d.priorDayClose || prev.priorDayClose,
-          cashOpen: d.cashOpen || prev.cashOpen,
-          esEM: d.esEM || prev.esEM,
-          esDelayed: !!d.esDelayed,
-          priceDelayed: !!d.priceDelayed,
-          hours: hoursRounded > 0 ? hoursRounded : prev.hours
-        }));
+        setI0(prev => {
+          const out = { ...prev };
+          MKT_0.forEach(k => { if (!held['0:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
+          // EM's provenance travels with EM: only restate it if EM itself refreshed.
+          if (!held['0:em'] && vals.em !== undefined) {
+            out.emSource = straddle ? 'straddle' : 'vix';
+            out.straddleCall = straddle ? String(straddle.callPrice) : '';
+            out.straddlePut = straddle ? String(straddle.putPrice) : '';
+          }
+          out.esDelayed = !!d.esDelayed;
+          out.priceDelayed = !!d.priceDelayed;
+          out.hours = hoursRounded > 0 ? hoursRounded : prev.hours;
+          return out;
+        });
       } else {
         // 45DTE: fill the market fields the feed provides (price, VIX). IV/skew come
         // from Fetch Greeks. Freshness tag (dataFresh) is set above for both engines.
-        setI45(prev => ({ ...prev, price: d.price || prev.price, vix: d.vix || prev.vix }));
+        setI45(prev => {
+          const out = { ...prev };
+          MKT_45.forEach(k => { if (!held['45:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
+          return out;
+        });
       }
     } catch (e) {
       alert('Auto-fill failed: ' + e.message);
@@ -830,13 +917,30 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
             <SectionLabel info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 and 15 with 30-min ago values for slope calculation. SPX uses SPY VWAP ×10 automatically.">Market data</SectionLabel>
             <div className="flex items-center gap-2">
               {dataFresh && (
-                <span title={dataFresh.label + (dataFresh.asOf ? ' \u00b7 ' + new Date(dataFresh.asOf).toLocaleTimeString() : '')}
-                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',
+                <span title={(dataFresh.label || '') + (dataFresh.asOf ? ' \u00b7 quote stamped ' + new Date(dataFresh.asOf).toLocaleString('en-AU') : '')
+                  + (feed && feed.missing && feed.missing.length ? '\n' + feed.missing.length + ' field(s) not returned by this pull: ' + feed.missing.join(', ') : '')}
+                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
                     background: dataFresh.isLive ? '#0d2818' : '#161b22',
                     color: dataFresh.isLive ? '#3fb950' : '#8b949e',
                     border: '1px solid ' + (dataFresh.isLive ? '#238636' : '#30363d')}}>
                   {dataFresh.isLive ? '\u25cf LIVE' : '\u25cb LAST CLOSE'}
+                  {(dataFresh.pulledAt || dataFresh.asOf) && <span style={{fontWeight:600}}> {clockOf(dataFresh.pulledAt || dataFresh.asOf)}</span>}
+                  <span style={{fontWeight:400,opacity:0.75}}> · {agoOf(dataFresh.pulledAt || dataFresh.asOf, tick)}</span>
                 </span>
+              )}
+              {justRefreshed && (
+                <span style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
+                  background:'#0d2818',color:'#3fb950',border:'1px solid #238636'}}>
+                  ✓ REFRESHED{feed && feed.missing && feed.missing.length ? ' · ' + feed.missing.length + ' missing' : ''}
+                </span>
+              )}
+              {heldKeys.length > 0 && (
+                <button onClick={releaseHolds}
+                  title={'You are holding ' + heldKeys.length + ' hand-typed market field(s); auto-fill leaves them alone. Click to release them and take the last feed value back.'}
+                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
+                    background:'#2d1a0d',color:'#d29922',border:'1px solid #5a3a1a',cursor:'pointer'}}>
+                  ✎ {heldKeys.length} MANUAL
+                </button>
               )}
               <button onClick={handleLoadFromTWS} disabled={loadingTws}
                 title="Load an open option position from TWS into the ticket, then pull market data"
@@ -864,25 +968,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
           )}
           <div className="grid grid-cols-2 gap-2.5">
             <Sel label="Underlying" value={is0?i0.underlying:i45.underlying} onChange={v=>is0?set0('underlying',v):set45('underlying',v)} options={UNDERLYING_LIST}/>
-            <Inp label="Price" value={is0?i0.price:i45.price} onChange={v=>is0?set0('price',v):set45('price',v)}/>
+            <Inp label="Price" {...mk('price')} value={is0?i0.price:i45.price} onChange={v=>is0?set0('price',v):set45('price',v)}/>
             {is0 ? <>
-              <Inp label="Day high" value={i0.high} onChange={v=>set0('high',v)}/>
-              <Inp label="Day low" value={i0.low} onChange={v=>set0('low',v)}/>
-              <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
-              <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
-              <Inp label={`VWAP 15${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
-              <Inp label={`VWAP 15 -30min${vwapScaled ? ' (x10)' : ''}`} value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
-              <Inp label="EM" value={i0.em} onChange={v=>setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''}))}/>
-              <Inp label="ATR 1 Day" value={i0.atr} onChange={v=>set0('atr',v)}/>
-              <Inp label="ATR 5m" value={i0.atr5} onChange={v=>set0('atr5',v)}/>
-              <Inp label="ATR 2h" value={i0.atr2h} onChange={v=>set0('atr2h',v)}/>
-              <Inp label="VIX" value={i0.vix} onChange={v=>set0('vix',v)}/>
-              <Inp label="VIX1D" value={i0.vix1d} onChange={v=>set0('vix1d',v)}/>
+              <Inp label="Day high" {...mk('high')} value={i0.high} onChange={v=>set0('high',v)}/>
+              <Inp label="Day low" {...mk('low')} value={i0.low} onChange={v=>set0('low',v)}/>
+              <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} {...mk('vwap5')} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
+              <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap5_30')} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
+              <Inp label={`VWAP 15${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap15')} value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
+              <Inp label={`VWAP 15 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap15_30')} value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
+              <Inp label="EM" {...mk('em')} value={i0.em} onChange={v=>{setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''})); markHeld('0','em');}}/>
+              <Inp label="ATR 1 Day" {...mk('atr')} value={i0.atr} onChange={v=>set0('atr',v)}/>
+              <Inp label="ATR 5m" {...mk('atr5')} value={i0.atr5} onChange={v=>set0('atr5',v)}/>
+              <Inp label="ATR 2h" {...mk('atr2h')} value={i0.atr2h} onChange={v=>set0('atr2h',v)}/>
+              <Inp label="VIX" {...mk('vix')} value={i0.vix} onChange={v=>set0('vix',v)}/>
+              <Inp label="VIX1D" {...mk('vix1d')} value={i0.vix1d} onChange={v=>set0('vix1d',v)}/>
             </> : <>
               <Inp label="IV Rank (%)" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
               <Inp label="IV (%)" value={i45.iv} onChange={v=>set45('iv',v)}/>
               <Inp label="HV (%)" value={i45.hv} onChange={v=>set45('hv',v)}/>
-              <Inp label="VIX" value={i45.vix} onChange={v=>set45('vix',v)}/>
+              <Inp label="VIX" {...mk('vix')} value={i45.vix} onChange={v=>set45('vix',v)}/>
               <Inp label="IV Front" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
               <Inp label="IV Back" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
               <Inp label="Skew (%)" value={i45.skew} onChange={v=>set45('skew',v)}/>
@@ -971,12 +1075,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, prefillDa
                 </div>
               )}
               <div className="grid grid-cols-2 gap-2.5">
-                <Inp label={esPriorCloseLabel} value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
-                <Inp label={esPreOpenLabel} value={i0.esClose} onChange={v=>set0('esClose',v)}/>
-                <Inp label="ES Overnight High" value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)} bad={r.onSwapped}/>
-                <Inp label="ES Overnight Low" value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)} bad={r.onSwapped}/>
-                <Inp label="ES EM" value={i0.esEM} onChange={v=>set0('esEM',v)}/>
-                <Inp label={i0.underlying + ' Open'} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
+                <Inp label={esPriorCloseLabel} {...mk('priorDayClose')} value={i0.priorDayClose} onChange={v=>set0('priorDayClose',v)}/>
+                <Inp label={esPreOpenLabel} {...mk('esClose')} value={i0.esClose} onChange={v=>set0('esClose',v)}/>
+                <Inp label="ES Overnight High" {...mk('esOvernightHigh')} value={i0.esOvernightHigh} onChange={v=>set0('esOvernightHigh',v)} bad={r.onSwapped}/>
+                <Inp label="ES Overnight Low" {...mk('esOvernightLow')} value={i0.esOvernightLow} onChange={v=>set0('esOvernightLow',v)} bad={r.onSwapped}/>
+                <Inp label="ES EM" {...mk('esEM')} value={i0.esEM} onChange={v=>set0('esEM',v)}/>
+                <Inp label={i0.underlying + ' Open'} {...mk('cashOpen')} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
               {r.onSwapped && (
                 <div style={{margin:'8px 0 0',padding:'5px 9px',borderRadius:6,background:'#3d1418',border:'1px solid #7d2b2b',fontSize:11,color:'#f85149',lineHeight:1.4}}>
@@ -1847,10 +1951,25 @@ function SectionLabel({ children, white, info }) {
   );
 }
 
-function Inp({label,value,onChange,type,bad}) {
-  return (<div><label className={`text-[11px] block mb-1 ${bad?'text-[#f85149]':'text-[#c9d1d9]'}`}>{label}</label>
-    <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—"
-      className={`w-full px-3 py-2 bg-[#0d1117] border rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7] ${bad?'border-[#f85149]':'border-[#30363d]'}`}/></div>);
+// `manual` = you typed this and auto-fill is leaving it alone (amber, with the
+// feed's value shown alongside when the two disagree). `stale` = the last pull
+// did not return this field at all, so what is on screen is older than the badge
+// suggests (dim, dashed). `bad` still wins over both — it means the value is wrong.
+function Inp({label,value,onChange,type,bad,manual,stale,feedVal}) {
+  const border = bad ? 'border-[#f85149]' : manual ? 'border-[#9e6a03]' : 'border-[#30363d]';
+  const lblCls = bad ? 'text-[#f85149]' : manual ? 'text-[#d29922]' : 'text-[#c9d1d9]';
+  const differs = manual && feedVal !== undefined && String(feedVal) !== String(value == null ? '' : value);
+  const tip = manual
+    ? 'Manual — you typed this, so auto-fill left it alone.' + (differs ? ' The last pull said ' + feedVal + '.' : '')
+    : stale ? 'The last auto-fill did not return this field, so this value is older than the badge above.' : undefined;
+  return (<div><label className={`text-[11px] block mb-1 ${lblCls}`} title={tip}>
+      {label}{manual ? ' ✎' : ''}
+      {differs && <span className="text-[#6e7681] font-normal"> feed {feedVal}</span>}
+      {!manual && stale && <span className="text-[#6e7681] font-normal"> · no feed</span>}
+    </label>
+    <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—" title={tip}
+      style={(!bad && !manual && stale) ? {borderStyle:'dashed'} : undefined}
+      className={`w-full px-3 py-2 bg-[#0d1117] border rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7] ${border}`}/></div>);
 }
 function Sel({label,value,onChange,options}) {
   return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
