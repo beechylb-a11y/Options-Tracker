@@ -753,10 +753,21 @@ export function calc0DTE(inputs) {
     let verdict, label, note;
     if (itmLegs.length > 0 && !isCashSettled) {
       verdict = 'close'; label = 'Close before the bell';
+      // The assignment exposure comes from holding THROUGH settlement, not from the hour
+      // on the clock, and a pin structure inside its wings earns most of its value in the
+      // last hour. Closing at 3:00 rather than 3:50 buys nothing on assignment and can
+      // forfeit most of the convergence. (Aug 2026 — SPY 766/769/771 post-mortem: a 3pm
+      // exit took $52 of a $144 settlement.) Guidance only; touches no score.
+      const pinInBand = profitLocus === 'pin'
+        && price > Math.min(..._allK) && price < Math.max(..._allK);
       note = `${underlying || 'This underlying'} settles into shares and ${itmLegs.length} leg`
         + `${itmLegs.length > 1 ? 's are' : ' is'} already ITM. Held to 4pm that is `
-        + `${itmLegs.length * 100} shares per contract, unhedged overnight. The exit cost is `
-        + `the cheap side of this trade.`;
+        + `${itmLegs.length * 100} shares per contract, unhedged overnight. The exposure comes `
+        + `from holding THROUGH settlement, not from the clock \u2014 closing at 3:50 carries the `
+        + `same (zero) assignment risk as closing at 3:00. What waiting costs you is cover `
+        + `against a late move and a wider closing spread.`
+        + (pinInBand ? ` Price is inside the wings, and a pin structure accrues most of its `
+          + `value in the final hour \u2014 an early exit is a real cost, so pick the time on purpose.` : '');
     } else if (cushionEM >= needed && !closingHour) {
       verdict = 'hold'; label = 'Can run to expiry';
       note = `${boundaryLabel} is ${cushionEM.toFixed(2)} EM away with `
@@ -797,6 +808,12 @@ export function calc0DTE(inputs) {
   }
   let pMaxLoss = null, pMaxLossLow = null, pMaxLossHigh = null;
   let pMaxLossModel = null, pMaxLossDelta = null, pMaxLossSource = null;
+  // Which expected move this tail was priced on, and the sigma it produced. Display
+  // only (Aug 2026). A ticket can score its "% EM" criteria on a MANUAL em while the
+  // tail — and therefore EV, and therefore Trade Confidence — runs on emV1D. Both are
+  // deliberate; the defect was that nothing on the ticket said they differed. Surfacing
+  // the basis changes no number. (SPY 766/769/771 post-mortem, 6 Aug 2026.)
+  let pMaxLossBasis = null;
   if (legs.length > 0 && price > 0 && em > 0) {
     const strikes = legs.map(l => l.strike);
     const lowerWing = Math.min(...strikes);
@@ -826,6 +843,8 @@ export function calc0DTE(inputs) {
     // back to the general EM input. Both are skew-free (see delta method below).
     const emBase = emV1D > 0 ? emV1D : em;
     const sigma = emBase * Math.sqrt(Math.min(1, hoursLeft / 5.5)); // remaining-session move
+    if (sigma > 0) pMaxLossBasis = { em: emBase, emSrc: emV1D > 0 ? 'VIX1D' : 'manual',
+      sigma, hoursLeft };
     if (sigma > 0) {
       // Reversed condor is a DEBIT structure — max loss is in the MIDDLE, not
       // the tails — so this tail method doesn't apply; leave null for it.
@@ -986,8 +1005,12 @@ export function calc0DTE(inputs) {
     tailLabel = 'Tail risk --';
   } else {
     tailPts = pMaxLoss < 0.05 ? 10 : pMaxLoss < 0.10 ? 8 : pMaxLoss < 0.15 ? 6 : pMaxLoss < 0.25 ? 3 : 0;
-    const srcTag = pMaxLossSource === 'blend' ? ' (blend)' : pMaxLossSource === 'delta' ? ' (delta)' : '';
-    tailLabel = `P(max loss) ${(pMaxLoss*100).toFixed(0)}%${srcTag}`;
+    const tags = [];
+    if (pMaxLossSource === 'blend') tags.push('blend');
+    else if (pMaxLossSource === 'delta') tags.push('delta');
+    if (pMaxLossBasis) tags.push(`${pMaxLossBasis.emSrc} EM ${pMaxLossBasis.em.toFixed(1)}`
+      + ` \u2192 \u03c3 ${pMaxLossBasis.sigma.toFixed(1)}`);
+    tailLabel = `P(max loss) ${(pMaxLoss*100).toFixed(0)}%${tags.length ? ` (${tags.join(' \u00b7 ')})` : ''}`;
   }
   setupScore += tailPts;
   criteria.push({ label: tailLabel, pts: tailPts, max: 10 });
@@ -1799,7 +1822,7 @@ export function calc0DTE(inputs) {
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
   if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
   if (emDisagree && emVolGap != null) warnings.push(`EM sources disagree on a like-for-like basis: straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%) — check the feed or an event`);
-  else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number`);
+  else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number, but P(max loss) — and therefore EV and Trade Confidence — runs off the VIX1D ruler`);
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -1972,6 +1995,7 @@ export function calc0DTE(inputs) {
     // Scoring
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
+    pMaxLossBasis,
     // Kelly (Sharpe-adjusted)
     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
