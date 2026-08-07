@@ -1660,6 +1660,15 @@ export function calc0DTE(inputs) {
     const absDelta = Math.abs(delta);
     const tEdge = absDelta * atr > 0 ? thetaAbs / (absDelta * atr) : 0;
     const gRisk = thetaAbs > 0 ? (gamma * atr) / thetaAbs : 0;
+    // Every band below reads gRisk as a magnitude, but gamma is SIGNED and a long fly
+    // or condor is SHORT gamma at the body — exactly where whipsaw hurts. A negative
+    // gRisk therefore sailed through `gRisk < 0.30` and came back "low — Safe to hold —
+    // minimal whipsaw risk" on the one structure that is not. Band on the magnitude and
+    // say which side of gamma you are on. (Aug 2026, same class as the Jul theta-sign
+    // fix.) The blocker at the bottom of this file still keys off the SIGNED gRisk, so
+    // no gate changes. Display only.
+    const gShort = gamma < 0;
+    const gMag = Math.abs(gRisk);
     // Max tolerable move: how far price can move before theta earned is consumed
     // theta is daily ($), hours is actual hours remaining to 4pm ET
     // Theta earned in remaining time = theta × (hours / 5.5)
@@ -1669,7 +1678,18 @@ export function calc0DTE(inputs) {
     const thetaRemaining = thetaAbs * (hoursUsed / 5.5);
     // A max tolerable move only exists when decay is accumulating to absorb one. A
     // position paying decay has no cushion, so the gauge is not applicable, not zero-ish.
-    const dsMax = absDelta > 0 && !thetaPaid ? thetaRemaining / absDelta : 0;
+    const dsRaw = absDelta > 0 && !thetaPaid ? thetaRemaining / absDelta : 0;
+    // theta/|delta| only measures a real tolerance while delta stays roughly constant.
+    // A pin structure is delta-FLAT at the body by design, so the ratio divides by an
+    // almost-zero and prints a cushion many times wider than the structure itself —
+    // 20.7 pts on a fly whose breakevens are 1.6 pts away, called "strong". Past the
+    // nearest breakeven the position is losing money no matter what theta is doing, so
+    // that distance is the real ceiling. (Aug 2026 — SPY 766/769/771.) Display only.
+    const _beDists = (payoff && Array.isArray(payoff.breakevens) && price > 0)
+      ? payoff.breakevens.map(b => Math.abs(b - price)).filter(d => d > 0) : [];
+    const beDist = _beDists.length ? Math.min(..._beDists) : 0;
+    const dsCapped = beDist > 0 && dsRaw > beDist;
+    const dsMax = dsCapped ? beDist : dsRaw;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
     // Theta edge interpretation
@@ -1681,11 +1701,18 @@ export function calc0DTE(inputs) {
       : 'Check Gamma Risk — looks great until it explodes';
 
     // Gamma risk interpretation
-    let gRiskSignal = gRisk < 0.30 ? 'low' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'elevated' : 'high';
-    let gRiskAction = gRisk < 0.30 ? 'Safe to hold — minimal whipsaw risk'
-      : gRisk < 0.70 ? 'Acceptable — watch if IV spikes'
-      : gRisk < 1.20 ? 'Reduce size or tighten profit target'
+    let gRiskSignal = gMag < 0.30 ? 'low' : gMag < 0.70 ? 'moderate' : gMag < 1.20 ? 'elevated' : 'high';
+    let gRiskAction = gMag < 0.30 ? 'Safe to hold — minimal whipsaw risk'
+      : gMag < 0.70 ? 'Acceptable — watch if IV spikes'
+      : gMag < 1.20 ? 'Reduce size or tighten profit target'
       : 'Avoid or exit — gamma cliff risk';
+    if (gShort) {
+      gRiskSignal = `${gRiskSignal} · short gamma`;
+      gRiskAction = gMag < 0.30 ? 'Short gamma, but small against the decay collected — holdable'
+        : gMag < 0.70 ? 'Short gamma — a move against the body costs more the further it goes'
+        : gMag < 1.20 ? 'Short gamma is biting — reduce size or tighten the profit target'
+        : 'Short gamma cliff — a fast move past the body outruns every hour of decay left';
+    }
 
     // Max tolerable move interpretation
     let dsSignal = dsATR > 1.0 ? 'strong' : dsATR > 0.50 ? 'good' : dsATR > 0.25 ? 'marginal' : 'thin';
@@ -1693,6 +1720,12 @@ export function calc0DTE(inputs) {
       : dsATR > 0.50 ? 'Theta holds unless vol expands significantly'
       : dsATR > 0.25 ? 'A+ setup only, low realised vol, tighten target'
       : 'Avoid or cut size sharply — theta cannot compensate';
+    if (dsCapped) {
+      dsSignal = dsATR > 0.50 ? 'capped' : 'thin';
+      dsAction = `Capped at the nearest breakeven (${beDist.toFixed(1)} pts). Theta/delta `
+        + `said ${dsRaw.toFixed(1)} pts, but this structure is delta-flat at the body — `
+        + `past breakeven it loses whatever decay is doing.`;
+    }
 
     // ── Sign-aware relabel ──
     // Every band above reads these ratios as decay COLLECTED. The arithmetic is
@@ -1715,7 +1748,7 @@ export function calc0DTE(inputs) {
     }
 
     // Sweet spot check — defined for decay collection only.
-    const sweetSpot = !thetaPaid && tEdge >= 0.15 && tEdge <= 0.40 && gRisk < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
+    const sweetSpot = !thetaPaid && tEdge >= 0.15 && tEdge <= 0.40 && gMag < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
 
     // ── Directional Edge Framework ──
     // Measures whether price movement or time decay will dominate
@@ -1794,7 +1827,7 @@ export function calc0DTE(inputs) {
       edgePhase = 'neutral';
     }
 
-    greeks = { tEdge, gRisk, dsMax, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
+    greeks = { tEdge, gRisk, gShort, dsMax, dsRaw, dsCapped, beDist, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
       // Directional Edge
       directionalGain, thetaPressure, edgeRatio, edgeThreshold, edgeSignal, edgeAction, edgePhase,
       remainingMove, isCreditStrat, isDebitDir, isBflyCondor

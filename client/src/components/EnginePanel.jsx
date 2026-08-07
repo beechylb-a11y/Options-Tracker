@@ -1228,7 +1228,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           {/* Greeks */}
           <div className="flex items-center justify-between">
-            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay, SIGNED: positive if the position collects decay, negative if it pays it (a long butterfly or debit spread before the body is reached). Fetching from TWS fills the sign for you; entering by hand, keep the minus sign - the survivability read inverts on it. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
+            <SectionLabel info="Enter from your broker's position Greeks, or fetch live from TWS. Theta = daily dollar decay, SIGNED: positive if the position collects decay, negative if it pays it (a long butterfly or debit spread before the body is reached). Fetching from TWS fills the sign for you; entering by hand, keep the minus sign - the survivability read inverts on it. Delta = price sensitivity. Gamma = delta acceleration. Gamma strike = price where gamma is highest (pin magnet). Used for trade survivability analysis (Directional Edge). UNITS: Theta, Delta, Gamma and Vega are POSITION-level (per-share greek x contracts x 100), so Delta 4.68 means the position gains $4.68 per 1 point of underlying. Wing |Δ| below is the opposite — a PER-SHARE delta between 0 and 1. Two different scales, and TWS fills both correctly; a position delta near 5 alongside a wing delta near 0.2 is not an import error. Wing |Δ|: enter the absolute delta of the lowest- and highest-strike long legs (put OR call — the engine converts each by its right) for the skew-aware P(max loss) cross-check.">Greeks (optional)</SectionLabel>
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               {greeksFresh && (() => {
                 const rt = greeksFresh.dataType === 'realtime';
@@ -1256,16 +1256,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
           <div className="grid grid-cols-2 gap-2.5">
             {is0 ? <>
-              <Inp label="Theta ($)" value={i0.theta} onChange={v=>set0('theta',v)}/>
-              <Inp label="Delta" value={i0.delta} onChange={v=>set0('delta',v)}/>
-              <Inp label="Gamma" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
+              <Inp label="Theta ($/day, position)" value={i0.theta} onChange={v=>set0('theta',v)}/>
+              <Inp label="Delta ($ per 1 pt, position)" value={i0.delta} onChange={v=>set0('delta',v)}/>
+              <Inp label="Gamma (Δ$ per 1 pt, position)" value={i0.gamma} onChange={v=>set0('gamma',v)}/>
               <Inp label="Gamma strike" value={i0.gamStrike} onChange={v=>set0('gamStrike',v)}/>
               <Inp label="Lower wing |Δ| (lowest strike)" value={i0.lowerWingDelta} onChange={v=>set0('lowerWingDelta',v)}/>
               <Inp label="Upper wing |Δ| (highest strike)" value={i0.upperWingDelta} onChange={v=>set0('upperWingDelta',v)}/>
             </> : <>
-              <Inp label="Theta ($)" value={i45.theta} onChange={v=>set45('theta',v)}/>
-              <Inp label="Vega ($)" value={i45.vega} onChange={v=>set45('vega',v)}/>
-              <Inp label="Delta" value={i45.delta} onChange={v=>set45('delta',v)}/>
+              <Inp label="Theta ($/day, position)" value={i45.theta} onChange={v=>set45('theta',v)}/>
+              <Inp label="Vega ($ per 1 vol pt, position)" value={i45.vega} onChange={v=>set45('vega',v)}/>
+              <Inp label="Delta ($ per 1 pt, position)" value={i45.delta} onChange={v=>set45('delta',v)}/>
               {!is0 && <Inp label="BPR ($)" value={i45.bpr} onChange={v=>set45('bpr',v)}/>}
               <Inp label="Lower wing |Δ| (lowest strike)" value={i45.lowerWingDelta} onChange={v=>set45('lowerWingDelta',v)}/>
               <Inp label="Upper wing |Δ| (highest strike)" value={i45.upperWingDelta} onChange={v=>set45('upperWingDelta',v)}/>
