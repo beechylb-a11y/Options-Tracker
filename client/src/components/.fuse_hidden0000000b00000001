@@ -1200,17 +1200,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {!is0 && (
             <InputSection
               title="Vol surface"
-              info="Implied-vol surface inputs. IV drives EM45 and the strikes — a blank IV blocks the decision. IVR, HV, IV Front and IV Back have no bridge source and stay manual; IV and Skew can auto-fill from Fetch Greeks (per-leg model IVs)."
+              info="Implied-vol surface inputs. IV drives EM45 and the strikes \u2014 a blank IV blocks the decision. IVR, HV, IV Front and IV Back have no bridge source and stay manual; IV and Skew can auto-fill from Fetch Greeks (per-leg model IVs)."
               missing={secMissing.vol}
               collapsed={isCollapsed('vol')}
               onToggle={() => toggleSection('vol')}
               onExpand={() => expandSection('vol')}>
               <div className="grid grid-cols-2 gap-2.5">
-                <Inp label="IV Rank (%) — manual" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
+                <Inp label="IV Rank (%) \u2014 manual" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
                 <Inp label="IV (%)" {...mk('iv')} value={i45.iv} onChange={v=>set45('iv',v)}/>
-                <Inp label="HV (%) — manual" value={i45.hv} onChange={v=>set45('hv',v)}/>
-                <Inp label="IV Front — manual" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
-                <Inp label="IV Back — manual" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
+                <Inp label="HV (%) \u2014 manual" value={i45.hv} onChange={v=>set45('hv',v)}/>
+                <Inp label="IV Front \u2014 manual" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
+                <Inp label="IV Back \u2014 manual" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
                 <Inp label="Skew (%)" {...mk('skew')} value={i45.skew} onChange={v=>set45('skew',v)}/>
                 <Sel label="Term bias" value={i45.termBias} onChange={v=>set45('termBias',v)} options={TERM_BIASES}/>
               </div>
@@ -1221,7 +1221,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {!is0 && (
             <InputSection
               title="Trade setup"
-              info="Days to expiry and directional outlook — these steer strategy selection and the 21-DTE exit maths. DTE defaults to 45 when blank."
+              info="Days to expiry and directional outlook \u2014 these steer strategy selection and the 21-DTE exit maths. DTE defaults to 45 when blank."
               collapsed={isCollapsed('setup')}
               onToggle={() => toggleSection('setup')}
               onExpand={() => expandSection('setup')}>
