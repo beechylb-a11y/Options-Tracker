@@ -1502,27 +1502,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
         {/* ── RESULTS PANEL ── */}
         <div className="space-y-4" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
-          {/* Setup quality */}
-          <div className="card">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="9 criteria scored out of 100: Compression (20), Move consumed (20), Strategy fit (15), VWAP slope + 15m confirm (10), VIX gap (10), ES overnight direction (10), Overnight range (5), VWAP distance (5), Gamma distance (5). A+ = 85+, A = 70+, B = 50+, No setup = below 50." /></span>
-              <div className="flex items-center gap-2">
-                <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
-                <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{r.setupScore}/100</span>
-              </div>
-            </div>
-            {r.criteria.map((cr,i) => {
-              const pct = cr.max>0?Math.round(cr.pts/cr.max*100):0;
-              const bc = pct>=80?'#3fb950':pct>=50?'#2f81f7':pct>=30?'#d29922':'#f85149';
-              return (<div key={i} className="flex items-center gap-2 mb-1">
-                <span className="text-xs text-white truncate" style={{flex:'0 0 160px'}}>{cr.label}</span>
-                <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{background:'#21262d'}}>
-                  <div style={{width:`${pct}%`,height:'100%',background:bc,borderRadius:4,transition:'width 0.3s'}}/>
-                </div>
-                <span className="text-xs text-white mono" style={{flex:'0 0 36px',textAlign:'right'}}>{cr.pts}/{cr.max}</span>
-              </div>);
-            })}
-          </div>
+          {/* Setup quality — weighted bar + points-lost list (full rows collapsible) */}
+          <SetupQualityCard r={r} sBg={sBg} sClr={sClr} />
 
           {/* Strategy ratings */}
           <div className="card">
@@ -1910,6 +1891,84 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Setup quality card: one weighted segment bar (segment width = criterion
+// weight, fill = points earned) + the top point-losers sorted by cost, with
+// the distance to the next grade. The full 9-row breakdown is collapsible.
+function SetupQualityCard({ r, sBg, sClr }) {
+  const [showDetail, setShowDetail] = useState(false);
+  const crits = r.criteria || [];
+  const score = r.setupScore || 0;
+  // Grade thresholds: A+ 85, A 70, B 50 (matches engine grading)
+  const nextUp = score >= 85 ? null
+    : score >= 70 ? { pts: 85 - score, grade: 'A+' }
+    : score >= 50 ? { pts: 70 - score, grade: 'A' }
+    : { pts: 50 - score, grade: 'B' };
+  const lost = crits
+    .filter(c => (c.pts || 0) < (c.max || 0))
+    .map(c => ({ ...c, lost: (c.max || 0) - (c.pts || 0) }))
+    .sort((a, b) => b.lost - a.lost)
+    .slice(0, 3);
+  const fillColor = pct => pct >= 80 ? '#3fb950' : pct >= 50 ? '#2f81f7' : pct >= 30 ? '#d29922' : '#f85149';
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="9 criteria scored out of 100: Compression (20), Move consumed (20), Strategy fit (15), VWAP slope + 15m confirm (10), VIX gap (10), ES overnight direction (10), Overnight range (5), VWAP distance (5), Gamma distance (5). A+ = 85+, A = 70+, B = 50+, No setup = below 50. Segment width = criterion weight; fill = points earned." /></span>
+        <div className="flex items-center gap-2">
+          <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
+          <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{score}/100</span>
+        </div>
+      </div>
+      {nextUp && nextUp.pts > 0 && (
+        <div style={{fontSize:11,color:'#8b949e',marginBottom:6}}>{nextUp.pts} pt{nextUp.pts !== 1 ? 's' : ''} to {nextUp.grade}</div>
+      )}
+      {crits.length > 0 && (
+        <div style={{display:'flex',gap:1,height:12,borderRadius:4,overflow:'hidden',marginBottom:4}}>
+          {crits.map((c, i) => {
+            const pct = c.max > 0 ? Math.round((c.pts || 0) / c.max * 100) : 0;
+            return (
+              <div key={i} title={`${c.label}: ${c.pts}/${c.max}`} style={{flex:c.max || 1,background:'#21262d'}}>
+                <div style={{width:`${pct}%`,height:'100%',background:fillColor(pct),transition:'width 0.3s'}}/>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{fontSize:10,color:'#484f58',marginBottom:8}}>Segment width = weight · fill = points earned · hover for detail</div>
+      {lost.length > 0 && (
+        <div style={{borderTop:'1px solid #21262d',paddingTop:6,marginBottom:2}}>
+          <div style={{fontSize:11,color:'#8b949e',marginBottom:3}}>Costing you the most</div>
+          {lost.map((c, i) => (
+            <div key={i} className="flex items-center justify-between" style={{padding:'2px 0'}}>
+              <span className="text-xs text-white">{c.label}</span>
+              <span className="mono text-xs" style={{color: c.lost >= c.max / 2 ? '#f85149' : '#d29922'}}>−{c.lost}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div onClick={() => setShowDetail(s => !s)}
+        style={{fontSize:11,color:'#58a6ff',cursor:'pointer',userSelect:'none',marginTop:4}}>
+        {showDetail ? 'Hide all criteria ▴' : 'Show all criteria ▾'}
+      </div>
+      {showDetail && (
+        <div style={{marginTop:6}}>
+          {crits.map((cr, i) => {
+            const pct = cr.max > 0 ? Math.round((cr.pts || 0) / cr.max * 100) : 0;
+            return (
+              <div key={i} className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-white truncate" style={{flex:'0 0 160px'}}>{cr.label}</span>
+                <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{background:'#21262d'}}>
+                  <div style={{width:`${pct}%`,height:'100%',background:fillColor(pct),borderRadius:4,transition:'width 0.3s'}}/>
+                </div>
+                <span className="text-xs text-white mono" style={{flex:'0 0 36px',textAlign:'right'}}>{cr.pts}/{cr.max}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
