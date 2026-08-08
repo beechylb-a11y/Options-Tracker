@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis } from 'recharts';
 import { TrendingUp, Calendar, Clock, Layers, Activity } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor } from '../utils/format';
+import { fmt$, pnlColor, localISODate } from '../utils/format';
 import { filterTracker } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
 
@@ -20,13 +20,19 @@ export default function Analytics({ authenticated, account }) {
       api.getDecisions().catch(() => [])
     ]).then(([t, d]) => {
       setTracker(t);
-      if (d && d.length > 1) {
+      // Decisions arrive as objects (with _rowIndex) from the API; legacy
+      // header-array form is still handled. Same normalization as Dashboard.
+      if (Array.isArray(d) && d.length > 0 && d[0]._rowIndex !== undefined) {
+        setDecisions(d);
+      } else if (Array.isArray(d) && d.length > 1 && Array.isArray(d[0])) {
         const headers = d[0];
         setDecisions(d.slice(1).map(row => {
           const obj = {};
           headers.forEach((h, i) => { obj[h] = row[i] || ''; });
           return obj;
         }));
+      } else {
+        setDecisions([]);
       }
       setLoading(false);
     }).catch(e => {
@@ -248,7 +254,7 @@ function RegimePerformance({ closed, decisions }) {
   const decByKey = {};
   decisions.forEach(d => {
     if (!d.Timestamp || !d.Underlying) return;
-    const date = new Date(d.Timestamp).toISOString().split('T')[0];
+    const date = localISODate(new Date(d.Timestamp));
     const key = `${d.Underlying}_${date}`;
     decByKey[key] = d;
   });
@@ -259,7 +265,7 @@ function RegimePerformance({ closed, decisions }) {
   const tradesByDirection = {};
 
   closed.forEach(t => {
-    const date = t.entryDate.toISOString().split('T')[0];
+    const date = localISODate(t.entryDate);
     const key = `${t.underlying}_${date}`;
     const dec = decByKey[key];
 
@@ -267,9 +273,13 @@ function RegimePerformance({ closed, decisions }) {
     const setup = dec?.['Setup Grade'] || 'No engine data';
     const direction = dec?.Direction || 'No engine data';
 
-    [tradesByRegime, regime].reduce((m, k) => { if (!m[k]) m[k] = { pnl: 0, trades: 0, wins: 0 }; m[k].pnl += t.pnl; m[k].trades++; if (t.wl === 'Win') m[k].wins++; return m; }, tradesByRegime);
-    [tradesBySetup, setup].reduce((m, k) => { if (!m[k]) m[k] = { pnl: 0, trades: 0, wins: 0 }; m[k].pnl += t.pnl; m[k].trades++; if (t.wl === 'Win') m[k].wins++; return m; }, tradesBySetup);
-    [tradesByDirection, direction].reduce((m, k) => { if (!m[k]) m[k] = { pnl: 0, trades: 0, wins: 0 }; m[k].pnl += t.pnl; m[k].trades++; if (t.wl === 'Win') m[k].wins++; return m; }, tradesByDirection);
+    // Plain bump — the old [map, key].reduce idiom iterated over BOTH array
+    // elements, using the map object itself as a key ("[object Object]") and
+    // double-counting every trade into that phantom bucket.
+    const bump = (m, k) => { if (!m[k]) m[k] = { pnl: 0, trades: 0, wins: 0 }; m[k].pnl += t.pnl; m[k].trades++; if (t.wl === 'Win') m[k].wins++; };
+    bump(tradesByRegime, regime);
+    bump(tradesBySetup, setup);
+    bump(tradesByDirection, direction);
   });
 
   const regimeData = Object.entries(tradesByRegime).map(([name, d]) => ({ name, ...d, ba: d.trades > 0 ? Math.round(d.wins / d.trades * 100) : 0 })).sort((a, b) => b.pnl - a.pnl);
