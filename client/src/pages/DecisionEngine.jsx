@@ -849,6 +849,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             accountConfig={accounts?.find(a => a.id === account) || {}}
             strategyHistory={strategyHistory}
             seed={t.seed} initialState={t.state}
+            toast={showToast}
             onStateChange={st => handlePanelState(t.id, st)} />
         </div>
       ))}

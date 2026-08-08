@@ -33,6 +33,30 @@ const agoOf = (ts, now) => {
   return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago';
 };
 
+// ── Composite score ──
+// Blends setup quality (market conditions) with sizing metrics (trade edge).
+// Each metric normalized to 0-100, then averaged: 40% setup quality + 60% sizing
+// (Kelly, Vol, Sharpe, POP, EV). EV is normalised by CAPITAL AT RISK, not
+// absolute dollars (Jul 2026): +8% of risk = 100, 0 = 40, −5.3% = 0; falls back
+// to the old "$200 = perfect" anchor when no risk base exists. Pure function of
+// a calc result so the structure-comparison table scores alternative strategies
+// with EXACTLY the formula the banner uses.
+function compositeScoreOf(res) {
+  const setupNorm = res.setupScore || 0;
+  if (res.missingSize) return setupNorm; // only setup quality when no sizing entered
+  const kellyNorm = Math.min(100, ((res.adjustedKelly || 0) / 0.25) * 100); // 25% = perfect
+  const volNorm = Math.min(100, (res.volFactor || 0) * 100); // 1.0 = perfect
+  const sharpeNorm = Math.min(100, (res.sharpeFactor || 0) * 100); // 1.0 = perfect
+  const popNorm = Math.min(100, ((res.popMargin || 0) / 2.0) * 100); // 2.0x = perfect
+  const evRiskBase = res.evBasis?.maxLoss || 0;
+  const evPerRisk = evRiskBase > 0 ? (res.ev || 0) / evRiskBase : 0;
+  const evNorm = evRiskBase > 0
+    ? Math.max(0, Math.min(100, 40 + (evPerRisk / 0.08) * 60))
+    : (res.ev > 0 ? Math.min(100, (res.ev / 200) * 100) : 0); // fallback: old anchor
+  const sizingAvg = (kellyNorm + volNorm + sharpeNorm + popNorm + evNorm) / 5;
+  return Math.round(setupNorm * 0.40 + sizingAvg * 0.60);
+}
+
 // Seed a fresh input bag from a multi-scan row. Only the market fields the scan
 // actually resolved are taken; sizing and defaults are left as they are.
 function applySeed(base, seed, keys) {
@@ -49,9 +73,12 @@ function applySeed(base, seed, keys) {
   return out;
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, toast }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
+  // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
+  // to alert only if no toast prop was wired, so the panel never fails silently.
+  const notify = (msg, type) => { if (toast) toast(msg, type || 'error'); else window.alert(msg); };
   const defBankroll = acfg.bankroll || 3000;
   const defMaxLoss = acfg.maxDailyLoss || 300;
   const defMaxOpen = acfg.maxOpenRisk || 450;
@@ -79,6 +106,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     return () => clearInterval(t);
   }, []);
   const [showWhatIf, setShowWhatIf] = useState(false);
+  const [showRiskBudget, setShowRiskBudget] = useState(false);
+  // Inline log-note input (replaces the old window.prompt on Log trade).
+  const [logNoteOpen, setLogNoteOpen] = useState(false);
+  const [logNote, setLogNote] = useState('');
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -211,12 +242,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           ...(over || {})
   });
 
-  const r = useMemo(() => {
-    try {
-      if (is0) {
-        return calc0DTE(mk0());
-      } else {
-        return calc45DTE({
+  // The 45DTE argument object, same shape/purpose as mk0: built once so the
+  // structure-comparison table can re-run the engine at a different strategy
+  // without duplicating the input mapping.
+  const mk45 = (over) => ({
           price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
           hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
           ivBack:fv(i45,'ivBack'), skew:fv(i45,'skew'), dte:fv(i45,'dte')||45,
@@ -230,8 +259,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
             lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
             upperAbsDelta: i45.upperWingDelta !== '' ? Math.abs(parseFloat(i45.upperWingDelta)) : null
-          } : null
-        });
+          } : null,
+          ...(over || {})
+  });
+
+  const r = useMemo(() => {
+    try {
+      if (is0) {
+        return calc0DTE(mk0());
+      } else {
+        return calc45DTE(mk45());
       }
     } catch (e) {
       console.error('Calc engine error:', e);
@@ -293,37 +330,38 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const ticketNet = is0 ? i0.netCreditDebit : i45.netCreditDebit;
   const cashType = resolveCashType(effectiveStrat, ticketNet); // 'credit' | 'debit' | 'varies'
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
-  // ── Composite banner score ──
-  // Blends setup quality (market conditions) with sizing metrics (trade edge)
-  // Each metric normalized to 0-100, then averaged
-  const kellyPct = r.adjustedKelly || 0;
+  // ── Composite banner score ── (formula extracted to compositeScoreOf, module
+  // scope, so the structure-comparison table scores alternatives identically)
   const missingInputs = r.missingSize;
   const hasBlocker = !!r.hardBlocker;
+  const compositeScore = compositeScoreOf(r);
 
-  // Setup quality: already 0-100
-  const setupNorm = r.setupScore || 0;
-
-  // Sizing metrics normalized to 0-100
-  const kellyNorm = Math.min(100, (kellyPct / 0.25) * 100); // 25% = perfect
-  const volNorm = Math.min(100, (r.volFactor || 0) * 100); // 1.0 = perfect
-  const sharpeNorm = Math.min(100, (r.sharpeFactor || 0) * 100); // 1.0 = perfect
-  const popNorm = Math.min(100, ((r.popMargin || 0) / 2.0) * 100); // 2.0x = perfect
-  // EV normalised by CAPITAL AT RISK, not absolute dollars (Jul 2026). The old
-  // "$200 = perfect" anchor was scale-blind — $200 on a $772 fly is a 26% return
-  // while $200 on a $5k 45DTE condor is 4% — and cliffed every negative EV to 0,
-  // so −$1 and −$500 scored identically. Now two-sided: +8% of risk = 100,
-  // 0 = 40, −5.3% = 0.
-  const evRiskBase = r.evBasis?.maxLoss || 0;
-  const evPerRisk = evRiskBase > 0 ? (r.ev || 0) / evRiskBase : 0;
-  const evNorm = evRiskBase > 0
-    ? Math.max(0, Math.min(100, 40 + (evPerRisk / 0.08) * 60))
-    : (r.ev > 0 ? Math.min(100, (r.ev / 200) * 100) : 0); // fallback: old anchor
-
-  // Composite: 40% setup quality + 60% sizing (Kelly, Vol, Sharpe, POP, EV)
-  const sizingAvg = missingInputs ? 50 : (kellyNorm + volNorm + sharpeNorm + popNorm + evNorm) / 5;
-  const compositeScore = missingInputs
-    ? setupNorm // only setup quality when no sizing entered
-    : Math.round(setupNorm * 0.40 + sizingAvg * 0.60);
+  // ── Structure comparison ──
+  // The calc engines are pure functions of their inputs (no fetches, no clocks,
+  // no module state), so alternative structures can be scored by re-running the
+  // SAME inputs with a different overrideStrategy. Current selection first,
+  // then the next-best rated strategies — 3 columns total. Cost: two extra
+  // engine runs, memoized on the same deps as the live result (the engine
+  // already runs on every keystroke, so 3× is fine).
+  const stratCompare = useMemo(() => {
+    if (r.decision === 'Error' || !Array.isArray(r.ratings) || r.ratings.length < 2) return null;
+    const cur = r.legStrat || r.bestStrat;
+    if (!cur) return null;
+    const names = [cur];
+    for (const s of r.ratings) {
+      if (names.length >= 3) break;
+      if (!names.includes(s.name)) names.push(s.name);
+    }
+    return names.map(name => {
+      const rating = r.ratings.find(s => s.name === name)?.rating || '';
+      if (name === cur) return { name, rating, res: r, current: true };
+      try {
+        const res = is0 ? calc0DTE(mk0({ overrideStrategy: name }))
+                        : calc45DTE(mk45({ overrideStrategy: name }));
+        return res ? { name, rating, res, current: false } : null;
+      } catch (e) { return null; }
+    }).filter(Boolean);
+  }, [is0, i0, i45, r, overrideStrat, strategyHistory]);
 
   let bannerTitle, bannerGrade;
   if (hasBlocker) {
@@ -363,10 +401,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setFetchingGreeks(true);
     try {
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
-      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setFetchingGreeks(false); return; }
+      if (!bridgeUrl) { notify('Set IBKR Bridge URL in Settings first'); setFetchingGreeks(false); return; }
       const underlying = is0 ? i0.underlying : i45.underlying;
       const legsSrc = r?.legs || [];
-      if (!legsSrc.length) { alert('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
+      if (!legsSrc.length) { notify('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
 
       // Derive expiry (YYYYMMDD). 0DTE = today (ET); 45DTE = today + DTE input.
       const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -393,12 +431,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         + '&expiry=' + yyyymmdd + '&legs=' + encodeURIComponent(JSON.stringify(legs));
       const resp = await fetch(url, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
-      if (d.error) { alert('Bridge error: ' + d.error); setFetchingGreeks(false); return; }
+      if (d.error) { notify('Bridge error: ' + d.error); setFetchingGreeks(false); return; }
       if (d.notSubscribed || (!d.net && d.message)) {
-        alert(d.message || 'TWS returned no Greeks — options market data not subscribed. Enter Greeks manually.');
+        notify(d.message || 'TWS returned no Greeks — options market data not subscribed. Enter Greeks manually.');
         setFetchingGreeks(false); return;
       }
-      if (!d.net) { alert('No Greeks returned — TWS may lack option data permissions, or the expiry/strikes are invalid. You can enter Greeks manually.'); setFetchingGreeks(false); return; }
+      if (!d.net) { notify('No Greeks returned — TWS may lack option data permissions, or the expiry/strikes are invalid. You can enter Greeks manually.'); setFetchingGreeks(false); return; }
 
       // Feed freshness (real-time / delayed / frozen) + the underlying price the model used.
       setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice,
@@ -461,7 +499,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         }));
       }
     } catch (e) {
-      alert('Fetch Greeks failed: ' + e.message);
+      notify('Fetch Greeks failed: ' + e.message);
     }
     setFetchingGreeks(false);
   }
@@ -473,13 +511,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setTwsStructures(null);
     try {
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
-      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setLoadingTws(false); return; }
+      if (!bridgeUrl) { notify('Set IBKR Bridge URL in Settings first'); setLoadingTws(false); return; }
       const resp = await fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
-      if (d.error) { alert('Bridge error: ' + d.error); setLoadingTws(false); return; }
+      if (d.error) { notify('Bridge error: ' + d.error); setLoadingTws(false); return; }
       const structs = d.structures || [];
       if (structs.length === 0) {
-        alert('No open option positions in TWS. For paper trades, enter the strikes, contracts and net credit/debit manually — the ticket fields below mirror what a fetch would fill.');
+        notify('No open option positions in TWS. For paper trades, enter the strikes, contracts and net credit/debit manually — the ticket fields below mirror what a fetch would fill.');
         setLoadingTws(false); return;
       }
       if (structs.length === 1) {
@@ -489,7 +527,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         setTwsStructures(structs);
       }
     } catch (e) {
-      alert('Load from TWS failed: ' + e.message);
+      notify('Load from TWS failed: ' + e.message);
     }
     setLoadingTws(false);
   }
@@ -517,11 +555,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setAutoFilling(true);
     try {
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
-      if (!bridgeUrl) { alert('Set IBKR Bridge URL in Settings first'); setAutoFilling(false); return; }
+      if (!bridgeUrl) { notify('Set IBKR Bridge URL in Settings first'); setAutoFilling(false); return; }
       const underlying = is0 ? i0.underlying : i45.underlying;
       const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, { headers: { 'ngrok-skip-browser-warning': '1' } });
       const d = await resp.json();
-      if (d.error) { alert('Bridge error: ' + d.error); setAutoFilling(false); return; }
+      if (d.error) { notify('Bridge error: ' + d.error); setAutoFilling(false); return; }
       // Data-freshness flag from the bridge (realtime | frozen | delayed | ...).
       // pulledAt is OUR clock at the moment of the pull; asOf is the feed's own
       // stamp. They answer different questions — "how old is this screen" vs
@@ -597,7 +635,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         });
       }
     } catch (e) {
-      alert('Auto-fill failed: ' + e.message);
+      notify('Auto-fill failed: ' + e.message);
     }
     setAutoFilling(false);
   }
@@ -768,21 +806,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     return lines.filter(Boolean).join('\n');
   }
 
+  // Log flow (Aug 2026): the old window.prompt is now an inline note input next
+  // to the Log button. Confirm (button or Enter) logs the trade with the note;
+  // Cancel or Escape closes the input and nothing is logged — the same abort
+  // semantics the prompt's Cancel had, but without a blocking modal, and the
+  // half-typed note is only lost, never the ticket.
   function handleLog() {
     if (!onLogTrade) return;
     if (!accountConfig?.id) {
-      alert('Please select a specific account in the sidebar before logging a trade.');
+      notify('Please select a specific account in the sidebar before logging a trade.');
       return;
     }
+    setLogNote('');
+    setLogNoteOpen(true);
+  }
+  function confirmLog() {
     const inp = is0 ? i0 : i45;
-    const ncd = parseFloat(inp.netCreditDebit) || 0;
     const engineSummary = buildTradeSummary();
-    // Prompt for the trader's own comment (rationale, feeling, plan).
-    const userComment = window.prompt('Add a note for this trade (optional) — your rationale, plan, or anything to remember:', '');
-    if (userComment === null) return; // Cancel aborts the whole log
     const fullNotes = engineSummary
       + '\n\n--- My notes ---\n'
-      + (userComment.trim() || '(none)');
+      + (logNote.trim() || '(none)');
+    setLogNoteOpen(false);
     onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
       strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
@@ -898,8 +942,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             )}
           </div>
         )}
+        {/* ONE decision line: composite · EV · P(max loss) · Kelly. The detailed
+            P(max loss) breakdown box stays in the input column; this is the headline. */}
+        {!r.hardBlocker && (
+          <div style={{display:'flex',flexWrap:'wrap',gap:'6px 18px',alignItems:'baseline',marginTop:8,fontFamily:'JetBrains Mono,monospace'}}>
+            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>SCORE{' '}
+              <b style={{fontSize:15,color:dcColor}}>{compositeScore}/100</b></span>
+            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>EV{' '}
+              <b style={{fontSize:15,color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#8b949e'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</b>
+              {r.evBasis && <span style={{fontSize:9,opacity:0.7}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</span>
+            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>P(MAX LOSS){' '}
+              <b style={{fontSize:15,color: r.pMaxLoss==null?'#8b949e':r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>
+                {r.pMaxLoss!=null?(r.pMaxLoss*100).toFixed(1)+'%':'--'}</b></span>
+            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>KELLY{' '}
+              <b style={{fontSize:15,color: r.kellyOverRisk?'#f85149':'#3fb950'}}>{r.contracts}x · ${r.kellyDollar?.toFixed(0)||0}</b></span>
+          </div>
+        )}
         <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
-          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'} — Adj Kelly $${r.kellyDollar?.toFixed(0)||0} — Score ${compositeScore}/100`}
+          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'}`}
         </div>
         {!r.hardBlocker && r.tradeConfidence != null && (
           <div style={{marginTop:6,fontSize:12,color:'#8b949e'}}>
@@ -922,6 +982,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         <button onClick={handlePrint} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
         {isOverride && (
           <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
+        )}
+        {logNoteOpen && (
+          <div style={{marginTop:10,display:'flex',gap:6,alignItems:'center',maxWidth:560}}>
+            <input autoFocus type="text" value={logNote}
+              onChange={e=>setLogNote(e.target.value)}
+              onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); confirmLog(); } else if (e.key==='Escape') { setLogNoteOpen(false); } }}
+              placeholder="Add a note for this trade (optional) — your rationale, plan, or anything to remember"
+              style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,outline:'none'}} />
+            <button onClick={confirmLog} style={{padding:'6px 14px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}}>Log</button>
+            <button onClick={()=>setLogNoteOpen(false)} title="Abort logging (nothing is written)"
+              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Cancel</button>
+          </div>
         )}
           </div>
           {/* Right: mini payoff diagram */}
@@ -1182,7 +1254,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               />
               {r.bePop > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
             </div>
-            <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+            <div>
+              <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+              <PrefillChip payoffVal={r.payoff?.maxProfit} fieldVal={is0?i0.win:i45.win}
+                onFill={v=>is0?set0('win',v):set45('win',v)}/>
+            </div>
             <div>
               <label className="text-xs text-text-muted block mb-1">Risk / contract ($)</label>
               <input type="number" step="any"
@@ -1213,8 +1289,30 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 }}
               />
               {r.kellyDollar > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
+              <PrefillChip payoffVal={r.payoff?.maxLoss} fieldVal={is0?i0.risk:i45.risk}
+                onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
             </div>
           </div>
+          {/* Risk budget — the account limits Kelly sizing is computed against.
+              These fields have no inputs on the panel (they seed from the account
+              config), so without this line the denominator was un-auditable. */}
+          {(() => {
+            const b = is0 ? i0 : i45;
+            return (
+              <div style={{marginTop:6,fontSize:11,color:'#8b949e',lineHeight:1.5}}>
+                <span onClick={()=>setShowRiskBudget(v=>!v)} style={{cursor:'pointer',userSelect:'none'}}
+                  title="What Kelly sizing is computed against — click to expand">
+                  {showRiskBudget ? '▾' : '▸'} Risk budget: bankroll ${fv(b,'bankroll').toFixed(0)} · max loss/trade ${fv(b,'maxLoss').toFixed(0)} · max open ${fv(b,'maxOpen').toFixed(0)}
+                </span>
+                {showRiskBudget && (
+                  <div style={{marginTop:2,paddingLeft:14,color:'#6e7681'}}>
+                    Start-of-day bankroll ${fv(b,'startBR').toFixed(0)} · account {acfg.id || 'default'} — seeded from account settings
+                    (bankroll / max daily loss / max open risk). Adj Kelly $ and the contract cap are computed against these numbers.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {r.targetMax > 0 && (() => {
             const ncdVal = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0;
             const actualIsCredit = ncdVal >= 0;
@@ -1383,6 +1481,63 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               })}
             </div>
           </div>
+
+          {/* Structure comparison — current pick vs the next-best rated structures,
+              each a FULL engine re-run on the same inputs (the calc is pure). */}
+          {stratCompare && stratCompare.length > 1 && (
+            <div className="card">
+              <SectionLabel white info="Side-by-side FULL engine runs for the top structures on the SAME market inputs — only the strategy differs. Composite, EV, P(max loss) and Kelly are complete engine outputs, not the rating shortcut. Net cr/dr is the engine's TARGET fill for that structure (your ticket net stays put). Click a column header to select that structure — same effect as clicking its rating row.">Structure comparison</SectionLabel>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr>
+                      <th className="text-left py-1.5 px-1"></th>
+                      {stratCompare.map((c, i) => (
+                        <th key={i} onClick={() => setOverrideStrat(c.name === r.bestStrat ? null : c.name)}
+                          title={c.current ? 'Selected structure' : 'Click to switch to this structure'}
+                          className="text-center py-1.5 px-2 cursor-pointer hover:bg-[#161b22]"
+                          style={{minWidth:104,borderRadius:6}}>
+                          <div style={{fontSize:11,fontWeight:700,color:c.current?'#fff':'#c9d1d9'}}>{c.name}</div>
+                          <div style={{fontSize:8,fontWeight:600,marginTop:1,letterSpacing:'0.04em',
+                            color: c.current ? (isOverride ? '#d29922' : '#3fb950') : '#6e7681'}}>
+                            {c.current ? (isOverride ? '✓ OVERRIDE' : '✓ ENGINE PICK') : c.rating}
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { label: 'Composite', render: c => { const s = compositeScoreOf(c.res);
+                          const col = s>=75?'#3fb950':s>=55?'#7bc74d':s>=35?'#d29922':'#f85149';
+                          return <span style={{color:col,fontWeight:700}}>{s}/100</span>; } },
+                      { label: 'EV / trade', render: c => c.res.ev
+                          ? <span style={{color: c.res.ev>0?'#3fb950':'#f85149'}}>${c.res.ev.toFixed(0)}</span>
+                          : '--' },
+                      { label: 'P(max loss)', render: c => c.res.pMaxLoss != null
+                          ? <span style={{color: c.res.pMaxLoss<=0.15?'#3fb950':c.res.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(c.res.pMaxLoss*100).toFixed(1)}%</span>
+                          : '--' },
+                      { label: 'Net cr/dr (target)', render: c => c.res.targetCredit != null
+                          ? <span style={{color: c.res.targetCredit>=0?'#3fb950':'#e3a008'}}>{c.res.targetCredit>=0?'cr':'dr'} ${Math.abs(c.res.targetCredit).toFixed(2)}</span>
+                          : '--' },
+                      { label: 'Breakevens', render: c => c.res.payoff?.breakevens?.length
+                          ? c.res.payoff.breakevens.map(b=>b.toFixed(0)).join(' / ')
+                          : '--' },
+                      { label: 'Kelly', render: c =>
+                          <span style={{color: c.res.kellyOverRisk?'#f85149':'#e6edf3'}}>{c.res.contracts}x · ${c.res.kellyDollar?.toFixed(0)||0}</span> },
+                    ].map((row, ri) => (
+                      <tr key={ri} className="border-t border-[#21262d]">
+                        <td className="py-1.5 px-1 text-[#8b949e]">{row.label}</td>
+                        {stratCompare.map((c, i) => (
+                          <td key={i} className="py-1.5 px-2 text-center mono">{row.render(c)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Payoff diagram — full width */}
           {r.payoff && r.payoff.points.length > 0 && (
@@ -2002,6 +2157,24 @@ function Sel({label,value,onChange,options}) {
       className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
       {options.map(o=><option key={o} value={o}>{o}</option>)}</select></div>);
 }
+// Inline pre-fill chip: the payoff engine computed this value and the sizing
+// field is empty or disagrees. Click to copy it in — typed values are NEVER
+// overwritten automatically. Win/Risk are sizing fields, outside the held/
+// auto-fill contract, so filling one creates no hold.
+function PrefillChip({ payoffVal, fieldVal, onFill }) {
+  if (payoffVal == null || !isFinite(payoffVal) || payoffVal <= 0) return null;
+  const v = Math.round(payoffVal);
+  const cur = parseFloat(fieldVal);
+  if (isFinite(cur) && Math.abs(cur - v) < 0.5) return null; // already matches
+  return (
+    <button type="button" onClick={() => onFill(String(v))}
+      title="Computed from the payoff at expiry. Click to fill — your typed value is never overwritten automatically."
+      style={{marginTop:3,padding:'1px 7px',borderRadius:4,border:'1px solid #1f6feb55',background:'#0d1a2e',color:'#58a6ff',fontSize:10,fontWeight:600,cursor:'pointer'}}>
+      ← {v} from payoff
+    </button>
+  );
+}
+
 function KV({label,value,cls}) {
   return (<div className="flex justify-between py-1 border-b border-[#21262d] last:border-0">
     <span className="text-sm text-[#c9d1d9]">{label}</span>

@@ -13,11 +13,87 @@ function rowKey(t) {
     : [t['Order #'], t['Entry Date'], t.Underlying, t['Strategy (OIC)'], t.Account].join('|');
 }
 
+// --- Filter / sort persistence ---
+const FILTER_KEY = 'ot_trades_filters';
+const FILTER_DEFAULTS = { status: 'All', ticker: '', strategy: 'All', from: '', to: '', sortBy: 'entry', sortDir: 'desc' };
+
+function loadFilters() {
+  try {
+    return { ...FILTER_DEFAULTS, ...(JSON.parse(localStorage.getItem(FILTER_KEY)) || {}) };
+  } catch {
+    return { ...FILTER_DEFAULTS };
+  }
+}
+
+// --- Account dot colors (stable hash of id across a theme-ish palette) ---
+const ACCT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#bc8cff', '#39c5cf', '#ff7b72', '#7ee787', '#f778ba'];
+function acctColor(id) {
+  const s = String(id || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return ACCT_COLORS[h % ACCT_COLORS.length];
+}
+function acctName(id, accounts) {
+  return (accounts || []).find(a => a.id === id)?.name || id || '';
+}
+
+// --- Derived columns ---
+// 'Net Credit ($)' is already total dollars (displayed directly via fmt$), so ROC = P&L / |Net Credit ($)|.
+function rocPct(t) {
+  const credit = parseFloat(t['Net Credit ($)']);
+  const pnl = parseFloat(t['Total P&L ($)']);
+  if (!credit || isNaN(pnl)) return null;
+  return (pnl / Math.abs(credit)) * 100;
+}
+function daysHeld(t) {
+  const entry = t['Entry Date'] ? new Date(t['Entry Date']) : null;
+  if (!entry || isNaN(entry)) return null;
+  const end = t.Status === 'Open' ? new Date() : (t['Close Date'] ? new Date(t['Close Date']) : null);
+  if (!end || isNaN(end)) return null;
+  return Math.max(0, Math.round((end - entry) / 86400000));
+}
+
+// --- Sorting ---
+const STRING_SORTS = ['ticker', 'strategy', 'status', 'account'];
+function sortValue(t, key, accounts) {
+  switch (key) {
+    case 'entry': return t['Entry Date'] ? new Date(t['Entry Date']).getTime() : -Infinity;
+    case 'ticker': return (t.Underlying || '').toLowerCase();
+    case 'strategy': return (t['Strategy (OIC)'] || '').toLowerCase();
+    case 'qty': return parseFloat(t.Qty) || 0;
+    case 'dte': return t['Expiry Date'] ? new Date(t['Expiry Date']).getTime() : -Infinity;
+    case 'credit': return parseFloat(t['Net Credit ($)']) || 0;
+    case 'pnl': return parseFloat(t['Total P&L ($)']) || 0;
+    case 'roc': { const r = rocPct(t); return r == null ? -Infinity : r; }
+    case 'held': { const d = daysHeld(t); return d == null ? -Infinity : d; }
+    case 'status': return (t.Status || '').toLowerCase();
+    case 'account': return acctName(t.Account, accounts).toLowerCase();
+    default: return 0;
+  }
+}
+
+function Th({ label, col, sortBy, sortDir, onSort, align = 'left', title }) {
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th className={`${alignCls} py-3 px-4 cursor-pointer select-none hover:text-text transition-colors`}
+      onClick={() => onSort(col)} title={title}>
+      {label}{sortBy === col && <span className="ml-1 text-accent">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+    </th>
+  );
+}
+
 export default function Trades({ authenticated, account, accounts }) {
   const [tracker, setTracker] = useState([]);
   const [rawTrades, setRawTrades] = useState([]);
-  const [filter, setFilter] = useState('All');
-  const [tickerFilter, setTickerFilter] = useState('');
+  const [filter, setFilter] = useState(() => loadFilters().status);
+  const [tickerFilter, setTickerFilter] = useState(() => loadFilters().ticker);
+  const [strategyFilter, setStrategyFilter] = useState(() => loadFilters().strategy);
+  const [dateFrom, setDateFrom] = useState(() => loadFilters().from);
+  const [dateTo, setDateTo] = useState(() => loadFilters().to);
+  const [sortBy, setSortBy] = useState(() => loadFilters().sortBy);
+  const [sortDir, setSortDir] = useState(() => loadFilters().sortDir);
+  const [showAll, setShowAll] = useState(false);
+  const [hlRow, setHlRow] = useState(-1);
   const [expandedRow, setExpandedRow] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -42,11 +118,46 @@ export default function Trades({ authenticated, account, accounts }) {
   const [compareFilter, setCompareFilter] = useState('all');
   const compareRef = useRef();
   const fileRef = useRef();
+  const visibleRef = useRef([]);
+  const hlRef = useRef(-1);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
     loadData();
   }, [authenticated]);
+
+  // Persist filter + sort state
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTER_KEY, JSON.stringify({
+        status: filter, ticker: tickerFilter, strategy: strategyFilter,
+        from: dateFrom, to: dateTo, sortBy, sortDir
+      }));
+    } catch { /* ignore */ }
+  }, [filter, tickerFilter, strategyFilter, dateFrom, dateTo, sortBy, sortDir]);
+
+  // Keyboard nav: j/k moves highlight, Enter toggles expansion
+  useEffect(() => {
+    function onKey(e) {
+      const el = e.target;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      if (e.key === 'j' || e.key === 'k') {
+        e.preventDefault();
+        const max = visibleRef.current.length - 1;
+        if (max < 0) return;
+        setHlRow(i => Math.min(max, Math.max(0, i + (e.key === 'j' ? 1 : -1))));
+      } else if (e.key === 'Enter') {
+        const t = visibleRef.current[hlRef.current];
+        if (t) {
+          e.preventDefault();
+          const k = rowKey(t);
+          setExpandedRow(prev => (prev === k ? null : k));
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -85,12 +196,47 @@ export default function Trades({ authenticated, account, accounts }) {
 
   const filters = ['All', 'Open', 'Closed', 'Expired', 'Assigned', 'Cash Settled'];
   const accountFiltered = filterByAccount(tracker, account);
+  const strategies = [...new Set(accountFiltered.map(t => t['Strategy (OIC)']).filter(Boolean))].sort();
   const filtered = accountFiltered.filter(t => {
     if (filter !== 'All' && t.Status !== filter) return false;
     if (tickerFilter && !t.Underlying?.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
+    if (strategyFilter !== 'All' && t['Strategy (OIC)'] !== strategyFilter) return false;
+    if (dateFrom || dateTo) {
+      const ed = t['Entry Date'] ? new Date(t['Entry Date']) : null;
+      if (dateFrom && (!ed || isNaN(ed) || ed < new Date(dateFrom))) return false;
+      if (dateTo && (!ed || isNaN(ed) || ed > new Date(dateTo + 'T23:59:59'))) return false;
+    }
     return true;
   });
   const filteredPnl = filtered.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+  const sorted = [...filtered].sort((a, b) => {
+    const va = sortValue(a, sortBy, accounts);
+    const vb = sortValue(b, sortBy, accounts);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+  const visible = showAll ? sorted : sorted.slice(0, 100);
+  visibleRef.current = visible;
+  hlRef.current = hlRow;
+
+  function handleSort(col) {
+    if (sortBy === col) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(col);
+      setSortDir(STRING_SORTS.includes(col) ? 'asc' : 'desc');
+    }
+  }
+
+  function resetFilters() {
+    setFilter(FILTER_DEFAULTS.status);
+    setTickerFilter(FILTER_DEFAULTS.ticker);
+    setStrategyFilter(FILTER_DEFAULTS.strategy);
+    setDateFrom(FILTER_DEFAULTS.from);
+    setDateTo(FILTER_DEFAULTS.to);
+    setSortBy(FILTER_DEFAULTS.sortBy);
+    setSortDir(FILTER_DEFAULTS.sortDir);
+  }
 
   // Get legs for a specific trade (matching by Order #)
   function getLegsForTrade(trade) {
@@ -361,7 +507,7 @@ export default function Trades({ authenticated, account, accounts }) {
       )}
 
       {/* Filters */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex border border-bg-border rounded-lg overflow-hidden">
           {filters.map(f => (
             <button key={f} onClick={() => setFilter(f)}
@@ -378,6 +524,24 @@ export default function Trades({ authenticated, account, accounts }) {
             className="pl-8 pr-3 py-1.5 text-sm bg-bg border border-bg-border rounded-lg text-text placeholder-text-faint focus:border-accent outline-none"
           />
         </div>
+        <select value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)}
+          className="px-2 py-1.5 text-xs bg-bg border border-bg-border rounded-lg text-text focus:border-accent outline-none"
+          title="Filter by strategy">
+          <option value="All">All strategies</option>
+          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <div className="flex items-center gap-1.5 text-xs text-text-faint">
+          <span>From</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="px-2 py-1.5 text-xs mono bg-bg border border-bg-border rounded-lg text-text focus:border-accent outline-none" />
+          <span>To</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="px-2 py-1.5 text-xs mono bg-bg border border-bg-border rounded-lg text-text focus:border-accent outline-none" />
+        </div>
+        <button onClick={resetFilters}
+          className="px-2.5 py-1.5 text-xs text-text-faint hover:text-text border border-bg-border rounded-lg hover:bg-bg-hover transition-colors">
+          Reset
+        </button>
       </div>
 
       {/* Trade Table */}
@@ -389,29 +553,34 @@ export default function Trades({ authenticated, account, accounts }) {
             <thead>
               <tr className="text-text-faint text-[11px] uppercase tracking-wider bg-bg">
                 <th className="text-left py-3 px-4"></th>
-                <th className="text-left py-3 px-4">Date</th>
-                <th className="text-left py-3 px-4">Ticker</th>
-                <th className="text-left py-3 px-4">Strategy</th>
-                <th className="text-center py-3 px-4">Qty</th>
-                <th className="text-right py-3 px-4">Credit</th>
-                <th className="text-right py-3 px-4">P&L</th>
+                <Th label="Date" col="entry" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Ticker" col="ticker" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Strategy" col="strategy" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Qty" col="qty" align="center" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Credit" col="credit" align="right" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="P&L" col="pnl" align="right" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="ROC %" col="roc" align="right" title="ROC % = Total P&L ($) ÷ |Net Credit ($)|" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <th className="text-center py-3 px-4">W/L</th>
-                <th className="text-left py-3 px-4">Status</th>
-                <th className="text-left py-3 px-4">DTE</th>
+                <Th label="Status" col="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="DTE" col="dte" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Days" col="held" align="center" title="Days held: Close Date − Entry Date (open trades: days since entry)" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                <Th label="Account" col="account" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t) => {
+              {visible.map((t, i) => {
                 const key = rowKey(t);
                 const pnl = parseFloat(t['Total P&L ($)']) || 0;
                 const credit = parseFloat(t['Net Credit ($)']) || 0;
                 const isOpen = t.Status === 'Open';
                 const expanded = expandedRow === key;
                 const dte = t['Expiry Date'] ? Math.ceil((new Date(t['Expiry Date']) - new Date()) / (1000 * 60 * 60 * 24)) : '';
+                const roc = rocPct(t);
+                const held = daysHeld(t);
 
                 return (
                   <React.Fragment key={key}>
-                    <tr className="table-row cursor-pointer" onClick={() => setExpandedRow(expanded ? null : key)}>
+                    <tr className={`table-row cursor-pointer ${hlRow === i ? 'bg-bg-hover' : ''}`} onClick={() => setExpandedRow(expanded ? null : key)}>
                       <td className="py-2.5 px-4 text-text-faint">
                         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </td>
@@ -421,6 +590,9 @@ export default function Trades({ authenticated, account, accounts }) {
                       <td className="py-2.5 px-4 text-center mono">{t.Qty}</td>
                       <td className="py-2.5 px-4 text-right mono" style={{ color: pnlColor(credit) }}>{fmt$(credit)}</td>
                       <td className="py-2.5 px-4 text-right mono font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</td>
+                      <td className="py-2.5 px-4 text-right mono text-xs" style={{ color: roc != null ? pnlColor(roc) : undefined }}>
+                        {roc != null ? `${roc.toFixed(1)}%` : ''}
+                      </td>
                       <td className="py-2.5 px-4 text-center">
                         {t['W / L'] && <span className={`badge ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
                       </td>
@@ -440,11 +612,20 @@ export default function Trades({ authenticated, account, accounts }) {
                       <td className="py-2.5 px-4 mono text-xs text-text-muted">
                         {isOpen && dte ? <span className={dte <= 3 ? 'text-red' : dte <= 7 ? 'text-amber' : ''}>{dte}d</span> : ''}
                       </td>
+                      <td className="py-2.5 px-4 text-center mono text-xs text-text-muted">{held != null ? `${held}d` : ''}</td>
+                      <td className="py-2.5 px-4 text-xs text-text-muted whitespace-nowrap">
+                        {t.Account ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ background: acctColor(t.Account) }} />
+                            {acctName(t.Account, accounts)}
+                          </span>
+                        ) : ''}
+                      </td>
                     </tr>
                     {/* Expanded trade ticket */}
                     {expanded && (
                       <tr>
-                        <td colSpan="10" className="bg-bg p-4">
+                        <td colSpan="13" className="bg-bg p-4">
                           {deleting === key ? (
                             <div className="fade-in text-center py-4">
                               <p className="text-sm text-text mb-2">Delete this trade?</p>
@@ -515,10 +696,22 @@ export default function Trades({ authenticated, account, accounts }) {
                   Subtotal — {filtered.length} position{filtered.length !== 1 ? 's' : ''} (filtered)
                 </td>
                 <td className="py-2.5 px-4 text-right mono font-bold" style={{ color: pnlColor(filteredPnl) }}>{fmt$(filteredPnl)}</td>
-                <td colSpan={3}></td>
+                <td colSpan={6}></td>
               </tr>
             </tfoot>
           </table>
+          {!showAll && sorted.length > 100 && (
+            <div className="text-center py-3 border-t border-bg-border">
+              <button onClick={() => setShowAll(true)}
+                className="px-4 py-1.5 text-xs border border-bg-border rounded-lg hover:bg-bg-hover text-text-muted transition-colors">
+                Show all {sorted.length}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : accountFiltered.length > 0 ? (
+        <div className="card text-center py-12">
+          <p className="text-text-faint">No trades match the current filters</p>
         </div>
       ) : (
         <div className="card text-center py-12">
