@@ -3,7 +3,7 @@ import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip,
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar, Award } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
-import { isAggExcluded, filterTracker, computeStats, BA_GREEN, BA_RED } from '../utils/stats';
+import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
 
 export default function Dashboard({ authenticated, account, accounts = [] }) {
@@ -63,35 +63,8 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const isAggregate = !account || account === 'all';
   const filteredTracker = filterTracker(tracker, account, accounts);
 
-  // Merge closed decision tickets into trades
-  const filteredDecisions = isAggregate
-    ? decisions.filter(d => !isAggExcluded(d.Account || '', accounts))
-    : decisions.filter(d => {
-        const decAccount = d.Account || '';
-        return decAccount === account || !decAccount;
-      });
-  const closedTickets = filteredDecisions
-    .filter(d => d.Status === 'Closed' && d['Actual P&L'])
-    .map(d => ({
-      'Entry Date': d.Timestamp?.split('T')[0] || '',
-      'Close Date': d['Close Date'] || d.Timestamp?.split('T')[0] || '',
-      'Expiry Date': '',
-      'Strategy (OIC)': (d.Strategy || '').split(' - ').slice(1, -1).join(' - ') || d.Strategy,
-      Underlying: d.Underlying || '',
-      Qty: d.Contracts || 1,
-      'Net Credit ($)': '',
-      'Total P&L ($)': d['Actual P&L'],
-      'W / L': parseFloat(d['Actual P&L']) >= 0 ? 'Win' : 'Loss',
-      Status: 'Closed',
-      Account: d.Account || '',
-      _source: 'ticket'
-    }));
-  
-  const allClosed = [
-    ...filteredTracker.filter(t => t.Status !== 'Open' && t['Total P&L ($)']),
-    ...closedTickets
-  ];
-  const closedTrades = allClosed.sort((a, b) => new Date(a['Entry Date'] || a['Close Date'] || 0) - new Date(b['Entry Date'] || b['Close Date'] || 0));
+  // Merge closed decision tickets into trades (shared with the header strip)
+  const closedTrades = mergeClosedTrades(tracker, decisions, account, accounts);
 
   // Calculate stats from merged closed trades (tracker + tickets)
   const { totalPnl, battingAvg, avgWin, avgLoss, expectancy } = computeStats(closedTrades);

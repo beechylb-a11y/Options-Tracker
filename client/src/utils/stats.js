@@ -1,7 +1,7 @@
 // Single source of truth for aggregate / KPI rules.
 // Tracker rows are objects keyed by sheet column names — use COL to avoid
 // magic strings scattered across pages.
-import { filterByAccount } from './format';
+import { filterByAccount, localISODate } from './format';
 
 export const COL = {
   ENTRY_DATE: 'Entry Date',
@@ -58,4 +58,46 @@ export function computeStats(rows) {
   const battingAvg = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
   const expectancy = totalTrades > 0 ? totalPnl / totalTrades : 0;
   return { totalPnl, wins, losses, scratches, battingAvg, avgWin, avgLoss, expectancy };
+}
+
+// Merge closed TradeTracker rows with closed Decision-ticket rows into one
+// tracker-shaped, date-sorted list. Single source of truth so Dashboard and
+// the header strip can never disagree on "today's P&L".
+export function mergeClosedTrades(tracker, decisions, account, accounts = []) {
+  const isAggregate = !account || account === 'all';
+  const filteredTracker = filterTracker(tracker || [], account, accounts);
+  const filteredDecisions = isAggregate
+    ? (decisions || []).filter(d => !isAggExcluded(d.Account || '', accounts))
+    : (decisions || []).filter(d => {
+        const decAccount = d.Account || '';
+        return decAccount === account || !decAccount;
+      });
+  const closedTickets = filteredDecisions
+    .filter(d => d.Status === 'Closed' && d['Actual P&L'])
+    .map(d => ({
+      'Entry Date': d.Timestamp?.split('T')[0] || '',
+      'Close Date': d['Close Date'] || d.Timestamp?.split('T')[0] || '',
+      'Expiry Date': '',
+      'Strategy (OIC)': (d.Strategy || '').split(' - ').slice(1, -1).join(' - ') || d.Strategy,
+      Underlying: d.Underlying || '',
+      Qty: d.Contracts || 1,
+      'Net Credit ($)': '',
+      'Total P&L ($)': d['Actual P&L'],
+      'W / L': parseFloat(d['Actual P&L']) >= 0 ? 'Win' : 'Loss',
+      Status: 'Closed',
+      Account: d.Account || '',
+      _source: 'ticket'
+    }));
+  return [
+    ...filteredTracker.filter(t => t.Status !== 'Open' && t[COL.TOTAL_PNL]),
+    ...closedTickets
+  ].sort((a, b) => new Date(a[COL.ENTRY_DATE] || a[COL.CLOSE_DATE] || 0) - new Date(b[COL.ENTRY_DATE] || b[COL.CLOSE_DATE] || 0));
+}
+
+// Realised P&L for the local calendar day.
+export function todayPnlOf(closedTrades) {
+  const todayStr = localISODate();
+  return closedTrades
+    .filter(t => (t[COL.CLOSE_DATE] || t[COL.ENTRY_DATE] || '').split('T')[0] === todayStr)
+    .reduce((s, t) => s + (parseFloat(t[COL.TOTAL_PNL]) || 0), 0);
 }
