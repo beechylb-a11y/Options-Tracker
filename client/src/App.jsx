@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, BarChart3, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn, FileBarChart } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn, FileBarChart } from 'lucide-react';
 import { api } from './utils/api';
 import HeaderStrip from './components/HeaderStrip';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
 import DecisionEngine from './pages/DecisionEngine';
 import Journal from './pages/Journal';
-import Summary from './pages/Summary';
 import Analytics from './pages/Analytics';
 import Reports from './pages/Reports';
 import PortfolioRisk from './pages/PortfolioRisk';
@@ -30,17 +29,16 @@ const NAV_GROUPS = [
     tabs: [
       { id: 'journal', label: 'Journal', icon: BookOpen, key: '4' },
       { id: 'analytics', label: 'Analytics', icon: TrendingUp, key: '5' },
-      { id: 'summary', label: 'Summary', icon: BarChart3, key: '6' },
-      { id: 'risk', label: 'Portfolio Risk', icon: Shield, key: '7' },
-      { id: 'reports', label: 'Reports', icon: FileBarChart, key: '8' },
+      { id: 'risk', label: 'Portfolio Risk', icon: Shield, key: '6' },
+      { id: 'reports', label: 'Reports', icon: FileBarChart, key: '7' },
     ],
   },
   {
     label: 'Reference',
     tabs: [
-      { id: 'knowledge', label: 'Knowledgebase', icon: Library, key: '9' },
-      { id: 'documents', label: 'Documents', icon: FolderOpen, key: '0' },
-      { id: 'settings', label: 'Settings', icon: Settings, key: null },
+      { id: 'knowledge', label: 'Knowledgebase', icon: Library, key: '8' },
+      { id: 'documents', label: 'Documents', icon: FolderOpen, key: '9' },
+      { id: 'settings', label: 'Settings', icon: Settings, key: '0' },
     ],
   },
 ];
@@ -51,6 +49,7 @@ const TAB_IDS = ALL_TABS.map(t => t.id);
 const savedTab = () => {
   try {
     const t = localStorage.getItem('ot_tab');
+    if (t === 'summary') return 'analytics'; // Summary merged into Analytics
     return TAB_IDS.includes(t) ? t : 'dashboard';
   } catch (e) { return 'dashboard'; }
 };
@@ -203,8 +202,7 @@ export default function App() {
           {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} />}
-          {tab === 'summary' && <Summary authenticated={authenticated} account={selectedAccount} />}
-          {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} />}
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}

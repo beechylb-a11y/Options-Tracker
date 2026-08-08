@@ -3,15 +3,15 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContai
 import { TrendingUp, Calendar, Clock, Layers, Activity } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor, localISODate } from '../utils/format';
-import { filterTracker } from '../utils/stats';
+import { filterTracker, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
 
-export default function Analytics({ authenticated, account }) {
+export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [section, setSection] = useState('time');
+  const [section, setSection] = useState('strategy');
 
   function loadData() {
     setError(null);
@@ -48,7 +48,7 @@ export default function Analytics({ authenticated, account }) {
   }, [authenticated]);
 
   const closed = useMemo(() =>
-    filterTracker(tracker, account).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
+    filterTracker(tracker, account, accounts).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
       .map(t => ({
         ...t,
         pnl: parseFloat(t['Total P&L ($)']) || 0,
@@ -62,7 +62,7 @@ export default function Analytics({ authenticated, account }) {
       }))
       .filter(t => t.entryDate)
       .sort((a, b) => a.entryDate - b.entryDate)
-  , [tracker, account]);
+  , [tracker, account, accounts]);
 
   if (!authenticated) {
     return (
@@ -75,6 +75,7 @@ export default function Analytics({ authenticated, account }) {
   if (loading) return <div className="text-text-muted text-sm">Loading analytics...</div>;
 
   const SECTIONS = [
+    { id: 'strategy', label: 'Strategy', icon: TrendingUp },
     { id: 'time', label: 'Time patterns', icon: Clock },
     { id: 'regime', label: 'Regime performance', icon: Layers },
     { id: 'decay', label: 'DTE analysis', icon: Calendar },
@@ -99,10 +100,160 @@ export default function Analytics({ authenticated, account }) {
         </div>
       </div>
 
+      {section === 'strategy' && <StrategyBreakdown closed={closed} accounts={accounts} />}
       {section === 'time' && <TimePatterns closed={closed} />}
       {section === 'regime' && <RegimePerformance closed={closed} decisions={decisions} />}
       {section === 'decay' && <DTEAnalysis closed={closed} />}
       {section === 'rolling' && <RollingStats closed={closed} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  STRATEGY BREAKDOWN (merged from the old Summary page)
+// ═══════════════════════════════════════════
+const GROUPINGS = [
+  { id: 'strategy', label: 'By Strategy' },
+  { id: 'underlying', label: 'By Underlying' },
+  { id: 'account', label: 'By Account' },
+];
+
+function StrategyBreakdown({ closed, accounts = [] }) {
+  const [groupBy, setGroupBy] = useState('strategy');
+  const [sort, setSort] = useState({ key: 'pnl', dir: 'desc' });
+
+  const accName = id => accounts.find(a => a.id === id)?.name || id || 'Unknown';
+  const keyFor = t => groupBy === 'strategy' ? (t.strategy || 'Unknown')
+    : groupBy === 'underlying' ? (t.underlying || 'Unknown')
+    : accName(t.Account);
+
+  const groups = {};
+  closed.forEach(t => {
+    const k = keyFor(t);
+    if (!groups[k]) groups[k] = { name: k, trades: 0, wins: 0, losses: 0, pnl: 0, winSum: 0, lossSum: 0, daysSum: 0, daysN: 0 };
+    const g = groups[k];
+    g.trades++;
+    g.pnl += t.pnl;
+    if (t.wl === 'Win') { g.wins++; g.winSum += t.pnl; }
+    else if (t.wl === 'Loss') { g.losses++; g.lossSum += t.pnl; }
+    if (t.closeDate && t.entryDate) { g.daysSum += Math.max(0, Math.ceil((t.closeDate - t.entryDate) / 86400000)); g.daysN++; }
+  });
+
+  const rows = Object.values(groups).map(g => ({
+    ...g,
+    ba: g.trades > 0 ? Math.round(g.wins / g.trades * 100) : 0,
+    avgPnl: g.trades > 0 ? g.pnl / g.trades : 0,
+    avgWin: g.wins > 0 ? g.winSum / g.wins : 0,
+    avgLoss: g.losses > 0 ? g.lossSum / g.losses : 0,
+    pf: g.lossSum < 0 ? g.winSum / Math.abs(g.lossSum) : (g.winSum > 0 ? Infinity : 0),
+    avgDays: g.daysN > 0 ? g.daysSum / g.daysN : null,
+  }));
+
+  const dirMul = sort.dir === 'desc' ? -1 : 1;
+  rows.sort((a, b) => {
+    const av = a[sort.key], bv = b[sort.key];
+    if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * dirMul;
+    const an = av === null ? -Infinity : av, bn = bv === null ? -Infinity : bv;
+    return (an > bn ? 1 : an < bn ? -1 : 0) * dirMul;
+  });
+
+  const chartData = [...rows].sort((a, b) => b.pnl - a.pnl);
+  const chartHeight = Math.max(160, chartData.length * 28 + 40);
+
+  const setSortKey = key => setSort(s => s.key === key
+    ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' }
+    : { key, dir: key === 'name' ? 'asc' : 'desc' });
+
+  const HEADERS = [
+    { key: 'name', label: GROUPINGS.find(g => g.id === groupBy).label.replace('By ', ''), align: 'text-left' },
+    { key: 'trades', label: 'Trades', align: 'text-center' },
+    { key: 'wins', label: 'W-L', align: 'text-center' },
+    { key: 'ba', label: 'BA %', align: 'text-center' },
+    { key: 'pnl', label: 'Total P&L', align: 'text-right' },
+    { key: 'avgPnl', label: 'Avg P&L', align: 'text-right' },
+    { key: 'avgWin', label: 'Avg Win', align: 'text-right' },
+    { key: 'avgLoss', label: 'Avg Loss', align: 'text-right' },
+    { key: 'pf', label: 'PF', align: 'text-right' },
+    { key: 'avgDays', label: 'Avg Days', align: 'text-right' },
+  ];
+
+  if (closed.length === 0) {
+    return <div className="card py-8 text-center text-text-faint text-sm">No closed trades to break down</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <div className="flex border border-bg-border rounded-lg overflow-hidden">
+          {GROUPINGS.map(g => (
+            <button key={g.id} onClick={() => setGroupBy(g.id)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${groupBy === g.id ? 'bg-accent text-white' : 'text-text-muted hover:text-text hover:bg-bg-hover'}`}>
+              {g.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* P&L bar chart */}
+      <div className="card">
+        <h3 className="text-sm font-medium text-text-muted mb-3">P&L {GROUPINGS.find(g => g.id === groupBy).label.toLowerCase()}</h3>
+        <ResponsiveContainer width="100%" height={chartHeight}>
+          <BarChart data={chartData} layout="vertical" margin={{ left: 120 }}>
+            <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={120} />
+            <Tooltip contentStyle={ttStyle} formatter={(v, n, p) => {
+              const d = p.payload;
+              return [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
+                {fmt$(v)} ({d.trades}t, {d.ba}% BA)
+              </span>, 'P&L'];
+            }} />
+            <ReferenceLine x={0} stroke="#30363d" />
+            <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
+              {chartData.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? '#238636' : '#da3633'} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Sortable breakdown table */}
+      <div className="card">
+        <h3 className="text-sm font-medium text-text-muted mb-3">Detailed Breakdown</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-text-faint text-[11px] uppercase tracking-wider">
+              {HEADERS.map(h => (
+                <th key={h.key} onClick={() => setSortKey(h.key)}
+                  className={`${h.align} py-2 cursor-pointer select-none hover:text-text-muted`}>
+                  {h.label}{sort.key === h.key ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d, i) => (
+              <tr key={i} className="table-row"
+                style={d.trades < 10 ? { opacity: 0.6 } : undefined}
+                title={d.trades < 10 ? 'Small sample (n<10)' : undefined}>
+                <td className="py-2 font-medium">{d.name}</td>
+                <td className="py-2 text-center mono">{d.trades}</td>
+                <td className="py-2 text-center mono"><span className="text-green">{d.wins}</span><span className="text-text-faint">-</span><span className="text-red">{d.losses}</span></td>
+                <td className="py-2 text-center">
+                  <span className={`mono font-medium ${d.ba >= BA_GREEN ? 'text-green' : d.ba >= BA_RED ? 'text-amber' : 'text-red'}`}>{d.ba}%</span>
+                </td>
+                <td className="py-2 text-right mono font-medium" style={{ color: pnlColor(d.pnl) }}>{fmt$(d.pnl)}</td>
+                <td className="py-2 text-right mono" style={{ color: pnlColor(d.avgPnl) }}>{fmt$(d.avgPnl)}</td>
+                <td className="py-2 text-right mono text-green">{d.wins > 0 ? fmt$(d.avgWin) : '--'}</td>
+                <td className="py-2 text-right mono text-red">{d.losses > 0 ? fmt$(d.avgLoss) : '--'}</td>
+                <td className="py-2 text-right mono">{d.pf === Infinity ? '∞' : d.pf.toFixed(2)}</td>
+                <td className="py-2 text-right mono text-text-muted">{d.avgDays !== null ? d.avgDays.toFixed(1) : '--'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-[10px] text-text-faint mt-2">
+          PF = gross wins ÷ |gross losses|. Avg Days = entry to close. Faded rows have fewer than 10 trades (small sample).
+        </p>
+      </div>
     </div>
   );
 }
@@ -403,6 +554,34 @@ function DTEAnalysis({ closed }) {
   const holdData = Object.entries(holdingPeriod)
     .map(([name, d]) => ({ name, ...d, ba: d.trades > 0 ? Math.round(d.wins / d.trades * 100) : 0 }));
 
+  // DTE bucket × entry day-of-week heatmap (Mon-Fri)
+  const HEAT_DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+  const heat = {};
+  Object.keys(dteBuckets).forEach(k => { heat[k] = HEAT_DOWS.map(() => ({ pnl: 0, trades: 0 })); });
+  let heatTrades = 0;
+  closed.forEach(t => {
+    if (t.dte === null) return;
+    const dow = t.entryDate.getDay();
+    if (dow < 1 || dow > 5) return;
+    for (const [name, range] of Object.entries(dteBuckets)) {
+      if (t.dte >= range.min && t.dte <= range.max) {
+        heat[name][dow - 1].pnl += t.pnl;
+        heat[name][dow - 1].trades++;
+        heatTrades++;
+        break;
+      }
+    }
+  });
+  const heatMaxAbs = Math.max(1, ...Object.values(heat).flatMap(row => row.map(c => Math.abs(c.pnl))));
+  const heatCellStyle = c => {
+    if (c.trades === 0) return { background: 'transparent' };
+    const alpha = 0.1 + 0.55 * (Math.abs(c.pnl) / heatMaxAbs);
+    return { background: c.pnl >= 0 ? `rgba(35, 134, 54, ${alpha})` : `rgba(218, 54, 51, ${alpha})` };
+  };
+  const fmtShort$ = n => Math.abs(n) >= 1000
+    ? `${n < 0 ? '-' : ''}$${(Math.abs(n) / 1000).toFixed(1)}k`
+    : fmt$(n, 0);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
@@ -466,6 +645,42 @@ function DTEAnalysis({ closed }) {
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* DTE × Day-of-week heatmap */}
+      <div className="card">
+        <h3 className="text-sm font-medium text-text-muted mb-3">P&L Heatmap: DTE Bucket × Entry Day</h3>
+        {heatTrades > 0 ? (
+          <>
+            <div className="grid gap-1" style={{ gridTemplateColumns: '90px repeat(5, 1fr)' }}>
+              <div />
+              {HEAT_DOWS.map(d => (
+                <div key={d} className="text-center text-[10px] text-text-faint uppercase tracking-wider pb-1">{d}</div>
+              ))}
+              {Object.keys(dteBuckets).map(bucket => (
+                <React.Fragment key={bucket}>
+                  <div className="flex items-center text-xs text-text-muted font-medium">{bucket}</div>
+                  {heat[bucket].map((c, i) => (
+                    <div key={i} className="rounded-md border border-bg-border py-2 text-center" style={heatCellStyle(c)}
+                      title={c.trades > 0 ? `${bucket} · ${HEAT_DOWS[i]}: ${fmt$(c.pnl)} over ${c.trades} trade${c.trades === 1 ? '' : 's'}` : 'No trades'}>
+                      {c.trades > 0 ? (
+                        <>
+                          <div className="mono text-xs font-medium" style={{ color: pnlColor(c.pnl) }}>{fmtShort$(c.pnl)}</div>
+                          <div className="text-[9px] text-text-faint">{c.trades}t</div>
+                        </>
+                      ) : (
+                        <div className="text-text-faint text-xs">--</div>
+                      )}
+                    </div>
+                  ))}
+                </React.Fragment>
+              ))}
+            </div>
+            <p className="text-[10px] text-text-faint mt-2">Cell colour intensity scales with total P&L. Weekend entries are excluded.</p>
+          </>
+        ) : (
+          <div className="h-[120px] flex items-center justify-center text-text-faint text-sm">Need weekday trades with DTE data</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -527,6 +742,47 @@ function RollingStats({ closed }) {
     return { label: t.entryDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }), expectancy: Math.round(cumPnl / (i + 1) * 100) / 100, idx: i };
   });
 
+  // Daily Sharpe / Sortino — aggregate closed P&L by close-date day.
+  // Computed on daily $ P&L (not % returns), annualised with √252.
+  const dailyPnl = {};
+  closed.forEach(t => {
+    if (!t.closeDate) return;
+    const k = localISODate(t.closeDate);
+    dailyPnl[k] = (dailyPnl[k] || 0) + t.pnl;
+  });
+  const dailyVals = Object.values(dailyPnl);
+  const nDays = dailyVals.length;
+  let sharpe = null, sortino = null;
+  if (nDays >= 10) {
+    const mean = dailyVals.reduce((s, v) => s + v, 0) / nDays;
+    const std = Math.sqrt(dailyVals.reduce((s, v) => s + (v - mean) ** 2, 0) / (nDays - 1));
+    const downStd = Math.sqrt(dailyVals.reduce((s, v) => s + Math.min(0, v) ** 2, 0) / nDays);
+    if (std > 0) sharpe = mean / std * Math.sqrt(252);
+    if (downStd > 0) sortino = mean / downStd * Math.sqrt(252);
+  }
+
+  // R-multiple histogram. True per-trade risk isn't recorded, so R is proxied
+  // as pnl / |average losing trade| of the filtered set.
+  const lossTrades = closed.filter(t => t.wl === 'Loss');
+  const avgLossAbs = lossTrades.length > 0
+    ? Math.abs(lossTrades.reduce((s, t) => s + t.pnl, 0) / lossTrades.length) : 0;
+  let rData = [];
+  if (avgLossAbs > 0) {
+    const buckets = [];
+    for (let b = -3; b < 2.99; b += 0.5) {
+      const start = Math.round(b * 10) / 10;
+      buckets.push({ start, label: `${start}R`, count: 0 });
+    }
+    closed.forEach(t => {
+      const r = t.pnl / avgLossAbs;
+      let idx = Math.floor((r + 3) / 0.5);
+      if (idx < 0) idx = 0;
+      if (idx >= buckets.length) idx = buckets.length - 1;
+      buckets[idx].count++;
+    });
+    rData = buckets;
+  }
+
   return (
     <div className="space-y-4">
       {/* KPIs */}
@@ -536,6 +792,19 @@ function RollingStats({ closed }) {
         <MiniKPI label="Current rolling BA" value={rollingBA.length > 0 ? `${rollingBA[rollingBA.length - 1].ba}%` : '--'} sub={`Last ${WINDOW} trades`} />
         <MiniKPI label="Expectancy/trade" value={closed.length > 0 ? fmt$(cumPnl / closed.length) : '--'}
           cls={cumPnl > 0 ? 'text-green' : 'text-red'} />
+      </div>
+
+      {/* Daily risk-adjusted KPIs */}
+      <div className="grid grid-cols-4 gap-3">
+        <MiniKPI label="Daily Sharpe (ann.)" value={sharpe !== null ? sharpe.toFixed(2) : '--'}
+          sub={nDays >= 10 ? `${nDays} trading days` : 'Need 10+ trading days'}
+          cls={sharpe !== null ? (sharpe >= 0 ? 'text-green' : 'text-red') : ''} />
+        <MiniKPI label="Daily Sortino (ann.)" value={sortino !== null ? sortino.toFixed(2) : '--'}
+          sub={nDays >= 10 ? `${nDays} trading days` : 'Need 10+ trading days'}
+          cls={sortino !== null ? (sortino >= 0 ? 'text-green' : 'text-red') : ''} />
+        <div className="col-span-2 flex items-center text-[10px] text-text-faint px-2">
+          Sharpe/Sortino are computed on daily $ P&L (grouped by close date), not % returns, annualised with √252.
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -612,6 +881,32 @@ function RollingStats({ closed }) {
             <div className="h-[200px] flex items-center justify-center text-text-faint text-sm">Need more trades</div>
           )}
         </div>
+      </div>
+
+      {/* R-multiple distribution */}
+      <div className="card">
+        <h3 className="text-sm font-medium text-text-muted mb-3">R-Multiple Distribution</h3>
+        {rData.length > 0 ? (
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rData}>
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} interval={0} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#8b949e' }}
+                  formatter={v => [<span style={{ color: '#e6edf3', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{v} trades</span>, 'Count']} />
+                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                  {rData.map((d, i) => <Cell key={i} fill={d.start >= 0 ? '#238636' : '#da3633'} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <p className="text-[10px] text-text-faint mt-2">
+              True per-trade risk isn't recorded, so R is proxied as trade P&L ÷ |average losing trade| ({fmt$(avgLossAbs)}) of the current filtered set.
+              Buckets are 0.5R wide from -3R to +3R; outliers are clamped into the edge buckets.
+            </p>
+          </>
+        ) : (
+          <div className="h-[120px] flex items-center justify-center text-text-faint text-sm">Need at least one losing trade to size R</div>
+        )}
       </div>
     </div>
   );

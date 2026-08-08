@@ -162,29 +162,36 @@ export default function Journal({ authenticated, account }) {
     });
   }
 
-  // ── Weekly + monthly summaries ──
-  const weeks = {};
-  Object.entries(dayStats).forEach(([date, data]) => {
-    const d = new Date(date + 'T12:00:00');
-    if (d.getMonth() === month && d.getFullYear() === year) {
-      const weekNum = Math.ceil(d.getDate() / 7);
-      const key = `W${weekNum}`;
-      if (!weeks[key]) weeks[key] = { pnl: 0, trades: 0, wins: 0, losses: 0 };
-      weeks[key].pnl += data.pnl;
-      weeks[key].trades += data.count;
-      weeks[key].wins += data.wins;
-      weeks[key].losses += data.losses;
-    }
+  // ── Calendar grid (visual weeks) + weekly / monthly summaries ──
+  const dateStrFor = d => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weekRows = [];
+  for (let i = 0; i < cells.length; i += 7) weekRows.push(cells.slice(i, i + 7));
+
+  const weekStats = weekRows.map(row => {
+    const s = { pnl: 0, trades: 0, wins: 0, losses: 0 };
+    row.forEach(d => {
+      if (!d) return;
+      const data = dayStats[dateStrFor(d)];
+      if (data) { s.pnl += data.pnl; s.trades += data.count; s.wins += data.wins; s.losses += data.losses; }
+    });
+    return s;
   });
 
-  const monthPnl = Object.values(weeks).reduce((s, w) => s + w.pnl, 0);
-  const monthTrades = Object.values(weeks).reduce((s, w) => s + w.trades, 0);
-  const monthWins = Object.values(weeks).reduce((s, w) => s + w.wins, 0);
-  const monthLosses = Object.values(weeks).reduce((s, w) => s + w.losses, 0);
+  const maxAbsDayPnl = Math.max(0, ...cells.filter(Boolean).map(d => Math.abs(dayStats[dateStrFor(d)]?.pnl || 0)));
+
+  const monthPnl = weekStats.reduce((s, w) => s + w.pnl, 0);
+  const monthTrades = weekStats.reduce((s, w) => s + w.trades, 0);
+  const monthWins = weekStats.reduce((s, w) => s + w.wins, 0);
+  const monthLosses = weekStats.reduce((s, w) => s + w.losses, 0);
+  const monthDecided = monthWins + monthLosses;
 
   function prevMonth() { setCurrentDate(new Date(year, month - 1, 1)); setSelectedDay(null); }
   function nextMonth() { setCurrentDate(new Date(year, month + 1, 1)); setSelectedDay(null); }
-  function goToday() { setCurrentDate(new Date()); setSelectedDay(null); }
+  function goToday() { const now = new Date(); setCurrentDate(now); setSelectedDay(localISODate(now)); }
 
   async function handleAddNote() {
     if (!noteDate) return;
@@ -218,10 +225,6 @@ export default function Journal({ authenticated, account }) {
   }
 
   if (!authenticated) return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Journal</h2><p className="text-text-muted">Connect Google to view journal.</p></div>);
-
-  const cells = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   const selData = selectedDay ? calendarData[selectedDay] || null : null;
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
@@ -273,48 +276,71 @@ export default function Journal({ authenticated, account }) {
               </div>
               <h3 className="font-display text-lg font-semibold">{monthName}</h3>
             </div>
-            <div className="grid grid-cols-7 gap-1">
-              {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
+            <div className="grid grid-cols-8 gap-1">
+              {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'WEEK'].map(d => (
                 <div key={d} className="text-center text-[10px] text-text-faint uppercase tracking-wider py-2">{d}</div>
               ))}
-              {cells.map((day, i) => {
-                if (day === null) return <div key={i} className="aspect-square" />;
-                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const data = calendarData[dateStr];
-                const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-                const isSelected = selectedDay === dateStr;
-                let bgColor = 'border-bg-border';
-                if (data && data.count > 0) {
-                  if (data.pnl > 0) bgColor = 'border-green/40 bg-green/5';
-                  else if (data.pnl < 0) bgColor = 'border-red/40 bg-red/5';
-                  else bgColor = 'border-bg-border bg-bg-hover';
-                }
-                if (isSelected) bgColor += ' ring-2 ring-accent';
-                return (
-                  <div key={i} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
-                    className={`aspect-square p-1.5 border rounded-lg relative transition-all cursor-pointer hover:border-accent/50 ${bgColor}`}>
-                    <span className={`text-xs ${isToday ? 'bg-accent text-white w-5 h-5 rounded-full flex items-center justify-center' : 'text-text-muted'}`}>{day}</span>
-                    {data && data.count > 0 && (
-                      <div className="absolute bottom-1 left-1 right-1">
-                        <div className="mono text-[10px] font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</div>
-                        <div className="text-[9px] text-text-faint">
-                          {data.count}t {data.wins}w {data.losses}l
-                          {data.ticketCount > 0 && <span className="text-amber"> ⚡{data.ticketCount}</span>}
-                        </div>
+              {weekRows.map((row, wi) => (
+                <React.Fragment key={wi}>
+                  {row.map((day, di) => {
+                    if (day === null) return <div key={di} className="h-16" />;
+                    const dateStr = dateStrFor(day);
+                    const data = calendarData[dateStr];
+                    const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+                    const isSelected = selectedDay === dateStr;
+                    const isWeekend = di === 0 || di === 6;
+                    const hasTrades = data && data.count > 0;
+                    let borderCls = 'border-bg-border';
+                    let bg;
+                    if (hasTrades) {
+                      if (data.pnl > 0) borderCls = 'border-green/40';
+                      else if (data.pnl < 0) borderCls = 'border-red/40';
+                      if (data.pnl !== 0 && maxAbsDayPnl > 0) {
+                        const alpha = 0.08 + 0.37 * Math.min(1, Math.abs(data.pnl) / maxAbsDayPnl);
+                        bg = data.pnl > 0 ? `rgba(63,185,80,${alpha.toFixed(3)})` : `rgba(248,81,73,${alpha.toFixed(3)})`;
+                      }
+                    }
+                    const dimmed = isWeekend && !hasTrades && !data?.notes && !data?.openCount;
+                    return (
+                      <div key={di} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                        style={bg ? { backgroundColor: bg } : undefined}
+                        className={`h-16 px-1.5 py-1 border rounded-lg relative transition-all cursor-pointer hover:border-accent/50 ${borderCls}${hasTrades && data.pnl === 0 ? ' bg-bg-hover' : ''}${isSelected ? ' ring-2 ring-accent' : ''}${dimmed ? ' opacity-40' : ''}`}>
+                        <span className={`text-[10px] ${isToday ? 'bg-accent text-white w-4 h-4 rounded-full inline-flex items-center justify-center' : 'text-text-muted'}`}>{day}</span>
+                        {hasTrades && (
+                          <div className="mt-0.5">
+                            <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</div>
+                            <div className="text-[10px] text-text-faint leading-tight">
+                              {data.count}t · {data.wins}-{data.losses}
+                              {data.ticketCount > 0 && <span className="text-amber"> ⚡{data.ticketCount}</span>}
+                            </div>
+                          </div>
+                        )}
+                        {data && !data.count && data.openCount > 0 && (
+                          <div className="text-[10px] text-amber leading-tight mt-0.5">⚡{data.openCount} open</div>
+                        )}
+                        {data && data.count > 0 && data.openCount > 0 && (
+                          <div className="absolute bottom-1 right-1"><span className="text-[8px] text-amber">⚡{data.openCount}</span></div>
+                        )}
+                        {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
                       </div>
+                    );
+                  })}
+                  <div className="h-16 px-1.5 py-1 border border-bg-border rounded-lg bg-bg flex flex-col justify-center">
+                    <div className="text-[9px] text-text-faint uppercase tracking-wider">W{wi + 1}</div>
+                    {weekStats[wi].trades > 0 ? (<>
+                      <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(weekStats[wi].pnl) }}>{fmt$(weekStats[wi].pnl)}</div>
+                      <div className="text-[10px] text-text-faint leading-tight">{weekStats[wi].trades}t</div>
+                    </>) : (
+                      <div className="text-[10px] text-text-faint">—</div>
                     )}
-                    {data && !data.count && data.openCount > 0 && (
-                      <div className="absolute bottom-1 left-1 right-1">
-                        <div className="text-[9px] text-amber">⚡{data.openCount} open</div>
-                      </div>
-                    )}
-                    {data && data.count > 0 && data.openCount > 0 && (
-                      <div className="absolute top-1 left-1"><span className="text-[8px] text-amber">⚡{data.openCount}</span></div>
-                    )}
-                    {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
                   </div>
-                );
-              })}
+                </React.Fragment>
+              ))}
+              <div className="col-span-7 flex items-center justify-end pr-1 text-[10px] text-text-faint uppercase tracking-wider">Month</div>
+              <div className="h-12 px-1.5 py-1 border border-accent/40 rounded-lg flex flex-col justify-center">
+                <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
+                <div className="text-[10px] text-text-faint leading-tight">{monthTrades}t</div>
+              </div>
             </div>
           </div>
 
@@ -449,44 +475,46 @@ export default function Journal({ authenticated, account }) {
         {/* Right column */}
         <div>
           <div className="card mb-4">
-            <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Month Summary</h3>
+            <h3 className="text-sm font-medium text-text mb-3">Month Summary</h3>
             <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="flex justify-between"><span className="text-[#8b949e]">Trades</span><span className="mono text-white">{monthTrades}</span></div>
-              <div className="flex justify-between"><span className="text-[#8b949e]">BA</span><span className="mono text-white">{monthTrades > 0 ? Math.round(monthWins / (monthWins + monthLosses) * 100) : 0}%</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Trades</span><span className="mono text-white">{monthTrades}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">BA (ex-scratch)</span><span className="mono text-white">{monthDecided > 0 ? Math.round(monthWins / monthDecided * 100) : 0}%</span></div>
               <div className="flex justify-between"><span className="text-green">Wins</span><span className="mono text-white">{monthWins}</span></div>
               <div className="flex justify-between"><span className="text-red">Losses</span><span className="mono text-white">{monthLosses}</span></div>
             </div>
-            {monthTrades > 0 && (
+            {monthDecided > 0 && (
               <div className="mt-3 h-2.5 rounded-full bg-bg-border overflow-hidden flex">
-                <div className="bg-green h-full" style={{ width: `${(monthWins / (monthWins + monthLosses)) * 100}%` }} />
-                <div className="bg-red h-full" style={{ width: `${(monthLosses / (monthWins + monthLosses)) * 100}%` }} />
+                <div className="bg-green h-full" style={{ width: `${(monthWins / monthDecided) * 100}%` }} />
+                <div className="bg-red h-full" style={{ width: `${(monthLosses / monthDecided) * 100}%` }} />
               </div>
             )}
           </div>
 
           <div className="card">
-            <h3 className="text-sm font-medium text-[#c9d1d9] mb-3">Weekly Results</h3>
-            {Object.entries(weeks).length > 0 ? (
+            <h3 className="text-sm font-medium text-text mb-3">Weekly Results</h3>
+            {weekStats.some(w => w.trades > 0) ? (
               <div className="space-y-3">
-                {Object.entries(weeks).sort().map(([week, data]) => {
-                  const ba = data.trades > 0 ? Math.round(data.wins / data.trades * 100) : 0;
+                {weekStats.map((data, wi) => {
+                  if (data.trades === 0) return null;
+                  const decided = data.wins + data.losses;
+                  const ba = decided > 0 ? Math.round(data.wins / decided * 100) : 0;
                   return (
-                    <div key={week} className="p-3 rounded-lg border border-bg-border">
+                    <div key={wi} className="p-3 rounded-lg border border-bg-border">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-white">{week}</span>
+                        <span className="text-sm font-medium text-white">W{wi + 1}</span>
                         <span className="mono text-sm font-bold" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</span>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-[#8b949e]">
+                      <div className="flex items-center gap-3 text-xs text-text-muted">
                         <span>{data.trades}t</span>
                         <span className="text-green">{data.wins}W</span>
                         <span className="text-red">{data.losses}L</span>
                         <span>BA: {ba}%</span>
                       </div>
                       <div className="mt-2 h-1.5 rounded-full bg-bg-border overflow-hidden flex">
-                        {data.trades > 0 && (<>
-                          <div className="bg-green h-full" style={{ width: `${(data.wins / data.trades) * 100}%` }} />
-                          <div className="bg-red h-full" style={{ width: `${(data.losses / data.trades) * 100}%` }} />
+                        {decided > 0 && (<>
+                          <div className="bg-green h-full" style={{ width: `${(data.wins / decided) * 100}%` }} />
+                          <div className="bg-red h-full" style={{ width: `${(data.losses / decided) * 100}%` }} />
                         </>)}
                       </div>
                     </div>
