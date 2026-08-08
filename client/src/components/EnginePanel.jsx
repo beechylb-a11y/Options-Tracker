@@ -191,6 +191,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const toggleSection = id => setSectionCollapsed(id, !isCollapsed(id));
   const expandSection = id => { if (isCollapsed(id)) setSectionCollapsed(id, false); };
 
+  // Banner zone-4 warning chips: which chip's "why" explanation is expanded (key or null)
+  const [expandedWarning, setExpandedWarning] = useState(null);
+
   // ── Section completeness ──
   // "Required" mirrors the exact gates behind the banner's incomplete states:
   // calc0dte sets hardBlocker ('Enter underlying price…') when price <= 0 and
@@ -413,6 +416,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   if (isOverride && bannerGrade !== 'weak') bannerTitle += ' (override)';
 
   const effectiveDecision = bannerTitle;
+
+  // Banner zone-3 thesis: skewNote trimmed to a clause (trailing period stripped,
+  // leading char lowercased unless it starts an acronym/ticker). Empty → omitted.
+  const skewClause = (() => {
+    const s = (r.skewNote || '').trim().replace(/\.\s*$/, '');
+    if (!s) return '';
+    return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
+  })();
 
   const dcBg = bannerGrade==='strong'?'#0d1f0d':bannerGrade==='decent'?'#0d1a0d':bannerGrade==='marginal'?'#1f1a0d':'#1f0d0d';
   const dcBorder = bannerGrade==='strong'?'#238636':bannerGrade==='decent'?'#4d8c2a':bannerGrade==='marginal'?'#9e6a03':'#da3633';
@@ -897,8 +908,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         <div style={{display:'flex',gap:20,alignItems:'flex-start'}}>
           {/* Left: strategy info */}
           <div style={{flex:'1 1 auto',minWidth:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <div style={{fontSize:12,fontWeight:700,color:dcColor,textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</div>
+            {/* Zone 1 — identity row: status pill · title · badges */}
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={{fontSize:12,fontWeight:700,padding:'2px 10px',borderRadius:999,
+                color:(missingInputs && !hasBlocker)?'#d29922':dcColor,
+                border:`1px solid ${(missingInputs && !hasBlocker)?'#9e6a03':dcBorder}`,
+                background:'rgba(255,255,255,0.04)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</span>
+              <span style={{fontSize:16,fontWeight:600,color:'#fff'}}>
+                {r.hardBlocker || `${is0?i0.underlying:i45.underlying} · ${effectiveStrat}${missingInputs ? '' : ` · ${r.contracts}x`}`}
+              </span>
               {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
               {(() => {
                 const net = parseFloat(ticketNet);
@@ -916,11 +934,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 </span>
               )}
             </div>
-            <div style={{fontSize:18,fontWeight:600,color:'#fff',marginTop:4}}>
-              {r.hardBlocker || `${is0?i0.underlying:i45.underlying} — ${effectiveStrat} — ${r.contracts} contract${r.contracts!==1?'s':''}`}
-            </div>
+        {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
         {r.legs.length > 0 && (
-          <div style={{marginTop:10}}>
+          <div style={{marginTop:8}}>
             {r.legs.length === 4 && r.legs[0]?.label?.includes('VIX') ? (
               // Dual EM suggestions for spreads
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
@@ -928,68 +944,74 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(VIX):</span>
                   {r.legs.slice(0,2).map((l,i) => {
                     const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
+                    return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                       {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX)','')}</span>
                     </div>);
                   })}
                 </div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(1D):</span>
                   {r.legs.slice(2,4).map((l,i) => {
                     const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
+                    return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                       {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX1D)','')}</span>
                     </div>);
                   })}
+                  {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
                 </div>
               </div>
             ) : (
-              // Standard leg display
-              <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+              // Standard leg display — wing distance appended inline, muted
+              <div style={{display:'flex',flexWrap:'wrap',gap:'6px 8px',alignItems:'center'}}>
                 {r.legs.map((l,i) => {
                   const isShort = l.label.toLowerCase().includes('short');
-                  return (<div key={i} style={{padding:'5px 12px',borderRadius:8,fontSize:13,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
+                  return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
                     {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
                   </div>);
                 })}
-              </div>
-            )}
-            {(r.wingTxt || r.strikeLine) && <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{r.wingTxt || r.strikeLine}</div>}
-            {r.skewNote && <div style={{fontSize:11,color: r.skewNote.includes('reversal') ? '#d29922' : '#58a6ff',marginTop:3,fontWeight:600}}>{r.skewNote}</div>}
-            {is0 && r.holdToExpiry && (
-              <div style={{marginTop:6,padding:'6px 10px',borderRadius:8,fontSize:11,lineHeight:1.55,
-                background: r.holdToExpiry.verdict === 'hold' ? '#0d2818' : r.holdToExpiry.verdict === 'watch' ? '#1f1a0d' : '#2d0f11',
-                border: '1px solid ' + (r.holdToExpiry.verdict === 'hold' ? '#238636' : r.holdToExpiry.verdict === 'watch' ? '#9e6a03' : '#8b2025')}}>
-                <span style={{fontWeight:700,color: r.holdToExpiry.verdict === 'hold' ? '#3fb950' : r.holdToExpiry.verdict === 'watch' ? '#d29922' : '#f85149'}}>
-                  Expiry · {r.holdToExpiry.label}
-                </span>
-                <span style={{color:'#8b949e'}}>
-                  {'  '}{r.holdToExpiry.isCashSettled ? 'cash-settled' : 'settles into shares'} · cushion {r.holdToExpiry.cushionEM.toFixed(2)} EM (need {r.holdToExpiry.needed.toFixed(2)})
-                </span>
-                <div style={{color:'#c9d1d9',marginTop:3}}>{r.holdToExpiry.note}</div>
+                {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
               </div>
             )}
           </div>
         )}
-        {/* ONE decision line: composite · EV · P(max loss) · Kelly. The detailed
-            P(max loss) breakdown box stays in the input column; this is the headline. */}
+        {/* Zone 2 — stat tiles: Score · P(max loss) · EV · Kelly. The detailed
+            P(max loss) breakdown box stays in the input column; this is the headline.
+            EV/Kelly gate on missingInputs (r.missingSize); P(max loss) on r.pMaxLoss==null. */}
+        {!r.hardBlocker && (() => {
+          const tile = (label, value, dim) => (
+            <div style={{background:'rgba(255,255,255,0.04)',borderRadius:8,padding:'8px 10px',opacity:dim?0.55:1}}>
+              <div style={{fontSize:11,color:'#8b949e',letterSpacing:'0.04em'}}>{label}</div>
+              {value}
+            </div>
+          );
+          const needs = txt => <div style={{fontSize:12,color:'#8b949e',marginTop:3}}>{txt}</div>;
+          const val = (node) => <div style={{fontSize:19,fontWeight:700,fontFamily:'JetBrains Mono,monospace',marginTop:1}}>{node}</div>;
+          return (
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginTop:10}}>
+              {tile('SCORE', val(<span style={{color:dcColor}}>{compositeScore}/100</span>), false)}
+              {tile('P(MAX LOSS)', r.pMaxLoss==null ? needs('needs greeks')
+                : val(<span style={{color: r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(r.pMaxLoss*100).toFixed(1)}%</span>),
+                r.pMaxLoss==null)}
+              {tile('EV', missingInputs ? needs('needs sizing')
+                : val(<><span style={{color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#8b949e'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</span>
+                  {r.evBasis && <span style={{fontSize:10,fontWeight:400,color:'#8b949e'}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</>),
+                missingInputs)}
+              {tile('KELLY', missingInputs ? needs('needs sizing')
+                : val(<span style={{color: r.kellyOverRisk?'#f85149':'#3fb950'}}>{r.contracts}x · ${r.kellyDollar?.toFixed(0)||0}</span>),
+                missingInputs)}
+            </div>
+          );
+        })()}
+        {/* Zone 3 — thesis line: direction/trend · skew clause · profit-if */}
         {!r.hardBlocker && (
-          <div style={{display:'flex',flexWrap:'wrap',gap:'6px 18px',alignItems:'baseline',marginTop:8,fontFamily:'JetBrains Mono,monospace'}}>
-            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>SCORE{' '}
-              <b style={{fontSize:15,color:dcColor}}>{compositeScore}/100</b></span>
-            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>EV{' '}
-              <b style={{fontSize:15,color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#8b949e'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</b>
-              {r.evBasis && <span style={{fontSize:9,opacity:0.7}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</span>
-            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>P(MAX LOSS){' '}
-              <b style={{fontSize:15,color: r.pMaxLoss==null?'#8b949e':r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>
-                {r.pMaxLoss!=null?(r.pMaxLoss*100).toFixed(1)+'%':'--'}</b></span>
-            <span style={{fontSize:10,color:'#8b949e',letterSpacing:'0.04em'}}>KELLY{' '}
-              <b style={{fontSize:15,color: r.kellyOverRisk?'#f85149':'#3fb950'}}>{r.contracts}x · ${r.kellyDollar?.toFixed(0)||0}</b></span>
+          <div style={{marginTop:8}}>
+            <span style={{fontSize:14,fontWeight:700,color:'#fff'}}>{`${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'}`}</span>
+            <span style={{fontSize:13,color:'#8b949e'}}>
+              {skewClause ? ` — ${skewClause}.` : ''}
+              {r.behaviour ? ` Profit if: ${r.behaviour}` : ''}
+            </span>
           </div>
         )}
-        <div style={{fontSize:13,color:'#c9d1d9',marginTop:6}}>
-          {!r.hardBlocker && `${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'}`}
-        </div>
         {!r.hardBlocker && r.tradeConfidence != null && (
           <div style={{marginTop:6,fontSize:12,color:'#8b949e'}}>
             <span style={{color:confClr,fontWeight:600}}>Confidence {r.tradeConfidence}/100 · {r.confidenceTier}</span>
@@ -1004,11 +1026,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             )}
           </div>
         )}
-        {r.behaviour && <div style={{fontSize:12,color:'#c9d1d9',marginTop:6,paddingTop:6,borderTop:'1px solid #30363d',fontStyle:'italic'}}>Profit if: {r.behaviour}</div>}
+        {/* Zone 4 — warning chips: hold-to-expiry verdict, expandable "why" */}
+        {is0 && r.holdToExpiry && (() => {
+          const h = r.holdToExpiry;
+          const bg = h.verdict==='hold'?'#0d2818':h.verdict==='watch'?'#1f1a0d':'#2d0f11';
+          const fg = h.verdict==='hold'?'#3fb950':h.verdict==='watch'?'#d29922':'#f85149';
+          return (
+            <div style={{marginTop:8}}>
+              <div style={{display:'inline-flex',alignItems:'center',gap:8,borderRadius:6,padding:'4px 10px',fontSize:12,background:bg,color:fg}}>
+                <span>Expiry · {h.label} · cushion {h.cushionEM.toFixed(2)} EM (need {h.needed.toFixed(2)}) · {h.isCashSettled?'cash-settled':'settles into shares'}</span>
+                <span onClick={()=>setExpandedWarning(expandedWarning==='expiry'?null:'expiry')}
+                  style={{textDecoration:'underline',cursor:'pointer',opacity:0.85}}>why</span>
+              </div>
+              {expandedWarning==='expiry' && (
+                <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{h.note}</div>
+              )}
+            </div>
+          );
+        })()}
         {!r.hardBlocker && bannerGrade !== 'weak' && !missingInputs && (
           <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
         )}
-        <button onClick={handlePrint} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
         {isOverride && (
           <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
         )}
@@ -1025,12 +1063,23 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
         )}
           </div>
-          {/* Right: mini payoff diagram */}
-          {r.payoff && r.payoff.points.length > 0 && (
-            <div style={{flex:'0 0 280px',minWidth:240}}>
+          {/* Right rail: mini payoff · BE/max caption · print */}
+          <div style={{flex:'0 0 180px',display:'flex',flexDirection:'column',gap:6}}>
+            {r.payoff && r.payoff.points.length > 0 && (
               <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
-            </div>
-          )}
+            )}
+            {r.payoff && (() => {
+              const bes = (r.payoff.breakevens || []).filter(Number.isFinite);
+              const mp = r.payoff.maxProfit;
+              const parts = [];
+              if (bes.length) parts.push(`BE ${bes.map(b => Math.round(b)).join(' / ')}`);
+              if (Number.isFinite(mp)) parts.push(`max +$${mp >= 1000 ? (mp/1000).toFixed(1).replace(/\.0$/,'') + 'k' : Math.round(mp)}`);
+              return parts.length > 0 ? (
+                <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:'#8b949e',textAlign:'center'}}>{parts.join(' · ')}</div>
+              ) : null;
+            })()}
+            <button onClick={handlePrint} style={{padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
+          </div>
         </div>
       </div>
 
