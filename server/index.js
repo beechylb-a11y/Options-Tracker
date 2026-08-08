@@ -583,14 +583,20 @@ app.delete('/api/tracker/:rowIndex', requireAuth, async (req, res) => {
 // ================================================================
 //  STATS / BATTING AVERAGE
 // ================================================================
+// PaperTrade rows are excluded from aggregated "All accounts" stats so paper
+// fills never distort real-money P&L. Mirrors client-side utils/stats.js.
+const isPaperAccountId = id => String(id || '').toLowerCase().startsWith('papertrade');
+
 app.get('/api/stats', requireAuth, async (req, res) => {
   try {
     const trackerRows = await getTradeTracker();
     const account = req.query.account;
-    let filtered = trackerRows;
+    const headers = trackerRows[0] || [];
+    let filtered;
     if (account && account !== 'all') {
-      const headers = trackerRows[0] || [];
       filtered = [headers, ...trackerRows.slice(1).filter(row => (row[12] || '') === account)];
+    } else {
+      filtered = [headers, ...trackerRows.slice(1).filter(row => !isPaperAccountId(row[12]))];
     }
     const stats = calculateStats(filtered);
     const config = await getConfig();
@@ -842,6 +848,9 @@ app.get('/api/performance', requireAuth, async (req, res) => {
     let data = rows.slice(1);
     if (account && account !== 'all') {
       data = data.filter(row => (row[12] || '') === account);
+    } else {
+      // Aggregate view: exclude PaperTrade (same rule as /api/stats)
+      data = data.filter(row => !isPaperAccountId(row[12]));
     }
     if (!data.length) return res.json({ byStrategy: {}, byUnderlying: {}, overall: {} });
 
@@ -883,7 +892,9 @@ app.get('/api/performance', requireAuth, async (req, res) => {
       u.pnl = Math.round(u.pnl * 100) / 100;
     });
 
-    const overall = calculateStats(rows);
+    // Overall KPIs now respect the same account filter/paper exclusion as the
+    // breakdowns (previously computed from ALL rows regardless of account).
+    const overall = calculateStats([rows[0] || [], ...data]);
     res.json({ byStrategy, byUnderlying, overall });
   } catch (err) {
     res.status(500).json({ error: err.message });

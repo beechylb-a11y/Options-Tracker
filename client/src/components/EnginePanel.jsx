@@ -16,6 +16,9 @@ const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwap15','vwap15_30','em'
   'atr','atr5','atr2h','vix','vix1d','esOvernightHigh','esOvernightLow','esClose',
   'priorDayClose','cashOpen','esEM'];
 const MKT_45 = ['price','vix'];
+// 45DTE fields Fetch Greeks can fill from the bridge's per-leg model IVs.
+// Same override contract as MKT_45: type one by hand and later fetches skip it.
+const GREEKS_45 = ['iv','skew'];
 
 const clockOf = ts => {
   if (!ts) return '';
@@ -132,7 +135,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const bag = is0 ? '0' : '45';
   const markHeld = (b, k) => setHeld(h => (h[b + ':' + k] ? h : { ...h, [b + ':' + k]: true }));
   const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
-  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k)) markHeld('45', k); };
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k)) markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -427,12 +430,32 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           upperWingDelta: upperWD || prev.upperWingDelta
         }));
       } else {
+        // The bridge's model greeks carry a per-leg implied vol (%, generic tick
+        // 106). Average the legs that returned one for the IV input; when the
+        // outer legs are a put and a call (condor-style), put-wing IV minus
+        // call-wing IV fills Skew in vol points. Same-right structures (flies)
+        // have no put/call skew to read, so Skew is left alone there. Held
+        // fields are skipped — same override contract as auto-fill.
+        let avgIV = '', skewIV = '';
+        if (Array.isArray(d.legs)) {
+          const withIV = d.legs.filter(l => l.greeks && l.greeks.iv != null && l.greeks.iv > 0);
+          if (withIV.length) avgIV = String(+(withIV.reduce((s, l) => s + l.greeks.iv, 0) / withIV.length).toFixed(2));
+          if (withIV.length > 1) {
+            const byStrike = [...withIV].sort((a, b) => a.strike - b.strike);
+            const loLeg = byStrike[0], hiLeg = byStrike[byStrike.length - 1];
+            if (String(loLeg.right).toUpperCase() === 'P' && String(hiLeg.right).toUpperCase() === 'C') {
+              skewIV = String(+(loLeg.greeks.iv - hiLeg.greeks.iv).toFixed(2));
+            }
+          }
+        }
         setI45(prev => ({
           ...prev,
           price: freshPx || prev.price,
           theta: d.net.theta ? String(d.net.theta) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
+          iv: avgIV && !held['45:iv'] ? avgIV : prev.iv,
+          skew: skewIV && !held['45:skew'] ? skewIV : prev.skew,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
           upperWingDelta: upperWD || prev.upperWingDelta
         }));
@@ -563,8 +586,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           return out;
         });
       } else {
-        // 45DTE: fill the market fields the feed provides (price, VIX). IV/skew come
-        // from Fetch Greeks. Freshness tag (dataFresh) is set above for both engines.
+        // 45DTE: fill the market fields the feed provides (price, VIX). IV and
+        // Skew auto-fill from Fetch Greeks (per-leg model IVs). IVR, HV, IV Front
+        // and IV Back have NO bridge source and stay manual — their labels say so.
+        // Freshness tag (dataFresh) is set above for both engines.
         setI45(prev => {
           const out = { ...prev };
           MKT_45.forEach(k => { if (!held['45:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
@@ -983,13 +1008,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <Inp label="VIX" {...mk('vix')} value={i0.vix} onChange={v=>set0('vix',v)}/>
               <Inp label="VIX1D" {...mk('vix1d')} value={i0.vix1d} onChange={v=>set0('vix1d',v)}/>
             </> : <>
-              <Inp label="IV Rank (%)" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
-              <Inp label="IV (%)" value={i45.iv} onChange={v=>set45('iv',v)}/>
-              <Inp label="HV (%)" value={i45.hv} onChange={v=>set45('hv',v)}/>
+              <Inp label="IV Rank (%) — manual" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
+              <Inp label="IV (%)" {...mk('iv')} value={i45.iv} onChange={v=>set45('iv',v)}/>
+              <Inp label="HV (%) — manual" value={i45.hv} onChange={v=>set45('hv',v)}/>
               <Inp label="VIX" {...mk('vix')} value={i45.vix} onChange={v=>set45('vix',v)}/>
-              <Inp label="IV Front" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
-              <Inp label="IV Back" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
-              <Inp label="Skew (%)" value={i45.skew} onChange={v=>set45('skew',v)}/>
+              <Inp label="IV Front — manual" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
+              <Inp label="IV Back — manual" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
+              <Inp label="Skew (%)" {...mk('skew')} value={i45.skew} onChange={v=>set45('skew',v)}/>
               <Sel label="Term bias" value={i45.termBias} onChange={v=>set45('termBias',v)} options={TERM_BIASES}/>
               <Inp label="DTE" value={i45.dte} onChange={v=>set45('dte',v)}/>
               <Sel label="Outlook" value={i45.outlook} onChange={v=>set45('outlook',v)} options={OUTLOOKS}/>

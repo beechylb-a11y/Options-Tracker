@@ -1,8 +1,12 @@
-export function fmt$(n) {
+export function fmt$(n, dp = 0) {
   if (n == null || isNaN(n)) return '--';
   const abs = Math.abs(n);
-  return (n < 0 ? '-$' : '$') + abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return (n < 0 ? '-$' : '$') + abs.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
+
+// YYYY-MM-DD using LOCAL date parts (avoids the UTC shift of toISOString)
+export const localISODate = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export function fmtPct(n) {
   if (n == null || isNaN(n)) return '--';

@@ -548,18 +548,24 @@ function StrategyDiagram({ name, type }) {
     },
   };
 
-  // Find matching shape (partial match)
+  // Exact match, case-insensitive. The old fuzzy .includes() fallback handed
+  // strategies with no shape of their own (Calendar, Diagonal, Jade Lizard) a
+  // lookalike diagram — an iron-condor payoff on a jade lizard implies upside
+  // risk the structure does not have. No shape now means no diagram, said openly.
+  const nameKey = name.toLowerCase();
   let shape = null;
   for (const [key, val] of Object.entries(shapes)) {
-    if (name.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(name.toLowerCase().replace(' - reversed','').replace(' - normal',''))) {
-      shape = val;
-      break;
-    }
+    if (key.toLowerCase() === nameKey) { shape = val; break; }
   }
   if (!shape) {
-    // Default: try to match by type
-    if (type === 'Credit') shape = shapes['Iron Condor - Normal'];
-    else shape = shapes['Standard butterfly'];
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
+        <text x={W/2} y={10} textAnchor="middle" fill="#8b949e" fontSize="8" fontWeight="600">Payoff at expiry</text>
+        <line x1="10" y1={z} x2="170" y2={z} stroke="#484f58" strokeWidth="0.5" strokeDasharray="2,2"/>
+        <text x={W/2} y={z-6} textAnchor="middle" fill={gr} fontSize="8">No diagram for this strategy</text>
+        <text x={W/2} y={z+12} textAnchor="middle" fill="#484f58" fontSize="7">See the structure description</text>
+      </svg>
+    );
   }
 
   const lossPaths = (shape.fillLoss || '').split(',').filter(Boolean);

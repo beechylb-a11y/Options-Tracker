@@ -2,18 +2,21 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ScatterChart, Scatter, ZAxis } from 'recharts';
 import { TrendingUp, Calendar, Clock, Layers, Activity } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor, filterByAccount } from '../utils/format';
+import { fmt$, pnlColor } from '../utils/format';
+import { filterTracker } from '../utils/stats';
+import ErrorBanner from '../components/ErrorBanner';
 
 export default function Analytics({ authenticated, account }) {
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [section, setSection] = useState('time');
 
-  useEffect(() => {
-    if (!authenticated) { setLoading(false); return; }
+  function loadData() {
+    setError(null);
     Promise.all([
-      api.getTracker().catch(() => []),
+      api.getTracker(),
       api.getDecisions().catch(() => [])
     ]).then(([t, d]) => {
       setTracker(t);
@@ -26,11 +29,20 @@ export default function Analytics({ authenticated, account }) {
         }));
       }
       setLoading(false);
+    }).catch(e => {
+      console.error(e);
+      setError(e.message || 'Failed to load analytics data');
+      setLoading(false);
     });
+  }
+
+  useEffect(() => {
+    if (!authenticated) { setLoading(false); return; }
+    loadData();
   }, [authenticated]);
 
   const closed = useMemo(() =>
-    filterByAccount(tracker, account).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
+    filterTracker(tracker, account).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
       .map(t => ({
         ...t,
         pnl: parseFloat(t['Total P&L ($)']) || 0,
@@ -44,7 +56,7 @@ export default function Analytics({ authenticated, account }) {
       }))
       .filter(t => t.entryDate)
       .sort((a, b) => a.entryDate - b.entryDate)
-  , [tracker]);
+  , [tracker, account]);
 
   if (!authenticated) {
     return (
@@ -65,6 +77,7 @@ export default function Analytics({ authenticated, account }) {
 
   return (
     <div className="fade-in">
+      {error && <ErrorBanner message={error} onRetry={loadData} />}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="font-display text-2xl font-bold">Analytics</h2>
@@ -103,7 +116,10 @@ function TimePatterns({ closed }) {
   });
   const dowData = byDow.filter(d => d.trades > 0).map(d => ({ ...d, ba: d.trades > 0 ? Math.round(d.wins / d.trades * 100) : 0 }));
 
-  // Hour of day (from entry time if available)
+  // Hour of day (from entry time if available). Entry dates are often
+  // date-only, so getHours() collapses every trade into the same hour —
+  // only trust hourly buckets when the raw dates carry a real time component.
+  const hasTimeData = closed.some(t => /\d{1,2}:\d{2}/.test(t['Entry Date'] || ''));
   const byHour = {};
   closed.forEach(t => {
     const h = t.entryDate.getHours();
@@ -128,9 +144,11 @@ function TimePatterns({ closed }) {
   const monthData = Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month))
     .map(m => ({ ...m, ba: m.trades > 0 ? Math.round(m.wins / m.trades * 100) : 0 }));
 
-  // Best and worst days of week
+  // Best and worst days of week (non-mutating — dowData/monthData keep chart order)
   const bestDow = dowData.reduce((best, d) => d.pnl > best.pnl ? d : best, { pnl: -Infinity, name: '--' });
   const worstDow = dowData.reduce((worst, d) => d.pnl < worst.pnl ? d : worst, { pnl: Infinity, name: '--' });
+  const mostActiveDow = [...dowData].sort((a, b) => b.trades - a.trades)[0];
+  const bestMonth = [...monthData].sort((a, b) => b.pnl - a.pnl)[0];
 
   return (
     <div className="space-y-4">
@@ -138,8 +156,8 @@ function TimePatterns({ closed }) {
       <div className="grid grid-cols-4 gap-3">
         <MiniKPI label="Best day of week" value={bestDow.name} sub={fmt$(bestDow.pnl)} cls="text-green" />
         <MiniKPI label="Worst day of week" value={worstDow.name} sub={fmt$(worstDow.pnl)} cls="text-red" />
-        <MiniKPI label="Most active day" value={dowData.sort((a,b)=>b.trades-a.trades)[0]?.name || '--'} sub={`${dowData[0]?.trades || 0} trades`} />
-        <MiniKPI label="Best month" value={monthData.sort((a,b)=>b.pnl-a.pnl)[0]?.month || '--'} sub={fmt$(monthData[0]?.pnl || 0)} cls="text-green" />
+        <MiniKPI label="Most active day" value={mostActiveDow?.name || '--'} sub={`${mostActiveDow?.trades || 0} trades`} />
+        <MiniKPI label="Best month" value={bestMonth?.month || '--'} sub={fmt$(bestMonth?.pnl || 0)} cls="text-green" />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -171,7 +189,7 @@ function TimePatterns({ closed }) {
         {/* P&L by Hour */}
         <div className="card">
           <h3 className="text-sm font-medium text-text-muted mb-3">P&L by Entry Hour</h3>
-          {hourData.length > 1 ? (
+          {hasTimeData && hourData.length > 1 ? (
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={hourData}>
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, ReferenceLine } from 'recharts';
 import { Shield, AlertTriangle, Edit3, Save, RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor, filterByAccount } from '../utils/format';
+import { fmt$, pnlColor } from '../utils/format';
+import { filterTracker } from '../utils/stats';
 
 // Sector mapping for common underlyings
 const SECTORS = {
@@ -45,7 +46,7 @@ export default function PortfolioRisk({ authenticated, account }) {
 
   // Open positions
   const openPositions = useMemo(() =>
-    filterByAccount(tracker, account).filter(t => t.Status === 'Open').map(t => {
+    filterTracker(tracker, account).filter(t => t.Status === 'Open').map(t => {
       const underlying = t.Underlying || '';
       const qty = parseInt(t.Qty) || 1;
       const g = greeks[underlying] || {};
@@ -66,14 +67,20 @@ export default function PortfolioRisk({ authenticated, account }) {
     })
   , [tracker, greeks]);
 
-  // Portfolio totals
+  // Portfolio totals — Greeks are stored per-underlying, so count each
+  // underlying once (summing per-position rows would double-count when
+  // multiple positions share an underlying).
   const totals = useMemo(() => {
     const t = { delta: 0, gamma: 0, theta: 0, vega: 0, positions: openPositions.length, withGreeks: 0 };
+    const seenUnderlyings = new Set();
     openPositions.forEach(p => {
-      t.delta += p.delta;
-      t.gamma += p.gamma;
-      t.theta += p.theta;
-      t.vega += p.vega;
+      if (!seenUnderlyings.has(p.underlying)) {
+        seenUnderlyings.add(p.underlying);
+        t.delta += p.delta;
+        t.gamma += p.gamma;
+        t.theta += p.theta;
+        t.vega += p.vega;
+      }
       if (p.hasGreeks) t.withGreeks++;
     });
     return t;
@@ -371,6 +378,9 @@ export default function PortfolioRisk({ authenticated, account }) {
                   </tr>
                 </tfoot>
               </table>
+            </div>
+            <div className="text-[10px] text-text-faint mt-2">
+              Greeks are entered per underlying — portfolio totals count each underlying once, even when multiple positions share it.
             </div>
           </div>
 

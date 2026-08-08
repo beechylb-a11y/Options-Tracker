@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar, Award } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, filterByAccount } from '../utils/format';
+import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
+import { isAggExcluded, filterTracker, computeStats, BA_GREEN, BA_RED } from '../utils/stats';
+import ErrorBanner from '../components/ErrorBanner';
 
 export default function Dashboard({ authenticated, account, accounts = [] }) {
   const [stats, setStats] = useState(null);
@@ -11,14 +13,17 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const [decisions, setDecisions] = useState([]);
   const [journal, setJournal] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
+    setLoadError(false);
     Promise.all([
-      api.getStats(account).catch(() => ({ stats: {}, config: {} })),
-      api.getTracker().catch(() => []),
-      api.getJournal().catch(() => []),
-      api.getDecisions().catch(() => [])
+      api.getStats(account).catch(() => { setLoadError(true); return { stats: {}, config: {} }; }),
+      api.getTracker().catch(() => { setLoadError(true); return []; }),
+      api.getJournal().catch(() => { setLoadError(true); return []; }),
+      api.getDecisions().catch(() => { setLoadError(true); return []; })
     ]).then(([s, t, j, d]) => {
       setStats(s.stats); setConfig(s.config); setTracker(t); setJournal(j);
       // Parse decisions if raw arrays
@@ -29,7 +34,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       }
       setLoading(false);
     });
-  }, [authenticated, account]);
+  }, [authenticated, account, retryTick]);
 
   if (!authenticated) {
     return (
@@ -53,24 +58,14 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const roi = startBR > 0 ? ((bankroll - startBR) / startBR) : 0;
 
   // ── Closed trades sorted by date ──
-  // PaperTrade is excluded from the aggregated "All accounts" view so it never
-  // distorts real-money P&L / batting average / streaks. It still appears when
-  // PaperTrade is explicitly selected. The Account column stores account *ids*,
-  // so resolve PaperTrade's id by name (fallback to the literal string for
-  // any legacy rows tagged by name).
-  const paperIds = accounts
-    .filter(a => (a.name || '').toLowerCase() === 'papertrade' || (a.id || '').toLowerCase().startsWith('papertrade'))
-    .map(a => a.id);
-  const AGG_EXCLUDED = [...paperIds, 'PaperTrade'];
+  // PaperTrade exclusion + account filtering live in utils/stats.js
+  // (single source of truth for aggregate rules).
   const isAggregate = !account || account === 'all';
-  const allTracker = isAggregate
-    ? tracker.filter(t => !AGG_EXCLUDED.includes(t.Account || ''))
-    : tracker;
-  const filteredTracker = filterByAccount(allTracker, account);
+  const filteredTracker = filterTracker(tracker, account, accounts);
 
   // Merge closed decision tickets into trades
   const filteredDecisions = isAggregate
-    ? decisions.filter(d => !AGG_EXCLUDED.includes(d.Account || ''))
+    ? decisions.filter(d => !isAggExcluded(d.Account || '', accounts))
     : decisions.filter(d => {
         const decAccount = d.Account || '';
         return decAccount === account || !decAccount;
@@ -99,14 +94,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const closedTrades = allClosed.sort((a, b) => new Date(a['Entry Date'] || a['Close Date'] || 0) - new Date(b['Entry Date'] || b['Close Date'] || 0));
 
   // Calculate stats from merged closed trades (tracker + tickets)
-  const totalTrades = closedTrades.length;
-  const wins = closedTrades.filter(t => t['W / L'] === 'Win');
-  const losses = closedTrades.filter(t => t['W / L'] === 'Loss');
-  const totalPnl = closedTrades.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
-  const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / wins.length : 0;
-  const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0) / losses.length : 0;
-  const battingAvg = totalTrades > 0 ? (wins.length / totalTrades * 100) : 0;
-  const expectancy = totalTrades > 0 ? totalPnl / totalTrades : 0;
+  const { totalPnl, battingAvg, avgWin, avgLoss, expectancy } = computeStats(closedTrades);
   const calcRoi = startBR > 0 ? (totalPnl / startBR * 100) : 0;
 
   // ── Equity curve (cumulative P&L over time) ──
@@ -204,7 +192,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const maxDailyLoss = Number(config?.maxDailyLoss) || 0;
   const maxOpenRisk = Number(config?.maxOpenRisk) || 0;
   // Today's realised P&L against the daily-loss cap.
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localISODate();
   const todayPnl = closedTrades
     .filter(t => (t['Close Date'] || t['Entry Date'] || '').split('T')[0] === todayStr)
     .reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
@@ -222,6 +210,12 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
 
   return (
     <div className="fade-in">
+      {loadError && (
+        <ErrorBanner
+          message="Data failed to load — check connection"
+          onRetry={() => setRetryTick(t => t + 1)}
+        />
+      )}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="font-display text-2xl font-bold">Dashboard</h2>
@@ -241,7 +235,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       <div className="grid grid-cols-6 gap-3 mb-3">
         <KPI icon={DollarSign} label="Total P&L" value={fmt$(totalPnl)} cls={totalPnl >= 0 ? 'green' : 'red'} />
         <KPI icon={Percent} label="ROI" value={calcRoi.toFixed(1) + '%'} cls={calcRoi >= 0 ? 'green' : 'red'} />
-        <KPI icon={Target} label="Batting Avg" value={battingAvg.toFixed(1) + '%'} cls={battingAvg >= 60 ? 'green' : battingAvg >= 40 ? 'amber' : 'red'} />
+        <KPI icon={Target} label="Batting Avg" value={battingAvg.toFixed(1) + '%'} cls={battingAvg >= BA_GREEN ? 'green' : battingAvg >= BA_RED ? 'amber' : 'red'} />
         <KPI icon={TrendingUp} label="Avg Win" value={fmt$(avgWin)} cls="green" />
         <KPI icon={TrendingDown} label="Avg Loss" value={fmt$(avgLoss)} cls="red" />
         <KPI icon={Activity} label="Expectancy" value={fmt$(expectancy)} cls={expectancy >= 0 ? 'green' : 'red'} />
@@ -391,7 +385,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                 const now = new Date();
                 const dte = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
                 // For 0DTE (expires today): show hours remaining to 3pm ET close
-                const todayStr = now.toISOString().split('T')[0];
+                const todayStr = localISODate(now);
                 const expiryStr = expiryDate.toISOString().split('T')[0];
                 const is0DTE = dte <= 0 || expiryStr === todayStr;
                 // Detect 45DTE trades (anything with DTE > 1 at entry, or strategy suggests longer term)

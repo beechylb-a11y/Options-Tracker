@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
-import { fmt$, pnlColor, filterByAccount } from '../utils/format';
+import { fmt$, pnlColor } from '../utils/format';
+import { filterTracker } from '../utils/stats';
 
 export default function Reports({ authenticated, account }) {
   const [trades, setTrades] = useState([]);
@@ -9,7 +10,7 @@ export default function Reports({ authenticated, account }) {
   const [selectedFY, setSelectedFY] = useState('');
 
   useEffect(() => {
-    if (!authenticated) return;
+    if (!authenticated) { setLoading(false); return; }
     Promise.all([
       api.getTracker().catch(() => []),
       api.getTrades().catch(() => [])
@@ -34,7 +35,7 @@ export default function Reports({ authenticated, account }) {
     return parseFloat(t['Total P&L ($)'] || t['Actual P&L'] || 0);
   }
 
-  const filtered = useMemo(() => filterByAccount(trades, account), [trades, account]);
+  const filtered = useMemo(() => filterTracker(trades, account), [trades, account]);
 
   const closedTrades = useMemo(() => {
     return filtered.filter(t => {

@@ -1,6 +1,40 @@
 const BASE = '';
 
-async function fetchJSON(url, opts = {}) {
+// ── Lightweight GET cache: in-flight request dedupe + 30s TTL ──
+const GET_TTL_MS = 30 * 1000;
+const getCache = new Map();   // url -> { time, data }
+const inflight = new Map();   // url -> Promise
+
+export function clearApiCache() {
+  getCache.clear();
+  inflight.clear();
+}
+
+function fetchJSON(url, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    // Mutations invalidate all cached GETs
+    clearApiCache();
+    return doFetchJSON(url, opts);
+  }
+  const hit = getCache.get(url);
+  if (hit && Date.now() - hit.time < GET_TTL_MS) return Promise.resolve(hit.data);
+  if (inflight.has(url)) return inflight.get(url);
+  const p = doFetchJSON(url, opts)
+    .then(data => {
+      getCache.set(url, { time: Date.now(), data });
+      inflight.delete(url);
+      return data;
+    })
+    .catch(err => {
+      inflight.delete(url);
+      throw err;
+    });
+  inflight.set(url, p);
+  return p;
+}
+
+async function doFetchJSON(url, opts = {}) {
   const res = await fetch(`${BASE}${url}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...opts.headers },
@@ -36,6 +70,7 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
     if (account) form.append('account', account);
+    clearApiCache();
     return fetch(`${BASE}/api/upload-csv`, {
       method: 'POST', credentials: 'include', body: form
     }).then(r => r.json());
@@ -106,6 +141,7 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
     Object.entries(metadata || {}).forEach(([k, v]) => form.append(k, v));
+    clearApiCache();
     return fetch(`${BASE}/api/documents`, {
       method: 'POST', credentials: 'include', body: form
     }).then(r => r.json());

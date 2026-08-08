@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap } from 'lucide-react';
 import { api } from '../utils/api';
-import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
+import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
+import { filterTracker } from '../utils/stats';
 import CloseTradeModal from '../components/CloseTradeModal';
+import ErrorBanner from '../components/ErrorBanner';
 
 export default function Journal({ authenticated, account }) {
   const [journal, setJournal] = useState([]);
@@ -17,9 +19,9 @@ export default function Journal({ authenticated, account }) {
   const [reviewText, setReviewText] = useState('');
   const [closingTrade, setClosingTrade] = useState(null);
   const [savingReview, setSavingReview] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
-  useEffect(() => {
-    if (!authenticated) { setLoading(false); return; }
+  function loadData() {
     Promise.all([
       api.getJournal().catch(() => []),
       api.getTracker().catch(() => []),
@@ -41,6 +43,11 @@ export default function Journal({ authenticated, account }) {
       }
       setLoading(false);
     });
+  }
+
+  useEffect(() => {
+    if (!authenticated) { setLoading(false); return; }
+    loadData();
   }, [authenticated]);
 
   const year = currentDate.getFullYear();
@@ -51,7 +58,7 @@ export default function Journal({ authenticated, account }) {
   const today = new Date();
 
   // ── Build daily stats from BOTH TradeTracker AND closed Decision tickets ──
-  const filteredTracker = filterByAccount(tracker, account);
+  const filteredTracker = filterTracker(tracker, account);
   const dayStats = {};
 
   // 1. CSV / TradeTracker trades
@@ -150,7 +157,7 @@ export default function Journal({ authenticated, account }) {
     return accountDecisions.filter(d => {
       if (d.Status === 'Closed') return false;
       if (!d.Timestamp) return false;
-      try { return new Date(d.Timestamp).toISOString().split('T')[0] === dateStr; }
+      try { return localISODate(new Date(d.Timestamp)) === dateStr; }
       catch (e) { return false; }
     });
   }
@@ -181,24 +188,32 @@ export default function Journal({ authenticated, account }) {
 
   async function handleAddNote() {
     if (!noteDate) return;
+    setSaveError(null);
     try {
       await api.addJournalEntry({ date: noteDate, notes: noteText, dayPnl: 0, tradesCount: 0, winCount: 0, lossCount: 0 });
       const updated = await api.getJournal();
       setJournal(updated);
       setShowAdd(false);
       setNoteText('');
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setSaveError('Failed to save note' + (e.message ? `: ${e.message}` : ''));
+    }
   }
 
   async function handleSaveReview() {
     if (!selectedDay) return;
     setSavingReview(true);
+    setSaveError(null);
     try {
       await api.addJournalEntry({ date: selectedDay, notes: reviewText, dayPnl: 0, tradesCount: 0, winCount: 0, lossCount: 0 });
       const updated = await api.getJournal();
       setJournal(updated);
       setReviewText('');
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setSaveError('Failed to save review' + (e.message ? `: ${e.message}` : ''));
+    }
     setSavingReview(false);
   }
 
@@ -221,11 +236,13 @@ export default function Journal({ authenticated, account }) {
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-display text-2xl font-bold">Journal</h2>
-        <button onClick={() => { setShowAdd(!showAdd); setNoteDate(today.toISOString().split('T')[0]); }}
+        <button onClick={() => { setShowAdd(!showAdd); setNoteDate(localISODate(today)); }}
           className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors">
           <Plus size={14} /> Add note
         </button>
       </div>
+
+      {saveError && <ErrorBanner message={saveError} />}
 
       {showAdd && (
         <div className="card mb-4 fade-in">
@@ -489,7 +506,7 @@ export default function Journal({ authenticated, account }) {
           trade={closingTrade.trade}
           type={closingTrade.type}
           onClose={() => setClosingTrade(null)}
-          onClosed={() => { setClosingTrade(null); window.location.reload(); }}
+          onClosed={() => { setClosingTrade(null); loadData(); }}
         />
       )}
     </>

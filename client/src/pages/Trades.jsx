@@ -2,7 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X, DollarSign } from 'lucide-react';
 import { api } from '../utils/api';
 import CloseTradeModal from '../components/CloseTradeModal';
+import ErrorBanner from '../components/ErrorBanner';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
+
+// Stable identity for a tracker row — survives filter changes (array indexes
+// don't). Sheet _rowIndex is unique per row; fall back to a composite string.
+function rowKey(t) {
+  return t._rowIndex != null
+    ? `r${t._rowIndex}`
+    : [t['Order #'], t['Entry Date'], t.Underlying, t['Strategy (OIC)'], t.Account].join('|');
+}
 
 export default function Trades({ authenticated, account, accounts }) {
   const [tracker, setTracker] = useState([]);
@@ -19,6 +28,7 @@ export default function Trades({ authenticated, account, accounts }) {
     if (account && account !== 'all') setUploadAccount(account);
   }, [account]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [uncategorised, setUncategorised] = useState([]);
   const [showReview, setShowReview] = useState(false);
   const [savingRow, setSavingRow] = useState(null);
@@ -40,16 +50,20 @@ export default function Trades({ authenticated, account, accounts }) {
 
   async function loadData() {
     setLoading(true);
+    setError(null);
     try {
       const [t, r, u] = await Promise.all([
-        api.getTracker().catch(() => []),
+        api.getTracker(),
         api.getTrades().catch(() => []),
         api.getUncategorised().catch(() => [])
       ]);
       setTracker(t);
       setRawTrades(r);
       setUncategorised(u);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Failed to load trades');
+    }
     setLoading(false);
   }
 
@@ -76,6 +90,7 @@ export default function Trades({ authenticated, account, accounts }) {
     if (tickerFilter && !t.Underlying?.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
     return true;
   });
+  const filteredPnl = filtered.reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
 
   // Get legs for a specific trade (matching by Order #)
   function getLegsForTrade(trade) {
@@ -100,7 +115,7 @@ export default function Trades({ authenticated, account, accounts }) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="font-display text-2xl font-bold">Trades</h2>
-          <p className="text-text-muted text-sm mt-0.5">{tracker.length} positions tracked</p>
+          <p className="text-text-muted text-sm mt-0.5">{filtered.length} positions tracked</p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={loadData} className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover transition-colors">
@@ -136,6 +151,8 @@ export default function Trades({ authenticated, account, accounts }) {
           </label>
         </div>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={loadData} />}
 
       {/* Upload result */}
       {uploadResult && (
@@ -384,16 +401,17 @@ export default function Trades({ authenticated, account, accounts }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t, i) => {
+              {filtered.map((t) => {
+                const key = rowKey(t);
                 const pnl = parseFloat(t['Total P&L ($)']) || 0;
                 const credit = parseFloat(t['Net Credit ($)']) || 0;
                 const isOpen = t.Status === 'Open';
-                const expanded = expandedRow === i;
+                const expanded = expandedRow === key;
                 const dte = t['Expiry Date'] ? Math.ceil((new Date(t['Expiry Date']) - new Date()) / (1000 * 60 * 60 * 24)) : '';
 
                 return (
-                  <React.Fragment key={i}>
-                    <tr className="table-row cursor-pointer" onClick={() => setExpandedRow(expanded ? null : i)}>
+                  <React.Fragment key={key}>
+                    <tr className="table-row cursor-pointer" onClick={() => setExpandedRow(expanded ? null : key)}>
                       <td className="py-2.5 px-4 text-text-faint">
                         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </td>
@@ -427,7 +445,7 @@ export default function Trades({ authenticated, account, accounts }) {
                     {expanded && (
                       <tr>
                         <td colSpan="10" className="bg-bg p-4">
-                          {deleting === i ? (
+                          {deleting === key ? (
                             <div className="fade-in text-center py-4">
                               <p className="text-sm text-text mb-2">Delete this trade?</p>
                               <p className="text-xs text-text-muted mb-3">{t.Underlying} — {t['Strategy (OIC)']} — {fmt$(parseFloat(t['Total P&L ($)']) || 0)}</p>
@@ -450,7 +468,7 @@ export default function Trades({ authenticated, account, accounts }) {
                               </div>
                             </div>
                           ) : (
-                            <TradeTicket trade={t} legs={getLegsForTrade(t)} tradeIdx={i} accounts={accounts}
+                            <TradeTicket trade={t} legs={getLegsForTrade(t)} tradeIdx={key} accounts={accounts}
                               editingRow={editingRow} editForm={editForm} setEditForm={setEditForm} saving={saving}
                               onEdit={(action, idx) => {
                                 if (action === null) { setEditingRow(null); return; }
@@ -491,6 +509,15 @@ export default function Trades({ authenticated, account, accounts }) {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="border-t border-bg-border bg-bg">
+                <td className="py-2.5 px-4 text-xs text-text-muted" colSpan={6}>
+                  Subtotal — {filtered.length} position{filtered.length !== 1 ? 's' : ''} (filtered)
+                </td>
+                <td className="py-2.5 px-4 text-right mono font-bold" style={{ color: pnlColor(filteredPnl) }}>{fmt$(filteredPnl)}</td>
+                <td colSpan={3}></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       ) : (
