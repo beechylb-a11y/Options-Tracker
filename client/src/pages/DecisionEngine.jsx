@@ -868,7 +868,7 @@ function Row({ label, value }) {
 
 function MultiScanPanel({ mode, onSelect }) {
   const is0 = mode === '0dte';
-  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'QQQ']);
+  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'XSP', 'QQQ']);
   const [scanning, setScanning] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState('');
@@ -1127,7 +1127,7 @@ function MultiScanPanel({ mode, onSelect }) {
             <select value={u} onChange={e => {
               const next = [...underlyings]; next[i] = e.target.value; setUnderlyings(next);
             }} className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
-              {['SPX','SPY','QQQ','RUT','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s =>
+              {['SPX','SPY','XSP','QQQ','RUT','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s =>
                 <option key={s} value={s}>{s}</option>
               )}
             </select>
