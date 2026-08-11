@@ -466,7 +466,7 @@ export function calc0DTE(inputs) {
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
-  const roundTo = (underlying === 'SPX' || underlying === 'RUT') ? 5 : (underlying === 'SPY' || underlying === 'QQQ' || underlying === 'IWM') ? 1 : 0.5;
+  const roundTo = (underlying === 'SPX' || underlying === 'RUT') ? 5 : (underlying === 'SPY' || underlying === 'QQQ' || underlying === 'IWM' || underlying === 'XSP') ? 1 : 0.5;
   if (D > 0 && D < roundTo * 2) D = roundTo * 2;
   const R = n => roundTo > 0 ? Math.round(n / roundTo) * roundTo : Math.round(n * 2) / 2;
   const leg = (label, strike) => ({ label, strike: R(strike) });

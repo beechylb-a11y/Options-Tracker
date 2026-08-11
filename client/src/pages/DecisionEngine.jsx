@@ -401,7 +401,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                 onChange={e => setManualForm(f => ({ ...f, underlying: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
                 <option value="">Select...</option>
-                {['SPY','QQQ','SPX','NVDA','TSLA','AAPL','IWM','VIX','AMZN','MSFT','AMD','META','INTC','GOOGL','SLV','GLD','HYG','TLT','MSTR','PLTR'].map(t =>
+                {['SPY','QQQ','SPX','XSP','NVDA','TSLA','AAPL','IWM','VIX','AMZN','MSFT','AMD','META','INTC','GOOGL','SLV','GLD','HYG','TLT','MSTR','PLTR'].map(t =>
                   <option key={t} value={t}>{t}</option>
                 )}
               </select>

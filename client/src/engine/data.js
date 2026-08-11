@@ -181,7 +181,7 @@ export const DELTA_GUIDE = [
 ];
 
 export const UNDERLYING_LIST = [
-  'SPX', 'SPY', 'QQQ', 'RUT', 'NVDA', 'TSLA', 'AAPL', 'IWM', 'VIX',
+  'SPX', 'XSP', 'SPY', 'QQQ', 'RUT', 'NVDA', 'TSLA', 'AAPL', 'IWM', 'VIX',
   'AMZN', 'MSFT', 'AMD', 'META', 'INTC', 'GOOGL', 'SLV', 'GLD',
   'HYG', 'TLT', 'MSTR', 'PLTR'
 ];

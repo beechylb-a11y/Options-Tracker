@@ -268,7 +268,7 @@ function getOptionGreeks(contract) {
 function buildOptionContract(underlying, expiry, strike, right) {
   // expiry: 'YYYYMMDD'; right: 'C' | 'P'
   const u = underlying.toUpperCase();
-  const isIndex = ['SPX', 'RUT', 'VIX', 'NDX'].includes(u);
+  const isIndex = ['SPX', 'RUT', 'VIX', 'NDX', 'XSP'].includes(u);
   return {
     symbol: u,
     secType: SecType.OPT,
@@ -319,6 +319,7 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 // ── Contract definitions ──
 const contracts = {
   SPX: { symbol: 'SPX', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
+  XSP: { symbol: 'XSP', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   RUT: { symbol: 'RUT', secType: SecType.IND, exchange: 'RUSSELL', currency: 'USD' },
   SPY: { symbol: 'SPY', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
   QQQ: { symbol: 'QQQ', secType: SecType.STK, exchange: 'SMART', primaryExch: 'NASDAQ', currency: 'USD' },
@@ -410,7 +411,7 @@ app.get('/api/market-data', async (req, res) => {
     // returns nothing for those, which is why VIX and the ES rows came back blank.
     try { ib.reqMarketDataType(3); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
-    const usesSPYVwap = underlying === 'SPX';
+    const usesSPYVwap = underlying === 'SPX' || underlying === 'XSP';
     const usesIWMVwap = underlying === 'RUT';
 
     // 1. Get snapshots in parallel
@@ -458,9 +459,13 @@ app.get('/api/market-data', async (req, res) => {
     // 3. Get historical bars for ATR calculations
     // SPX index has no MIDPOINT historical data — use SPY bars and scale ×10
     // RUT index — use IWM bars and scale by RUT/IWM ratio
-    const histContract = (underlying === 'SPX') ? contracts.SPY : (underlying === 'RUT') ? contracts.IWM : mainContract;
+    const histContract = (underlying === 'SPX' || underlying === 'XSP') ? contracts.SPY : (underlying === 'RUT') ? contracts.IWM : mainContract;
     const histWhat = (histContract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
-    const atrScale = (underlying === 'SPX') ? 10 : (underlying === 'RUT') ? 1 : 1;
+    // XSP mirrors SPX (SPY bars as proxy), but SPY trades ~0.3-0.5% below XSP
+    // (dividend drift) and a constant offset corrupts the VWAP-distance signal,
+    // so XSP starts at 1 and switches to a dynamic xspSpot/spyRef ratio below
+    // once the SPY bars arrive.
+    let atrScale = (underlying === 'SPX') ? 10 : (underlying === 'RUT') ? 1 : 1;
     console.log('[BRIDGE] Requesting historical bars for', underlying, 'using', histContract.symbol, 'scale:', atrScale);
     const [bars1D, bars5m, bars2h] = await Promise.all([
       getHistoricalBars(histContract, '20 D', BarSizeSetting.DAYS_ONE, histWhat).catch(e => { console.log('[BRIDGE] bars1D error:', e.message); return []; }),
@@ -468,6 +473,16 @@ app.get('/api/market-data', async (req, res) => {
       getHistoricalBars(histContract, '5 D', BarSizeSetting.HOURS_TWO, histWhat).catch(e => { console.log('[BRIDGE] bars2h error:', e.message); return []; })
     ]);
     console.log('[BRIDGE] Bars received: 1D=' + bars1D.length + ' 5m=' + bars5m.length + ' 2h=' + bars2h.length);
+    if (underlying === 'XSP') {
+      const spyRef = (bars5m.length > 0 ? bars5m[bars5m.length - 1].close : 0) ||
+                     (bars1D.length > 0 ? bars1D[bars1D.length - 1].close : 0) || 0;
+      if (price > 0 && spyRef > 0) {
+        atrScale = price / spyRef;
+        console.log('[BRIDGE] XSP dynamic scale: xspSpot=' + price + ' / spyRef=' + spyRef + ' = ' + atrScale.toFixed(5));
+      } else {
+        console.log('[BRIDGE] XSP: no spot/SPY reference (spot=' + price + ' spyRef=' + spyRef + ') — returning RAW SPY-derived values (~0.5% low, degraded)');
+      }
+    }
     if (bars1D.length > 0) {
       const b = bars1D[0];
       console.log('[BRIDGE] Bar sample: date=' + (b[0]||b.date) + ' open=' + (b[1]||b.open) + ' high=' + (b[2]||b.high) + ' low=' + (b[3]||b.low) + ' close=' + (b[4]||b.close));
@@ -545,6 +560,12 @@ app.get('/api/market-data', async (req, res) => {
       }
     } catch (e) {
       console.error('[BRIDGE] VWAP calc error:', e.message);
+    }
+
+    // XSP: SPX sends RAW SPY VWAPs and the client rescales ×10 client-side; the
+    // client does NOT rescale XSP, so scale to index points here bridge-side.
+    if (underlying === 'XSP' && atrScale !== 1) {
+      vwap5 *= atrScale; vwap5_30 *= atrScale; vwap15 *= atrScale; vwap15_30 *= atrScale;
     }
 
     // Data freshness, derived from the main price snapshot's IBKR market-data type
