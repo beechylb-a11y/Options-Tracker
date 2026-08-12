@@ -73,7 +73,7 @@ function applySeed(base, seed, keys) {
   return out;
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, toast }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, toast, onOpenInTab }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -359,6 +359,60 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
   const effectiveStrat = r.legStrat || r.bestStrat;
+
+  // ── Net credit/debit pre-fills from the engine's TARGET for the structure in
+  // front of you. A fresh ticket -- and every structure opened in its own tab --
+  // is therefore scoreable immediately instead of showing nothing until you have
+  // typed a number you do not have yet.
+  //
+  // It is a TARGET, not a fill. That distinction now matters more than it used to:
+  // the debit is written to the Decisions log (column AH), so an untouched target
+  // left in the box would be recorded as if it were a real price. The chip beside
+  // the label says which one you are looking at and disappears the instant the
+  // value differs from what was auto-filled.
+  //
+  // Fills once per (engine, structure). Clearing the box by hand keeps it clear --
+  // the ref remembers the key, not the emptiness. (Aug 2026.)
+  const netAutoRef = useRef({ key: null, value: '' });
+  const netKey = bag + '|' + (effectiveStrat || '');
+  const netTarget = (r && r.targetCredit != null && isFinite(r.targetCredit)) ? r.targetCredit : null;
+  useEffect(() => {
+    if (netTarget == null) return;
+    if (netAutoRef.current.key === netKey) return;
+    const cur = is0 ? i0.netCreditDebit : i45.netCreditDebit;
+    if (cur !== '' && cur != null) { netAutoRef.current = { key: netKey, value: '' }; return; }
+    const v = netTarget.toFixed(2);
+    netAutoRef.current = { key: netKey, value: v };
+    if (is0) setI0(p => ({ ...p, netCreditDebit: v }));
+    else setI45(p => ({ ...p, netCreditDebit: v }));
+  }, [netKey, netTarget]);
+  const netCur = is0 ? i0.netCreditDebit : i45.netCreditDebit;
+  const netIsTarget = netCur !== '' && netCur != null && netAutoRef.current.value === netCur;
+
+  // ── Structure comparison opens its pick in a new tab.
+  // Session & sizing is the one block that does NOT travel: max profit, max loss,
+  // POP and the fill you got all describe the legs in front of you, so carrying
+  // them into a different structure would score the new one on the old one's
+  // numbers. Hours re-derives itself on mount, and net credit/debit re-fills from
+  // the new structure's own target. Everything else -- market data, vol, ES,
+  // greeks, which fields you typed by hand, feed provenance -- is a property of
+  // the session, and comes across untouched. (Aug 2026.)
+  const SIZING_KEYS = ['win', 'risk', 'pop', 'hours', 'netCreditDebit'];
+  function openStructureInTab(name) {
+    const nextOverride = name === r.bestStrat ? null : name;
+    if (!onOpenInTab) { setOverrideStrat(nextOverride); return; }   // fallback: old in-place behaviour
+    const strip = o => {
+      const c = { ...o };
+      SIZING_KEYS.forEach(k => { if (k in c) c[k] = ''; });
+      return c;
+    };
+    onOpenInTab({
+      i0: strip(i0), i45: strip(i45),
+      overrideStrat: nextOverride,
+      dataFresh, esContract, greeksFresh, held, feed
+    }, mode, name);
+    if (toast) toast(name + ' opened in a new tab \u2014 re-enter win/risk/POP from your broker preview');
+  }
   const ticketNet = is0 ? i0.netCreditDebit : i45.netCreditDebit;
   const cashType = resolveCashType(effectiveStrat, ticketNet); // 'credit' | 'debit' | 'varies'
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
@@ -1327,7 +1381,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {/* Session & sizing */}
           <InputSection
             title={is0 ? 'Session & sizing' : 'Sizing'}
-            info="Net credit/debit from your broker order preview — positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width."
+            info="Net credit/debit pre-fills from the engine's TARGET for this structure and is flagged as such until you change it — replace it with your broker's actual fill, because this is the number written to the trade log. Positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width."
             missing={secMissing.sizing}
             collapsed={isCollapsed('sizing')}
             onToggle={() => toggleSection('sizing')}
@@ -1344,7 +1398,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 return t === 'credit' ? 'Net credit ($) — expected'
                   : t === 'debit' ? 'Net debit ($) — expected'
                   : 'Net credit/debit ($)';
-              })()}</label>
+              })()}{netIsTarget && (
+                <span title="Pre-filled from the engine's target for this structure — not a fill. Overwrite it with your actual price; this number is logged."
+                  style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:9,fontWeight:700,
+                    letterSpacing:'0.04em',background:'#3a2d00',color:'#e3b341',verticalAlign:'1px'}}>
+                  TARGET — REPLACE WITH FILL
+                </span>
+              )}</label>
               <input type="number" step="any"
                 value={is0?i0.netCreditDebit:i45.netCreditDebit}
                 onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
@@ -1614,15 +1674,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               each a FULL engine re-run on the same inputs (the calc is pure). */}
           {stratCompare && stratCompare.length > 1 && (
             <div className="card">
-              <SectionLabel white info="Side-by-side FULL engine runs for the top structures on the SAME market inputs — only the strategy differs. Composite, EV, P(max loss) and Kelly are complete engine outputs, not the rating shortcut. Net cr/dr is the engine's TARGET fill for that structure (your ticket net stays put). Click a column header to select that structure — same effect as clicking its rating row.">Structure comparison</SectionLabel>
+              <SectionLabel white info="Side-by-side FULL engine runs for the top structures on the SAME market inputs — only the strategy differs. Composite, EV, P(max loss) and Kelly are complete engine outputs, not the rating shortcut. Net cr/dr is the engine's TARGET fill for that structure. Click a column header to open that structure in its OWN tab, carrying this ticket's market data, vol and greeks — only Session & sizing is cleared, because max profit, max loss, POP and your fill belong to the legs you were looking at. This ticket is left exactly as it is, so both stay on screen.">Structure comparison</SectionLabel>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr>
                       <th className="text-left py-1.5 px-1"></th>
                       {stratCompare.map((c, i) => (
-                        <th key={i} onClick={() => setOverrideStrat(c.name === r.bestStrat ? null : c.name)}
-                          title={c.current ? 'Selected structure' : 'Click to switch to this structure'}
+                        <th key={i} onClick={() => { if (!c.current) openStructureInTab(c.name); }}
+                          title={c.current ? 'Selected structure' : 'Open this structure in its own tab \u2014 same market data, sizing cleared'}
                           className="text-center py-1.5 px-2 cursor-pointer hover:bg-[#161b22]"
                           style={{minWidth:104,borderRadius:6}}>
                           <div style={{fontSize:11,fontWeight:700,color:c.current?'#fff':'#c9d1d9'}}>{c.name}</div>

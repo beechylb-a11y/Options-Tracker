@@ -109,6 +109,28 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     return t;
   }
 
+  // Open a tab that starts from an ALREADY-BUILT panel state rather than a seed.
+  // Structure comparison uses it: comparing two structures used to mean overwriting
+  // the ticket in place, so the one you were looking at was gone by the time you
+  // had a view on the other. Now each becomes its own tab and both stay on screen.
+  // The tag distinguishes them, since both carry the same underlying and date.
+  // (Aug 2026.)
+  function addStateTab(state, m, tag) {
+    const createdAt = Date.now();
+    const mode2 = m || mode;
+    const und = (state && state.i0 && state.i0.underlying)
+      || (state && state.i45 && state.i45.underlying) || null;
+    const t = {
+      id: 'tab' + createdAt + '-' + Math.round(Math.random() * 10000),
+      mode: mode2, createdAt, seed: null, state: state || null,
+      label: tabLabel(mode2, und, createdAt, state && state.i45 && state.i45.dte)
+             + (tag ? ' \u00b7 ' + tag : '')
+    };
+    setTabs(prev => [...prev, t]);
+    setActiveId(t.id);
+    return t;
+  }
+
   // Wipe every tab back to one fresh ticket. Two-step: the first click arms it,
   // the second within 4s does it — tabs now survive a reload, so an accidental
   // click here would throw away work that used to be unrecoverable.
@@ -850,6 +872,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             strategyHistory={strategyHistory}
             seed={t.seed} initialState={t.state}
             toast={showToast}
+            onOpenInTab={addStateTab}
             onStateChange={st => handlePanelState(t.id, st)} />
         </div>
       ))}
