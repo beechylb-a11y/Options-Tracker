@@ -908,7 +908,7 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
   try {
     const rowIndex = parseInt(req.params.rowIndex);
     if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
-    const { closeDate, closePrice, actualPnl, closeIV, closeVix } = req.body;
+    const { closeDate, closePrice, actualPnl, closeIV, closeVix, sessionHigh, sessionLow } = req.body;
 
     // 0. Check if already closed (prevent duplicate writes)
     const decRowsPre = await getDecisions();
@@ -920,7 +920,8 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     }
 
     // 1. Update the Decisions sheet
-    await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl, closeIV, closeVix });
+    await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl, closeIV, closeVix,
+      sessionHigh, sessionLow });
 
     // 2. Get the decision row to extract details for TradeTracker + Journal
     const decRows = await getDecisions();

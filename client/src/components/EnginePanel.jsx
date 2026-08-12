@@ -881,6 +881,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // Open position greeks (already populated by Fetch Greeks or entered manually)
       delta:fv(inp,'delta'), theta:fv(inp,'theta'),
       gamma:fv(inp,'gamma'), vega:fv(inp,'vega'),
+      // The trade as priced, and the engine's own verdict on it. Logged so a month of
+      // reviews is a query rather than a stack of ticket PDFs. (Aug 2026.)
+      netCreditDebit: fv(inp, 'netCreditDebit'),
+      maxRisk: r.maxRisk ?? '',
+      maxProfit: (r.contracts && fv(inp, 'win')) ? r.contracts * fv(inp, 'win') : '',
+      ev: r.ev != null ? Math.round(r.ev) : '',
+      confidence: r.tradeConfidence != null ? `${r.tradeConfidence}/100 ${r.confidenceTier}` : '',
+      pMaxLoss: r.pMaxLoss != null ? `${(r.pMaxLoss * 100).toFixed(1)}%` : '',
+      pMaxLossBasis: r.pMaxLossBasis
+        ? `${r.pMaxLossBasis.emSrc} EM ${r.pMaxLossBasis.em.toFixed(1)} \u2192 \u03c3 ${r.pMaxLossBasis.sigma.toFixed(1)}`
+        : '',
+      cushionEM: r.holdToExpiry?.cushionEM != null ? r.holdToExpiry.cushionEM.toFixed(2) : '',
       // Expiry info for tracking
       dte: is0 ? '0DTE' : '45DTE',
       expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today

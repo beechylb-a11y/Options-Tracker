@@ -108,7 +108,14 @@ const REQUIRED_TABS = {
     'Wing Strikes', 'Market Behaviour', 'Notes',
     'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade',
     'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes', 'Account',
-    'Delta', 'Theta', 'Gamma', 'Vega', 'Close IV', 'Close VIX']],
+    'Delta', 'Theta', 'Gamma', 'Vega', 'Close IV', 'Close VIX',
+    // AH-AQ (Aug 2026). The log recorded Kelly $ and Setup Score but NOT the numbers
+    // that define the trade or the engine's own verdict on it, so every review had to
+    // reopen the ticket PDF and re-key them by hand -- and "did the EV gate predict the
+    // outcome" could only be asked through Kelly $ as a proxy. Appended after Close VIX
+    // so no existing column index moves.
+    'Net Debit/Credit', 'Max Risk', 'Max Profit', 'EV', 'Confidence',
+    'P(max loss)', 'EM Basis', 'Cushion EM', 'Session High', 'Session Low']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -636,7 +643,18 @@ export async function logDecision(decision) {
     decision.gamma ?? '',   // Gamma  (open)
     decision.vega ?? '',    // Vega   (open)
     '',  // Close IV  -- filled at close
-    ''   // Close VIX -- filled at close
+    '',  // Close VIX -- filled at close
+    // -- AH-AQ: the trade as priced, and the engine's verdict on it --
+    decision.netCreditDebit ?? '',  // AH per-share net; negative = debit paid
+    decision.maxRisk ?? '',         // AI $ at true max loss, all contracts
+    decision.maxProfit ?? '',       // AJ $
+    decision.ev ?? '',              // AK the number the edge gate actually used
+    decision.confidence ?? '',      // AL Trade Confidence 0-100
+    decision.pMaxLoss ?? '',        // AM %
+    decision.pMaxLossBasis ?? '',   // AN e.g. "VIX1D EM 5.0 -> sigma 4.5"
+    decision.cushionEM ?? '',       // AO nearest wing / remaining EM at entry
+    '',  // AP Session High -- filled at close
+    ''   // AQ Session Low  -- filled at close
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -651,7 +669,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:AG'  // 33 cols: through Account (AA) + open greeks + Close IV/VIX (AB:AG)
+    range: 'Decisions!A:AQ'  // 43 cols: through Close IV/VIX (AG) + priced-trade block (AH:AQ)
   });
   return res.data.values || [];
 }
@@ -748,6 +766,20 @@ export async function closeTradeTicket(rowIndex, closeData) {
       requestBody: { values: [[
         closeData.closeIV ?? '',
         closeData.closeVix ?? ''
+      ]] }
+    });
+  }
+  // Session High (AP) + Low (AQ) -- what the day ACTUALLY did, so realised range can be
+  // compared with the expected move the ticket was priced on without re-reading a chart.
+  // Same best-effort contract as Close VIX: absent bridge -> blank, close still proceeds.
+  if (closeData.sessionHigh != null || closeData.sessionLow != null) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(),
+      range: `Decisions!AP${rowIndex}:AQ${rowIndex}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[
+        closeData.sessionHigh ?? '',
+        closeData.sessionLow ?? ''
       ]] }
     });
   }
