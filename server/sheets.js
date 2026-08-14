@@ -841,6 +841,40 @@ export async function closeTradeTicket(rowIndex, closeData) {
   }
 }
 
+// Backfill vol-snapshot fields on an ALREADY-CLOSED decision row. Used by the
+// reconcile "Accept & close" path, which closes instantly and lets the bridge
+// snapshot land a few seconds later. Fill-only-blank: an existing value in any
+// cell is never overwritten, so a normal close's data always wins.
+export async function backfillDecisionVol(rowIndex, snap) {
+  const sheets = getSheets();
+  await ensureDecisionVolHeaders();
+  // One read covering AF..AT; offsets within it:
+  // AF=0 Close IV, AG=1 Close VIX, AP=10 Session High, AQ=11 Session Low,
+  // AS=13 Underlying Price Close, AT=14 VIX1D Close.
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(),
+    range: `Decisions!AF${rowIndex}:AT${rowIndex}`
+  });
+  const cur = (res.data.values && res.data.values[0]) || [];
+  const CELLS = [
+    { col: 'AF', idx: 0,  val: snap.closeIV },
+    { col: 'AG', idx: 1,  val: snap.closeVix },
+    { col: 'AP', idx: 10, val: snap.sessionHigh },
+    { col: 'AQ', idx: 11, val: snap.sessionLow },
+    { col: 'AS', idx: 13, val: snap.closeUnderlyingPrice },
+    { col: 'AT', idx: 14, val: snap.closeVix1d }
+  ];
+  const data = CELLS
+    .filter(c => c.val != null && c.val !== '' && !(cur[c.idx] != null && cur[c.idx] !== ''))
+    .map(c => ({ range: `Decisions!${c.col}${rowIndex}`, values: [[c.val]] }));
+  if (!data.length) return { updated: 0 };
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SHEET_ID(),
+    requestBody: { valueInputOption: 'RAW', data }
+  });
+  return { updated: data.length };
+}
+
 export async function updateTradeNotes(rowIndex, notes) {
   const sheets = getSheets();
   // Column Z = Trade Notes (26)

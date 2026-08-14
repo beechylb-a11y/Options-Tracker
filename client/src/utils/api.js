@@ -123,6 +123,9 @@ export const api = {
   closeTicket: (rowIndex, data) => fetchJSON(`/api/decisions/${rowIndex}/close`, {
     method: 'PUT', body: JSON.stringify(data)
   }),
+  backfillTicketVol: (rowIndex, snap) => fetchJSON(`/api/decisions/${rowIndex}/vol`, {
+    method: 'PUT', body: JSON.stringify(snap)
+  }),
   updateTicketNotes: (rowIndex, notes) => fetchJSON(`/api/decisions/${rowIndex}/notes`, {
     method: 'PUT', body: JSON.stringify({ notes })
   }),

@@ -556,6 +556,21 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                         <button onClick={async () => {
                           try {
                             if (m.ticket.type === 'decision') {
+                              // One-click close has no capture window, so start the
+                              // bridge vol snapshot now, close immediately, and
+                              // backfill the row when the data lands (~14s covers
+                              // the chained market-data + greeks fetches). Expiry
+                              // for IVx only when this is a same-day (0DTE) ticket;
+                              // otherwise price/VIX still arrive, IVx stays blank.
+                              const today = new Date().toISOString().split('T')[0];
+                              const snap = startCloseVolSnapshot(m.ticket.underlying,
+                                m.ticket.entryDate === today ? { expiry: today } : {});
+                              const rowIdx = m.ticket.rowIndex;
+                              setTimeout(() => {
+                                if (Object.values(snap).some(v => v != null)) {
+                                  api.backfillTicketVol(rowIdx, snap).catch(() => {});
+                                }
+                              }, 14000);
                               await api.closeTicket(m.ticket.rowIndex, {
                                 closeDate: new Date().toISOString().split('T')[0],
                                 actualPnl: m.totalPnl.toString(),

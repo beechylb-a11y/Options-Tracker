@@ -16,7 +16,7 @@ import {
   appendJournalEntry, getJournal,
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
-  closeTradeTicket, updateTradeNotes, updateTradeStatus,
+  closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
   scanTastyTradeEmails
 } from './sheets.js';
@@ -965,6 +965,19 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     res.json({ ok: true, debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });
   } catch (err) {
     console.error('[CLOSE TICKET ERROR]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Vol-snapshot backfill for closes that happened without a capture window
+// (reconcile "Accept & close"). Fill-only-blank — never overwrites.
+app.put('/api/decisions/:rowIndex/vol', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
+    const result = await backfillDecisionVol(rowIndex, req.body || {});
+    res.json({ ok: true, ...result });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
