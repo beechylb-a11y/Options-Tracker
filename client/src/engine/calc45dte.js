@@ -135,6 +135,36 @@ export function calc45DTE(inputs) {
     strikeLine = `1 SD=${em45.toFixed(1)} pts | 0.5 SD=${sd50.toFixed(1)} pts | ${dte}d @ IV ${iv.toFixed(1)}%`;
   }
 
+  // ── User strike overrides — pure substitution, no derivation math (Aug 2026) ──
+  // Same contract as calc0DTE: inputs.overrideStrikes is { [legIndex]: strike }
+  // keyed by index into the legs array as built above; overrideStrikesStrat gates
+  // the map to the structure it was typed against. Applied BEFORE P(max loss)
+  // reads the wings, so the tail runs on the substituted strikes. engineLegs
+  // preserves the engine's suggestion for the UI and dual logging.
+  const engineLegs = legs.map(l => ({ ...l }));
+  const ovStrikes = inputs.overrideStrikes || null;
+  let strikeOrderWarning = null;
+  if (ovStrikes && legs.length > 0
+      && (!inputs.overrideStrikesStrat || inputs.overrideStrikesStrat === legStrat)) {
+    const Rov = n => Math.round(n * 2) / 2;   // same 0.5 increment the builder uses
+    legs = legs.map((l, i) => {
+      const v = ovStrikes[i];
+      // An absent/unparseable override falls back to the engine strike — never NaN.
+      const k = (typeof v === 'number' && isFinite(v) && v > 0) ? Rov(v) : null;
+      return k != null ? { ...l, strike: k } : l;
+    });
+    // Flag (never throw) when edits break the engine's relative strike ordering.
+    for (let i = 1; i < legs.length; i++) {
+      const d0 = Math.sign(engineLegs[i].strike - engineLegs[i - 1].strike);
+      const d1 = Math.sign(legs[i].strike - legs[i - 1].strike);
+      if (d0 !== 0 && d1 !== d0) {
+        strikeOrderWarning = `Edited strikes break the ${legStrat} ordering: `
+          + `${legs[i - 1].label} ${legs[i - 1].strike} vs ${legs[i].label} ${legs[i].strike}`;
+        break;
+      }
+    }
+  }
+
   // ── P(max loss): probability price settles in a max-loss tail by expiry ──
   // 45DTE version uses the full-DTE lognormal sigma (NOT the intraday 5.5h window
   // used in 0DTE): sigma = price × (IV/100) × √(DTE/365). Much wider distribution
@@ -516,7 +546,7 @@ export function calc45DTE(inputs) {
     termDiff, termLabel, skew,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
-    legs, strikeLine,
+    legs, engineLegs, strikeOrderWarning, strikeLine,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,

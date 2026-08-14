@@ -73,6 +73,164 @@ function applySeed(base, seed, keys) {
   return out;
 }
 
+// ── Phase-2 strike ladder cache ──
+// One ladder fetch (7 strikes × greeks) cached for 60s, keyed by
+// (underlying, expiry, right, centerStrike). Module scope so reopening the same
+// chip's ladder inside a minute is instant, across re-renders and across tabs.
+const LADDER_CACHE = new Map();
+const LADDER_TTL_MS = 60000;
+
+// The ladder popover itself: compact mono table of 7 strikes around the leg.
+// Pure presentation — the parent owns fetch/loading/error and the strike list.
+// The 7 rows render even while loading or after a bridge failure, so a strike
+// can still be picked with no greeks at all; only the Δ/θ/γ cells wait for data.
+function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
+  const fmt = (v, dp, signed) => (v == null || !isFinite(v)) ? '--'
+    : (signed && v > 0 ? '+' : '') + v.toFixed(dp);
+  // Max |θ| row — tagged only once real greeks arrived.
+  let maxThetaStrike = null;
+  if (ladder.rows) {
+    let best = -1;
+    ladder.strikes.forEach(s => {
+      const g = ladder.rows[s];
+      if (g && g.theta != null && isFinite(g.theta) && Math.abs(g.theta) > best) {
+        best = Math.abs(g.theta); maxThetaStrike = s;
+      }
+    });
+  }
+  const cols = { display:'grid', gridTemplateColumns:'56px 48px 50px 52px 50px', alignItems:'center' };
+  const num = { textAlign:'right', paddingRight:6 };
+  return (
+    <div onClick={e => e.stopPropagation()}
+      style={{position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:120,
+        background:'#161b22', border:'1px solid #30363d', borderRadius:8,
+        padding:'8px 6px', minWidth:262, boxShadow:'0 8px 24px rgba(0,0,0,0.55)',
+        cursor:'default', fontFamily:'JetBrains Mono,monospace', fontWeight:400}}>
+      {ladder.loading && (
+        <div style={{fontSize:10,color:'#8b949e',padding:'0 6px 5px'}}>fetching ladder…</div>
+      )}
+      {!ladder.loading && ladder.error && (
+        <div style={{fontSize:10,color:'#8b949e',padding:'0 6px 5px'}}>bridge unavailable ·{' '}
+          <span onClick={onRetry} style={{color:'#2f81f7',textDecoration:'underline',cursor:'pointer'}}>retry</span>
+        </div>
+      )}
+      <div style={{...cols, fontSize:9, color:'#8b949e', letterSpacing:'0.04em', padding:'0 4px 3px'}}>
+        <span>STRIKE</span><span style={num}>Δ</span><span style={num}>θ/day</span><span style={num}>γ</span><span />
+      </div>
+      {ladder.strikes.map(s => {
+        const g = ladder.rows ? ladder.rows[s] : null;
+        const isCur = s === current;
+        const isEng = engineStrike != null && s === engineStrike;
+        const isMaxT = maxThetaStrike != null && s === maxThetaStrike;
+        return (
+          <div key={s} onClick={() => onPick(s)}
+            title={`Set this leg to ${s}`}
+            style={{...cols, fontSize:11, color:'#c9d1d9', padding:'2px 4px', borderRadius:4,
+              cursor:'pointer', background:isCur ? 'rgba(47,129,247,0.16)' : 'transparent'}}>
+            <span style={{fontWeight:isCur?700:400, color:isCur?'#fff':'#c9d1d9'}}>{s}</span>
+            <span style={num}>{g ? fmt(g.delta, 2, true) : '--'}</span>
+            <span style={num}>{g ? fmt(g.theta, 2, false) : '--'}</span>
+            <span style={num}>{g ? fmt(g.gamma, 3, false) : '--'}</span>
+            <span style={{fontSize:9}}>
+              {isEng && <span style={{color:'#2f81f7'}}>engine</span>}
+              {isEng && isMaxT && ' '}
+              {isMaxT && <span style={{color:'#3fb950'}}>max θ</span>}
+            </span>
+          </div>
+        );
+      })}
+      <div style={{marginTop:6, fontSize:10, color:'#8b949e', padding:'0 4px', fontFamily:'inherit'}}>
+        click a row to set · payoff, P(max loss), EV recompute
+      </div>
+    </div>
+  );
+}
+
+// ── One banner strike chip (Zone 1b) ──
+// Click swaps the chip for a compact mono input of the same footprint. Enter or
+// blur commits (the parent rounds to the underlying's increment), Escape cancels,
+// ArrowUp/Down steps one increment. An edited chip carries the app's manual-field
+// convention: amber border + ✎. onCommit(idx, rawText) is the single seam both
+// the inline input and the phase-2 ladder popover call — the chip knows nothing
+// about how overrides are stored. The '≡' affordance at the right edge opens the
+// ladder (parent-owned data via the ladder* props); the chip body still opens the
+// inline input.
+function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
+  ladderOpen, ladder, onOpenLadder, onCloseLadder, onRetryLadder }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+  const escRef = useRef(false); // Escape pressed → the unmount blur must not commit
+  const wrapRef = useRef(null); // chip + popover, for the click-outside guard
+  const isShort = leg.label.toLowerCase().includes('short');
+  const edited = engineStrike != null && leg.strike !== engineStrike;
+  const label = stripLabel ? stripLabel(leg.label) : leg.label;
+
+  // Ladder dismissal: Escape or click outside. Listeners exist only while THIS
+  // chip's ladder is open (the parent opens one at a time, so at most one pair
+  // of document listeners exists app-wide) and are removed on close/unmount.
+  useEffect(() => {
+    if (!ladderOpen) return;
+    const onKey = e => { if (e.key === 'Escape') onCloseLadder && onCloseLadder(); };
+    const onDown = e => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) onCloseLadder && onCloseLadder();
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [ladderOpen]);
+
+  const box = {
+    padding:'3px 10px', borderRadius:8, fontSize:12, fontWeight:700,
+    background:isShort?'#8b2025':'#0d2818', color:isShort?'#f85149':'#3fb950',
+    fontFamily:'JetBrains Mono,monospace',
+    border: edited || editing ? '1px solid #d29922' : '1px solid transparent'
+  };
+  const chip = editing ? (
+    <div style={{...box, cursor:'text'}}>
+      <input autoFocus type="text" inputMode="decimal" value={text}
+        onChange={e=>setText(e.target.value)}
+        onKeyDown={e=>{
+          if (e.key === 'Enter') { e.preventDefault(); setEditing(false); onCommit(idx, text); }
+          else if (e.key === 'Escape') { escRef.current = true; setEditing(false); }
+          else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const v = parseFloat(text);
+            const base = isFinite(v) ? v : leg.strike;
+            setText(String(+(base + (e.key === 'ArrowUp' ? step : -step)).toFixed(2)));
+          }
+        }}
+        onBlur={()=>{ if (escRef.current) { escRef.current = false; return; } setEditing(false); onCommit(idx, text); }}
+        style={{width:(String(leg.strike).length + 2) + 'ch', background:'transparent', border:'none',
+          outline:'none', color:'inherit', font:'inherit', padding:0}} />
+      <span style={{fontSize:10,fontWeight:400,opacity:0.8}}> {label}</span>
+    </div>
+  ) : (
+    <div onClick={()=>{ if (ladderOpen && onCloseLadder) onCloseLadder(); setText(String(leg.strike)); setEditing(true); }}
+      title={edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike'}
+      style={{...box, cursor:'pointer'}}>
+      {leg.strike}{edited && <span style={{fontSize:9,marginLeft:3,color:'#d29922'}}>✎</span>} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{label}</span>
+      {onOpenLadder && (
+        <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
+          title="Strike ladder — nearby strikes with live greeks"
+          style={{fontSize:10,marginLeft:5,opacity:0.55,cursor:'pointer'}}>≡</span>
+      )}
+    </div>
+  );
+  return (
+    <div ref={wrapRef} style={{position:'relative', display:'inline-block'}}>
+      {chip}
+      {ladderOpen && ladder && !editing && (
+        <LadderPopover ladder={ladder} current={leg.strike} engineStrike={engineStrike}
+          onPick={s => { onCommit(idx, String(s)); onCloseLadder && onCloseLadder(); }}
+          onRetry={onRetryLadder} />
+      )}
+    </div>
+  );
+}
+
 export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, toast, onOpenInTab }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
@@ -92,6 +250,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Market fields you have typed by hand. Auto-fill will not overwrite these;
   // they render amber with the feed's value alongside so the override is visible.
   const [held, setHeld] = useState(init?.held ?? {});
+  // Per-leg strike overrides, keyed by engine bag ('0' | '45') and TAGGED with the
+  // structure they were typed against: { '0': { strat, map: { legIndex: strike } } }.
+  // The calc ignores a map whose strat tag no longer matches, so switching
+  // structures can never restrike the wrong shape. Persisted with the tab state
+  // exactly like held / overrideStrat.
+  const [overrideStrikes, setOverrideStrikes] = useState(init?.overrideStrikes ?? {});
   // The last raw bridge pull: what it gave us, what it did not, and when. This is
   // what lets a re-fill say "these three did not come back" instead of quietly
   // leaving stale numbers behind a LIVE badge.
@@ -232,8 +396,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, dataFresh, esContract, greeksFresh, held, feed });
-  }, [i0, i45, overrideStrat, dataFresh, esContract, greeksFresh, held, feed]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, dataFresh, esContract, greeksFresh, held, feed });
+  }, [i0, i45, overrideStrat, overrideStrikes, dataFresh, esContract, greeksFresh, held, feed]);
 
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
@@ -262,6 +426,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
           underlying:i0.underlying,
           overrideStrategy: overrideStrat,
+          overrideStrikes: overrideStrikes['0']?.map || null,
+          overrideStrikesStrat: overrideStrikes['0']?.strat || null,
           historyByStrategy: strategyHistory || null,
           wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
             lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
@@ -287,6 +453,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
           underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
           overrideStrategy: overrideStrat,
+          overrideStrikes: overrideStrikes['45']?.map || null,
+          overrideStrikesStrat: overrideStrikes['45']?.strat || null,
           historyByStrategy: strategyHistory || null,
           wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
             lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
@@ -305,7 +473,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     } catch (e) {
       console.error('Calc engine error:', e);
       return { decision:'Error', decisionClass:'nogo', hardBlocker:'Calculation error: ' + e.message,
-        setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], warnings:[], blockers:[],
+        setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], engineLegs:[], strikeOrderWarning:null, warnings:[], blockers:[],
         bestStrat:'', bestRating:'POOR', legStrat:'', kelly:0, rawKelly:0, adjustedKelly:0,
         kellyDollar:0, contracts:1, maxRisk:0, popMargin:0, bePop:0, wlRatio:0, ev:0,
         volFactor:1, sharpeFactor:1, sharpeProxy:0, kellyOverRisk:false, missingSize:true,
@@ -318,7 +486,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         fairValueScore:0, fairValueGrade:'', volScore:0, volGrade:'', structScore:0, structGrade:'',
         regimeScore:0, regimeGrade:'', ivHvRatio:0 };
     }
-  }, [is0, i0, i45, overrideStrat, strategyHistory]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, strategyHistory]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -359,6 +527,130 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
   const effectiveStrat = r.legStrat || r.bestStrat;
+
+  // ── Per-leg strike editing (Zone 1b chips) ──
+  // The strike increment mirrors calc0dte's roundTo; the 45DTE builder rounds
+  // every strike to 0.5, so that is its increment.
+  const strikeStep = is0
+    ? ((i0.underlying === 'SPX' || i0.underlying === 'RUT') ? 5
+      : ['SPY', 'QQQ', 'IWM', 'XSP'].includes(i0.underlying) ? 1 : 0.5)
+    : 0.5;
+  const editedCount = (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length)
+    ? r.legs.reduce((n, l, i) => n + (l.strike !== r.engineLegs[i].strike ? 1 : 0), 0)
+    : 0;
+  // Commit one edited strike (the seam the phase-2 ladder/popover will call too).
+  // Invalid input can never produce a NaN leg — it falls back to the engine strike.
+  function commitStrike(idx, rawVal) {
+    const eng = r.engineLegs?.[idx]?.strike;
+    const cur = r.legs?.[idx]?.strike;
+    if (eng == null || cur == null) return;
+    const v = parseFloat(rawVal);
+    const next = (isFinite(v) && v > 0) ? Math.round(v / strikeStep) * strikeStep : eng;
+    if (next === cur) return;
+    setOverrideStrikes(prev => {
+      const keep = (prev[bag] && prev[bag].strat === (r.legStrat || '')) ? { ...prev[bag].map } : {};
+      if (next === eng) delete keep[idx]; else keep[idx] = next;
+      const out = { ...prev };
+      if (Object.keys(keep).length) out[bag] = { strat: r.legStrat || '', map: keep };
+      else delete out[bag];
+      return out;
+    });
+    markGreeksStale();
+  }
+  function resetStrikes() {
+    if (!overrideStrikes[bag]) return;
+    setOverrideStrikes(prev => { const out = { ...prev }; delete out[bag]; return out; });
+    markGreeksStale();
+  }
+  // A strike change invalidates any greeks already fetched (they priced the OLD
+  // legs). Reuse the existing amber "mixed" badge state as the refetch prompt —
+  // a successful refetch rebuilds greeksFresh from the response and clears it.
+  function markGreeksStale() {
+    setGreeksFresh(g => (g && !g.greeksMixed)
+      ? { ...g, greeksMixed: true, greekSource: 'edited strikes' } : g);
+  }
+
+  // Expiry (YYYYMMDD) for option-greeks calls: 0DTE = today (ET); 45DTE = today
+  // + the DTE input. Shared by Fetch Greeks and the strike ladder so the two can
+  // never disagree about which expiry they priced.
+  function deriveExpiryYYYYMMDD() {
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    let expDate = nowET;
+    if (!is0) {
+      const dte = parseInt(i45.dte, 10);
+      if (dte > 0) { expDate = new Date(nowET); expDate.setDate(expDate.getDate() + dte); }
+    }
+    return expDate.getFullYear().toString()
+      + String(expDate.getMonth() + 1).padStart(2, '0')
+      + String(expDate.getDate()).padStart(2, '0');
+  }
+
+  // ── Strike ladder popover (phase 2) ──
+  // One ladder open at a time: { idx, right, center, strikes[7, high→low],
+  // loading, error, rows: { strike → greeks|null } }. The fetch lives HERE, not
+  // in the chip, because underlying/expiry/bridge plumbing is the panel's. A row
+  // click goes through commitStrike, so payoff / P(max loss) / EV recompute by
+  // the same path a typed strike uses — no extra coupling.
+  const [ladder, setLadder] = useState(null);
+  const ladderAbortRef = useRef(null);
+  useEffect(() => () => { if (ladderAbortRef.current) ladderAbortRef.current.abort(); }, []);
+  const closeLadder = () => {
+    if (ladderAbortRef.current) { ladderAbortRef.current.abort(); ladderAbortRef.current = null; }
+    setLadder(null);
+  };
+  function toggleLadder(idx, force) {
+    if (!force && ladder && ladder.idx === idx) { closeLadder(); return; }
+    const leg = r.legs?.[idx];
+    if (!leg) return;
+    const right = (leg.label || '').toLowerCase().includes('put') ? 'P' : 'C';
+    const center = leg.strike;
+    const strikes = [];
+    for (let k = 3; k >= -3; k--) strikes.push(+(center + k * strikeStep).toFixed(2));
+    const underlying = is0 ? i0.underlying : i45.underlying;
+    const expiry = deriveExpiryYYYYMMDD();
+    const key = underlying + '|' + expiry + '|' + right + '|' + center;
+    const cached = LADDER_CACHE.get(key);
+    if (cached && Date.now() - cached.ts < LADDER_TTL_MS) {
+      setLadder({ idx, right, center, strikes, loading: false, error: null, rows: cached.rows });
+      return;
+    }
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) {
+      setLadder({ idx, right, center, strikes, loading: false, error: 'no bridge', rows: null });
+      return;
+    }
+    setLadder({ idx, right, center, strikes, loading: true, error: null, rows: null });
+    fetchLadder(idx, underlying, expiry, right, center, strikes, bridgeUrl, key);
+  }
+  async function fetchLadder(idx, underlying, expiry, right, center, strikes, bridgeUrl, key) {
+    if (ladderAbortRef.current) ladderAbortRef.current.abort();
+    const ctrl = new AbortController();
+    ladderAbortRef.current = ctrl;
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const legsParam = encodeURIComponent(JSON.stringify(strikes.map(s => ({ strike: s, right, qty: 1 }))));
+      const url = bridgeUrl + '/api/option-greeks?underlying=' + underlying
+        + '&expiry=' + expiry + '&legs=' + legsParam;
+      const resp = await fetch(url, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
+      const d = await resp.json();
+      if (d.error) throw new Error(d.error);
+      const rows = {};
+      if (Array.isArray(d.legs)) d.legs.forEach(l => { rows[l.strike] = l.greeks || null; });
+      LADDER_CACHE.set(key, { ts: Date.now(), rows });
+      setLadder(prev => (prev && prev.idx === idx && prev.center === center)
+        ? { ...prev, loading: false, error: null, rows } : prev);
+    } catch (e) {
+      // Superseded by a newer fetch (its abort landed here) — the newer one owns the state.
+      if (ctrl.signal.aborted && ladderAbortRef.current !== ctrl) return;
+      setLadder(prev => (prev && prev.idx === idx && prev.center === center)
+        ? { ...prev, loading: false, error: 'unavailable' } : prev);
+    } finally {
+      clearTimeout(t);
+      if (ladderAbortRef.current === ctrl) ladderAbortRef.current = null;
+    }
+  }
+  function retryLadder() { if (ladder) toggleLadder(ladder.idx, true); }
 
   // ── Net credit/debit pre-fills from the engine's TARGET for the structure in
   // front of you. A fresh ticket -- and every structure opened in its own tab --
@@ -500,16 +792,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       const legsSrc = r?.legs || [];
       if (!legsSrc.length) { notify('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
 
-      // Derive expiry (YYYYMMDD). 0DTE = today (ET); 45DTE = today + DTE input.
-      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      let expDate = nowET;
-      if (!is0) {
-        const dte = parseInt(i45.dte, 10);
-        if (dte > 0) { expDate = new Date(nowET); expDate.setDate(expDate.getDate() + dte); }
-      }
-      const yyyymmdd = expDate.getFullYear().toString()
-        + String(expDate.getMonth() + 1).padStart(2, '0')
-        + String(expDate.getDate()).padStart(2, '0');
+      // Expiry (YYYYMMDD) — shared derivation with the strike ladder popover.
+      const yyyymmdd = deriveExpiryYYYYMMDD();
 
       // Build legs: right from label (put/call), signed qty from long/short (+x2 body).
       const legs = legsSrc.map(l => {
@@ -892,6 +1176,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     }
     if (isOverride) lines.push(`Override: engine picked ${r.bestStrat}, logged ${effectiveStrat}`);
     lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
+    if (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length
+        && r.legs.some((l,i)=>l.strike!==r.engineLegs[i].strike)) {
+      lines.push(`Engine strikes (before hand edits): ${r.engineLegs.map(l=>l.strike).join(' / ')}`);
+    }
     if (r.skewNote) lines.push(r.skewNote);
     if (is0 && r.holdToExpiry) lines.push(`Expiry: ${r.holdToExpiry.label} — ${r.holdToExpiry.note}`);
     lines.push(`${ncd>0?`Credit $${ncd.toFixed(2)}`:ncd<0?`Debit $${Math.abs(ncd).toFixed(2)}`:''} · POP ${inp.pop||'--'}% · Win $${inp.win||'--'} · Risk $${inp.risk||'--'}`);
@@ -935,6 +1223,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
       setupGrade:r.setup, regime:r.regime, wingStrikes:r.legs.map(l=>l.strike).join(' / '),
+      // Dual strike record: wingStrikes above is the FINAL legs (hand edits
+      // included); engineStrikes is what the engine itself suggested. Identical
+      // when nothing was edited.
+      engineStrikes:((r.engineLegs && r.engineLegs.length ? r.engineLegs : r.legs).map(l=>l.strike).join(' / ')),
       marketBehaviour:r.behaviour,
       notes: fullNotes,
       price:fv(inp,'price'), vix:fv(inp,'vix'),
@@ -1021,35 +1313,45 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(VIX):</span>
-                  {r.legs.slice(0,2).map((l,i) => {
-                    const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
-                      {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX)','')}</span>
-                    </div>);
-                  })}
+                  {r.legs.slice(0,2).map((l,i) => (
+                    <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')}
+                      ladderOpen={ladder?.idx === i} ladder={ladder}
+                      onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
+                  ))}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                   <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(1D):</span>
-                  {r.legs.slice(2,4).map((l,i) => {
-                    const isShort = l.label.toLowerCase().includes('short');
-                    return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
-                      {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label.replace(' (VIX1D)','')}</span>
-                    </div>);
-                  })}
+                  {r.legs.slice(2,4).map((l,i) => (
+                    <StrikeChip key={i} leg={l} idx={i+2} engineStrike={r.engineLegs?.[i+2]?.strike}
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')}
+                      ladderOpen={ladder?.idx === i+2} ladder={ladder}
+                      onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
+                  ))}
                   {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
                 </div>
               </div>
             ) : (
               // Standard leg display — wing distance appended inline, muted
               <div style={{display:'flex',flexWrap:'wrap',gap:'6px 8px',alignItems:'center'}}>
-                {r.legs.map((l,i) => {
-                  const isShort = l.label.toLowerCase().includes('short');
-                  return (<div key={i} style={{padding:'3px 10px',borderRadius:8,fontSize:12,fontWeight:700,background:isShort?'#8b2025':'#0d2818',color:isShort?'#f85149':'#3fb950',fontFamily:'JetBrains Mono,monospace'}}>
-                    {l.strike} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{l.label}</span>
-                  </div>);
-                })}
+                {r.legs.map((l,i) => (
+                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
+                    step={strikeStep} onCommit={commitStrike}
+                    ladderOpen={ladder?.idx === i} ladder={ladder}
+                    onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
+                ))}
                 {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
               </div>
+            )}
+            {editedCount > 0 && (
+              <div style={{marginTop:4,fontSize:11,color:'#d29922'}}>
+                ✎ {editedCount} leg{editedCount>1?'s':''} edited ·{' '}
+                <span onClick={resetStrikes} title="Clear every hand-edited strike and take the engine's suggestion back"
+                  style={{textDecoration:'underline',cursor:'pointer'}}>reset to engine</span>
+              </div>
+            )}
+            {r.strikeOrderWarning && (
+              <div style={{marginTop:4,fontSize:11,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
             )}
           </div>
         )}

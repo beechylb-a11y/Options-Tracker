@@ -703,6 +703,62 @@ export function calc0DTE(inputs) {
           : `the short leg is further OTM, so the credit is smaller and max loss (width − credit) rises slightly`);
     }
   }
+  // ── User strike overrides (Aug 2026) — pure substitution, no derivation math ──
+  // inputs.overrideStrikes: { [legIndex]: strike }, keyed by index into the legs
+  // array AS BUILT ABOVE (dual-EM verticals therefore key 0..3 across both pairs).
+  // inputs.overrideStrikesStrat: the structure the overrides were typed against;
+  // when present and different from legStrat the map is ignored, so a stale map
+  // can never restrike a different structure. Substitution happens HERE — before
+  // hold-to-expiry, P(max loss), the target-credit width, payoff/breakevens, the
+  // EV moneyness band and the greeks-fetch legs read `legs` — so every consumer
+  // downstream sees the SUBSTITUTED strikes. engineLegs preserves the engine's
+  // own suggestion for the UI (show/reset) and dual logging.
+  const engineLegs = legs.map(l => ({ ...l }));
+  const ovStrikes = inputs.overrideStrikes || null;
+  let strikeOrderWarning = null;
+  if (ovStrikes && legs.length > 0
+      && (!inputs.overrideStrikesStrat || inputs.overrideStrikesStrat === legStrat)) {
+    legs = legs.map((l, i) => {
+      const v = ovStrikes[i];
+      // An absent/unparseable override falls back to the engine strike — never NaN.
+      const k = (typeof v === 'number' && isFinite(v) && v > 0) ? R(v) : null;
+      return k != null ? { ...l, strike: k } : l;
+    });
+    // Structure-order check: edited strikes must keep the engine's relative
+    // ordering (e.g. a body pushed above its upper wing breaks the shape). The
+    // calc still runs on the substituted legs; this only FLAGS, for the UI.
+    // Dual-EM verticals are two alternative strike PAIRS, so only compare
+    // within each pair — the ordering between the pairs is not structural.
+    const adjacents = (legs.length === 4 && /VIX/.test(legs[0].label || ''))
+      ? [[0, 1], [2, 3]]
+      : legs.slice(1).map((_, i) => [i, i + 1]);
+    for (const [a, b] of adjacents) {
+      const d0 = Math.sign(engineLegs[b].strike - engineLegs[a].strike);
+      const d1 = Math.sign(legs[b].strike - legs[a].strike);
+      if (d0 !== 0 && d1 !== d0) {
+        strikeOrderWarning = `Edited strikes break the ${legStrat} ordering: `
+          + `${legs[a].label} ${legs[a].strike} vs ${legs[b].label} ${legs[b].strike}`;
+        break;
+      }
+    }
+  }
+
+  // Did an override actually change a strike? Gates the edited-width fallback
+  // below: when false, every consumer reads the exact numbers it always did.
+  const strikesEdited = legs.length === engineLegs.length
+    && legs.some((l, i) => l.strike !== engineLegs[i].strike);
+  // Effective wing width of the EDITED structure: the smallest positive gap
+  // between adjacent (unique, sorted) strikes. For every fly/condor the builder
+  // makes, this equals the near-wing width the target-credit block reads as D —
+  // but unlike D it tracks hand edits. null when nothing was edited.
+  const editedWingWidth = (() => {
+    if (!strikesEdited || legs.length < 2) return null;
+    const ks = [...new Set(legs.map(l => l.strike))].sort((x, y) => x - y);
+    let m = Infinity;
+    for (let i = 1; i < ks.length; i++) { const g = ks[i] - ks[i - 1]; if (g > 0 && g < m) m = g; }
+    return isFinite(m) ? m : null;
+  })();
+
   const isSpread = VERTICALS.includes(legStrat);
   // Hoisted out of the scorecard (Aug 2026) — hold-to-expiry needs it too, and one
   // structure should not have two locus lookups.
@@ -916,7 +972,9 @@ export function calc0DTE(inputs) {
   const wingTxt = D > 0
     ? isSpread
       ? `EM rem(VIX)=${dVixRem.toFixed(1)} | EM rem(VIX1D)=${dV1dRem.toFixed(1)} · ${(sessionFrac*5.5).toFixed(1)}h left (session ${emVIX>0?emVIX.toFixed(0):'--'}/${emV1D>0?emV1D.toFixed(0):'--'})`
-      : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
+      : (strikesEdited && editedWingWidth != null && Math.abs(editedWingWidth - D) >= 0.05)
+        ? `D=${editedWingWidth.toFixed(1)} pts (edited · engine ${D.toFixed(1)}, base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
+        : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
     : '';
 
   // EM method detail for the UI: show the straddle legs when the EM came from the
@@ -1095,7 +1153,9 @@ export function calc0DTE(inputs) {
     // (Aug 2026. Flies/condors keep D — their wings genuinely are D wide.)
     const vertWidth = (isSpread && legs.length >= 2)
       ? Math.abs(legs[1].strike - legs[0].strike) : 0;
-    const width = vertWidth > 0 ? vertWidth : D;
+    // Hand-edited flies/condors price their target off the EDITED near-wing width
+    // (editedWingWidth); untouched structures keep D exactly as before.
+    const width = vertWidth > 0 ? vertWidth : (editedWingWidth ?? D);
     targetMax = width; // max possible credit/debit = wing width
     if (legStrat.includes('Iron Condor') || legStrat === 'Chicken condor') {
       targetLow = width * 0.25; targetHigh = width * 0.40;
@@ -1116,7 +1176,7 @@ export function calc0DTE(inputs) {
       // BWB: typically a debit trade. Near wing is tight, broken wing is wide.
       // Debit depends on how wide the broken wing is vs near wing.
       // Typical debit = 30-60% of near wing width
-      const nearW = D; // near wing width
+      const nearW = editedWingWidth ?? D; // near wing width (tracks hand edits)
       targetLow = nearW * 0.20; targetHigh = nearW * 0.60;
       targetCredit = -(targetLow + targetHigh) / 2;
       targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)} (or small credit)`;
@@ -1860,7 +1920,7 @@ export function calc0DTE(inputs) {
 
   // Debit/wing ratio check for butterflies
   if (isDebitBfly && D > 0 && netCreditDebit < 0) {
-    const debitWingRatio = Math.abs(netCreditDebit) / D;
+    const debitWingRatio = Math.abs(netCreditDebit) / (editedWingWidth ?? D);
     if (debitWingRatio > 0.55) {
       blockers.push(`Debit ${(debitWingRatio*100).toFixed(0)}% of wing width — too expensive (>55%)`);
     } else if (debitWingRatio > 0.40) {
@@ -2014,8 +2074,9 @@ export function calc0DTE(inputs) {
     trendPattern, trendStrength,
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
-    // Strikes
-    legs, wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
+    // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
+    legs, engineLegs, strikeOrderWarning,
+    wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)
     emRemaining, emSession, emSessionModel, emStraddleSD, emStraddleSessionVol,

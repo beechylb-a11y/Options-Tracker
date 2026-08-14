@@ -122,7 +122,13 @@ const REQUIRED_TABS = {
     // lack, the expiry-specific IV of the structure at log time. The CLOSE side
     // completes Close IV (=IVx at close) / Close VIX with the close spot and
     // VIX1D. Strictly appended — no existing column index moves.
-    'IVx Open', 'Underlying Price Close', 'VIX1D Close']],
+    'IVx Open', 'Underlying Price Close', 'VIX1D Close',
+    // AU (Aug 2026): the engine's OWN suggested strikes before any hand edit.
+    // Wing Strikes (col L) is the FINAL legs as traded — once strikes became
+    // user-editable the two can differ, and "did my nudges beat the engine" is
+    // only answerable if both are recorded. Identical when nothing was edited.
+    // Strictly appended — no existing column index moves.
+    'Engine Strikes']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -615,14 +621,15 @@ export async function deleteTradeTrackerRow(rowIndex) {
 // ================================================================
 //  DECISIONS (logged from decision engine)
 // ================================================================
-// The vol-snapshot columns AR:AT ('IVx Open', 'Underlying Price Close',
-// 'VIX1D Close') were appended in Aug 2026; sheets created before then stop at
-// AQ. Before any write that targets them, read row 1 and — only if AR1:AT1 do
-// not already hold the expected names — write those three header cells. A1:AQ1
+// The appended columns AR:AU ('IVx Open', 'Underlying Price Close',
+// 'VIX1D Close' — Aug 2026 vol snapshot — plus 'Engine Strikes', the engine's
+// pre-edit strike suggestion) postdate older sheets, which stop at AQ (or AT).
+// Before any write that targets them, read row 1 and — only if AR1:AU1 do
+// not already hold the expected names — write those four header cells. A1:AQ1
 // is never touched, so existing columns can neither move nor be overwritten.
 // Runs once per process (cached on success) and is strictly best-effort: a
 // failure here must never block a log or a close.
-const DECISION_VOL_HEADERS = ['IVx Open', 'Underlying Price Close', 'VIX1D Close'];
+const DECISION_VOL_HEADERS = ['IVx Open', 'Underlying Price Close', 'VIX1D Close', 'Engine Strikes'];
 let decisionVolHeadersEnsured = false;
 async function ensureDecisionVolHeaders() {
   if (decisionVolHeadersEnsured) return;
@@ -633,11 +640,11 @@ async function ensureDecisionVolHeaders() {
       range: 'Decisions!1:1'
     });
     const header = (res.data.values && res.data.values[0]) || [];
-    const ok = DECISION_VOL_HEADERS.every((h, i) => header[43 + i] === h); // AR = col 44 (idx 43)
+    const ok = DECISION_VOL_HEADERS.every((h, i) => header[43 + i] === h); // AR = col 44 (idx 43) … AU = idx 46
     if (!ok) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID(),
-        range: 'Decisions!AR1:AT1',
+        range: 'Decisions!AR1:AU1',
         valueInputOption: 'RAW',
         requestBody: { values: [DECISION_VOL_HEADERS] }
       });
@@ -696,7 +703,8 @@ export async function logDecision(decision) {
     '',  // AQ Session Low  -- filled at close
     decision.ivxOpen ?? '',  // AR IVx Open -- expiry-specific IV at log time
     '',  // AS Underlying Price Close -- filled at close
-    ''   // AT VIX1D Close -- filled at close
+    '',  // AT VIX1D Close -- filled at close
+    decision.engineStrikes ?? ''  // AU Engine Strikes -- pre-edit suggestion (Wing Strikes = final)
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -711,7 +719,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:AT'  // 46 cols: Close IV/VIX (AF:AG) + priced-trade block (AH:AQ) + vol snapshot (AR:AT)
+    range: 'Decisions!A:AU'  // 47 cols: Close IV/VIX (AF:AG) + priced-trade block (AH:AQ) + vol snapshot (AR:AT) + Engine Strikes (AU)
   });
   return res.data.values || [];
 }
