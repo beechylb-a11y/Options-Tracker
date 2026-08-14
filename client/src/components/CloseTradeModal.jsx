@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
+import { startCloseVolSnapshot } from '../utils/volSnapshot';
 
 export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
   const [closing, setClosing] = useState(false);
@@ -71,22 +72,21 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
     setFetchingTWS(false);
   }
 
-  // Best-effort snapshot of the volatility environment at close (VIX). Works for
-  // any account without OPRA option-data permissions and needs no leg info, so
-  // it's safe to call on every close. Any failure → blank, close proceeds.
-  // One market-data call at close returns VIX and the session range together, so the
-  // realised move costs no extra request. Any failure -> nulls, and the close proceeds.
-  async function captureCloseSnapshot() {
-    try {
-      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
-      if (!bridgeUrl) return {};
-      const resp = await fetch(bridgeUrl + '/api/market-data?underlying=' + encodeURIComponent(underlying),
-        { headers: { 'ngrok-skip-browser-warning': '1' } });
-      const d = await resp.json();
-      const num = x => (x != null && !isNaN(parseFloat(x)) && parseFloat(x) !== 0) ? parseFloat(x) : null;
-      return { closeVix: num(d?.vix ?? d?.VIX), sessionHigh: num(d?.high), sessionLow: num(d?.low) };
-    } catch { return {}; }
-  }
+  // Best-effort snapshot of the volatility environment at close (spot, VIX,
+  // VIX1D, expiry IVx, session range). Fired ONCE when the modal opens, so the
+  // bridge gets the seconds the user spends on the form to answer; at confirm we
+  // attach whatever arrived. Bridge down / no data → blanks, close proceeds
+  // exactly as before. 0DTE tickets use their open-date as the expiry for the
+  // IVx leg; otherwise Expiry Date if the row carries one, else IVx is skipped.
+  const closeSnapRef = useRef({});
+  useEffect(() => {
+    if (type === 'tracker') return; // tracker closes write no vol columns
+    const expiry = (trade.Engine === '0DTE')
+      ? (trade.Timestamp || '').split('T')[0]
+      : (trade['Expiry Date'] || '');
+    closeSnapRef.current = startCloseVolSnapshot(underlying, { expiry });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleClose() {
     setClosing(true);
@@ -101,7 +101,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           partialQty: partial ? form.partialQty : null
         });
       } else {
-        const snap = await captureCloseSnapshot();
+        const snap = closeSnapRef.current || {};
         await api.closeTicket(trade._rowIndex, {
           closeDate: form.closeDate,
           closePrice: form.closePrice,
@@ -109,7 +109,10 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           sessionHigh: snap.sessionHigh ?? null,
           sessionLow: snap.sessionLow ?? null,
           account: trade.Account || '',
-          closeVix
+          closeVix: snap.closeVix ?? null,
+          closeIV: snap.closeIV ?? null,
+          closeUnderlyingPrice: snap.closeUnderlyingPrice ?? null,
+          closeVix1d: snap.closeVix1d ?? null
         });
       }
       if (onClosed) onClosed();

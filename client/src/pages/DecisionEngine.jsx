@@ -5,6 +5,7 @@ import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
+import { startCloseVolSnapshot } from '../utils/volSnapshot';
 
 // ── Trade tabs (Aug 2026) ──
 // One mounted EnginePanel per tab, inactive ones hidden with display:none so
@@ -178,6 +179,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Close ticket state
   const [closingIdx, setClosingIdx] = useState(null);
   const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', actualPnl: '' });
+  // Vol snapshot at close: started when the close form opens (so the bridge has
+  // the seconds the user spends typing to answer), read at confirm. Best-effort
+  // only — an empty object means blanks in the sheet, never a blocked close.
+  const closeSnapRef = useRef({});
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResults, setReconcileResults] = useState(null);
 
@@ -271,7 +276,14 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   async function handleCloseTicket(dec) {
     setSaving(true);
     try {
-      const result = await api.closeTicket(dec._rowIndex, { ...closeForm, account: account || '' });
+      const snap = closeSnapRef.current || {};
+      const result = await api.closeTicket(dec._rowIndex, {
+        ...closeForm, account: account || '',
+        closeVix: snap.closeVix ?? null, closeIV: snap.closeIV ?? null,
+        closeUnderlyingPrice: snap.closeUnderlyingPrice ?? null,
+        closeVix1d: snap.closeVix1d ?? null,
+        sessionHigh: snap.sessionHigh ?? null, sessionLow: snap.sessionLow ?? null
+      });
       console.log('[CLOSE TICKET RESULT]', result);
       showToast('Trade ticket closed', 'success');
       setClosingIdx(null);
@@ -631,7 +643,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
                         {/* Action buttons */}
                         <div className="flex items-center gap-2 pt-2 border-t border-bg-border">
-                          <button onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' }); }}
+                          <button onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' });
+                            closeSnapRef.current = isClosing ? {} : startCloseVolSnapshot(dec.Underlying,
+                              { expiry: dec.Engine === '0DTE' ? (dec.Timestamp || '').split('T')[0] : '' }); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors">
                             <DollarSign size={12} /> Close ticket
                           </button>

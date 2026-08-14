@@ -118,7 +118,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const base = {
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
     em:'', atr5:'', atr2h:'', atr:'',
-    vix:'', vix1d:'',
+    vix:'', vix1d:'', ivx:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
     win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
@@ -149,7 +149,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   const [i45, setI45] = useState(() => {
     const base = {
-    underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'',
+    underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'', ivx:'',
     ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
     outlook:'neutral', pop:'', win:'', risk:'', netCreditDebit:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
@@ -550,6 +550,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           upperWD = String(Math.abs(sorted[sorted.length - 1].greeks.delta));
         }
       }
+      // The bridge's model greeks carry a per-leg implied vol (%, generic tick
+      // 106). Average the legs that returned one — that average IS the
+      // expiry-specific IV of the structure ("IVx"). 45DTE feeds it into the IV
+      // input as before; 0DTE has no IV input, so it rides along as i0.ivx
+      // purely for the log-time vol snapshot (IVx Open column).
+      let avgIV = '';
+      if (Array.isArray(d.legs)) {
+        const withIV = d.legs.filter(l => l.greeks && l.greeks.iv != null && l.greeks.iv > 0);
+        if (withIV.length) avgIV = String(+(withIV.reduce((s, l) => s + l.greeks.iv, 0) / withIV.length).toFixed(2));
+      }
       if (is0) {
         setI0(prev => ({
           ...prev,
@@ -558,20 +568,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
           gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike,
+          ivx: avgIV || prev.ivx,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
           upperWingDelta: upperWD || prev.upperWingDelta
         }));
       } else {
-        // The bridge's model greeks carry a per-leg implied vol (%, generic tick
-        // 106). Average the legs that returned one for the IV input; when the
-        // outer legs are a put and a call (condor-style), put-wing IV minus
-        // call-wing IV fills Skew in vol points. Same-right structures (flies)
-        // have no put/call skew to read, so Skew is left alone there. Held
-        // fields are skipped — same override contract as auto-fill.
-        let avgIV = '', skewIV = '';
+        // When the outer legs are a put and a call (condor-style), put-wing IV
+        // minus call-wing IV fills Skew in vol points. Same-right structures
+        // (flies) have no put/call skew to read, so Skew is left alone there.
+        // Held fields are skipped — same override contract as auto-fill.
+        let skewIV = '';
         if (Array.isArray(d.legs)) {
           const withIV = d.legs.filter(l => l.greeks && l.greeks.iv != null && l.greeks.iv > 0);
-          if (withIV.length) avgIV = String(+(withIV.reduce((s, l) => s + l.greeks.iv, 0) / withIV.length).toFixed(2));
           if (withIV.length > 1) {
             const byStrike = [...withIV].sort((a, b) => a.strike - b.strike);
             const loLeg = byStrike[0], hiLeg = byStrike[byStrike.length - 1];
@@ -587,6 +595,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
           iv: avgIV && !held['45:iv'] ? avgIV : prev.iv,
+          ivx: avgIV || prev.ivx,
           skew: skewIV && !held['45:skew'] ? skewIV : prev.skew,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
           upperWingDelta: upperWD || prev.upperWingDelta
@@ -931,6 +940,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
       em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
+      // Expiry-specific IV at log time (IVx Open, col AR): the per-leg average
+      // from Fetch Greeks when it ran; 45DTE falls back to the typed IV. Blank
+      // when nothing is known — never a fake zero.
+      ivxOpen: (inp.ivx || (is0 ? '' : inp.iv) || ''),
       account: accountConfig?.id || '',
       // Open position greeks (already populated by Fetch Greeks or entered manually)
       delta:fv(inp,'delta'), theta:fv(inp,'theta'),

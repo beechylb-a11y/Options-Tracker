@@ -115,7 +115,14 @@ const REQUIRED_TABS = {
     // outcome" could only be asked through Kelly $ as a proxy. Appended after Close VIX
     // so no existing column index moves.
     'Net Debit/Credit', 'Max Risk', 'Max Profit', 'EV', 'Confidence',
-    'P(max loss)', 'EM Basis', 'Cushion EM', 'Session High', 'Session Low']],
+    'P(max loss)', 'EM Basis', 'Cushion EM', 'Session High', 'Session Low',
+    // AR-AT (Aug 2026): vol-snapshot completion for implied-vs-realized and
+    // vega-attribution reviews. The OPEN side mostly already lives in
+    // Price/VIX/VIX1D/IV/IVR/EM (cols O-T); IVx Open adds the one thing those
+    // lack, the expiry-specific IV of the structure at log time. The CLOSE side
+    // completes Close IV (=IVx at close) / Close VIX with the close spot and
+    // VIX1D. Strictly appended — no existing column index moves.
+    'IVx Open', 'Underlying Price Close', 'VIX1D Close']],
   BattingAverage: [['Metric', 'Value'],
     ['Total Trades', '0'],
     ['Batting Average', '0'],
@@ -608,8 +615,40 @@ export async function deleteTradeTrackerRow(rowIndex) {
 // ================================================================
 //  DECISIONS (logged from decision engine)
 // ================================================================
+// The vol-snapshot columns AR:AT ('IVx Open', 'Underlying Price Close',
+// 'VIX1D Close') were appended in Aug 2026; sheets created before then stop at
+// AQ. Before any write that targets them, read row 1 and — only if AR1:AT1 do
+// not already hold the expected names — write those three header cells. A1:AQ1
+// is never touched, so existing columns can neither move nor be overwritten.
+// Runs once per process (cached on success) and is strictly best-effort: a
+// failure here must never block a log or a close.
+const DECISION_VOL_HEADERS = ['IVx Open', 'Underlying Price Close', 'VIX1D Close'];
+let decisionVolHeadersEnsured = false;
+async function ensureDecisionVolHeaders() {
+  if (decisionVolHeadersEnsured) return;
+  try {
+    const sheets = getSheets();
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID(),
+      range: 'Decisions!1:1'
+    });
+    const header = (res.data.values && res.data.values[0]) || [];
+    const ok = DECISION_VOL_HEADERS.every((h, i) => header[43 + i] === h); // AR = col 44 (idx 43)
+    if (!ok) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID(),
+        range: 'Decisions!AR1:AT1',
+        valueInputOption: 'RAW',
+        requestBody: { values: [DECISION_VOL_HEADERS] }
+      });
+    }
+    decisionVolHeadersEnsured = true;
+  } catch (e) { /* retried on the next write */ }
+}
+
 export async function logDecision(decision) {
   const sheets = getSheets();
+  await ensureDecisionVolHeaders();
   const row = [
     decision.timestamp || new Date().toISOString(),
     decision.engine || '0DTE',
@@ -654,7 +693,10 @@ export async function logDecision(decision) {
     decision.pMaxLossBasis ?? '',   // AN e.g. "VIX1D EM 5.0 -> sigma 4.5"
     decision.cushionEM ?? '',       // AO nearest wing / remaining EM at entry
     '',  // AP Session High -- filled at close
-    ''   // AQ Session Low  -- filled at close
+    '',  // AQ Session Low  -- filled at close
+    decision.ivxOpen ?? '',  // AR IVx Open -- expiry-specific IV at log time
+    '',  // AS Underlying Price Close -- filled at close
+    ''   // AT VIX1D Close -- filled at close
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -669,7 +711,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:AQ'  // 43 cols: through Close IV/VIX (AG) + priced-trade block (AH:AQ)
+    range: 'Decisions!A:AT'  // 46 cols: Close IV/VIX (AF:AG) + priced-trade block (AH:AQ) + vol snapshot (AR:AT)
   });
   return res.data.values || [];
 }
@@ -745,6 +787,7 @@ export async function getJournal() {
 // ================================================================
 export async function closeTradeTicket(rowIndex, closeData) {
   const sheets = getSheets();
+  await ensureDecisionVolHeaders();
   // Columns: V=Status(22), W=Close Date(23), X=Close Price(24), Y=Actual P&L(25)
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID(),
@@ -780,6 +823,19 @@ export async function closeTradeTicket(rowIndex, closeData) {
       requestBody: { values: [[
         closeData.sessionHigh ?? '',
         closeData.sessionLow ?? ''
+      ]] }
+    });
+  }
+  // Underlying Price Close (AS) + VIX1D Close (AT) -- the rest of the close vol
+  // snapshot. Same best-effort contract: absent bridge -> blank, close proceeds.
+  if (closeData.closeUnderlyingPrice != null || closeData.closeVix1d != null) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(),
+      range: `Decisions!AS${rowIndex}:AT${rowIndex}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[
+        closeData.closeUnderlyingPrice ?? '',
+        closeData.closeVix1d ?? ''
       ]] }
     });
   }
