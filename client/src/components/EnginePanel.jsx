@@ -12,7 +12,7 @@ const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 // override by hand and expect the override to SURVIVE the next pull. Sizing
 // fields (bankroll, max loss, win/risk, net credit) are never fed and so are
 // deliberately absent: typing one of those is not an override of anything.
-const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwap15','vwap15_30','em',
+const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwapRoll30','vwapRoll30Prior','vwapAccept','em',
   'atr','atr5','atr2h','vix','vix1d','esOvernightHigh','esOvernightLow','esClose',
   'priorDayClose','cashOpen','esEM'];
 const MKT_45 = ['price','vix'];
@@ -280,7 +280,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   const [i0, setI0] = useState(() => {
     const base = {
-    underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'', vwap15:'', vwap15_30:'',
+    underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'',
+    vwapRoll30:'', vwapRoll30Prior:'', vwapAccept:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'', ivx:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
@@ -414,7 +415,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const mk0 = (over) => ({
           price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
           vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
-          vwap15:scaleVWAP(i0.vwap15), vwap15_30:scaleVWAP(i0.vwap15_30),
+          // Rolling windows are prices and scale like the rest. Acceptance is a
+          // 0..1 ratio — it must NEVER go through scaleVWAP. Blank = unavailable,
+          // which the engine reads as "no acceptance data" rather than "0%".
+          vwapRoll30:scaleVWAP(i0.vwapRoll30), vwapRoll30Prior:scaleVWAP(i0.vwapRoll30Prior),
+          vwapAccept: i0.vwapAccept === '' || i0.vwapAccept == null ? null : (parseFloat(i0.vwapAccept) || 0),
           atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
           gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
           esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
@@ -480,7 +485,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         vixGap:0, vixGrade:'', dirScore:0, dirLabel:'', regime:'', behaviour:'',
         comp:null, rmRatio:0, moveConsumed:0, volRemaining:1, payoff:null, greeks:null,
         vwapDistPctEM:0, vwapOverextended:false, confirmed:false, diverges:false,
-        slope5:{}, slope15:{}, slope:'flat', slopeDirection:'unknown',
+        slope5:{}, slope:'flat', slopeDirection:'unknown', vwapAccept:null, acceptLabel:'n/a',
         overnightDir:'unknown', trendPattern:'unknown', wingTxt:'',
         targetCredit:null, targetLabel:'', targetLow:0, targetHigh:0, targetMax:0, targetIsCredit:true,
         fairValueScore:0, fairValueGrade:'', volScore:0, volGrade:'', structScore:0, structGrade:'',
@@ -1252,6 +1257,21 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         ? `${r.pMaxLossBasis.emSrc} EM ${r.pMaxLossBasis.em.toFixed(1)} \u2192 \u03c3 ${r.pMaxLossBasis.sigma.toFixed(1)}`
         : '',
       cushionEM: r.holdToExpiry?.cushionEM != null ? r.holdToExpiry.cushionEM.toFixed(2) : '',
+      // ── VWAP inputs and reads, persisted (Aug 2026) ──
+      // Nothing VWAP-derived used to reach the sheet, so no logged trade could
+      // ever be re-scored against a changed VWAP rule — the reason the Aug 2026
+      // rework could not be validated against 11 weeks of history. These six
+      // columns make the next such change answerable with a query instead of a
+      // rebuild. Raw inputs first (so any future rule can be recomputed), then
+      // the reads this build produced (so old and new can be compared directly).
+      vwapAnchored: is0 ? fv(inp, 'vwap5') : '',
+      vwapRoll30: is0 ? fv(inp, 'vwapRoll30') : '',
+      vwapRoll30Prior: is0 ? fv(inp, 'vwapRoll30Prior') : '',
+      vwapAccept: is0 && inp.vwapAccept !== '' && inp.vwapAccept != null ? inp.vwapAccept : '',
+      vwapTrend: is0 ? `${r.slope}${r.slopeDirection && r.slopeDirection !== 'flat' ? ` ${r.slopeDirection}` : ''}`
+        + `${r.slope5?.shiftEM != null ? ` ${r.slope5.shiftEM >= 0 ? '+' : ''}${r.slope5.shiftEM.toFixed(2)}EM30` : ''}`
+        + `${r.confirmed ? ' confirmed' : r.diverges ? ' diverges' : ''}` : '',
+      vwapDistEM: is0 && r.vwapDistPctEM ? `${(r.vwapDistPctEM * 100).toFixed(0)}%` : '',
       // Expiry info for tracking
       dte: is0 ? '0DTE' : '45DTE',
       expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today
@@ -1480,7 +1500,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {/* Market Data */}
           <InputSection
             title="Market data"
-            info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 and 15 with 30-min ago values for slope calculation. SPX uses SPY VWAP ×10 automatically."
+            info="Price, high, low from your chart or auto-filled from IBKR. VWAP 5 is the anchored session VWAP (used for position and distance). VWAP last 30m / prior 30m are rolling windows used for the trend read — unlike the anchored line, their slope does not decay as the session wears on. VWAP acceptance is the share (0-1) of the last twelve 5-min bars that closed above the session VWAP; leave blank if unknown. SPX uses SPY VWAP ×10 automatically."
             missing={secMissing.market}
             collapsed={isCollapsed('market')}
             onToggle={() => toggleSection('market')}
@@ -1543,8 +1563,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <Inp label="Day low" {...mk('low')} value={i0.low} onChange={v=>set0('low',v)}/>
               <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} {...mk('vwap5')} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
               <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap5_30')} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
-              <Inp label={`VWAP 15${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap15')} value={i0.vwap15} onChange={v=>set0('vwap15',v)}/>
-              <Inp label={`VWAP 15 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap15_30')} value={i0.vwap15_30} onChange={v=>set0('vwap15_30',v)}/>
+              <Inp label={`VWAP last 30m${vwapScaled ? ' (x10)' : ''}`} {...mk('vwapRoll30')} value={i0.vwapRoll30} onChange={v=>set0('vwapRoll30',v)}/>
+              <Inp label={`VWAP prior 30m${vwapScaled ? ' (x10)' : ''}`} {...mk('vwapRoll30Prior')} value={i0.vwapRoll30Prior} onChange={v=>set0('vwapRoll30Prior',v)}/>
+              <Inp label="VWAP acceptance (0-1)" {...mk('vwapAccept')} value={i0.vwapAccept} onChange={v=>set0('vwapAccept',v)}/>
               <Inp label="EM" {...mk('em')} value={i0.em} onChange={v=>{setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''})); markHeld('0','em');}}/>
               <Inp label="ATR 1 Day" {...mk('atr')} value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" {...mk('atr5')} value={i0.atr5} onChange={v=>set0('atr5',v)}/>
@@ -2295,7 +2316,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           {/* Signals */}
           <div className="card">
-            <SectionLabel white info="All derived market signals: direction and trend pattern, move consumed breakdown (directional vs range), overnight ES analysis, VWAP slope with 15m confirmation, VIX gap grade, compression ratio, gamma distance. These feed into the setup quality scoring.">Signals</SectionLabel>
+            <SectionLabel white info="All derived market signals: direction and trend pattern, move consumed breakdown (directional vs range), overnight ES analysis, VWAP trend (rolling 30-min windows, sized in units of the 30-min expected move) confirmed or contradicted by VWAP acceptance, VIX gap grade, compression ratio, gamma distance. These feed into the setup quality scoring.">Signals</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5">
               {is0 ? <>
                 <KV label="Direction" value={r.dirLabel} cls={r.dirScore>0?'text-green':r.dirScore<0?'text-red':''}/>
@@ -2305,9 +2326,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <KV label="ES overnight" value={r.overnightDir!=='unknown'?`${r.overnightDir} (${r.overnightDirMove>0?'+':''}${r.overnightDirMove?.toFixed(1)||0} pts)`:'--'} cls={r.overnightDir==='bullish'?'text-green':r.overnightDir==='bearish'?'text-red':''}/>
                 <KV label="Cash move" value={r.cashDirMove!==undefined?`${r.cashDirMove>0?'+':''}${r.cashDirMove?.toFixed(1)||0} pts (${r.cashDir})`:'--'} cls={r.cashDir==='bullish'?'text-green':r.cashDir==='bearish'?'text-red':''}/>
                 <KV label="Overnight range" value={r.overnightRangePct>0?`${(r.overnightRangePct*100).toFixed(0)}% EM`:'--'}/>
-                <KV label="VWAP 5 slope" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
-                <KV label="VWAP 15 slope" value={`${r.slope15?.strength||'--'} (${r.slope15?.direction||'--'})`} cls={r.slope15?.direction==='rising'?'text-green':r.slope15?.direction==='falling'?'text-red':''}/>
-                <KV label="15m confirms" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
+                <KV label="VWAP trend (30m windows)" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})${r.slope5?.shiftEM?` · ${r.slope5.shiftEM>0?'+':''}${r.slope5.shiftEM.toFixed(2)} EM30`:''}`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
+                <KV label="VWAP acceptance" value={r.vwapAccept==null?'--':`${(r.vwapAccept*100).toFixed(0)}% above · ${r.acceptLabel}`} cls={r.vwapAccept==null?'':r.vwapAccept>=0.65?'text-green':r.vwapAccept<=0.35?'text-red':''}/>
+                <KV label="Trend confirmed" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
                 <KV label="VIX grade" value={r.vixGrade}/>
                 <KV label="RM ratio" value={r.rmRatio?`${(r.rmRatio*100).toFixed(0)}% EM`:'--'}/>
@@ -2352,7 +2373,7 @@ function SetupQualityCard({ r, sBg, sClr }) {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="9 criteria scored out of 100: Compression (20), Move consumed (20), Strategy fit (15), VWAP slope + 15m confirm (10), VIX gap (10), ES overnight direction (10), Overnight range (5), VWAP distance (5), Gamma distance (5). A+ = 85+, A = 70+, B = 50+, No setup = below 50. Segment width = criterion weight; fill = points earned." /></span>
+        <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="8 criteria scored out of 100: Compression (15), Move consumed (15), Tail risk / P(max loss) (10), Strategy fit (15), VWAP structure (15), VIX gap (10), ES overnight direction (10), Overnight range (5), Gamma distance (5). VWAP structure merges the former VWAP slope (10) and VWAP distance (5), which were scoring the same measurement twice. A+ = 85+, A = 70+, B = 50+, No setup = below 50. Segment width = criterion weight; fill = points earned." /></span>
         <div className="flex items-center gap-2">
           <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
           <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{score}/100</span>

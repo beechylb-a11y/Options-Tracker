@@ -630,6 +630,13 @@ export async function deleteTradeTrackerRow(rowIndex) {
 // Runs once per process (cached on success) and is strictly best-effort: a
 // failure here must never block a log or a close.
 const DECISION_VOL_HEADERS = ['IVx Open', 'Underlying Price Close', 'VIX1D Close', 'Engine Strikes'];
+// AV:BA — the VWAP block (Aug 2026). Raw inputs first so ANY future VWAP rule can
+// be recomputed from the log, then the reads this build produced so a rule change
+// can be compared against the rule it replaced. Added because the Aug 2026 VWAP
+// rework had 11 weeks of logged trades and could not be validated against a single
+// one of them: not one VWAP number had ever been persisted.
+const DECISION_VWAP_HEADERS = ['VWAP Anchored', 'VWAP Roll30', 'VWAP Roll30 Prior',
+  'VWAP Acceptance', 'VWAP Trend', 'VWAP Dist EM'];
 let decisionVolHeadersEnsured = false;
 async function ensureDecisionVolHeaders() {
   if (decisionVolHeadersEnsured) return;
@@ -647,6 +654,17 @@ async function ensureDecisionVolHeaders() {
         range: 'Decisions!AR1:AU1',
         valueInputOption: 'RAW',
         requestBody: { values: [DECISION_VOL_HEADERS] }
+      });
+    }
+    // AV = idx 47 … BA = idx 52. Same contract as above: A1:AU1 is never touched,
+    // so existing columns cannot move or be overwritten.
+    const vwapOk = DECISION_VWAP_HEADERS.every((h, i) => header[47 + i] === h);
+    if (!vwapOk) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID(),
+        range: 'Decisions!AV1:BA1',
+        valueInputOption: 'RAW',
+        requestBody: { values: [DECISION_VWAP_HEADERS] }
       });
     }
     decisionVolHeadersEnsured = true;
@@ -704,7 +722,14 @@ export async function logDecision(decision) {
     decision.ivxOpen ?? '',  // AR IVx Open -- expiry-specific IV at log time
     '',  // AS Underlying Price Close -- filled at close
     '',  // AT VIX1D Close -- filled at close
-    decision.engineStrikes ?? ''  // AU Engine Strikes -- pre-edit suggestion (Wing Strikes = final)
+    decision.engineStrikes ?? '',  // AU Engine Strikes -- pre-edit suggestion (Wing Strikes = final)
+    // -- AV-BA: VWAP inputs and reads at entry (see DECISION_VWAP_HEADERS) --
+    decision.vwapAnchored ?? '',     // AV cumulative session VWAP, index scale
+    decision.vwapRoll30 ?? '',       // AW VWAP of the last 30 min
+    decision.vwapRoll30Prior ?? '',  // AX VWAP of the 30 min before that
+    decision.vwapAccept ?? '',       // AY 0..1, share of last 12 bars closing above VWAP
+    decision.vwapTrend ?? '',        // AZ e.g. "mild rising +0.62EM30 confirmed"
+    decision.vwapDistEM ?? ''        // BA price-to-VWAP distance as % of session EM
   ];
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID(),
@@ -719,7 +744,7 @@ export async function getDecisions() {
   const sheets = getSheets();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:AU'  // 47 cols: Close IV/VIX (AF:AG) + priced-trade block (AH:AQ) + vol snapshot (AR:AT) + Engine Strikes (AU)
+    range: 'Decisions!A:BA'  // 53 cols: … + Engine Strikes (AU) + VWAP block (AV:BA)
   });
   return res.data.values || [];
 }

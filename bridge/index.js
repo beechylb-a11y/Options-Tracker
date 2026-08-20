@@ -381,21 +381,60 @@ function calcATR(bars, period) {
   return trs.slice(-n).reduce((s, v) => s + v, 0) / n;
 }
 
-// ── Calculate VWAP from bars ──
+// ── Bar field accessors (bars arrive as objects or as positional arrays) ──
+const barTyp = b => (((b.high ?? b[2] ?? 0) + (b.low ?? b[3] ?? 0) + (b.close ?? b[4] ?? 0)) / 3);
+const barVol = b => (b.volume ?? b[5] ?? 0);
+const barClose = b => (b.close ?? b[4] ?? 0);
+
+// ── Cumulative (anchored) session VWAP, one value per bar ──
+// This is the classic "VWAP line" and is the right ruler for PRICE POSITION
+// (above/below, distance). It is the WRONG ruler for trend: its rate of change is
+// (volume in the window / cumulative volume) x (window price - VWAP), and that
+// leading fraction decays through the session, so the same tape reads "strong" at
+// 10:00 and "flat" from 11:30 to the close. Use vwapWindow() for trend instead.
 function calcVWAP(bars) {
   let cumVP = 0, cumV = 0;
   const vwaps = [];
   bars.forEach(b => {
-    const h = b.high ?? b[2] ?? 0;
-    const l = b.low ?? b[3] ?? 0;
-    const c = b.close ?? b[4] ?? 0;
-    const vol = b.volume ?? b[5] ?? 0;
-    const typical = (h + l + c) / 3;
-    cumVP += typical * vol;
+    const vol = barVol(b);
+    cumVP += barTyp(b) * vol;
     cumV += vol;
-    vwaps.push(cumV > 0 ? cumVP / cumV : c);
+    vwaps.push(cumV > 0 ? cumVP / cumV : barClose(b));
   });
   return vwaps;
+}
+
+// ── Rolling-window VWAP over bars[from, to) ──
+// Not anchored to the open, so its value does not depend on how much of the
+// session has already elapsed. Comparing two adjacent windows gives a trend
+// reading whose statistical distribution is constant all day. (Aug 2026)
+function vwapWindow(bars, from, to) {
+  if (from < 0 || to > bars.length || to - from <= 0) return 0;
+  let vp = 0, v = 0;
+  for (let i = from; i < to; i++) { const vol = barVol(bars[i]); vp += barTyp(bars[i]) * vol; v += vol; }
+  if (v > 0) return vp / v;
+  // Zero-volume slice (thin index feed): fall back to an unweighted mean so the
+  // window still returns a usable level rather than 0, which would read as a
+  // gigantic false slope downstream.
+  let s = 0; for (let i = from; i < to; i++) s += barTyp(bars[i]);
+  return s / (to - from);
+}
+
+// ── VWAP acceptance: share of the last `len` bars that CLOSED above session VWAP ──
+// Returns 0..1 (1 = every bar closed above). Aggregates the sign of `len` bars
+// rather than the magnitude of one shift, so it is far less noise-dominated than
+// any single slope reading, and it distinguishes "flat because balanced" from
+// "flat because the VWAP line has gone inert" — which a slope alone cannot.
+function calcAcceptance(bars, vwaps, len) {
+  const n = Math.min(len, bars.length, vwaps.length);
+  if (n <= 0) return -1;               // -1 = unavailable (0 is a real reading)
+  let above = 0;
+  for (let i = bars.length - n; i < bars.length; i++) {
+    const c = barClose(bars[i]);
+    const v = vwaps[i];
+    if (c > 0 && v > 0 && c > v) above++;
+  }
+  return above / n;
 }
 
 const SQRT252 = Math.sqrt(252);
@@ -524,7 +563,16 @@ app.get('/api/market-data', async (req, res) => {
 
     // 5. VWAP from 5-min bars
     // Indices need SPY/QQQ for volume. If unavailable, skip VWAP.
-    let vwap5 = 0, vwap5_30 = 0, vwap15 = 0, vwap15_30 = 0;
+    // vwap5      = cumulative session VWAP now          (position / distance)
+    // vwap5_30   = cumulative session VWAP 30 min ago   (reference only)
+    // vwapRoll30 = VWAP of the last 30 min              (trend, time-invariant)
+    // vwapRoll30Prior = VWAP of the 30 min before that  (trend, time-invariant)
+    // vwapAccept = share of last 12 bars closing above session VWAP, -1 = n/a
+    // vwap15/vwap15_30 are GONE (Aug 2026): they were assigned `= vwap5` and
+    // `= vwap5_30`, so the engine's "15m confirmation" compared a series with
+    // itself — `diverges` could never fire and `confirmed` was always true,
+    // handing every non-flat day a free conviction bump.
+    let vwap5 = 0, vwap5_30 = 0, vwapRoll30 = 0, vwapRoll30Prior = 0, vwapAccept = -1;
     try {
       // For VWAP we need volume data — use stocks directly, skip for indices if subscription missing
       const vwapContract = usesSPYVwap ? contracts.SPY : usesIWMVwap ? contracts.IWM : mainContract;
@@ -534,10 +582,18 @@ app.get('/api/market-data', async (req, res) => {
         const todayBars = vwapBars;
         const vwaps = calcVWAP(todayBars);
 
+        const nb = todayBars.length;
         vwap5 = vwaps.length > 0 ? vwaps[vwaps.length - 1] : 0;
         vwap5_30 = vwaps.length > 6 ? vwaps[vwaps.length - 7] : vwap5;
-        vwap15 = vwap5;
-        vwap15_30 = vwaps.length > 6 ? vwaps[vwaps.length - 7] : vwap5;
+
+        // Two adjacent 30-minute windows (6 five-minute bars each). Needs 12 bars
+        // of session, i.e. valid from ~10:30 ET. Before that both stay 0 and the
+        // engine degrades to a neutral trend reading rather than a wrong one.
+        if (nb >= 12) {
+          vwapRoll30      = vwapWindow(todayBars, nb - 6, nb);
+          vwapRoll30Prior = vwapWindow(todayBars, nb - 12, nb - 6);
+        }
+        vwapAccept = calcAcceptance(todayBars, vwaps, 12);
 
         // Derive price from last VWAP bar close if snapshot failed
         if (!finalPrice || finalPrice <= 0) {
@@ -564,8 +620,10 @@ app.get('/api/market-data', async (req, res) => {
 
     // XSP: SPX sends RAW SPY VWAPs and the client rescales ×10 client-side; the
     // client does NOT rescale XSP, so scale to index points here bridge-side.
+    // vwapAccept is a 0..1 ratio, never a price — it is deliberately not scaled.
     if (underlying === 'XSP' && atrScale !== 1) {
-      vwap5 *= atrScale; vwap5_30 *= atrScale; vwap15 *= atrScale; vwap15_30 *= atrScale;
+      vwap5 *= atrScale; vwap5_30 *= atrScale;
+      vwapRoll30 *= atrScale; vwapRoll30Prior *= atrScale;
     }
 
     // Data freshness, derived from the main price snapshot's IBKR market-data type
@@ -597,8 +655,11 @@ app.get('/api/market-data', async (req, res) => {
       // VWAP (SPY values for SPX — engine handles x10 scaling)
       vwap5: Math.round(vwap5 * 100) / 100,
       vwap5_30: Math.round(vwap5_30 * 100) / 100,
-      vwap15: Math.round(vwap15 * 100) / 100,
-      vwap15_30: Math.round(vwap15_30 * 100) / 100,
+      // Rolling 30-min windows for the trend read (see block above)
+      vwapRoll30: Math.round(vwapRoll30 * 100) / 100,
+      vwapRoll30Prior: Math.round(vwapRoll30Prior * 100) / 100,
+      // Ratio 0..1, or -1 when unavailable. NOT price-scaled.
+      vwapAccept: vwapAccept < 0 ? -1 : Math.round(vwapAccept * 1000) / 1000,
       // ES overnight
       esClose: Math.round(esClose * 100) / 100,
       priorDayClose: Math.round(esPrevClose * 100) / 100,

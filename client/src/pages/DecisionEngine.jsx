@@ -948,8 +948,9 @@ function MultiScanPanel({ mode, onSelect }) {
     { key: 'vix1d', label: 'VIX1D' },
     { key: 'vwap5', label: 'VWAP 5' },
     { key: 'vwap5_30', label: 'VWAP 5 -30m' },
-    { key: 'vwap15', label: 'VWAP 15' },
-    { key: 'vwap15_30', label: 'VWAP 15 -30m' },
+    { key: 'vwapRoll30', label: 'VWAP last 30m' },
+    { key: 'vwapRoll30Prior', label: 'VWAP prior 30m' },
+    { key: 'vwapAccept', label: 'VWAP acceptance' },
     { key: 'esClose', label: 'ES Pre-open' },
     { key: 'priorDayClose', label: 'ES Prior Close' },
     { key: 'esOvernightHigh', label: 'ES O/N High' },
@@ -1017,7 +1018,8 @@ function MultiScanPanel({ mode, onSelect }) {
           const scale = v => (u === 'SPX' && v > 0 && v < 3000) ? v * 10 : v;
           const price = num('price') || scale(num('vwap5'));  // bridge spot, else VWAP
           if (price) md.price = String(+price.toFixed(2));
-          ['high', 'low', 'cashOpen', 'vwap5', 'vwap5_30', 'vwap15', 'vwap15_30'].forEach(k => {
+          // vwapAccept is a 0..1 ratio, not a price — deliberately excluded from scaling.
+          ['high', 'low', 'cashOpen', 'vwap5', 'vwap5_30', 'vwapRoll30', 'vwapRoll30Prior'].forEach(k => {
             const v = num(k);
             if (v) md[k] = String(+scale(v).toFixed(2));
           });
@@ -1098,8 +1100,12 @@ function MultiScanPanel({ mode, onSelect }) {
           vix1d: parseFloat(m.vix1d) || 0,
           vwap5: scaleV(parseFloat(m.vwap5) || 0),
           vwap5_30: scaleV(parseFloat(m.vwap5_30) || 0),
-          vwap15: scaleV(parseFloat(m.vwap15) || 0),
-          vwap15_30: scaleV(parseFloat(m.vwap15_30) || 0),
+          vwapRoll30: scaleV(parseFloat(m.vwapRoll30) || 0),
+          vwapRoll30Prior: scaleV(parseFloat(m.vwapRoll30Prior) || 0),
+          // Ratio, never scaled. The bridge sends -1 when it has no reading;
+          // null tells the engine "unavailable" rather than "0% acceptance".
+          vwapAccept: (m.vwapAccept == null || m.vwapAccept === '' || parseFloat(m.vwapAccept) < 0)
+            ? null : parseFloat(m.vwapAccept),
           esClose: parseFloat(m.esClose) || 0,
           priorDayClose: parseFloat(m.priorDayClose) || 0,
           esOvernightHigh: parseFloat(m.esOvernightHigh) || 0,
@@ -1263,9 +1269,10 @@ function MultiScanPanel({ mode, onSelect }) {
                 { label: 'Regime', render: r => <span style={{fontSize:11,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
                 { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
                 { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>{r.result?.trendPattern || '--'}</span> },
-                { label: 'VWAP slope', render: r => {
+                { label: 'VWAP trend', render: r => {
                   const s = r.result?.slope5;
-                  return <span style={{color: s?.direction === 'rising' ? '#3fb950' : s?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
+                  const a = r.result?.vwapAccept;
+                  return <span style={{color: s?.direction === 'rising' ? '#3fb950' : s?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
                 }},
                 { label: 'Price', render: r => r.data?.price || '--' },
                 { label: 'VIX', render: r => r.data?.vix || '--' },

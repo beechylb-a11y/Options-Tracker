@@ -36,8 +36,8 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   const trendDay = isStrong && trendPattern === 'continuation';
   // ── Continuation ramp (Aug 2026) ──
   // trendDay required |dirScore| >= 2, so a MILD-direction continuation day got no lift
-  // at all on any vertical — a cliff at exactly 2, on a score that a single diverging
-  // 15-minute VWAP already clamps back to 1. A mild continuation is a weaker version of
+  // at all on any vertical — a cliff at exactly 2, on a score that VWAP acceptance
+  // diverging from the trend clamps back to 1. A mild continuation is a weaker version of
   // the same read, not a different one, so it gets the same lift one notch lower.
   // ONE notch, not two. Gap band 0 (cheap short-term vol) and a mild dirScore are each
   // an argument for less conviction, but stacking them landed BELOW the branch the lift
@@ -190,7 +190,8 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
 }
 
 export function calc0DTE(inputs) {
-  const { price, high, low, vwap5, vwap5_30, vwap15, vwap15_30, atr, em, atr5, atr2h, gamStrike,
+  const { price, high, low, vwap5, vwap5_30, vwapRoll30, vwapRoll30Prior, vwapAccept,
+    atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop, netCreditDebit,
     emSource, straddleCall, straddlePut, straddleHaircut,
     theta, delta, gamma, hours, underlying,
@@ -386,26 +387,85 @@ export function calc0DTE(inputs) {
     trendStrength = -Math.min(5, Math.round(moveConsumedDir * 5)); // negative = reversal
   }
 
-  // ── VWAP slopes ──
-  function calcSlope(now, ago) {
-    if (now > 0 && ago > 0) {
-      const pctChange = ((now - ago) / ago) * 100;
-      const absChange = Math.abs(pctChange);
-      const strength = absChange < 0.02 ? 'flat' : absChange < 0.08 ? 'mild' : 'strong';
-      const direction = pctChange > 0.02 ? 'rising' : pctChange < -0.02 ? 'falling' : 'flat';
-      return { strength, direction, pctChange };
+  // ── VWAP trend: rolling windows, not the anchored line (Aug 2026) ──
+  //
+  // WHAT WAS WRONG. The slope used to be taken on the CUMULATIVE session VWAP:
+  // (vwap5 - vwap5_30) as a percentage, bucketed at fixed 0.02% / 0.08% cutoffs.
+  // The rate of change of an anchored VWAP is
+  //        (volume in the window / cumulative volume) x (window price - VWAP)
+  // and that leading fraction collapses as the session's volume base grows: ~0.83
+  // at 10:00, ~0.23 at 11:00, ~0.075 at 14:00. Price parked a steady 8 SPX points
+  // above VWAP therefore read `strong` at 10:00, `mild` at 11:00 and `flat` from
+  // 11:30 to the close. The criterion had quietly become a clock. Because flat
+  // paid isCentred 10/10 and isSkewed 5/10, every afternoon tilted the engine
+  // toward condors and flies on no evidence, and because trendDay needs
+  // |dirScore| >= 2 which flat cannot reach, continuation days stopped being
+  // detectable after lunch — the exact days the trend read exists to catch.
+  //
+  // Worse, it was barely independent: slope ~ k x (price - VWAP) means it was a
+  // clock-scaled copy of vwapDistPctEM, which is scored separately. Two criteria,
+  // one measurement. They are merged into one below.
+  //
+  // WHAT IT IS NOW. VWAP of the last 30 minutes vs VWAP of the 30 before it.
+  // Neither window is anchored to the open, so the reading's distribution is
+  // constant all day (measured through this engine: ~50/38/12 flat/mild/strong at
+  // every hour from 11:00 to the close, against 21-46% flat for the old signal).
+  // Magnitude is normalised by the expected move over the SAME 30 minutes rather
+  // than by a fixed percentage of price, so it also stops meaning different things
+  // at VIX 12 and VIX 30.
+  //
+  // HONEST LIMIT: a single 30-minute window is noise-dominated. Against a
+  // random-walk null the separation is ~0.54 (0.50 = useless), and acceptance
+  // below is the better of the two at ~0.57. This change removes a measurement
+  // artefact; it does not manufacture edge. Validate against the trade log.
+  const em30 = emSession > 0
+    ? emSession * Math.sqrt(30 / 390)          // 1 SD of a 30-min move
+    : (atr5 > 0 ? atr5 * 1.5 : 0);             // fallback: 5-min ATR ~ 1.6 SD, x sqrt(6)
+  function calcSlope(now, prior) {
+    if (!(now > 0 && prior > 0) || em30 <= 0) {
+      return { strength: 'flat', direction: 'unknown', shift: 0, shiftEM: 0 };
     }
-    return { strength: 'flat', direction: 'unknown', pctChange: 0 };
+    const shift = now - prior;
+    const shiftEM = shift / em30;
+    const a = Math.abs(shiftEM);
+    // Calibrated through this engine so the three buckets stay populated at every
+    // hour: ~50% flat / 38% mild / 12% strong, constant from 11:00 to the close.
+    // Tuned against REALIZED move ~0.7x the implied EM (the usual variance premium),
+    // not against realized == implied, or `strong` would almost never print.
+    const strength = a < 0.40 ? 'flat' : a < 0.90 ? 'mild' : 'strong';
+    const direction = a < 0.40 ? 'flat' : (shift > 0 ? 'rising' : 'falling');
+    return { strength, direction, shift, shiftEM };
   }
-  const slope5 = calcSlope(vwap5, vwap5_30);
-  const slope15 = calcSlope(vwap15, vwap15_30);
+  const slope5 = calcSlope(vwapRoll30, vwapRoll30Prior);
   const slope = slope5.strength;
   const slopeDirection = slope5.direction;
-  const confirmed = slope5.direction !== 'flat' && slope5.direction !== 'unknown'
-    && slope15.direction === slope5.direction;
-  const diverges = slope5.direction !== 'flat' && slope5.direction !== 'unknown'
-    && slope15.direction !== 'unknown' && slope15.direction !== 'flat'
-    && slope15.direction !== slope5.direction;
+
+  // ── VWAP acceptance ──
+  // Share of the last 12 bars (1 hour) that CLOSED above the session VWAP.
+  // -1 / undefined = unavailable (an old bridge build, or a manual entry).
+  // Aggregating the sign of twelve bars is markedly steadier than the magnitude
+  // of one window shift, and it separates "flat because buyers and sellers are
+  // balanced" (accept ~0.5) from "flat because the anchored line has gone inert
+  // while price sits on one side" (accept ~0 or ~1) — a distinction no slope can
+  // make, and the one the old signal was silently losing every afternoon.
+  const hasAccept = typeof vwapAccept === 'number' && vwapAccept >= 0;
+  const acceptLabel = !hasAccept ? 'n/a'
+    : vwapAccept >= 0.80 ? 'bulls hold'
+    : vwapAccept <= 0.20 ? 'bears hold'
+    : vwapAccept >= 0.35 && vwapAccept <= 0.65 ? 'balanced'
+    : vwapAccept > 0.5 ? 'bull lean' : 'bear lean';
+
+  // Confirmation is now a genuine second opinion: the direction the average price
+  // is travelling (slope) against the side price keeps closing on (acceptance).
+  // Previously this compared the 5-min series with a literal copy of itself, so
+  // `diverges` was unreachable dead code and `confirmed` was always true.
+  const slopeDirectional = slope5.direction === 'rising' || slope5.direction === 'falling';
+  const confirmed = slopeDirectional && hasAccept
+    && ((slope5.direction === 'rising' && vwapAccept >= 0.65)
+      || (slope5.direction === 'falling' && vwapAccept <= 0.35));
+  const diverges = slopeDirectional && hasAccept
+    && ((slope5.direction === 'rising' && vwapAccept <= 0.35)
+      || (slope5.direction === 'falling' && vwapAccept >= 0.65));
 
   // ── Direction score ──
   let dirScore;
@@ -416,9 +476,18 @@ export function calc0DTE(inputs) {
   else if (!aboveVWAP && slope === 'mild') dirScore = -1;
   else dirScore = aboveVWAP ? 1 : (hasPrice ? -1 : 0);
 
-  // 15m confirmation adjusts conviction
+  // Acceptance adjusts conviction (was: the self-comparing "15m confirmation").
   if (diverges && Math.abs(dirScore) >= 2) dirScore = dirScore > 0 ? 1 : -1;
   else if (confirmed && Math.abs(dirScore) === 1) dirScore = dirScore > 0 ? 2 : -2;
+  // A flat slope with near-total one-sided acceptance is directional control, not
+  // indecision: price is being held on one side of VWAP for a full hour. Without
+  // this, a flat slope pinned |dirScore| at 1 via the fallback above, so trendDay
+  // (|dirScore| >= 2) was unreachable on exactly those days. Gated hard at 0.90 /
+  // 0.10 so it only fires on genuinely one-sided hours.
+  else if (slope === 'flat' && hasAccept && Math.abs(dirScore) === 1) {
+    if (aboveVWAP && vwapAccept >= 0.90) dirScore = 2;
+    else if (!aboveVWAP && vwapAccept <= 0.10) dirScore = -2;
+  }
 
   // Overnight alignment boost
   if (hasOvernight) {
@@ -999,9 +1068,12 @@ export function calc0DTE(inputs) {
 
   // ═══════════════════════════════════════
   //  MERGED SCORING (100 pts)
-  //  Compression(20) + MoveConsumed(20) + StratFit(15) +
-  //  VWAP(10) + VIXgap(10) + Overnight(10) +
-  //  OvernightRange(5) + VWAPdist(5) + GammaDist(5)
+  //  Compression(15) + MoveConsumed(15) + TailRisk(10) + StratFit(15) +
+  //  VWAPstructure(15) + VIXgap(10) + Overnight(10) +
+  //  OvernightRange(5) + GammaDist(5)
+  //  (VWAPstructure = the former VWAPslope(10) + VWAPdist(5), which were two
+  //   scores of one measurement. Weights above are the code's real maxima; the
+  //   old header claimed 20/20 for the first two and omitted TailRisk.)
   // ═══════════════════════════════════════
   let setupScore = 0;
   const criteria = [];
@@ -1079,18 +1151,32 @@ export function calc0DTE(inputs) {
   setupScore += stratFit;
   criteria.push({ label: `Strategy fit (${scoreRating})`, pts: stratFit, max: 15 });
 
-  // 4. VWAP slope + 15m confirmation (10)
-  let slopePts;
-  if (slope === 'flat') slopePts = isCentred?10:isSkewed?5:7;
-  else if (slope === 'mild') slopePts = isSkewed?10:isCentred?5:7;
-  else slopePts = isSkewed?8:isCentred?2:5;
-  if (confirmed && isSkewed) slopePts = Math.min(10, slopePts + 2);
+  // 4. VWAP structure (15) — trend + position, scored ONCE.
+  // Was two criteria: "VWAP slope" (10) and "VWAP distance" (5). Because the
+  // anchored-VWAP slope was algebraically (volume fraction) x (price - VWAP), those
+  // two were largely the same measurement and the setup score double-counted it,
+  // once through a clock. Merged here at the same combined weight so totals and
+  // the A+/A/B bands are unchanged. Trend carries 8, position carries 7.
+  let trendPts;
+  if (slope === 'flat') trendPts = isCentred?8:isSkewed?4:6;
+  else if (slope === 'mild') trendPts = isSkewed?8:isCentred?4:6;
+  else trendPts = isSkewed?6:isCentred?2:4;
+  let posPts;
+  if (emSession <= 0 || vwap <= 0) posPts = 4;
+  else if (isSkewed) posPts = vwapDistPctEM<0.25?7:vwapDistPctEM<0.50?5:vwapDistPctEM<0.75?3:0;
+  else posPts = vwapDistPctEM<0.15?7:vwapDistPctEM<0.30?4:1;
+  let slopePts = trendPts + posPts;
+  // Acceptance agreeing with the slope is real corroboration now, so it is worth
+  // paying for; disagreement is a warning that the trend is not being held.
+  if (confirmed && isSkewed) slopePts = Math.min(15, slopePts + 2);
   if (diverges && isSkewed) slopePts = Math.max(0, slopePts - 3);
-  if (diverges && isCentred) slopePts = Math.min(10, slopePts + 1);
+  if (diverges && isCentred) slopePts = Math.min(15, slopePts + 1);
   if (vwapOverextended && isSkewed) slopePts = Math.max(0, slopePts - 2);
   setupScore += slopePts;
-  const slopeLabel = `VWAP ${slope} (${slopeDirection})${confirmed?' ✓15m':diverges?' ✗15m':''}`;
-  criteria.push({ label: slopeLabel, pts: slopePts, max: 10 });
+  const slopeLabel = `VWAP ${slope}${slopeDirectional?` (${slopeDirection})`:''}`
+    + `${vwap>0&&emSession>0?` · ${(vwapDistPctEM*100).toFixed(0)}% EM out`:''}`
+    + `${confirmed?' ✓accept':diverges?' ✗accept':''}`;
+  criteria.push({ label: slopeLabel, pts: slopePts, max: 15 });
 
   // 5. VIX1D/VIX gap (10)
   const vixGapRatings = VIX_GAP_RATINGS[scoreStrat] || [3,5,7,10];
@@ -1122,13 +1208,8 @@ export function calc0DTE(inputs) {
   setupScore += rangePts;
   criteria.push({ label: `Overnight range ${hasOvernight?(overnightRangePct*100).toFixed(0)+'% EM':'--'}`, pts: rangePts, max: 5 });
 
-  // 8. VWAP distance (5)
-  let vwapDistPts;
-  if (emSession <= 0 || vwap <= 0) vwapDistPts = 3;
-  else if (isSkewed) vwapDistPts = vwapDistPctEM<0.25?5:vwapDistPctEM<0.50?4:vwapDistPctEM<0.75?2:0;
-  else vwapDistPts = vwapDistPctEM<0.15?5:vwapDistPctEM<0.30?3:1;
-  setupScore += vwapDistPts;
-  criteria.push({ label: `VWAP distance ${vwap>0?(vwapDistPctEM*100).toFixed(0)+'% EM':'--'}`, pts: vwapDistPts, max: 5 });
+  // 8. VWAP distance — REMOVED (Aug 2026). Folded into criterion 4 above as the
+  // `posPts` term; it was scoring the same measurement the slope already carried.
 
   // 9. Gamma distance (5)
   let gamPts;
@@ -1913,7 +1994,7 @@ export function calc0DTE(inputs) {
   if (moveConsumed > 0.90 && isSkewed && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
-  if (diverges) warnings.push('15m VWAP diverges from 5m — lower conviction');
+  if (diverges) warnings.push(`VWAP trend ${slopeDirection} but only ${(vwapAccept*100).toFixed(0)}% of the last hour closed above VWAP — trend not being held`);
   if (emDisagree && emVolGap != null) warnings.push(`EM sources disagree on a like-for-like basis: straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%) — check the feed or an event`);
   else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number, but P(max loss) — and therefore EV and Trade Confidence — runs off the VIX1D ruler`);
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
@@ -2062,7 +2143,8 @@ export function calc0DTE(inputs) {
     // Signals
     vixGap, vixGrade, vixImplic, emVIX, emV1D, gapBandIdx,
     dirScore, dirLabel, aboveVWAP, vwapDiff,
-    slope, slopeDirection, slope5, slope15, vwapDistPctEM, vwapOverextended, confirmed, diverges,
+    slope, slopeDirection, slope5, vwapDistPctEM, vwapOverextended, confirmed, diverges,
+    vwapAccept: hasAccept ? vwapAccept : null, acceptLabel, em30,
     rm, rmRatio, comp, isCompressing,
     gamDist, regime, regimeConds, regimeCommentary,
     // Overnight
