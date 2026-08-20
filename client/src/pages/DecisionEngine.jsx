@@ -999,7 +999,12 @@ function MultiScanPanel({ mode, onSelect }) {
             const existing = mergedData[underlying] || {};
             const merged = {};
             inputFields.forEach(f => {
-              merged[f.key] = existing[f.key] || (data[f.key] != null && data[f.key] !== 0 ? String(data[f.key]) : existing[f.key] || '');
+              // See EnginePanel: vwapAccept is a 0..1 ratio, so 0 is a real reading
+              // (nothing closed above VWAP all hour) and only -1 means no reading.
+              // Every other field here is a price or level where 0 does mean failure.
+              const v = data[f.key];
+              const usable = f.key === 'vwapAccept' ? (v != null && v >= 0) : (v != null && v !== 0);
+              merged[f.key] = existing[f.key] || (usable ? String(v) : existing[f.key] || '');
             });
             mergedData[underlying] = merged;
           }

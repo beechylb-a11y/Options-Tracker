@@ -986,7 +986,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       fields.forEach(k => {
         let v = d[k];
         if (is0 && k === 'em' && straddle) v = straddle.expectedMove; // straddle beats the VIX model
-        if (v == null || v === '' || v === 0) missing.push(k); else vals[k] = String(v);
+        // Zero means "the feed failed" for every field here EXCEPT vwapAccept, which
+        // is a 0..1 ratio whose 0 is the strongest reading it has: not one of the last
+        // twelve bars closed above VWAP. Dropping it as missing would have blinded the
+        // engine to acceptance on exactly the most one-sided days — the days it exists
+        // to catch. The bridge's sentinel for "no reading" is -1, so that is the test.
+        const absent = k === 'vwapAccept'
+          ? (v == null || v === '' || v < 0)
+          : (v == null || v === '' || v === 0);
+        if (absent) missing.push(k); else vals[k] = String(v);
       });
       setFeed({ at: pulledAt, values: vals, missing });
       setJustRefreshed(true);
