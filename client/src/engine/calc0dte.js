@@ -772,6 +772,36 @@ export function calc0DTE(inputs) {
           : `the short leg is further OTM, so the credit is smaller and max loss (width − credit) rises slightly`);
     }
   }
+  // ── Max-profit strike may not cross spot (Aug 2026) ──
+  //
+  // A debit vertical earns its maximum at the SHORT strike and everywhere beyond it.
+  // Slide the structure toward the money far enough and that strike passes through
+  // spot, at which point the trade sits at max profit the moment it is opened: nothing
+  // left to win, debit ≈ the whole width, a bond with downside. The 40% variant cap
+  // below makes that unreachable arithmetically, but only BEFORE rounding — R() can
+  // still drop the short strike onto or through spot on a coarse grid (SPX rounds to 5).
+  // So enforce it as a property of the built legs rather than trusting the arithmetic.
+  //
+  // Applied to the engine's own legs and to every variant, but deliberately NOT to
+  // hand-typed overrides further down: those are explicit intent, and silently moving
+  // a strike someone typed is worse than letting the price-vs-structure check flag it.
+  // Credit verticals are untouched — they collect maximum when price stays AWAY from
+  // the strikes, so crossing spot gains nothing and their OTM logic already governs it.
+  const clampMaxProfitStrike = (arr) => {
+    const isDebitVert = legStrat === 'Bull call spread' || legStrat === 'Bear put spread';
+    if (!isDebitVert || !Array.isArray(arr) || arr.length < 2 || price <= 0) return arr;
+    const isCallSide = legStrat === 'Bull call spread';
+    const step = roundTo || 1;
+    return arr.map(l => {
+      if (!/short/i.test(l.label || '')) return l;
+      // Bull call: short call must stay ABOVE spot. Bear put: short put BELOW it.
+      const floor = isCallSide ? R(price + step) : R(price - step);
+      const bad = isCallSide ? l.strike < floor : l.strike > floor;
+      return bad ? { ...l, strike: floor, clamped: true } : l;
+    });
+  };
+  legs = clampMaxProfitStrike(legs);
+
   // ── ITM-shifted vertical variants (Aug 2026) ──
   //
   // The engine's own vertical sits with its breakeven OUTSIDE the money: a bull call
@@ -846,8 +876,11 @@ export function calc0DTE(inputs) {
     const variant = (id, label, shift, dRem) => {
       const cap = isDebitVert ? PULLBACK_CAP * (dRem * 0.5) : Infinity;
       const eff = Math.min(shift, cap);
-      const pair = build(eff, dRem);
+      // Clamp BEFORE economics so intrinsic / maxProfitCeil / rrCeil describe the legs
+      // that will actually be traded, not the pre-rounding ones.
+      const pair = clampMaxProfitStrike(build(eff, dRem));
       return { id, label, shift: eff, wanted: shift, capped: eff < shift - 1e-9,
+        clamped: pair.some(l => l.clamped),
         dRem, legs: pair, ...economics(pair, dRem) };
     };
     vertVariants = [
@@ -866,6 +899,21 @@ export function calc0DTE(inputs) {
     if (chosen && chosen.id !== 'engine') legs = chosen.legs.map(l => ({ ...l }));
   }
 
+  // ── Max-profit strike may not cross spot (Aug 2026) ──
+  //
+  // A debit vertical earns its maximum at the SHORT strike and everywhere beyond it.
+  // Slide the structure toward the money far enough and that strike passes through
+  // spot, at which point the trade is already at max profit the moment it is opened:
+  // there is nothing left to win, the debit is the whole width, and the position is a
+  // bond with downside. The 40% cap above makes that unreachable arithmetically, but
+  // only BEFORE rounding — R() can still drop the short strike onto or through spot on
+  // a coarse grid (SPX rounds to 5), and a hand-typed strike bypasses the cap entirely.
+  //
+  // So enforce it on the built legs as a property rather than trusting the arithmetic:
+  // the short strike stays at least one strike increment beyond spot, on the side the
+  // structure needs it. Credit verticals are untouched — their max profit is collected
+  // when price stays AWAY from the strikes, so nothing is gained by crossing spot and
+  // the existing OTM logic already governs them.
   // ── User strike overrides (Aug 2026) — pure substitution, no derivation math ──
   // inputs.overrideStrikes: { [legIndex]: strike }, keyed by index into the legs
   // array AS BUILT ABOVE (dual-EM verticals therefore key 0..3 across both pairs).
@@ -1680,6 +1728,53 @@ export function calc0DTE(inputs) {
     };
   }
 
+  // ── Price vs structure: is the typed net credit/debit even possible? (Aug 2026) ──
+  //
+  // Nothing used to reconcile `netCreditDebit` against the strikes it was typed
+  // beside. Drag a bull call's long leg from 766 down to 760 with spot at 765.91 and
+  // leave the debit at 1.00, and the engine reported max profit rising 200 → 800 with
+  // max loss pinned at −100, setup climbing 62 → 68 and confidence following it up. A
+  // 760/769 spread with 5.91 of intrinsic cannot be bought for 1.00. Every number
+  // downstream — payoff curve, breakevens, EV, Kelly, P(max loss) — inherited the lie,
+  // and `payoffGate` could not catch it because it reads the TYPED win/risk, which
+  // nobody had re-typed either.
+  //
+  // The check prices the structure under the SAME normal approximation and the SAME
+  // sigma the P(max loss) model already uses, so it cannot disagree with the rest of
+  // the engine. For a strike K and spot S with S_T ~ N(S, sigma):
+  //     E[max(S_T − K, 0)] = sigma·φ(d) + (S − K)·Φ(d),   d = (S − K)/sigma
+  //     E[max(K − S_T, 0)] = sigma·φ(d') + (K − S)·Φ(d'), d' = (K − S)/sigma
+  // Summing those over the legs with their signs gives what the combination is worth
+  // right now. Two failures are separated because they mean different things:
+  //   ARBITRAGE  — cost outside [min payoff, max payoff]. Impossible at any vol.
+  //   MISMATCH   — cost inside those bounds but far from fair value. Possible only if
+  //                the price and the strikes describe different trades.
+  // Tolerance is 35% of the structure's width, which is loose enough that a real fill
+  // on a real spread never trips it and tight enough to catch the 1.00-vs-5.23 case.
+  let priceCheck = null;
+  if (payoff && price > 0 && netCreditDebit !== 0 && Array.isArray(payoff.legs) && payoff.legs.length >= 2) {
+    const pcSigma = (pMaxLossBasis && pMaxLossBasis.sigma > 0) ? pMaxLossBasis.sigma : emRemaining;
+    const ks = payoff.legs.map(l => l.strike);
+    const pcWidth = Math.max(...ks) - Math.min(...ks);
+    if (pcSigma > 0 && pcWidth > 0) {
+      const normPdf = z => 0.3989422804 * Math.exp(-z * z / 2);
+      const fair = payoff.legs.reduce((sum, l) => {
+        const sign = (l.side === 'sell' ? -1 : 1) * (l.qty || 1);
+        const d = (l.type === 'call' ? price - l.strike : l.strike - price) / pcSigma;
+        const intrinsicNow = l.type === 'call' ? price - l.strike : l.strike - price;
+        return sum + sign * (pcSigma * normPdf(d) + intrinsicNow * normCdf(d));
+      }, 0);
+      // Payoff bounds with the price stripped out — `payoff` already added ncd in.
+      const bareMax = (payoff.maxProfit / 100) - netCreditDebit;
+      const bareMin = (payoff.maxLoss / 100) - netCreditDebit;
+      const cost = -netCreditDebit;                    // debit paid (+) or credit taken (−)
+      const tol = 0.35 * pcWidth;
+      priceCheck = { cost, fair, bareMin, bareMax, width: pcWidth, sigma: pcSigma,
+        arb: cost < bareMin - 0.01 || cost > bareMax + 0.01,
+        mismatch: Math.abs(cost - fair) > tol, gap: cost - fair };
+    }
+  }
+
   // ── EV calculation (tiered) ──
   // Old model used max profit × POP − max loss × (1−POP), which is too punitive:
   // you rarely capture max profit and rarely eat max loss. Instead:
@@ -2078,6 +2173,16 @@ export function calc0DTE(inputs) {
 
   // Both of these read a collected-decay position. Inverted for a paying one - a low
   // tEdge means time is cheap, and high gamma is the compensation you bought.
+  // A price the strikes cannot produce makes every number below it meaningless, so this
+  // blocks rather than warns — there is nothing to weigh up until one of the two is fixed.
+  if (priceCheck?.arb) {
+    blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} is outside `
+      + `what these strikes can pay (${priceCheck.bareMin.toFixed(2)} to ${priceCheck.bareMax.toFixed(2)}) — impossible at any volatility`);
+  } else if (priceCheck?.mismatch) {
+    blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} vs `
+      + `${priceCheck.fair.toFixed(2)} fair for these strikes at spot (${priceCheck.gap > 0 ? '+' : ''}${priceCheck.gap.toFixed(2)}) — `
+      + `the price and the strikes describe different trades; EV, Kelly and the payoff all run off this number`);
+  }
   if (greeks && !greeks.thetaPaid && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
   if (greeks && !greeks.thetaPaid && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
@@ -2160,12 +2265,21 @@ export function calc0DTE(inputs) {
   // low reward:risk a second time, so a high-POP structure paid twice for the same
   // fact (edge 0.47 × payoff 0.78 = 0.37 before coherence). This now only bites
   // when the geometry is genuinely broken (rr < 0.20). (Jul 2026)
+  // Reward:risk now comes from the STRUCTURE (payoff max profit / max loss), not from
+  // the typed win/risk. Those two are sizing inputs: nothing forces them to describe
+  // the strikes on screen, and when strikes are edited or a variant is picked they are
+  // not re-typed, so the gate was scoring a trade nobody was placing — 150:1 on a
+  // spread whose real geometry was 0.00:1. The typed pair stays as the fallback for
+  // when the payoff cannot be built (no price, fewer than two legs).
   let payoffGate = 1;
-  if (win > 0 && risk > 0) {
-    const rr = win / risk;
+  const structRR = (payoff && payoff.maxProfit > 0 && payoff.maxLoss < 0)
+    ? payoff.maxProfit / Math.abs(payoff.maxLoss) : null;
+  const rr = structRR != null ? structRR : (win > 0 && risk > 0 ? win / risk : null);
+  if (rr != null) {
     payoffGate = rr >= 0.20 ? 1.00 : rr >= 0.12 ? 0.90 : rr >= 0.06 ? 0.72 : 0.55;
     if (rr < 0.12) confConflicts.push({ tag: 'Reward:Risk',
-      label: `Reward:risk ${rr.toFixed(2)} — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
+      label: `Reward:risk ${rr.toFixed(2)}${structRR != null ? ' from the strikes' : ' from typed win/risk'}`
+        + ` — one loss erases ${Math.round(1 / rr)} wins`, severity: 'high' });
   }
 
   // ── CoherenceGate: do direction, vol regime and structure agree? ──
@@ -2229,7 +2343,7 @@ export function calc0DTE(inputs) {
   const confGates = [
     { v: edgeGate, msg: (win > 0 && ev < 0) ? `Negative EV ($${Math.round(ev)})` : 'Thin edge' },
     { v: coherenceGate, msg: confConflicts.find(c => c.tag.includes('↔'))?.label || 'Signal conflict' },
-    { v: payoffGate, msg: (win > 0 && risk > 0) ? `Reward:risk ${(win / risk).toFixed(2)}` : 'Payoff' }
+    { v: payoffGate, msg: rr != null ? `Reward:risk ${rr.toFixed(2)}` : 'Payoff' }
   ];
   const bindingGate = confGates.reduce((a, b) => (b.v < a.v ? b : a));
   const confidenceDriver = missingSize
@@ -2265,7 +2379,7 @@ export function calc0DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
-    vertVariants, vertVariant: vertVariantId,
+    vertVariants, vertVariant: vertVariantId, priceCheck,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)
