@@ -277,6 +277,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [showRiskBudget, setShowRiskBudget] = useState(false);
   // Inline log-note input (replaces the old window.prompt on Log trade).
   const [logNoteOpen, setLogNoteOpen] = useState(false);
+  // Set only after the write is CONFIRMED (onLogTrade resolves true). `loggedSig` is a
+  // fingerprint of the ticket at that moment — strategy, strikes, size, net — so that
+  // editing the ticket afterwards drops the badge and brings the button back rather
+  // than leaving "Logged" sitting over a trade that is no longer the one on the sheet.
+  const [loggedAt, setLoggedAt] = useState(init?.loggedAt ?? null);
+  const [loggedSig, setLoggedSig] = useState(init?.loggedSig ?? null);
+  const [logging, setLogging] = useState(false);
   const [logNote, setLogNote] = useState('');
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
@@ -401,8 +408,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed, loggedAt, loggedSig });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed, loggedAt, loggedSig]);
 
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
@@ -1248,6 +1255,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setLogNote('');
     setLogNoteOpen(true);
   }
+  // Fingerprint of what is on the ticket right now. Compared against the one captured
+  // at log time so the "Logged" badge disappears the moment the ticket stops being the
+  // trade that was written.
+  const ticketSig = `${effectiveStrat}|${r.legs.map(l => l.strike).join('/')}|${r.contracts}|${ticketNet}`;
+  const isLogged = !!loggedAt && loggedSig === ticketSig;
+
   function confirmLog() {
     const inp = is0 ? i0 : i45;
     const engineSummary = buildTradeSummary();
@@ -1255,7 +1268,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
-    onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
+    setLogging(true);
+    const sigAtLog = ticketSig;
+    // onLogTrade resolves true only when the sheet confirmed the write, so "Logged"
+    // never appears over a write that did not happen.
+    Promise.resolve(onLogTrade({ engine:is0?'0DTE':'45DTE', underlying:inp.underlying,
       strategy:`${inp.underlying} - ${effectiveStrat} - ${r.contracts} contract${r.contracts!==1?'s':''}`,
       direction:effectiveDecision, contracts:r.contracts, kellyDollar:`$${r.kellyDollar?.toFixed(0)||0}`,
       popMargin:r.popMargin?`${r.popMargin.toFixed(2)}x`:'', setupScore:`${r.setupScore}/100`,
@@ -1307,7 +1324,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // Expiry info for tracking
       dte: is0 ? '0DTE' : '45DTE',
       expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today
-    });
+    }))
+      .then(ok => {
+        // Strictly true. A rejection, an explicit false, or a host that returns nothing
+        // all leave the button alone — "Logged" is a claim about the sheet, so it needs
+        // the sheet to have said yes, not merely the absence of a no.
+        if (ok !== true) return;
+        setLoggedAt(Date.now());
+        setLoggedSig(sigAtLog);
+      })
+      .finally(() => setLogging(false));
   }
 
   // ES overnight reference-date labels (ET). ES trades ~23h, so "close"/"open" are
@@ -1523,7 +1549,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           );
         })()}
         {!r.hardBlocker && bannerGrade !== 'weak' && !missingInputs && (
-          <button onClick={handleLog} style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log trade</button>
+          isLogged ? (
+            // Confirmed-write state. Deliberately not a disabled Log button: legging in
+            // is a real workflow, so "Log again" stays available — just demoted, so a
+            // second write has to be chosen rather than fallen into. Edit the ticket and
+            // the signature stops matching, this whole branch disappears, and the normal
+            // green button returns.
+            <div style={{marginTop:10,display:'inline-flex',alignItems:'center',gap:10}}>
+              <span title={`Written to the Decisions sheet at ${new Date(loggedAt).toLocaleString()}`}
+                style={{padding:'6px 16px',borderRadius:8,fontSize:13,fontWeight:600,
+                  background:'#0d2818',border:'1px solid #238636',color:'#3fb950'}}>
+                ✓ Logged · {new Date(loggedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+              </span>
+              <span onClick={handleLog} title="Log a second ticket for these same strikes — for legging in, not for correcting a mistake"
+                style={{fontSize:12,color:'#8b949e',textDecoration:'underline',cursor:'pointer'}}>Log again</span>
+            </div>
+          ) : (
+            <button onClick={handleLog} disabled={logging}
+              style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',
+                background: logging ? '#1a4d24' : '#238636', color:'#fff', fontSize:13, fontWeight:600,
+                cursor: logging ? 'default' : 'pointer', opacity: logging ? 0.7 : 1}}>
+              {logging ? 'Logging…' : 'Log trade'}
+            </button>
+          )
         )}
         {isOverride && (
           <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>

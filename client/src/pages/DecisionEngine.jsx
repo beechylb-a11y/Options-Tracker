@@ -257,15 +257,22 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   }, [authenticated, account]);
 
   // Handle native engine log trade
+  // Returns the promise (resolving true only on a confirmed write) so the panel can
+  // show its "Logged HH:MM" state on the real outcome rather than on the click. A
+  // response without ok — previously silent — now surfaces and resolves false, so the
+  // button cannot claim a trade was recorded when it was not.
   function handleEngineLog(data) {
-    api.logDecision(data)
+    return api.logDecision(data)
       .then(result => {
-        if (result.ok) {
+        if (result && result.ok) {
           showToast('Trade logged to Options Tracker', 'success');
           loadDecisions();
+          return true;
         }
+        showToast('Log failed: the sheet did not confirm the write', 'error');
+        return false;
       })
-      .catch(err => showToast('Error: ' + err.message, 'error'));
+      .catch(err => { showToast('Error: ' + err.message, 'error'); return false; });
   }
 
   function showToast(msg, type) {
