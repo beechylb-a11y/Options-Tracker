@@ -1749,8 +1749,13 @@ export function calc0DTE(inputs) {
   //   ARBITRAGE  — cost outside [min payoff, max payoff]. Impossible at any vol.
   //   MISMATCH   — cost inside those bounds but far from fair value. Possible only if
   //                the price and the strikes describe different trades.
-  // Tolerance is 35% of the structure's width, which is loose enough that a real fill
-  // on a real spread never trips it and tight enough to catch the 1.00-vs-5.23 case.
+  // Tolerance is 20% of the structure's width. It started at 35%, which caught gross
+  // errors but let sloppy ones through: a live SPY ticket carried a 0.46 debit on
+  // 766/769 against 0.95 fair at spot — roughly half price, and unfillable — and passed
+  // because 0.49 sat under the 1.05 band. At 20% the band is 0.60 and that case flags.
+  // The cost of the tighter number is the occasional nuisance flag on a genuinely good
+  // fill in fast markets; that is the right way round, since the flag is a blocker you
+  // can look at and dismiss, while the miss silently poisons EV, Kelly and the payoff.
   let priceCheck = null;
   if (payoff && price > 0 && netCreditDebit !== 0 && Array.isArray(payoff.legs) && payoff.legs.length >= 2) {
     const pcSigma = (pMaxLossBasis && pMaxLossBasis.sigma > 0) ? pMaxLossBasis.sigma : emRemaining;
@@ -1768,7 +1773,7 @@ export function calc0DTE(inputs) {
       const bareMax = (payoff.maxProfit / 100) - netCreditDebit;
       const bareMin = (payoff.maxLoss / 100) - netCreditDebit;
       const cost = -netCreditDebit;                    // debit paid (+) or credit taken (−)
-      const tol = 0.35 * pcWidth;
+      const tol = 0.20 * pcWidth;
       priceCheck = { cost, fair, bareMin, bareMax, width: pcWidth, sigma: pcSigma,
         arb: cost < bareMin - 0.01 || cost > bareMax + 0.01,
         mismatch: Math.abs(cost - fair) > tol, gap: cost - fair };

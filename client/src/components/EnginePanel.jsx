@@ -1347,7 +1347,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
                 const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
                 const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#8b949e';
-                const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(0)}` : '';
+                // Per-share net, to 2dp. toFixed(0) rounded a real 0.46 debit to "-$0",
+                // which reads as a free trade on the one badge whose job is the price.
+                const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(2)}` : '';
                 return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
                   style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
               })()}
@@ -1449,8 +1451,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             P(max loss) breakdown box stays in the input column; this is the headline.
             EV/Kelly gate on missingInputs (r.missingSize); P(max loss) on r.pMaxLoss==null. */}
         {!r.hardBlocker && (() => {
-          const tile = (label, value, dim) => (
-            <div style={{background:'rgba(255,255,255,0.04)',borderRadius:8,padding:'8px 10px',opacity:dim?0.55:1}}>
+          const tile = (label, value, dim, tip) => (
+            <div title={tip} style={{background:'rgba(255,255,255,0.04)',borderRadius:8,padding:'8px 10px',opacity:dim?0.55:1}}>
               <div style={{fontSize:11,color:'#8b949e',letterSpacing:'0.04em'}}>{label}</div>
               {value}
             </div>
@@ -1459,7 +1461,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           const val = (node) => <div style={{fontSize:19,fontWeight:700,fontFamily:'JetBrains Mono,monospace',marginTop:1}}>{node}</div>;
           return (
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginTop:10}}>
-              {tile('SCORE', val(<span style={{color:dcColor}}>{compositeScore}/100</span>), false)}
+              {/* Labelled COMPOSITE, not SCORE. The Setup Quality card on the right shows
+                  r.setupScore, a different number on the same 0-100 scale, and two tiles
+                  both reading "/100" on one screen invited them to be read as the same
+                  measure (48 here against 68 there). */}
+              {tile('COMPOSITE', val(<span style={{color:dcColor}}>{compositeScore}/100</span>), false,
+                'Composite banner score — blends setup quality with fair value, vol and regime. NOT the same number as the Setup Quality card, which is the 100-point scorecard on its own.')}
               {tile('P(MAX LOSS)', r.pMaxLoss==null ? needs('needs greeks')
                 : val(<span style={{color: r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(r.pMaxLoss*100).toFixed(1)}%</span>),
                 r.pMaxLoss==null)}
