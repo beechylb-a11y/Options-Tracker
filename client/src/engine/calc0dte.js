@@ -772,6 +772,100 @@ export function calc0DTE(inputs) {
           : `the short leg is further OTM, so the credit is smaller and max loss (width − credit) rises slightly`);
     }
   }
+  // ── ITM-shifted vertical variants (Aug 2026) ──
+  //
+  // The engine's own vertical sits with its breakeven OUTSIDE the money: a bull call
+  // long leg starts at spot, so BE = spot + debit and the day has to move before the
+  // trade is worth anything. These variants slide the WHOLE structure toward the money
+  // by a full EM remaining — dV1dRem for the VIX1D variant, dVixRem for the VIX one —
+  // which drags BE down through spot and raises P(profit).
+  //
+  // Width is untouched: both legs move by the same shift, so the structure keeps its
+  // shape and only its position changes. The pullback ramp is NOT applied here — a
+  // variant is an explicit position choice, and stacking the two would double-count
+  // the same idea and land somewhere neither rule intended.
+  //
+  // WHAT THIS COSTS, stated plainly because the ticket cannot price it. A debit
+  // vertical whose long leg is driven ITM pays for that in intrinsic value: the debit
+  // (= max loss) rises toward the full width and max profit falls by the same amount.
+  // Shifting a 0.5×EM-wide debit spread by a FULL EM puts the long leg two widths ITM,
+  // at which point the spread is worth nearly its width, the debit is nearly the width,
+  // and max profit is nearly nothing. `maxProfitCeil` and `rrCeil` below are computed
+  // from the intrinsic floor so that outcome is visible BEFORE the trade is logged
+  // rather than discovered at the fill. Credit verticals do not have this problem —
+  // there the shift pushes the short further OTM, which is straightforwardly safer and
+  // simply collects less premium.
+  let vertVariants = null;
+  const vertVariantId = inputs.vertVariant || 'engine';
+  if (VERTICALS.includes(legStrat) && price > 0 && D > 0) {
+    const p = price;
+    const isCall = legStrat === 'Bull call spread' || legStrat === 'Bear call spread';
+    const isDebitVert = legStrat === 'Bull call spread' || legStrat === 'Bear put spread';
+    // Bull structures slide down, bear structures slide up — the same side the existing
+    // pullback buffer moves toward, so "into the money" means one thing across all four.
+    const dir = (legStrat === 'Bull put spread' || legStrat === 'Bull call spread') ? -1 : +1;
+    const right = isCall ? 'call' : 'put';
+    const build = (shift, dRem) => {
+      if (isDebitVert) {
+        const lo = p + dir * shift;                        // long leg, driven ITM
+        return [leg(`Long ${right}`, lo), leg(`Short ${right}`, lo + (isCall ? 1 : -1) * dRem * 0.5)];
+      }
+      const sh = p + dir * (dRem + shift);                 // credit: short leg, pushed further OTM
+      return [leg(`Short ${right}`, sh), leg(`Long ${right}`, sh + dir * dRem)];
+    };
+    const economics = (pair, dRem) => {
+      const a = pair[0].strike, b = pair[1].strike;
+      const width = Math.abs(b - a);
+      if (!isDebitVert) {
+        return { width, otmEM: dRem > 0 ? Math.abs(pair[0].strike - p) / dRem : 0 };
+      }
+      // Debit floor = the long leg's intrinsic, capped at the width. The real fill is
+      // higher (time value), so max profit is at BEST width − intrinsic.
+      const intrinsic = Math.max(0, Math.min(width, isCall ? p - a : a - p));
+      const maxProfitCeil = Math.max(0, width - intrinsic);
+      return { width, intrinsic, maxProfitCeil, rrCeil: intrinsic > 0 ? maxProfitCeil / intrinsic : null };
+    };
+    // ── Debit-side cap (Aug 2026, Option A) ──
+    // A debit vertical is only 0.5 × dRem wide, so an uncapped 1 × dRem shift drives
+    // the long leg TWO widths in-the-money: the spread is then worth its full width,
+    // the debit is the full width, and max profit is zero. Measured on a SPY bull call:
+    // 3.00 wide, 3.00 intrinsic, 0.00 max profit, 0.00:1 — and setup score ROSE 62 → 68,
+    // because tailPts rewards the lower P(max loss) and nothing in the scorecard notices
+    // the upside has gone. The engine would have recommended a trade that cannot win.
+    //
+    // Cap the shift at PULLBACK_CAP of the structure's own width, the same 0.40 the
+    // pullback ramp uses, which pins intrinsic at ≤ 0.40 × width and so holds
+    // reward/risk at ≥ 1.5:1 whatever the ruler says. Credit verticals are NOT capped:
+    // there the shift pushes the short further OTM, which is simply safer for less
+    // premium, and the existing otmEM warning covers the point where it collects nothing.
+    //
+    // The cap scales with each ruler's own width, so VIX1D and VIX still differ
+    // (0.20 × dRem each) — but on a $1 or $5 strike grid the two capped shifts often
+    // round to the SAME strikes. That is the strike grid talking, not a bug, and the
+    // `capped` flag below is what the UI uses to say so.
+    const variant = (id, label, shift, dRem) => {
+      const cap = isDebitVert ? PULLBACK_CAP * (dRem * 0.5) : Infinity;
+      const eff = Math.min(shift, cap);
+      const pair = build(eff, dRem);
+      return { id, label, shift: eff, wanted: shift, capped: eff < shift - 1e-9,
+        dRem, legs: pair, ...economics(pair, dRem) };
+    };
+    vertVariants = [
+      // The engine's own suggestion, shown for comparison. Its legs are the built
+      // `legs` (pullback ramp included) — the dual-EM pair the ticket already renders.
+      { id: 'engine', label: 'Engine', shift: 0, dRem: dVixRem, legs: legs.map(l => ({ ...l })),
+        ...economics([legs[0] || { strike: p }, legs[1] || { strike: p }], dVixRem) },
+      variant('v1d', 'EM(VIX1D) ITM', dV1dRem, dV1dRem),
+      variant('vix', 'EM(VIX) ITM', dVixRem, dVixRem),
+    ];
+    // Selecting a variant REPLACES the dual-EM pair with a single unambiguous two-leg
+    // structure. That is deliberate: with four legs the downstream consumers disagree
+    // about which pair is the trade (vertWidth reads legs[0..1], P(max loss) reads
+    // Math.min across all four), and a chosen variant should leave nothing to guess.
+    const chosen = vertVariants.find(v => v.id === vertVariantId);
+    if (chosen && chosen.id !== 'engine') legs = chosen.legs.map(l => ({ ...l }));
+  }
+
   // ── User strike overrides (Aug 2026) — pure substitution, no derivation math ──
   // inputs.overrideStrikes: { [legIndex]: strike }, keyed by index into the legs
   // array AS BUILT ABOVE (dual-EM verticals therefore key 0..3 across both pairs).
@@ -1997,6 +2091,19 @@ export function calc0DTE(inputs) {
   if (diverges) warnings.push(`VWAP trend ${slopeDirection} but only ${(vwapAccept*100).toFixed(0)}% of the last hour closed above VWAP — trend not being held`);
   if (emDisagree && emVolGap != null) warnings.push(`EM sources disagree on a like-for-like basis: straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%) — check the feed or an event`);
   else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number, but P(max loss) — and therefore EV and Trade Confidence — runs off the VIX1D ruler`);
+  // An ITM-shifted debit vertical buys P(profit) with intrinsic value. Past a point
+  // there is nothing left to win: the intrinsic floor alone tells you the ceiling on
+  // max profit, so flag it here rather than letting the fill deliver the news.
+  if (vertVariants && vertVariantId !== 'engine') {
+    const v = vertVariants.find(x => x.id === vertVariantId);
+    if (v && v.rrCeil != null && v.rrCeil < 0.25) {
+      warnings.push(`${v.label}: long leg ${v.intrinsic.toFixed(2)} ITM on a ${v.width.toFixed(2)} wide spread `
+        + `— max profit is at best ${v.maxProfitCeil.toFixed(2)} against ${v.intrinsic.toFixed(2)} at risk `
+        + `(${v.rrCeil.toFixed(2)}:1 before time value). The shift has priced out the upside`);
+    } else if (v && v.otmEM != null && v.otmEM > 2.5) {
+      warnings.push(`${v.label}: short strike ${v.otmEM.toFixed(1)}× EM remaining OTM — credit will be negligible`);
+    }
+  }
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -2158,6 +2265,7 @@ export function calc0DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
+    vertVariants, vertVariant: vertVariantId,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)

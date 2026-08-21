@@ -256,6 +256,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // structures can never restrike the wrong shape. Persisted with the tab state
   // exactly like held / overrideStrat.
   const [overrideStrikes, setOverrideStrikes] = useState(init?.overrideStrikes ?? {});
+  // Which vertical variant is being traded: 'engine' | 'v1d' | 'vix'. Persisted with
+  // the tab like overrideStrat so a tab reopens on the structure you chose, and read
+  // by Log trade and Print summary so the record says which one actually went on.
+  const [vertVariant, setVertVariant] = useState(init?.vertVariant ?? 'engine');
   // The last raw bridge pull: what it gave us, what it did not, and when. This is
   // what lets a re-fill say "these three did not come back" instead of quietly
   // leaving stale numbers behind a LIVE badge.
@@ -397,8 +401,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, dataFresh, esContract, greeksFresh, held, feed });
-  }, [i0, i45, overrideStrat, overrideStrikes, dataFresh, esContract, greeksFresh, held, feed]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed]);
 
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
@@ -433,6 +437,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrategy: overrideStrat,
           overrideStrikes: overrideStrikes['0']?.map || null,
           overrideStrikesStrat: overrideStrikes['0']?.strat || null,
+          vertVariant,
           historyByStrategy: strategyHistory || null,
           wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
             lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
@@ -489,9 +494,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         overnightDir:'unknown', trendPattern:'unknown', wingTxt:'',
         targetCredit:null, targetLabel:'', targetLow:0, targetHigh:0, targetMax:0, targetIsCredit:true,
         fairValueScore:0, fairValueGrade:'', volScore:0, volGrade:'', structScore:0, structGrade:'',
-        regimeScore:0, regimeGrade:'', ivHvRatio:0 };
+        regimeScore:0, regimeGrade:'', ivHvRatio:0,
+        vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, strategyHistory]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1044,6 +1050,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const g = r.greeks;
     const underlying = is0 ? i0.underlying : i45.underlying;
 
+    // Printed alongside the strikes so a filed summary says which position was taken,
+    // not just where the strikes landed.
+    var variantTxt = '';
+    if (r.vertVariants) {
+      var pv = r.vertVariants.find(function(x){ return x.id === (r.vertVariant || 'engine'); });
+      if (pv) variantTxt = '<b>Position:</b> ' + pv.label
+        + (pv.shift > 0 ? ' — slid ' + pv.shift.toFixed(2) + ' pts toward the money (1 × EM remaining), width unchanged' : ' — engine strikes')
+        + (pv.rrCeil != null ? ' · max profit ≤ ' + pv.maxProfitCeil.toFixed(2) + ' against ' + pv.intrinsic.toFixed(2) + ' intrinsic (' + pv.rrCeil.toFixed(2) + ':1 ceiling)' : '');
+    }
+
     const legsHtml = r.legs.map(function(l) {
       var isShort = l.label.toLowerCase().includes('short');
       var cls = isShort ? 'leg-short' : 'leg-long';
@@ -1137,6 +1153,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '</div>' +
       (warningsHtml ? '<div style="margin-top:10px;padding:8px 12px;background:#1f1a0d;border:1px solid #9e6a03;border-radius:6px">' + warningsHtml + '</div>' : '') +
       '<div style="margin-top:12px">' + legsHtml + '</div>' +
+      (variantTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + variantTxt + '</div>' : '') +
       (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
       (is0 && r.holdToExpiry ? '<div style="font-size:11px;color:#8b949e;margin-top:4px"><b>Expiry:</b> ' + r.holdToExpiry.label + ' — ' + r.holdToExpiry.note + '</div>' : '') +
       (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
@@ -1188,6 +1205,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       if (r.confConflicts?.length) lines.push(`Conflicts: ${r.confConflicts.map(c=>c.tag).join(', ')}`);
     }
     if (isOverride) lines.push(`Override: engine picked ${r.bestStrat}, logged ${effectiveStrat}`);
+    // Which vertical position was actually traded. Without this the log cannot tell an
+    // ITM-shifted spread from the engine's own — the strikes alone do not say why.
+    if (r.vertVariants) {
+      const v = r.vertVariants.find(x => x.id === (r.vertVariant || 'engine'));
+      if (v) lines.push(`Position: ${v.label}${v.shift > 0 ? ` — slid ${v.shift.toFixed(2)} pts toward the money (1 × EM remaining), width unchanged` : ' — engine strikes'}`
+        + (v.rrCeil != null ? ` · max profit ≤ ${v.maxProfitCeil.toFixed(2)} against ${v.intrinsic.toFixed(2)} intrinsic (${v.rrCeil.toFixed(2)}:1 ceiling)` : ''));
+    }
     lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
     if (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length
         && r.legs.some((l,i)=>l.strike!==r.engineLegs[i].strike)) {
@@ -1336,6 +1360,44 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
         {r.legs.length > 0 && (
           <div style={{marginTop:8}}>
+            {/* Vertical position variants. Picking one rebuilds the structure as a single
+                unambiguous two-leg spread and everything downstream — EV, P(max loss),
+                Kelly, payoff, Log trade, Print summary — recomputes from it. `rr` is a
+                CEILING derived from the long leg's intrinsic value, so the real fill is
+                worse; it is shown because the engine cannot price the debit and the cost
+                of shifting into the money is otherwise invisible until the fill. */}
+            {r.vertVariants && (
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+                {r.vertVariants.map(v => {
+                  const on = v.id === (r.vertVariant || 'engine');
+                  const thin = v.rrCeil != null && v.rrCeil < 0.25;
+                  const clr = on ? (thin ? '#d29922' : '#58a6ff') : '#8b949e';
+                  return (
+                    <button key={v.id} onClick={() => setVertVariant(v.id)}
+                      title={v.id === 'engine'
+                        ? 'The engine’s own strikes, including the pullback ramp.'
+                        : `Whole spread slid ${v.shift.toFixed(2)} pts toward the money`
+                          + (v.capped
+                            ? ` — capped from ${v.wanted.toFixed(2)} (1 × ${v.id === 'v1d' ? 'EM rem VIX1D' : 'EM rem VIX'}) at 40% of the spread's own width, which holds reward/risk at 1.5:1 or better. Uncapped, the long leg would sit two widths ITM and max profit would be zero.`
+                            : ` (1 × ${v.id === 'v1d' ? 'EM remaining VIX1D' : 'EM remaining VIX'}).`)
+                          + ' Width unchanged; pullback ramp not applied.'}
+                      style={{textAlign:'left',padding:'5px 9px',borderRadius:6,cursor:'pointer',
+                        background: on ? (thin ? '#1f1a0d' : '#0d1a2b') : '#0d1117',
+                        border:`1px solid ${on ? clr : '#21262d'}`, color: clr}}>
+                      <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.03em'}}>
+                        {v.label}{v.shift > 0 ? ` · ${v.shift.toFixed(2)}` : ''}{v.capped ? ' · capped' : ''}
+                      </div>
+                      <div className="mono" style={{fontSize:11,color: on ? '#c9d1d9' : '#6e7681'}}>
+                        {(v.id === 'engine' ? v.legs.slice(0,2) : v.legs).map(l => l.strike).join(' / ')}
+                        {v.rrCeil != null
+                          ? `  ≤+${v.maxProfitCeil.toFixed(2)} / ${v.intrinsic.toFixed(2)} (${v.rrCeil.toFixed(2)}:1)`
+                          : v.otmEM != null ? `  ${v.otmEM.toFixed(1)}× EM OTM` : ''}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {r.legs.length === 4 && r.legs[0]?.label?.includes('VIX') ? (
               // Dual EM suggestions for spreads
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
