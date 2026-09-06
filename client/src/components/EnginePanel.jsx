@@ -296,7 +296,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'', ivx:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
-    win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
+    win:'', risk:'', pop:'', hours:'', netCreditDebit:'', comboBid:'', comboAsk:'',
     theta:'', delta:'', gamma:'', gamStrike:'',
     lowerWingDelta:'', upperWingDelta:'',
     emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'1.2533',
@@ -438,6 +438,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
           risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         netCreditDebit:fv(i0,'netCreditDebit'),
+          comboBid: i0.comboBid !== '' ? parseFloat(i0.comboBid) : null,
+          comboAsk: i0.comboAsk !== '' ? parseFloat(i0.comboAsk) : null,
           maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
           underlying:i0.underlying,
@@ -870,6 +872,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
           gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike,
+          // The combo quote rides along with the greeks fetch, so the frictions
+          // gauge fills itself on the same click. Only when every leg quoted.
+          comboBid: d.net.bid != null ? String(d.net.bid) : prev.comboBid,
+          comboAsk: d.net.ask != null ? String(d.net.ask) : prev.comboAsk,
           ivx: avgIV || prev.ivx,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
           upperWingDelta: upperWD || prev.upperWingDelta
@@ -1842,7 +1848,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {/* Session & sizing */}
           <InputSection
             title={is0 ? 'Session & sizing' : 'Sizing'}
-            info="Net credit/debit pre-fills from the engine's TARGET for this structure and is flagged as such until you change it — replace it with your broker's actual fill, because this is the number written to the trade log. Positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width."
+            info="Net credit/debit pre-fills from the engine's TARGET for this structure and is flagged as such until you change it — replace it with your broker's actual fill, because this is the number written to the trade log. Positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width. Frictions = spread (round trip) + commission as a share of MAX PROFIT — the one gauge that asks whether winning is worth anything after execution, rather than how likely winning is. Under 5% is clean, over 20% means the payoff is too thin to survive its own costs and no probability repairs it."
             missing={secMissing.sizing}
             collapsed={isCollapsed('sizing')}
             onToggle={() => toggleSection('sizing')}
@@ -1955,6 +1961,46 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
             </div>
           </div>
+          {/* Combo quote — the two numbers TWS prints under the Strategy Builder.
+              Fetch Greeks fills them from the bridge; typed by hand they work with
+              no bridge at all. They drive the frictions gauge below and nothing else. */}
+          <div className="grid grid-cols-2 gap-2.5 mt-2">
+            <Inp label="Combo bid" value={is0?i0.comboBid:i45.comboBid}
+              onChange={v=>is0?set0('comboBid',v):set45('comboBid',v)}/>
+            <Inp label="Combo ask" value={is0?i0.comboAsk:i45.comboAsk}
+              onChange={v=>is0?set0('comboAsk',v):set45('comboAsk',v)}/>
+          </div>
+          {(() => {
+            const f = r.frictions;
+            if (!f) return (
+              <div style={{marginTop:8,fontSize:11,color:'#6e7681',lineHeight:1.5}}>
+                Enter the combo bid/ask above (or press Fetch Greeks) to price what getting
+                in and out of this structure costs against its maximum profit.
+              </div>
+            );
+            const col = f.signal === 'clean' ? '#3fb950' : f.signal === 'acceptable' ? '#7bc74d'
+              : f.signal === 'heavy' ? '#d29922' : '#f85149';
+            const bg  = f.signal === 'prohibitive' ? '#2d0f0f' : f.signal === 'heavy' ? '#2a1f00' : '#0d1117';
+            return (
+              <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:bg,
+                border:`1px solid ${f.signal === 'prohibitive' ? '#5c1f1f' : '#21262d'}`,
+                fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:10}}>
+                  <span style={{fontWeight:600}}>Frictions</span>
+                  <span className="mono" style={{color:col,fontWeight:700}}>
+                    {(f.pct * 100).toFixed(0)}% of max profit · {f.signal}
+                  </span>
+                </div>
+                <div style={{fontSize:11,color:'#8b949e',marginTop:3}}>
+                  spread {f.spreadWidth.toFixed(2)} wide → ${Math.round(f.spreadCost)} round trip · commission
+                  ${f.commission.toFixed(2)} on {f.legCount} legs · <strong style={{color:'#c9d1d9'}}>${Math.round(f.total)}</strong> to
+                  get in and out of ${Math.round(fv(is0?i0:i45,'win'))} max profit
+                  {r.contracts > 1 && <> · ${Math.round(f.totalAll)} at {r.contracts} contracts</>}
+                </div>
+                <div style={{fontSize:11,color:col,marginTop:4}}>{f.action}</div>
+              </div>
+            );
+          })()}
           {/* Risk budget — the account limits Kelly sizing is computed against.
               These fields have no inputs on the panel (they seed from the account
               config), so without this line the denominator was un-auditable. */}

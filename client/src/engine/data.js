@@ -5,6 +5,77 @@
 
 export const SQRT252 = Math.sqrt(252);
 
+// ── Execution frictions ──────────────────────────────────────────────────────
+// Spread plus commission as a share of MAX PROFIT.
+//
+// Every other gauge on the ticket asks whether the trade is likely to WIN. This
+// one asks whether winning is worth anything after you have paid to get in and
+// out, and it is the only measure that separates a thin structure from a good
+// one BEFORE the market has an opinion. Four 0DTE candidates on 2-3 Sep 2026 all
+// finished green and looked interchangeable on outcome; on this number they were
+// not close - two call flies at 5-7%, a deep-ITM bull call at 22% and an iron
+// condor at 29%, with the condor holding the HIGHEST probability of the four
+// (82%) and the widest cushion (1.35x EM). A payoff that thin is not a
+// probability problem and no POP repairs it.
+//
+// Round trip, because you pay the spread twice: crossing a ROUND_TRIP_SPREADS
+// multiple of the quoted width, plus commission on every leg both ways.
+// Denominator is max profit per contract - the checkable number a trader already
+// has in front of them, not a capture-adjusted estimate.
+//
+// Defaults are IBKR tiered US equity options (~$0.65/contract/side). Override
+// commissionPerContract per account if that is wrong for you. (Sep 2026.)
+export const FRICTION_DEFAULTS = { commissionPerContract: 0.65, roundTripSpreads: 1.0 };
+
+// bid/ask of a COMBO from its per-leg quotes: buying pays the ask on longs and
+// receives the bid on shorts, and the reverse for the side you sell out on.
+// Reproduces the TWS combo quote to the cent on flies, verticals and condors.
+export function comboQuote(legs) {
+  if (!Array.isArray(legs) || !legs.length) return null;
+  let bid = 0, ask = 0;
+  const num = x => (x === null || x === undefined || x === '' || Number.isNaN(Number(x)))
+    ? null : Number(x);   // Number(null) is 0, so a missing quote must be rejected first
+  for (const l of legs) {
+    const q = num(l.qty), b = num(l.bid), a = num(l.ask);
+    if (q === null || b === null || a === null || !isFinite(q) || !isFinite(b)
+        || !isFinite(a) || q === 0) return null;
+    ask += q > 0 ? q * a : q * b;
+    bid += q > 0 ? q * b : q * a;
+  }
+  return { bid: +bid.toFixed(2), ask: +ask.toFixed(2) };
+}
+
+// win = max profit per contract in DOLLARS. legCount = number of option legs.
+// Returns null when the combo quote is unknown - the gauge reads "not available"
+// rather than inventing a spread.
+export function computeFrictions({ comboBid, comboAsk, win, legCount, contracts = 1, opts = {} }) {
+  const cfg = { ...FRICTION_DEFAULTS, ...opts };
+  const ok = x => !(x === null || x === undefined || x === '' || Number.isNaN(Number(x)));
+  if (!ok(comboBid) || !ok(comboAsk)) return null;
+  const b = Number(comboBid), a = Number(comboAsk);
+  if (!isFinite(b) || !isFinite(a) || !(win > 0) || !(legCount > 0)) return null;
+  const width = Math.abs(a - b);
+  if (!isFinite(width)) return null;
+  const spread$ = width * 100 * cfg.roundTripSpreads;          // per contract, round trip
+  const commission$ = cfg.commissionPerContract * legCount * 2; // both ways
+  const total$ = spread$ + commission$;
+  const pct = total$ / win;
+  const signal = pct < 0.05 ? 'clean' : pct < 0.10 ? 'acceptable'
+    : pct < 0.20 ? 'heavy' : 'prohibitive';
+  const action = pct < 0.05 ? 'Execution is not a factor in this trade'
+    : pct < 0.10 ? 'Normal cost of doing business - worth a limit order, not a worry'
+    : pct < 0.20 ? 'Getting in and out costs a meaningful slice of the best case - work the fill or widen the structure'
+    : 'The payoff is too thin to survive its own execution. Probability does not fix this - pick a structure with more to win.';
+  return {
+    comboBid: +b.toFixed(2), comboAsk: +a.toFixed(2), spreadWidth: +width.toFixed(2),
+    // Exact dollars; the UI rounds. Rounding here and again at contract scale
+    // made "$10 each, $99 for ten" — arithmetic the reader has to forgive.
+    spreadCost: spread$, commission: commission$, total: total$,
+    totalAll: total$ * (contracts || 1),
+    pct, signal, action, legCount
+  };
+}
+
 export const STRATS_0DTE = [
   'Chicken condor', 'Broken wing butterfly', 'Asymmetric butterfly',
   'Standard butterfly', 'Iron Condor - Normal', 'Long Condor - Reversed',

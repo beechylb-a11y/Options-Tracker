@@ -199,12 +199,22 @@ function getOptionGreeks(contract) {
     let fallback = null;   // best non-model computation seen, used only if 13 never lands
     let graceTimer = null; // short wait for the model tick once a fallback exists
     let hardTimer = null;
+    // The same reqMktData that carries the greeks already carries the quote; we
+    // were throwing it away. Keeping it is what lets the app price the SPREAD of a
+    // structure rather than only its mid, which is the difference between knowing
+    // a trade is likely to win and knowing whether winning pays for the execution.
+    // (Sep 2026.) Fields: 1/2 real-time bid/ask, 66/67 the delayed equivalents.
+    const quote = { bid: null, ask: null };
     const done = (data) => {
       if (resolved) return;
       resolved = true;
+      if (data && typeof data === 'object' && !data.notSubscribed) {
+        data.bid = quote.bid; data.ask = quote.ask;
+      }
       if (graceTimer) clearTimeout(graceTimer);
       if (hardTimer) clearTimeout(hardTimer);
       ib.removeListener(EventName.tickOptionComputation, onGreeks);
+      ib.removeListener(EventName.tickPrice, onPrice);
       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
       ib.removeListener(EventName.marketDataType, onMdType);
       ib.removeListener(EventName.error, onErr);
@@ -246,6 +256,11 @@ function getOptionGreeks(contract) {
       if (!fallback || (TICK_RANK[tickType] || 0) > (TICK_RANK[fallback.tickType] || 0)) fallback = g;
       if (!graceTimer) graceTimer = setTimeout(() => done(fallback), 1500);
     };
+    const onPrice = (id, field, value) => {
+      if (id !== reqId || value == null || !(value >= 0)) return;
+      if (field === 1 || field === 66) quote.bid = +Number(value).toFixed(2);
+      else if (field === 2 || field === 67) quote.ask = +Number(value).toFixed(2);
+    };
     const onEnd = (id) => { if (id === reqId) done(fallback); };
     const onMdType = (id, type) => { if (id === reqId) mdType = type; };
     // Market-data-not-subscribed errors (scoped to THIS request).
@@ -255,6 +270,7 @@ function getOptionGreeks(contract) {
     };
     ib.on(EventName.error, onErr);
     ib.on(EventName.tickOptionComputation, onGreeks);
+    ib.on(EventName.tickPrice, onPrice);
     ib.on(EventName.tickSnapshotEnd, onEnd);
     ib.on(EventName.marketDataType, onMdType);
     // genericTickList '106' = implied vol / model greeks; snapshot=false because
@@ -750,11 +766,25 @@ app.get('/api/option-greeks', async (req, res) => {
     // here handed the engine a decay-EARNED number for every position, including the
     // ones bleeding theta every hour - which is how a long fly came back looking like
     // a premium seller. (Jul 2026.)
+    // Combo bid/ask from the per-leg quotes. Buying a spread pays the ask on the
+    // legs you are long and receives the bid on the ones you are short; selling it
+    // is the mirror. Reproduces the TWS combo quote to the cent on flies, verticals
+    // and condors. Null unless EVERY leg quoted - a partial sum is a wrong number,
+    // not an approximate one. (Sep 2026.)
+    let comboBid = 0, comboAsk = 0, comboOk = results.length > 0;
+    for (const r of results) {
+      const b = r.greeks && r.greeks.bid, a = r.greeks && r.greeks.ask, q = r.qty || 1;
+      if (b == null || a == null || !isFinite(b) || !isFinite(a)) { comboOk = false; break; }
+      comboAsk += q > 0 ? q * a : q * b;
+      comboBid += q > 0 ? q * b : q * a;
+    }
     const netOut = haveAny ? {
       delta: +net.delta.toFixed(2),
       gamma: +net.gamma.toFixed(2),
       theta: +net.theta.toFixed(2),
-      vega: +net.vega.toFixed(2)
+      vega: +net.vega.toFixed(2),
+      bid: comboOk ? +comboBid.toFixed(2) : null,
+      ask: comboOk ? +comboAsk.toFixed(2) : null
     } : null;
 
     // Feed freshness: which IBKR data type actually served these greeks, plus the

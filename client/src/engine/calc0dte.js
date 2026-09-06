@@ -2,7 +2,7 @@
 //  0DTE CALCULATION ENGINE v2
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
-import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE } from './data.js';
+import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -204,7 +204,10 @@ export function calc0DTE(inputs) {
     // by strategy name (the engine indexes it by its own legStrat below).
     // wingDeltas: { lowerAbsDelta, upperAbsDelta } — |delta| of the outer wing
     // options from the live chain, for the skew-aware P(max loss) cross-check.
-    history: historyInput, historyByStrategy, wingDeltas } = inputs;
+    history: historyInput, historyByStrategy, wingDeltas,
+    // Quoted bid/ask of the WHOLE structure, from TWS or rebuilt from the per-leg
+    // quotes the bridge returns. Optional: absent it the frictions gauge says so.
+    comboBid, comboAsk } = inputs;
 
   const hasPrice = price > 0;
   const hasComp = atr5 > 0 && atr2h > 0;
@@ -1989,6 +1992,18 @@ export function calc0DTE(inputs) {
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
 
+  // ── Execution frictions ── what getting in and out costs, against max profit.
+  // Display only: it feeds one warning at the prohibitive band and no gate.
+  // (Sep 2026 — see FRICTION_DEFAULTS in data.js for why this earns a place.)
+  // Leg count comes from the PAYOFF's legs, not the suggestion's. A 4-leg dual-EM
+  // suggestion is two alternative 2-leg spreads, so `legs.length` there would bill
+  // commission on a structure you are not going to trade.
+  const frictions = computeFrictions({
+    comboBid, comboAsk, win,
+    legCount: (payoff && payoff.legs && payoff.legs.length) || legs.length,
+    contracts
+  });
+
   // ── Greeks analysis ──
   let greeks = null;
   if (hasGreeks && atr > 0) {
@@ -2190,6 +2205,11 @@ export function calc0DTE(inputs) {
   }
   if (greeks && !greeks.thetaPaid && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
   if (greeks && !greeks.thetaPaid && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
+  if (frictions && frictions.signal === 'prohibitive') {
+    warnings.push(`Frictions ${(frictions.pct * 100).toFixed(0)}% of max profit `
+      + `($${Math.round(frictions.total)} to get in and out of $${Math.round(win)}) — the payoff is too thin `
+      + `to survive its own execution`);
+  }
   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
   if (vixHigh) warnings.push('VIX >25 — half-size override');
@@ -2400,6 +2420,7 @@ export function calc0DTE(inputs) {
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     pMaxLossBasis,
     // Kelly (Sharpe-adjusted)
+    frictions,
     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
