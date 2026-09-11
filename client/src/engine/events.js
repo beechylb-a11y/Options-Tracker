@@ -79,6 +79,16 @@ function coverageNotices(todayISO, needThroughISO, cal = CALENDAR) {
   if (meta.horizonEnd && needThroughISO > meta.horizonEnd) {
     out.push(`Event calendar only runs to ${meta.horizonEnd}, short of this position's ${needThroughISO} expiry — events after that are unknown, not absent`);
   }
+  // Per-source coverage. The two publishers schedule different distances ahead, and a
+  // single horizon hides that: a 45-day position can easily reach past where BLS stops
+  // while Fed dates still run on, and the calendar would then look populated but be
+  // blind to CPI for the back half of the trade. Report each source where it ends.
+  if (cal.blsThrough && needThroughISO > cal.blsThrough) {
+    out.push(`BLS releases (CPI, PPI, payrolls) are only scheduled to ${cal.blsThrough} — past that date this position is NOT checked for them. Re-run tools/refresh-calendar.mjs once BLS publishes further ahead`);
+  }
+  if (cal.fedThrough && needThroughISO > cal.fedThrough) {
+    out.push(`Fed events are only scheduled to ${cal.fedThrough} — FOMC dates past that are unknown, not absent`);
+  }
   return out;
 }
 

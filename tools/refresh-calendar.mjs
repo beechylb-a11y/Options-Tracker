@@ -214,15 +214,28 @@ const events = [...fed.events, ...(blsOk ? bls.events : prevBls), ...manual, ...
 
 // blsLoaded is derived from what actually landed in the window, never assumed: an
 // empty result after a "successful" fetch still has to read as not-loaded downstream.
-const blsInWindow = events.filter(e => e.source === 'bls-ics' || e.source === 'manual').length;
+const blsRows = events.filter(e => e.source === 'bls-ics' || e.source === 'manual');
+const fedRows = events.filter(e => e.source === 'fed-json');
+const blsInWindow = blsRows.length;
+
+// PER-SOURCE COVERAGE, not one asserted horizon. `horizonEnd` is only the window this
+// script ASKED for; the two publishers schedule different distances ahead, and BLS in
+// particular may stop well short of a 45-day option. Recording where each source
+// actually runs out is what lets the ticket say "CPI is unchecked past this date"
+// instead of showing an empty calendar and letting it read as a quiet stretch.
+const maxDate = rows => rows.length ? rows.map(e => e.date).sort().at(-1) : null;
 
 const out = {
   ...prev,
   generatedAt: today,
   horizonEnd,
   blsLoaded: blsInWindow > 0,
+  blsThrough: maxDate(blsRows),
+  fedThrough: maxDate(fedRows),
   events,
 };
+console.log(`  Fed events run to: ${out.fedThrough || '—'}`);
+console.log(`  BLS events run to: ${out.blsThrough || '—'}`);
 writeFileSync(OUT, header + 'export default ' + JSON.stringify(out, null, 2) + ';\n');
 
 console.log(`\nWrote ${events.length} events to ${OUT}`);

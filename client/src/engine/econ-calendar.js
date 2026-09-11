@@ -42,7 +42,7 @@
 export default {
   "generatedAt": "2026-09-11",
   "horizonEnd": "2027-06-11",
-  "blsLoaded": false,
+  "blsLoaded": true,
   "timezone": "America/New_York",
   "severity": {
     "FOMC": "high",
@@ -63,11 +63,32 @@ export default {
   },
   "events": [
     {
+      "date": "2026-09-11",
+      "time": "08:30",
+      "kind": "CPI",
+      "label": "CPI",
+      "source": "bls-ics"
+    },
+    {
       "date": "2026-09-16",
       "time": "14:00",
       "kind": "FOMC",
       "label": "FOMC statement",
       "source": "fed-json"
+    },
+    {
+      "date": "2026-09-29",
+      "time": "10:00",
+      "kind": "JOLTS",
+      "label": "JOLTS",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-10-02",
+      "time": "08:30",
+      "kind": "NFP",
+      "label": "Employment Situation (payrolls)",
+      "source": "bls-ics"
     },
     {
       "date": "2026-10-07",
@@ -77,11 +98,60 @@ export default {
       "source": "fed-json"
     },
     {
+      "date": "2026-10-14",
+      "time": "08:30",
+      "kind": "CPI",
+      "label": "CPI",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-10-15",
+      "time": "08:30",
+      "kind": "PPI",
+      "label": "PPI",
+      "source": "bls-ics"
+    },
+    {
       "date": "2026-10-28",
       "time": "14:00",
       "kind": "FOMC",
       "label": "FOMC statement",
       "source": "fed-json"
+    },
+    {
+      "date": "2026-10-30",
+      "time": "08:30",
+      "kind": "ECI",
+      "label": "Employment Cost Index",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-11-03",
+      "time": "10:00",
+      "kind": "JOLTS",
+      "label": "JOLTS",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-11-06",
+      "time": "08:30",
+      "kind": "NFP",
+      "label": "Employment Situation (payrolls)",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-11-10",
+      "time": "08:30",
+      "kind": "CPI",
+      "label": "CPI",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-11-13",
+      "time": "08:30",
+      "kind": "PPI",
+      "label": "PPI",
+      "source": "bls-ics"
     },
     {
       "date": "2026-11-18",
@@ -91,11 +161,39 @@ export default {
       "source": "fed-json"
     },
     {
+      "date": "2026-12-01",
+      "time": "10:00",
+      "kind": "JOLTS",
+      "label": "JOLTS",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-12-04",
+      "time": "08:30",
+      "kind": "NFP",
+      "label": "Employment Situation (payrolls)",
+      "source": "bls-ics"
+    },
+    {
       "date": "2026-12-09",
       "time": "14:00",
       "kind": "FOMC",
       "label": "FOMC statement",
       "source": "fed-json"
+    },
+    {
+      "date": "2026-12-10",
+      "time": "08:30",
+      "kind": "CPI",
+      "label": "CPI",
+      "source": "bls-ics"
+    },
+    {
+      "date": "2026-12-15",
+      "time": "08:30",
+      "kind": "PPI",
+      "label": "PPI",
+      "source": "bls-ics"
     },
     {
       "date": "2026-12-30",
