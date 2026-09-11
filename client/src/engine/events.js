@@ -79,18 +79,31 @@ function coverageNotices(todayISO, needThroughISO, cal = CALENDAR) {
   if (meta.horizonEnd && needThroughISO > meta.horizonEnd) {
     out.push(`Event calendar only runs to ${meta.horizonEnd}, short of this position's ${needThroughISO} expiry — events after that are unknown, not absent`);
   }
-  // Per-source coverage. The two publishers schedule different distances ahead, and a
-  // single horizon hides that: a 45-day position can easily reach past where BLS stops
-  // while Fed dates still run on, and the calendar would then look populated but be
-  // blind to CPI for the back half of the trade. Report each source where it ends.
-  if (cal.blsThrough && needThroughISO > cal.blsThrough) {
-    out.push(`BLS releases (CPI, PPI, payrolls) are only scheduled to ${cal.blsThrough} — past that date this position is NOT checked for them. Re-run tools/refresh-calendar.mjs once BLS publishes further ahead`);
-  }
-  if (cal.fedThrough && needThroughISO > cal.fedThrough) {
-    out.push(`Fed events are only scheduled to ${cal.fedThrough} — FOMC dates past that are unknown, not absent`);
-  }
-  if (cal.beaThrough && needThroughISO > cal.beaThrough) {
-    out.push(`BEA releases (PCE, GDP) are only scheduled to ${cal.beaThrough} — past that date this position is NOT checked for them`);
+  // ── Per-source coverage, with a heads-up margin ──
+  // The publishers schedule different distances ahead, and a single horizon hides that:
+  // a 45-day position can reach past where BLS stops while Fed dates still run on, and
+  // the calendar then looks populated while being blind to CPI for the back half of the
+  // trade. So each source reports its own end date.
+  //
+  // The margin matters as much as the check. Warning only once coverage has ALREADY run
+  // out puts the notice on the wrong side of the event: everything reads clean the day
+  // before and is silently uncovered the day after. RUNNING_LOW_DAYS gives warning while
+  // there is still time to do something about it, which is what turns "remember to
+  // refresh monthly" into "the ticket tells you when".
+  const RUNNING_LOW_DAYS = 30;
+  const SOURCES = [
+    ['blsThrough', 'BLS releases (CPI, PPI, payrolls)'],
+    ['fedThrough', 'Fed events (FOMC, minutes)'],
+    ['beaThrough', 'BEA releases (PCE, GDP)'],
+  ];
+  for (const [field, name] of SOURCES) {
+    const through = cal[field];
+    if (!through) continue;
+    if (needThroughISO > through) {
+      out.push(`${name} are only scheduled to ${through} — past that date this position is NOT checked for them. Run: node tools/refresh-calendar.mjs`);
+    } else if (daysBetween(needThroughISO, through) <= RUNNING_LOW_DAYS) {
+      out.push(`${name} run out ${through}, only ${daysBetween(needThroughISO, through)} days past this position — refresh soon: node tools/refresh-calendar.mjs`);
+    }
   }
   return out;
 }

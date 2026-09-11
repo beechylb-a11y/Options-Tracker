@@ -84,6 +84,13 @@ export default {
       "source": "bls-ics"
     },
     {
+      "date": "2026-09-30",
+      "time": "08:30",
+      "kind": "PCE",
+      "label": "PCE (Personal Income and Outlays)",
+      "source": "bea-ics"
+    },
+    {
       "date": "2026-10-02",
       "time": "08:30",
       "kind": "NFP",
@@ -117,6 +124,20 @@ export default {
       "kind": "FOMC",
       "label": "FOMC statement",
       "source": "fed-json"
+    },
+    {
+      "date": "2026-10-29",
+      "time": "08:30",
+      "kind": "GDP",
+      "label": "GDP advance estimate",
+      "source": "bea-ics"
+    },
+    {
+      "date": "2026-10-29",
+      "time": "08:30",
+      "kind": "PCE",
+      "label": "PCE (Personal Income and Outlays)",
+      "source": "bea-ics"
     },
     {
       "date": "2026-10-30",
@@ -161,6 +182,13 @@ export default {
       "source": "fed-json"
     },
     {
+      "date": "2026-11-25",
+      "time": "08:30",
+      "kind": "PCE",
+      "label": "PCE (Personal Income and Outlays)",
+      "source": "bea-ics"
+    },
+    {
       "date": "2026-12-01",
       "time": "10:00",
       "kind": "JOLTS",
@@ -196,6 +224,13 @@ export default {
       "source": "bls-ics"
     },
     {
+      "date": "2026-12-23",
+      "time": "08:30",
+      "kind": "PCE",
+      "label": "PCE (Personal Income and Outlays)",
+      "source": "bea-ics"
+    },
+    {
       "date": "2026-12-30",
       "time": "14:00",
       "kind": "FOMC_MINUTES",
@@ -204,5 +239,6 @@ export default {
     }
   ],
   "blsThrough": "2026-12-15",
-  "fedThrough": "2026-12-30"
+  "fedThrough": "2026-12-30",
+  "beaThrough": "2026-12-23"
 };
