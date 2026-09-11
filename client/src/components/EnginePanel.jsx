@@ -1115,7 +1115,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regime + '</span></div>';
     }
 
-    var html = '<!DOCTYPE html><html><head><title>Trade Summary</title>' +
+    // Date and time on the summary, in ET — the session the trade belongs to, not the
+    // browser's timezone. A filed summary with no timestamp is unfileable: two tickets
+    // on the same underlying and structure are indistinguishable a week later, and the
+    // printed date is also what the browser puts in the PDF filename by default.
+    var _printET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    var _pad = function (n) { return String(n).padStart(2, '0'); };
+    var _printDate = _printET.getFullYear() + '-' + _pad(_printET.getMonth() + 1) + '-' + _pad(_printET.getDate());
+    var _printTime = _pad(_printET.getHours()) + ':' + _pad(_printET.getMinutes());
+    var _printStamp = _printDate + ' ' + _printTime + ' ET';
+
+    var html = '<!DOCTYPE html><html><head><title>' + underlying + ' ' + effectiveStrat + ' — ' + _printDate + '</title>' +
       '<style>' +
       'body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#e6edf3;background:#0d1117;padding:20px}' +
       'h1{font-size:22px;margin-bottom:4px}' +
@@ -1134,7 +1144,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#1a7f37}.leg-short{color:#cf222e}}' +
       '</style></head><body>' +
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
-      '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
+      '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') +
+        '<span style="float:right;font-size:13px;font-weight:400;color:#57606a">' + _printStamp + '</span></h1>' +
       '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + '</h2>' +
       (r.tradeConfidence != null ?
         '<div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:' + confBg + ';border:1px solid ' + confClr + '">' +
