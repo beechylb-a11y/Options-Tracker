@@ -67,7 +67,11 @@ function coverageNotices(todayISO, needThroughISO, cal = CALENDAR) {
     return out;
   }
   if (!meta.blsLoaded) {
-    out.push('Event calendar has no BLS dates loaded (CPI, PPI, payrolls) — only Fed events are being checked. Run tools/refresh-calendar.mjs');
+    // Says what actually fixes it. The first version pointed at the refresh script,
+    // which only automates the Fed feed — BLS blocks scraping, so running it changes
+    // nothing here and the notice would never clear. An instruction that does not work
+    // is worse than none: it gets followed, fails silently, and trains you to ignore it.
+    out.push('Event calendar holds Fed dates only (FOMC, minutes). CPI, PPI, payrolls and PCE are NOT being checked — a release on those days will pass unmentioned. Add them by hand to client/src/engine/econ-calendar.js with source:"manual" (template in that file\'s header); BLS blocks automated fetching so no script can do it');
   }
   if (meta.generatedAt) {
     const age = daysBetween(meta.generatedAt, todayISO);
