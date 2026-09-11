@@ -2241,9 +2241,14 @@ export function calc0DTE(inputs) {
   // 0DTE is ever traded, while a 14:00 FOMC lands mid-position. The module also
   // reports what it CANNOT see (no BLS dates, stale file), because on a ticket an
   // empty calendar and a clear calendar look identical.
+  // Warnings gate the decision; notices never do. Coverage gaps (no BLS dates, a
+  // stale file, a horizon short of expiry) are notices — routing them through
+  // `warnings` pinned EVERY ticket at "Trade with caution" while the gap existed,
+  // which is how a warning system gets ignored.
   const _et = nowET();
   const _ev0 = eventRisk0DTE(_et.dateISO, _et.minutes);
   _ev0.warnings.forEach(w => warnings.push(w));
+  const notices = [..._ev0.notices];
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -2415,7 +2420,7 @@ export function calc0DTE(inputs) {
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
     vertVariants, vertVariant: vertVariantId, priceCheck,
-    eventsToday: _ev0.events,
+    eventsToday: _ev0.events, notices,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)

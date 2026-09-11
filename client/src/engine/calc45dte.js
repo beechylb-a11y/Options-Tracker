@@ -449,8 +449,10 @@ export function calc45DTE(inputs) {
   // another chance for vol to expand through the wings over a 45-day hold. Events in
   // the final week get called out separately — least time to recover, sharpest gamma.
   // Warn-only; the scorecard is untouched.
+  // Warnings gate the decision; notices (coverage gaps, date provenance) never do.
   const _ev45 = eventRisk45DTE(nowET().dateISO, dte);
   _ev45.warnings.forEach(w => warnings.push(w));
+  const notices = [..._ev45.notices];
 
   let decision, decisionClass;
   if (hardBlocker) { decision='No trade'; decisionClass='nogo'; }
@@ -555,7 +557,7 @@ export function calc45DTE(inputs) {
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, engineLegs, strikeOrderWarning, strikeLine,
-    eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO,
+    eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,

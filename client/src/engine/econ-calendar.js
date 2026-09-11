@@ -41,7 +41,7 @@
 
 export default {
   "generatedAt": "2026-09-11",
-  "horizonEnd": "2026-12-30",
+  "horizonEnd": "2027-06-11",
   "blsLoaded": false,
   "timezone": "America/New_York",
   "severity": {

@@ -52,9 +52,14 @@ export function eventsInWindow(fromISO, toISO, cal = CALENDAR) {
 }
 
 // ── Coverage: what this calendar cannot tell you ──────────────────────────────
-// Returned separately from event warnings so the caller can always show it, even
-// on a day with no events — that is exactly the day a silent gap is dangerous.
-function coverageWarnings(todayISO, needThroughISO, cal = CALENDAR) {
+// These are NOTICES, not warnings, and the distinction is load-bearing. The engines
+// gate their decision on `warnings.length`, so routing "the calendar has no BLS
+// dates" through that array pinned every single ticket at "Trade with caution" for
+// as long as the gap existed — a permanent alarm, which is the fastest way to teach
+// someone to stop reading alarms. A coverage gap is a statement about MY data, not
+// about your trade: it is shown, prominently, but it never moves the decision.
+// Only a real scheduled event does that.
+function coverageNotices(todayISO, needThroughISO, cal = CALENDAR) {
   const out = [];
   const meta = calendarMeta(cal);
   if (!meta.count) {
@@ -81,7 +86,8 @@ function coverageWarnings(todayISO, needThroughISO, cal = CALENDAR) {
  */
 export function eventRisk0DTE(todayISO, nowMinET, cal = CALENDAR) {
   const events = eventsInWindow(todayISO, todayISO, cal);
-  const warnings = coverageWarnings(todayISO, todayISO, cal);
+  const notices = coverageNotices(todayISO, todayISO, cal);
+  const warnings = [];
 
   for (const e of events) {
     const sev = severityOf(e.kind, cal);
@@ -99,9 +105,10 @@ export function eventRisk0DTE(todayISO, nowMinET, cal = CALENDAR) {
       // collapsing as the day's uncertainty resolves.
       warnings.push(`${e.label} released${at}, before the open${src} — expect a wide opening range and then IV crush; premium sold after the open is selling into that`);
     } else if (t > CLOSE_MIN) {
-      warnings.push(`${e.label}${at} lands after the close${src} — no 0DTE impact today`);
+      // Nothing to act on — a notice, so it does not downgrade the decision.
+      notices.push(`${e.label}${at} lands after the close${src} — no 0DTE impact today`);
     } else if (nowMinET != null && t <= nowMinET) {
-      warnings.push(`${e.label} released${at}, already out${src} — the move is in the tape`);
+      notices.push(`${e.label} released${at}, already out${src} — the move is in the tape`);
     } else {
       // The one that actually matters: an event INSIDE the holding window.
       const mins = nowMinET == null ? null : t - nowMinET;
@@ -114,7 +121,7 @@ export function eventRisk0DTE(todayISO, nowMinET, cal = CALENDAR) {
       warnings.push(`${e.label}${when} lands INSIDE your window${src}${weight}`);
     }
   }
-  return { warnings, events };
+  return { warnings, notices, events };
 }
 
 // ── 45DTE ────────────────────────────────────────────────────────────────────
@@ -126,7 +133,8 @@ export function eventRisk0DTE(todayISO, nowMinET, cal = CALENDAR) {
 export function eventRisk45DTE(todayISO, dte, cal = CALENDAR) {
   const expiryISO = addDays(todayISO, Math.max(0, Math.round(dte || 0)));
   const events = eventsInWindow(todayISO, expiryISO, cal);
-  const warnings = coverageWarnings(todayISO, expiryISO, cal);
+  const notices = coverageNotices(todayISO, expiryISO, cal);
+  const warnings = [];
 
   const high = events.filter(e => severityOf(e.kind, cal) === 'high');
   const byKind = {};
@@ -147,12 +155,39 @@ export function eventRisk45DTE(todayISO, dte, cal = CALENDAR) {
     warnings.push(`${late.map(e => e.label).join(', ')} falls in the final week before expiry (${late.map(e => e.date).join(', ')}) — least time to recover, sharpest gamma`);
   }
 
+  // Provenance is a fact about the data, not about the trade — notice, not warning.
   const inferred = events.filter(e => e.source === 'rule');
   if (inferred.length) {
-    warnings.push(`${inferred.length} date${inferred.length > 1 ? 's' : ''} in this window ${inferred.length > 1 ? 'are' : 'is'} inferred from a calendar rule, not confirmed — verify against the official schedule`);
+    notices.push(`${inferred.length} date${inferred.length > 1 ? 's' : ''} in this window ${inferred.length > 1 ? 'are' : 'is'} inferred from a calendar rule, not confirmed — verify against the official schedule`);
   }
 
-  return { warnings, events, expiryISO, highCount: high.length, byKind };
+  return { warnings, notices, events, expiryISO, highCount: high.length, byKind };
+}
+
+// ── Dashboard outlook ────────────────────────────────────────────────────────
+/**
+ * Today plus the next `days`, for the at-a-glance banner. Same calendar, same
+ * coverage notices — a dashboard that quietly showed "no events" while holding no
+ * BLS dates would be the same trap as the ticket.
+ */
+export function eventOutlook(todayISO, nowMinET, days = 21, cal = CALENDAR) {
+  const throughISO = addDays(todayISO, days);
+  const all = eventsInWindow(todayISO, throughISO, cal);
+  const today = all.filter(e => e.date === todayISO);
+  const upcoming = all.filter(e => e.date > todayISO);
+  const t = eventRisk0DTE(todayISO, nowMinET, cal);
+  return {
+    today, upcoming, throughISO,
+    todayWarnings: t.warnings,
+    notices: coverageNotices(todayISO, throughISO, cal),
+    highToday: today.some(e => severityOf(e.kind, cal) === 'high'),
+    daysUntilNextHigh: (() => {
+      const nxt = all.find(e => severityOf(e.kind, cal) === 'high' && e.date >= todayISO);
+      return nxt ? daysBetween(todayISO, nxt.date) : null;
+    })(),
+    nextHigh: all.find(e => severityOf(e.kind, cal) === 'high' && e.date >= todayISO) || null,
+    severityOf: k => severityOf(k, cal),
+  };
 }
 
 /** Minutes past midnight in America/New_York, and today's ET date. */

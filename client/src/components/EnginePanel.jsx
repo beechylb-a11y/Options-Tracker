@@ -492,7 +492,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     } catch (e) {
       console.error('Calc engine error:', e);
       return { decision:'Error', decisionClass:'nogo', hardBlocker:'Calculation error: ' + e.message,
-        setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], engineLegs:[], strikeOrderWarning:null, warnings:[], blockers:[],
+        setup:'No setup', setupScore:0, criteria:[], ratings:[], legs:[], engineLegs:[], strikeOrderWarning:null, warnings:[], notices:[], blockers:[],
         bestStrat:'', bestRating:'POOR', legStrat:'', kelly:0, rawKelly:0, adjustedKelly:0,
         kellyDollar:0, contracts:1, maxRisk:0, popMargin:0, bePop:0, wlRatio:0, ev:0,
         volFactor:1, sharpeFactor:1, sharpeProxy:0, kellyOverRisk:false, missingSize:true,
@@ -1534,6 +1534,45 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 ))}
               </span>
             )}
+          </div>
+        )}
+        {/* Zone 3b — blockers, warnings and notices (Aug 2026)
+            These existed in the engine from the start but were rendered NOWHERE on the
+            ticket: they reached only the Print summary and the logged trade notes, so
+            every warning the engine raised was invisible at the moment of the decision.
+            Three tiers, because they mean different things:
+              blockers — the trade is not takeable as configured
+              warnings — takeable, but they downgrade the decision
+              notices  — facts about the DATA, never about the trade; they never gate */}
+        {(r.blockers?.length > 0 || r.warnings?.length > 0 || r.notices?.length > 0) && (
+          <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
+            {r.blockers?.map((b,i) => (
+              <div key={'b'+i} style={{fontSize:12,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
+                background:'#2d0f11',border:'1px solid #6e2427',color:'#f85149'}}>
+                <b>Blocker</b> · {b}
+              </div>
+            ))}
+            {r.warnings?.map((w,i) => {
+              // Event warnings earn a distinct colour: they are the only ones that are
+              // about the calendar rather than the structure, and they are actionable
+              // in a different way — you wait, or you size down, you do not re-strike.
+              const isEvent = /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
+              return (
+                <div key={'w'+i} style={{fontSize:12,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
+                  background: isEvent ? '#1a1726' : '#1f1a0d',
+                  border:`1px solid ${isEvent ? '#4b3f7a' : '#9e6a03'}`,
+                  color: isEvent ? '#b9a7ff' : '#d29922'}}>
+                  {isEvent ? '📅' : '⚠'} {w}
+                </div>
+              );
+            })}
+            {r.notices?.map((n,i) => (
+              <div key={'n'+i} title="A fact about the calendar data, not about this trade — it does not affect the decision."
+                style={{fontSize:11,lineHeight:1.45,padding:'5px 10px',borderRadius:6,
+                  background:'#0d1117',border:'1px solid #21262d',color:'#8b949e'}}>
+                {n}
+              </div>
+            ))}
           </div>
         )}
         {/* Zone 4 — warning chips: hold-to-expiry verdict, expandable "why" */}

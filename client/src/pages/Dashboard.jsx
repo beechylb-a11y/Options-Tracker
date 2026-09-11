@@ -5,6 +5,7 @@ import { api } from '../utils/api';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
+import { eventOutlook, nowET } from '../engine/events';
 
 const RANGE_KEY = 'ot_dash_range';
 const RANGES = ['MTD', '30D', '90D', 'YTD', 'All'];
@@ -243,6 +244,8 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
         </div>
       </div>
 
+      <EventBanner />
+
       {/* KPI Cards - Row 1: performance */}
       <div className="grid grid-cols-6 gap-3 mb-3">
         <KPI icon={DollarSign} label="Total P&L" value={fmt$(totalPnl)} cls={totalPnl >= 0 ? 'green' : 'red'} />
@@ -461,6 +464,71 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           <div className="h-20 flex items-center justify-center text-text-faint text-sm">No closed trades yet</div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Scheduled macro events (Aug 2026) ────────────────────────────────────────
+// Sits above the KPIs so the first thing the dashboard says each morning is what
+// kind of day it is. Deliberately renders even when there is nothing scheduled:
+// a banner that only appears on event days is a banner you cannot trust on the
+// quiet ones, because its absence could equally mean the calendar is broken.
+// Coverage gaps are stated in the same box for the same reason.
+function EventBanner() {
+  const { dateISO, minutes } = nowET();
+  const o = useMemo(() => eventOutlook(dateISO, minutes, 21), [dateISO, minutes]);
+
+  const todayHigh = o.highToday;
+  const border = o.todayWarnings.length ? (todayHigh ? '#6e2427' : '#4b3f7a') : '#21262d';
+  const bg = o.todayWarnings.length ? (todayHigh ? '#1f1214' : '#151327') : '#0d1117';
+
+  return (
+    <div className="mb-3 rounded-lg" style={{ background: bg, border: `1px solid ${border}`, padding: '10px 14px' }}>
+      <div className="flex items-center gap-2 mb-1">
+        <Calendar size={14} className="text-text-muted" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Macro calendar</span>
+        {o.nextHigh && (
+          <span className="text-xs mono" style={{ color: '#8b949e' }}>
+            · next major: {o.nextHigh.label} {o.nextHigh.date}
+            {o.daysUntilNextHigh === 0 ? ' (today)' : ` (${o.daysUntilNextHigh}d)`}
+          </span>
+        )}
+      </div>
+
+      {o.todayWarnings.length > 0 ? (
+        o.todayWarnings.map((w, i) => (
+          <div key={i} className="text-sm" style={{ color: todayHigh ? '#f0a0a0' : '#b9a7ff', lineHeight: 1.5 }}>
+            {w}
+          </div>
+        ))
+      ) : (
+        <div className="text-sm" style={{ color: '#8b949e' }}>
+          Nothing scheduled inside today's session.
+        </div>
+      )}
+
+      {o.upcoming.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {o.upcoming.slice(0, 8).map((e, i) => {
+            const sev = o.severityOf(e.kind);
+            return (
+              <span key={i} title={`${e.label} — ${e.date}${e.time ? ' ' + e.time + ' ET' : ''}${e.source === 'rule' ? ' (inferred, unconfirmed)' : ''}`}
+                className="mono" style={{
+                  fontSize: 11, padding: '2px 7px', borderRadius: 4,
+                  background: sev === 'high' ? '#2a1418' : '#161b22',
+                  border: `1px solid ${sev === 'high' ? '#6e2427' : '#21262d'}`,
+                  color: sev === 'high' ? '#f85149' : '#8b949e',
+                }}>
+                {e.date.slice(5)} {e.label}{e.source === 'rule' ? ' ?' : ''}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {o.notices.map((n, i) => (
+        <div key={'n' + i} className="text-xs mt-2" style={{ color: '#6e7681' }}>{n}</div>
+      ))}
     </div>
   );
 }
