@@ -202,5 +202,7 @@ export default {
       "label": "FOMC minutes",
       "source": "fed-json"
     }
-  ]
+  ],
+  "blsThrough": "2026-12-15",
+  "fedThrough": "2026-12-30"
 };

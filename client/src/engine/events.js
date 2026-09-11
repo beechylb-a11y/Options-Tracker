@@ -89,6 +89,9 @@ function coverageNotices(todayISO, needThroughISO, cal = CALENDAR) {
   if (cal.fedThrough && needThroughISO > cal.fedThrough) {
     out.push(`Fed events are only scheduled to ${cal.fedThrough} — FOMC dates past that are unknown, not absent`);
   }
+  if (cal.beaThrough && needThroughISO > cal.beaThrough) {
+    out.push(`BEA releases (PCE, GDP) are only scheduled to ${cal.beaThrough} — past that date this position is NOT checked for them`);
+  }
   return out;
 }
 

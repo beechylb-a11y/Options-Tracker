@@ -33,6 +33,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'client', 'src', 'engine', 'econ-calendar.js');
 const FED_URL = 'https://www.federalreserve.gov/json/calendar.json';
 const BLS_URL = 'https://www.bls.gov/schedule/news_release/bls.ics';
+const BEA_URL = 'https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics';
+
+// BEA publishes PCE under this name. "Personal Income and Outlays" IS the PCE release —
+// the price index the Fed actually targets — and nothing in the feed says "PCE", so
+// matching on the obvious word would silently find nothing.
+const BEA_KINDS = {
+  'Personal Income and Outlays': { kind: 'PCE', label: 'PCE (Personal Income and Outlays)' },
+  'GDP (Advance Estimate)': { kind: 'GDP', label: 'GDP advance estimate' },
+  'Gross Domestic Product': { kind: 'GDP', label: 'GDP' },
+};
 
 // Which BLS releases are worth a warning, and how hard. The feed carries ~270 events a
 // year, the overwhelming majority of which (state and metro breakdowns, annual surveys,
@@ -106,37 +116,51 @@ async function fedEvents() {
   return { events, unverified, statements: statements.length, minutes: events.filter(e => e.kind === 'FOMC_MINUTES').length };
 }
 
-// ── BLS (iCalendar) ──────────────────────────────────────────────────────────
-async function blsEvents() {
-  const res = await fetch(BLS_URL, { headers: { 'User-Agent': 'options-tracker/1.0' } });
-  if (!res.ok) throw new Error(`BLS ics HTTP ${res.status}`);
-  const raw = await res.text();
+// ── Shared iCalendar parser ──────────────────────────────────────────────────
+// Handles both feeds, which do NOT agree on time representation:
+//   BLS  DTSTART;TZID=US-Eastern:20250103T100000   already Eastern, use as-is
+//   BEA  DTSTART:20260930T123000Z                  UTC, must be converted
+// 12:30Z is 08:30 ET in September and 07:30 ET in December — reading the digits
+// raw would report a pre-open PCE as a 12:30 intraday event, a four-hour error in
+// the exact direction that matters, since the whole 0DTE distinction is whether a
+// release lands before the bell or inside the position. Conversion goes through
+// Intl with a real timezone so DST is handled rather than assumed.
+const ET_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+function utcToET(y, mo, d, h, mi) {
+  const parts = Object.fromEntries(
+    ET_PARTS.formatToParts(new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi))).map(p => [p.type, p.value])
+  );
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}` };
+}
 
+function parseIcs(raw, kinds, source, defaultTime) {
   // RFC 5545 line folding: a continuation line begins with a space or tab and belongs
   // to the previous one. Unfold before parsing or long SUMMARY values split in half.
   const lines = raw.replace(/\r\n/g, '\n').replace(/\n[ \t]/g, '').split('\n');
-
   const out = [];
-  let cur = null;
-  let skipped = 0;
+  let cur = null, skipped = 0;
+
   for (const line of lines) {
     if (line.startsWith('BEGIN:VEVENT')) { cur = {}; continue; }
     if (line.startsWith('END:VEVENT')) {
       if (cur && cur.date && cur.summary) {
-        const hit = BLS_KINDS[cur.summary];
-        if (hit) {
-          out.push({ date: cur.date, time: cur.time || '08:30', kind: hit.kind, label: hit.label, source: 'bls-ics' });
-        } else skipped++;
+        // BEA titles carry the reference period ("Personal Income and Outlays, August
+        // 2026"), so match on the leading phrase rather than the whole string.
+        const key = Object.keys(kinds).find(k => cur.summary === k || cur.summary.startsWith(k + ','));
+        if (key) out.push({ date: cur.date, time: cur.time || defaultTime, kind: kinds[key].kind, label: kinds[key].label, source });
+        else skipped++;
       }
       cur = null; continue;
     }
     if (!cur) continue;
-    // DTSTART;TZID=US-Eastern:20250103T100000  — the feed publishes ET, which is
-    // exactly the timezone the engines reason in, so no conversion is needed.
-    const dt = /^DTSTART[^:]*:(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(line);
+    const dt = /^DTSTART[^:]*:(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?/.exec(line);
     if (dt) {
-      cur.date = `${dt[1]}-${dt[2]}-${dt[3]}`;
-      if (dt[4]) cur.time = `${dt[4]}:${dt[5]}`;
+      const [, y, mo, d, h, mi, , z] = dt;
+      if (h && z) { const et = utcToET(y, mo, d, h, mi); cur.date = et.date; cur.time = et.time; }
+      else { cur.date = `${y}-${mo}-${d}`; if (h) cur.time = `${h}:${mi}`; }
       continue;
     }
     if (line.startsWith('SUMMARY:')) {
@@ -145,6 +169,15 @@ async function blsEvents() {
   }
   return { events: out, skipped };
 }
+
+async function fetchIcs(url, kinds, source, defaultTime) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'options-tracker/1.0' } });
+  if (!res.ok) throw new Error(`${source} HTTP ${res.status}`);
+  return parseIcs(await res.text(), kinds, source, defaultTime);
+}
+
+const blsEvents = () => fetchIcs(BLS_URL, BLS_KINDS, 'bls-ics', '08:30');
+const beaEvents = () => fetchIcs(BEA_URL, BEA_KINDS, 'bea-ics', '08:30');
 
 // ── NFP by rule (opt-in, explicitly marked as unconfirmed) ───────────────────
 // First Friday of each month is right most of the time and wrong often enough to
@@ -203,12 +236,24 @@ try {
   console.error('so the ticket keeps saying which releases are unchecked rather than going quiet.');
 }
 
-// Keep every hand-entered event (PCE and anything else neither feed carries).
+let bea = { events: [], skipped: 0 };
+let beaOk = false;
+try {
+  bea = await beaEvents();
+  beaOk = true;
+  const byKind = bea.events.reduce((m, e) => (m[e.kind] = (m[e.kind] || 0) + 1, m), {});
+  console.log(`BEA: ${bea.events.length} releases (${Object.entries(byKind).map(([k, n]) => `${n}× ${k}`).join(', ')}), ${bea.skipped} minor releases ignored`);
+} catch (e) {
+  console.error(`BEA feed FAILED: ${e.message} — keeping existing BEA entries.`);
+}
+
+// Keep every hand-entered event (anything none of the three feeds carries).
 const manual = (prev.events || []).filter(e => e.source === 'manual');
 const prevBls = (prev.events || []).filter(e => e.source === 'bls-ics');
+const prevBea = (prev.events || []).filter(e => e.source === 'bea-ics');
 const ruleBased = NFP_RULE ? nfpByRule(today, horizonEnd) : (prev.events || []).filter(e => e.source === 'rule');
 
-const events = [...fed.events, ...(blsOk ? bls.events : prevBls), ...manual, ...ruleBased]
+const events = [...fed.events, ...(blsOk ? bls.events : prevBls), ...(beaOk ? bea.events : prevBea), ...manual, ...ruleBased]
   .filter(e => e.date >= today && e.date <= horizonEnd)
   .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
@@ -216,6 +261,7 @@ const events = [...fed.events, ...(blsOk ? bls.events : prevBls), ...manual, ...
 // empty result after a "successful" fetch still has to read as not-loaded downstream.
 const blsRows = events.filter(e => e.source === 'bls-ics' || e.source === 'manual');
 const fedRows = events.filter(e => e.source === 'fed-json');
+const beaRows = events.filter(e => e.source === 'bea-ics');
 const blsInWindow = blsRows.length;
 
 // PER-SOURCE COVERAGE, not one asserted horizon. `horizonEnd` is only the window this
@@ -232,10 +278,12 @@ const out = {
   blsLoaded: blsInWindow > 0,
   blsThrough: maxDate(blsRows),
   fedThrough: maxDate(fedRows),
+  beaThrough: maxDate(beaRows),
   events,
 };
 console.log(`  Fed events run to: ${out.fedThrough || '—'}`);
 console.log(`  BLS events run to: ${out.blsThrough || '—'}`);
+console.log(`  BEA events run to: ${out.beaThrough || '—'}`);
 writeFileSync(OUT, header + 'export default ' + JSON.stringify(out, null, 2) + ';\n');
 
 console.log(`\nWrote ${events.length} events to ${OUT}`);
@@ -252,11 +300,8 @@ if (!blsInWindow) {
   console.log(`  next CPI: ${nextCpi ? `${nextCpi.date} ${nextCpi.time} ET` : '—'}`);
   console.log(`  next NFP: ${nextNfp ? `${nextNfp.date} ${nextNfp.time} ET` : '—'}`);
 }
-if (!events.some(e => e.kind === 'PCE')) {
-  console.log(`
-Note: PCE is published by the BEA and appears in neither feed. If you want it warned on,
-add entries by hand with source:"manual" from bea.gov's release schedule.`);
-}
+const nextPce = events.find(e => e.kind === 'PCE');
+console.log(`  next PCE: ${nextPce ? `${nextPce.date} ${nextPce.time} ET` : '— (BEA feed returned none)'}`);
 if (ruleBased.length) {
   console.log(`\n${ruleBased.length} rule-derived date(s) included — flagged as unconfirmed on the ticket.`);
 }
