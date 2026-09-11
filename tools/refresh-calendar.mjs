@@ -7,10 +7,13 @@
  *   node tools/refresh-calendar.mjs --months 9      # horizon (default 9 months)
  *
  * WHAT IS AUTOMATED AND WHAT IS NOT
- * The Fed publishes a machine-readable calendar and it is pulled and verified here.
- * The BLS does not: bls.gov blocks automated requests, so CPI, PPI and payrolls dates
- * are typed in by hand from https://www.bls.gov/schedule/news_release/ — once or twice
- * a year, when the next year's schedule is published. This script never invents them.
+ * Fed events come from federalreserve.gov/json/calendar.json.
+ * BLS releases come from the published iCalendar feed, bls.gov/schedule/news_release/bls.ics.
+ * (The HTML schedule page blocks automated requests; the .ics does not, and it is better
+ * data anyway — it carries the exact release TIME, which is what decides whether a 0DTE
+ * event lands before the open or inside the session.)
+ *
+ * PCE is BEA, not BLS, and is in neither feed. It stays a manual entry.
  *
  * HOW FOMC STATEMENTS ARE TOLD FROM MINUTES
  * The Fed feed tags both as type "FOMC" with no further distinction. But a statement
@@ -29,6 +32,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // imported them outside the bundler.
 const OUT = join(HERE, '..', 'client', 'src', 'engine', 'econ-calendar.js');
 const FED_URL = 'https://www.federalreserve.gov/json/calendar.json';
+const BLS_URL = 'https://www.bls.gov/schedule/news_release/bls.ics';
+
+// Which BLS releases are worth a warning, and how hard. The feed carries ~270 events a
+// year, the overwhelming majority of which (state and metro breakdowns, annual surveys,
+// productivity revisions) never move SPX by a tick. Warning on those would bury the
+// three that matter. Anything not on this list is deliberately dropped.
+const BLS_KINDS = {
+  'Employment Situation': { kind: 'NFP', label: 'Employment Situation (payrolls)' },
+  'Consumer Price Index': { kind: 'CPI', label: 'CPI' },
+  'Producer Price Index': { kind: 'PPI', label: 'PPI' },
+  'Employment Cost Index': { kind: 'ECI', label: 'Employment Cost Index' },
+  'Job Openings and Labor Turnover Survey': { kind: 'JOLTS', label: 'JOLTS' },
+};
 
 const args = process.argv.slice(2);
 const argOf = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
@@ -90,6 +106,46 @@ async function fedEvents() {
   return { events, unverified, statements: statements.length, minutes: events.filter(e => e.kind === 'FOMC_MINUTES').length };
 }
 
+// ── BLS (iCalendar) ──────────────────────────────────────────────────────────
+async function blsEvents() {
+  const res = await fetch(BLS_URL, { headers: { 'User-Agent': 'options-tracker/1.0' } });
+  if (!res.ok) throw new Error(`BLS ics HTTP ${res.status}`);
+  const raw = await res.text();
+
+  // RFC 5545 line folding: a continuation line begins with a space or tab and belongs
+  // to the previous one. Unfold before parsing or long SUMMARY values split in half.
+  const lines = raw.replace(/\r\n/g, '\n').replace(/\n[ \t]/g, '').split('\n');
+
+  const out = [];
+  let cur = null;
+  let skipped = 0;
+  for (const line of lines) {
+    if (line.startsWith('BEGIN:VEVENT')) { cur = {}; continue; }
+    if (line.startsWith('END:VEVENT')) {
+      if (cur && cur.date && cur.summary) {
+        const hit = BLS_KINDS[cur.summary];
+        if (hit) {
+          out.push({ date: cur.date, time: cur.time || '08:30', kind: hit.kind, label: hit.label, source: 'bls-ics' });
+        } else skipped++;
+      }
+      cur = null; continue;
+    }
+    if (!cur) continue;
+    // DTSTART;TZID=US-Eastern:20250103T100000  — the feed publishes ET, which is
+    // exactly the timezone the engines reason in, so no conversion is needed.
+    const dt = /^DTSTART[^:]*:(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(line);
+    if (dt) {
+      cur.date = `${dt[1]}-${dt[2]}-${dt[3]}`;
+      if (dt[4]) cur.time = `${dt[4]}:${dt[5]}`;
+      continue;
+    }
+    if (line.startsWith('SUMMARY:')) {
+      cur.summary = line.slice(8).replace(/\\,/g, ',').replace(/\\;/g, ';').trim();
+    }
+  }
+  return { events: out, skipped };
+}
+
 // ── NFP by rule (opt-in, explicitly marked as unconfirmed) ───────────────────
 // First Friday of each month is right most of the time and wrong often enough to
 // matter, so these are written with source:"rule" and the engines label them
@@ -134,35 +190,59 @@ try {
   process.exit(1);
 }
 
-// Keep every hand-entered BLS/BEA event; replace only what this script owns.
+let bls = { events: [], skipped: 0 };
+let blsOk = false;
+try {
+  bls = await blsEvents();
+  blsOk = true;
+  const byKind = bls.events.reduce((m, e) => (m[e.kind] = (m[e.kind] || 0) + 1, m), {});
+  console.log(`BLS: ${bls.events.length} market-moving releases (${Object.entries(byKind).map(([k, n]) => `${n}× ${k}`).join(', ')}), ${bls.skipped} minor releases ignored`);
+} catch (e) {
+  console.error(`BLS feed FAILED: ${e.message}`);
+  console.error('Keeping existing BLS entries. blsLoaded will reflect what is actually there,');
+  console.error('so the ticket keeps saying which releases are unchecked rather than going quiet.');
+}
+
+// Keep every hand-entered event (PCE and anything else neither feed carries).
 const manual = (prev.events || []).filter(e => e.source === 'manual');
+const prevBls = (prev.events || []).filter(e => e.source === 'bls-ics');
 const ruleBased = NFP_RULE ? nfpByRule(today, horizonEnd) : (prev.events || []).filter(e => e.source === 'rule');
 
-const events = [...fed.events, ...manual, ...ruleBased]
+const events = [...fed.events, ...(blsOk ? bls.events : prevBls), ...manual, ...ruleBased]
   .filter(e => e.date >= today && e.date <= horizonEnd)
   .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+// blsLoaded is derived from what actually landed in the window, never assumed: an
+// empty result after a "successful" fetch still has to read as not-loaded downstream.
+const blsInWindow = events.filter(e => e.source === 'bls-ics' || e.source === 'manual').length;
 
 const out = {
   ...prev,
   generatedAt: today,
   horizonEnd,
-  blsLoaded: manual.length > 0,
+  blsLoaded: blsInWindow > 0,
   events,
 };
 writeFileSync(OUT, header + 'export default ' + JSON.stringify(out, null, 2) + ';\n');
 
 console.log(`\nWrote ${events.length} events to ${OUT}`);
 console.log(`Horizon: ${today} → ${horizonEnd}`);
-if (!manual.length) {
+if (!blsInWindow) {
   console.log(`
-⚠ No BLS dates loaded (blsLoaded:false).
-  CPI, PPI, payrolls and PCE are NOT being checked. Both engines say so on every
-  ticket rather than showing a clean calendar, because an empty calendar and a clear
-  calendar are indistinguishable otherwise.
-
-  To fix: open https://www.bls.gov/schedule/news_release/ and add entries with
-  source:"manual" to econ-calendar.json — see _blsTemplate_DeleteWhenFilled in the file.
-  BLS blocks automated requests, so this step cannot be scripted.`);
+⚠ No BLS releases landed in the window (blsLoaded:false).
+  CPI, PPI and payrolls are NOT being checked, and both engines say so on every ticket
+  rather than showing a clean calendar — an empty calendar and a clear calendar are
+  otherwise indistinguishable.`);
+} else {
+  const nextCpi = events.find(e => e.kind === 'CPI');
+  const nextNfp = events.find(e => e.kind === 'NFP');
+  console.log(`  next CPI: ${nextCpi ? `${nextCpi.date} ${nextCpi.time} ET` : '—'}`);
+  console.log(`  next NFP: ${nextNfp ? `${nextNfp.date} ${nextNfp.time} ET` : '—'}`);
+}
+if (!events.some(e => e.kind === 'PCE')) {
+  console.log(`
+Note: PCE is published by the BEA and appears in neither feed. If you want it warned on,
+add entries by hand with source:"manual" from bea.gov's release schedule.`);
 }
 if (ruleBased.length) {
   console.log(`\n${ruleBased.length} rule-derived date(s) included — flagged as unconfirmed on the ticket.`);

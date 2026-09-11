@@ -51,6 +51,7 @@ export default {
     "PCE": "high",
     "FOMC_MINUTES": "medium",
     "PPI": "medium",
+    "ECI": "medium",
     "RETAIL_SALES": "medium",
     "ISM": "medium",
     "GDP": "medium",
