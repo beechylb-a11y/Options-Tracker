@@ -3,6 +3,7 @@
 //  Pure functions — no DOM access.
 // ================================================================
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE } from './data.js';
+import { eventRisk45DTE, nowET } from './events.js';
 
 function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
@@ -443,6 +444,13 @@ export function calc45DTE(inputs) {
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');
   if (greeks && greeks.tvRatio > 4) warnings.push('Vega/theta elevated — vol expansion risk');
+  // ── Scheduled macro events between entry and expiry (Aug 2026) ──
+  // For a premium seller the COUNT matters more than any single date: each event is
+  // another chance for vol to expand through the wings over a 45-day hold. Events in
+  // the final week get called out separately — least time to recover, sharpest gamma.
+  // Warn-only; the scorecard is untouched.
+  const _ev45 = eventRisk45DTE(nowET().dateISO, dte);
+  _ev45.warnings.forEach(w => warnings.push(w));
 
   let decision, decisionClass;
   if (hardBlocker) { decision='No trade'; decisionClass='nogo'; }
@@ -547,6 +555,7 @@ export function calc45DTE(inputs) {
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, engineLegs, strikeOrderWarning, strikeLine,
+    eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,

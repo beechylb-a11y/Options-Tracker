@@ -1,0 +1,369 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 6 Sep 2026 08:49:49 +0000
+Subject: [PATCH] Frictions filter: price the spread and commission against max
+ profit
+
+Every other gauge on the ticket asks whether a trade is likely to WIN. This one
+asks whether winning is worth anything once you have paid to get in and out --
+the only measure that separates a thin structure from a good one before the
+market has an opinion.
+
+The four 0DTE candidates on 2-3 Sep 2026 are why. All four finished green and
+looked interchangeable on outcome; on this number they are not close:
+
+  QQQ 707/710/715 call fly      5.1%   acceptable
+  SPY 769/772/778 call fly      7.0%   acceptable
+  SPY 769/771 bull call        22.4%   prohibitive
+  QQQ 700/703 711/714 condor   28.8%   prohibitive
+
+The condor held the HIGHEST probability of the four (82%) and the widest cushion
+(1.35x EM), and still gives up more than a quarter of its best case to execution.
+A payoff that thin is not a probability problem and no POP repairs it.
+
+  data.js       comboQuote() rebuilds a combo bid/ask from per-leg quotes -- buy
+                pays the ask on longs, receives the bid on shorts. Reproduces the
+                TWS Strategy Builder quote to within a cent on flies, verticals
+                and condors. computeFrictions() charges the spread round trip
+                (you cross it twice) plus commission on every leg both ways, over
+                max profit per contract. Bands: <5% clean, <10% acceptable,
+                <20% heavy, else prohibitive. Shared, so 45DTE can adopt it.
+  calc0dte.js   computes it and raises ONE warning at the prohibitive band.
+                Leg count comes from the payoff's legs, not the suggestion's -- a
+                4-leg dual-EM suggestion is two alternative 2-leg spreads, and
+                billing four legs of commission on it is wrong.
+  bridge        reqMktData already carried the quote alongside the greeks and we
+                were discarding it; a tickPrice listener keeps it, and the
+                endpoint returns a combo bid/ask when EVERY leg quoted (a partial
+                sum is a wrong number, not an approximate one).
+  EnginePanel   combo bid/ask fill from Fetch Greeks, or type them from TWS with
+                no bridge at all. Absent a quote the gauge says so rather than
+                inventing a spread.
+
+Display only: it drives one warning and no gate. Nothing about score, EV, Kelly,
+P(max loss) or any blocker changes -- asserted directly in the tests.
+
+Verified: vite build clean; node --check clean on the bridge; 14/14 vitest specs
+pass. Two of them earned their place -- comboQuote accepted a leg with a null bid
+because Number(null) is 0 and passes isFinite, silently summing a missing quote
+as zero; and rounding both per-contract and at contract scale produced "$10 each,
+$99 for ten", so the helper now returns exact dollars and the UI rounds once.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01JjhAMnUKKoQprRD5i9gHnN
+---
+ bridge/index.js                       | 32 +++++++++++-
+ client/src/components/EnginePanel.jsx | 50 ++++++++++++++++++-
+ client/src/engine/calc0dte.js         | 25 +++++++++-
+ client/src/engine/data.js             | 71 +++++++++++++++++++++++++++
+ 4 files changed, 173 insertions(+), 5 deletions(-)
+
+diff --git a/bridge/index.js b/bridge/index.js
+index 303313a..1f762f9 100644
+--- a/bridge/index.js
++++ b/bridge/index.js
+@@ -199,12 +199,22 @@ function getOptionGreeks(contract) {
+     let fallback = null;   // best non-model computation seen, used only if 13 never lands
+     let graceTimer = null; // short wait for the model tick once a fallback exists
+     let hardTimer = null;
++    // The same reqMktData that carries the greeks already carries the quote; we
++    // were throwing it away. Keeping it is what lets the app price the SPREAD of a
++    // structure rather than only its mid, which is the difference between knowing
++    // a trade is likely to win and knowing whether winning pays for the execution.
++    // (Sep 2026.) Fields: 1/2 real-time bid/ask, 66/67 the delayed equivalents.
++    const quote = { bid: null, ask: null };
+     const done = (data) => {
+       if (resolved) return;
+       resolved = true;
++      if (data && typeof data === 'object' && !data.notSubscribed) {
++        data.bid = quote.bid; data.ask = quote.ask;
++      }
+       if (graceTimer) clearTimeout(graceTimer);
+       if (hardTimer) clearTimeout(hardTimer);
+       ib.removeListener(EventName.tickOptionComputation, onGreeks);
++      ib.removeListener(EventName.tickPrice, onPrice);
+       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
+       ib.removeListener(EventName.marketDataType, onMdType);
+       ib.removeListener(EventName.error, onErr);
+@@ -246,6 +256,11 @@ function getOptionGreeks(contract) {
+       if (!fallback || (TICK_RANK[tickType] || 0) > (TICK_RANK[fallback.tickType] || 0)) fallback = g;
+       if (!graceTimer) graceTimer = setTimeout(() => done(fallback), 1500);
+     };
++    const onPrice = (id, field, value) => {
++      if (id !== reqId || value == null || !(value >= 0)) return;
++      if (field === 1 || field === 66) quote.bid = +Number(value).toFixed(2);
++      else if (field === 2 || field === 67) quote.ask = +Number(value).toFixed(2);
++    };
+     const onEnd = (id) => { if (id === reqId) done(fallback); };
+     const onMdType = (id, type) => { if (id === reqId) mdType = type; };
+     // Market-data-not-subscribed errors (scoped to THIS request).
+@@ -255,6 +270,7 @@ function getOptionGreeks(contract) {
+     };
+     ib.on(EventName.error, onErr);
+     ib.on(EventName.tickOptionComputation, onGreeks);
++    ib.on(EventName.tickPrice, onPrice);
+     ib.on(EventName.tickSnapshotEnd, onEnd);
+     ib.on(EventName.marketDataType, onMdType);
+     // genericTickList '106' = implied vol / model greeks; snapshot=false because
+@@ -750,11 +766,25 @@ app.get('/api/option-greeks', async (req, res) => {
+     // here handed the engine a decay-EARNED number for every position, including the
+     // ones bleeding theta every hour - which is how a long fly came back looking like
+     // a premium seller. (Jul 2026.)
++    // Combo bid/ask from the per-leg quotes. Buying a spread pays the ask on the
++    // legs you are long and receives the bid on the ones you are short; selling it
++    // is the mirror. Reproduces the TWS combo quote to the cent on flies, verticals
++    // and condors. Null unless EVERY leg quoted - a partial sum is a wrong number,
++    // not an approximate one. (Sep 2026.)
++    let comboBid = 0, comboAsk = 0, comboOk = results.length > 0;
++    for (const r of results) {
++      const b = r.greeks && r.greeks.bid, a = r.greeks && r.greeks.ask, q = r.qty || 1;
++      if (b == null || a == null || !isFinite(b) || !isFinite(a)) { comboOk = false; break; }
++      comboAsk += q > 0 ? q * a : q * b;
++      comboBid += q > 0 ? q * b : q * a;
++    }
+     const netOut = haveAny ? {
+       delta: +net.delta.toFixed(2),
+       gamma: +net.gamma.toFixed(2),
+       theta: +net.theta.toFixed(2),
+-      vega: +net.vega.toFixed(2)
++      vega: +net.vega.toFixed(2),
++      bid: comboOk ? +comboBid.toFixed(2) : null,
++      ask: comboOk ? +comboAsk.toFixed(2) : null
+     } : null;
+ 
+     // Feed freshness: which IBKR data type actually served these greeks, plus the
+diff --git a/client/src/components/EnginePanel.jsx b/client/src/components/EnginePanel.jsx
+index e4f41d2..7611ffd 100644
+--- a/client/src/components/EnginePanel.jsx
++++ b/client/src/components/EnginePanel.jsx
+@@ -296,7 +296,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
+     em:'', atr5:'', atr2h:'', atr:'',
+     vix:'', vix1d:'', ivx:'',
+     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
+-    win:'', risk:'', pop:'', hours:'', netCreditDebit:'',
++    win:'', risk:'', pop:'', hours:'', netCreditDebit:'', comboBid:'', comboAsk:'',
+     theta:'', delta:'', gamma:'', gamStrike:'',
+     lowerWingDelta:'', upperWingDelta:'',
+     emSource:'', straddleCall:'', straddlePut:'', straddleHaircut:'1.2533',
+@@ -438,6 +438,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
+           bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
+           risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
+         netCreditDebit:fv(i0,'netCreditDebit'),
++          comboBid: i0.comboBid !== '' ? parseFloat(i0.comboBid) : null,
++          comboAsk: i0.comboAsk !== '' ? parseFloat(i0.comboAsk) : null,
+           maxOpen:fv(i0,'maxOpen'), pop:fv(i0,'pop'), theta:fv(i0,'theta'),
+           delta:fv(i0,'delta'), gamma:fv(i0,'gamma'), hours:fv(i0,'hours'),
+           underlying:i0.underlying,
+@@ -870,6 +872,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
+           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
+           gamma: d.net.gamma != null ? String(d.net.gamma) : prev.gamma,
+           gamStrike: bodyLeg ? String(bodyLeg.strike) : prev.gamStrike,
++          // The combo quote rides along with the greeks fetch, so the frictions
++          // gauge fills itself on the same click. Only when every leg quoted.
++          comboBid: d.net.bid != null ? String(d.net.bid) : prev.comboBid,
++          comboAsk: d.net.ask != null ? String(d.net.ask) : prev.comboAsk,
+           ivx: avgIV || prev.ivx,
+           lowerWingDelta: lowerWD || prev.lowerWingDelta,
+           upperWingDelta: upperWD || prev.upperWingDelta
+@@ -1842,7 +1848,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
+           {/* Session & sizing */}
+           <InputSection
+             title={is0 ? 'Session & sizing' : 'Sizing'}
+-            info="Net credit/debit pre-fills from the engine's TARGET for this structure and is flagged as such until you change it — replace it with your broker's actual fill, because this is the number written to the trade log. Positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width."
++            info="Net credit/debit pre-fills from the engine's TARGET for this structure and is flagged as such until you change it — replace it with your broker's actual fill, because this is the number written to the trade log. Positive for credit, negative for debit. Label and box colour change automatically. POP = probability of profit (red if below breakeven POP). Win = max profit, Risk = max loss per contract (red if exceeds Kelly $). Credit/debit tape shows where your fill sits vs target range. Profit targets show TWS limit order values at 25/30/40/50/75/100%. Butterfly debit blocked above 55% of wing width. Frictions = spread (round trip) + commission as a share of MAX PROFIT — the one gauge that asks whether winning is worth anything after execution, rather than how likely winning is. Under 5% is clean, over 20% means the payoff is too thin to survive its own costs and no probability repairs it."
+             missing={secMissing.sizing}
+             collapsed={isCollapsed('sizing')}
+             onToggle={() => toggleSection('sizing')}
+@@ -1955,6 +1961,46 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
+                 onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
+             </div>
+           </div>
++          {/* Combo quote — the two numbers TWS prints under the Strategy Builder.
++              Fetch Greeks fills them from the bridge; typed by hand they work with
++              no bridge at all. They drive the frictions gauge below and nothing else. */}
++          <div className="grid grid-cols-2 gap-2.5 mt-2">
++            <Inp label="Combo bid" value={is0?i0.comboBid:i45.comboBid}
++              onChange={v=>is0?set0('comboBid',v):set45('comboBid',v)}/>
++            <Inp label="Combo ask" value={is0?i0.comboAsk:i45.comboAsk}
++              onChange={v=>is0?set0('comboAsk',v):set45('comboAsk',v)}/>
++          </div>
++          {(() => {
++            const f = r.frictions;
++            if (!f) return (
++              <div style={{marginTop:8,fontSize:11,color:'#6e7681',lineHeight:1.5}}>
++                Enter the combo bid/ask above (or press Fetch Greeks) to price what getting
++                in and out of this structure costs against its maximum profit.
++              </div>
++            );
++            const col = f.signal === 'clean' ? '#3fb950' : f.signal === 'acceptable' ? '#7bc74d'
++              : f.signal === 'heavy' ? '#d29922' : '#f85149';
++            const bg  = f.signal === 'prohibitive' ? '#2d0f0f' : f.signal === 'heavy' ? '#2a1f00' : '#0d1117';
++            return (
++              <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:bg,
++                border:`1px solid ${f.signal === 'prohibitive' ? '#5c1f1f' : '#21262d'}`,
++                fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
++                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:10}}>
++                  <span style={{fontWeight:600}}>Frictions</span>
++                  <span className="mono" style={{color:col,fontWeight:700}}>
++                    {(f.pct * 100).toFixed(0)}% of max profit · {f.signal}
++                  </span>
++                </div>
++                <div style={{fontSize:11,color:'#8b949e',marginTop:3}}>
++                  spread {f.spreadWidth.toFixed(2)} wide → ${Math.round(f.spreadCost)} round trip · commission
++                  ${f.commission.toFixed(2)} on {f.legCount} legs · <strong style={{color:'#c9d1d9'}}>${Math.round(f.total)}</strong> to
++                  get in and out of ${Math.round(fv(is0?i0:i45,'win'))} max profit
++                  {r.contracts > 1 && <> · ${Math.round(f.totalAll)} at {r.contracts} contracts</>}
++                </div>
++                <div style={{fontSize:11,color:col,marginTop:4}}>{f.action}</div>
++              </div>
++            );
++          })()}
+           {/* Risk budget — the account limits Kelly sizing is computed against.
+               These fields have no inputs on the panel (they seed from the account
+               config), so without this line the denominator was un-auditable. */}
+diff --git a/client/src/engine/calc0dte.js b/client/src/engine/calc0dte.js
+index 5f8c31f..76aa782 100644
+--- a/client/src/engine/calc0dte.js
++++ b/client/src/engine/calc0dte.js
+@@ -2,7 +2,7 @@
+ //  0DTE CALCULATION ENGINE v2
+ //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
+ // ================================================================
+-import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE } from './data.js';
++import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
+ 
+ // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
+ // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
+@@ -204,7 +204,10 @@ export function calc0DTE(inputs) {
+     // by strategy name (the engine indexes it by its own legStrat below).
+     // wingDeltas: { lowerAbsDelta, upperAbsDelta } — |delta| of the outer wing
+     // options from the live chain, for the skew-aware P(max loss) cross-check.
+-    history: historyInput, historyByStrategy, wingDeltas } = inputs;
++    history: historyInput, historyByStrategy, wingDeltas,
++    // Quoted bid/ask of the WHOLE structure, from TWS or rebuilt from the per-leg
++    // quotes the bridge returns. Optional: absent it the frictions gauge says so.
++    comboBid, comboAsk } = inputs;
+ 
+   const hasPrice = price > 0;
+   const hasComp = atr5 > 0 && atr2h > 0;
+@@ -1989,6 +1992,18 @@ export function calc0DTE(inputs) {
+   const maxRisk = contracts * risk;
+   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
+ 
++  // ── Execution frictions ── what getting in and out costs, against max profit.
++  // Display only: it feeds one warning at the prohibitive band and no gate.
++  // (Sep 2026 — see FRICTION_DEFAULTS in data.js for why this earns a place.)
++  // Leg count comes from the PAYOFF's legs, not the suggestion's. A 4-leg dual-EM
++  // suggestion is two alternative 2-leg spreads, so `legs.length` there would bill
++  // commission on a structure you are not going to trade.
++  const frictions = computeFrictions({
++    comboBid, comboAsk, win,
++    legCount: (payoff && payoff.legs && payoff.legs.length) || legs.length,
++    contracts
++  });
++
+   // ── Greeks analysis ──
+   let greeks = null;
+   if (hasGreeks && atr > 0) {
+@@ -2190,6 +2205,11 @@ export function calc0DTE(inputs) {
+   }
+   if (greeks && !greeks.thetaPaid && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
+   if (greeks && !greeks.thetaPaid && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
++  if (frictions && frictions.signal === 'prohibitive') {
++    warnings.push(`Frictions ${(frictions.pct * 100).toFixed(0)}% of max profit `
++      + `($${Math.round(frictions.total)} to get in and out of $${Math.round(win)}) — the payoff is too thin `
++      + `to survive its own execution`);
++  }
+   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
+   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
+   if (vixHigh) warnings.push('VIX >25 — half-size override');
+@@ -2400,6 +2420,7 @@ export function calc0DTE(inputs) {
+     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
+     pMaxLossBasis,
+     // Kelly (Sharpe-adjusted)
++    frictions,
+     kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
+     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
+diff --git a/client/src/engine/data.js b/client/src/engine/data.js
+index be273c7..09e4400 100644
+--- a/client/src/engine/data.js
++++ b/client/src/engine/data.js
+@@ -5,6 +5,77 @@
+ 
+ export const SQRT252 = Math.sqrt(252);
+ 
++// ── Execution frictions ──────────────────────────────────────────────────────
++// Spread plus commission as a share of MAX PROFIT.
++//
++// Every other gauge on the ticket asks whether the trade is likely to WIN. This
++// one asks whether winning is worth anything after you have paid to get in and
++// out, and it is the only measure that separates a thin structure from a good
++// one BEFORE the market has an opinion. Four 0DTE candidates on 2-3 Sep 2026 all
++// finished green and looked interchangeable on outcome; on this number they were
++// not close - two call flies at 5-7%, a deep-ITM bull call at 22% and an iron
++// condor at 29%, with the condor holding the HIGHEST probability of the four
++// (82%) and the widest cushion (1.35x EM). A payoff that thin is not a
++// probability problem and no POP repairs it.
++//
++// Round trip, because you pay the spread twice: crossing a ROUND_TRIP_SPREADS
++// multiple of the quoted width, plus commission on every leg both ways.
++// Denominator is max profit per contract - the checkable number a trader already
++// has in front of them, not a capture-adjusted estimate.
++//
++// Defaults are IBKR tiered US equity options (~$0.65/contract/side). Override
++// commissionPerContract per account if that is wrong for you. (Sep 2026.)
++export const FRICTION_DEFAULTS = { commissionPerContract: 0.65, roundTripSpreads: 1.0 };
++
++// bid/ask of a COMBO from its per-leg quotes: buying pays the ask on longs and
++// receives the bid on shorts, and the reverse for the side you sell out on.
++// Reproduces the TWS combo quote to the cent on flies, verticals and condors.
++export function comboQuote(legs) {
++  if (!Array.isArray(legs) || !legs.length) return null;
++  let bid = 0, ask = 0;
++  const num = x => (x === null || x === undefined || x === '' || Number.isNaN(Number(x)))
++    ? null : Number(x);   // Number(null) is 0, so a missing quote must be rejected first
++  for (const l of legs) {
++    const q = num(l.qty), b = num(l.bid), a = num(l.ask);
++    if (q === null || b === null || a === null || !isFinite(q) || !isFinite(b)
++        || !isFinite(a) || q === 0) return null;
++    ask += q > 0 ? q * a : q * b;
++    bid += q > 0 ? q * b : q * a;
++  }
++  return { bid: +bid.toFixed(2), ask: +ask.toFixed(2) };
++}
++
++// win = max profit per contract in DOLLARS. legCount = number of option legs.
++// Returns null when the combo quote is unknown - the gauge reads "not available"
++// rather than inventing a spread.
++export function computeFrictions({ comboBid, comboAsk, win, legCount, contracts = 1, opts = {} }) {
++  const cfg = { ...FRICTION_DEFAULTS, ...opts };
++  const ok = x => !(x === null || x === undefined || x === '' || Number.isNaN(Number(x)));
++  if (!ok(comboBid) || !ok(comboAsk)) return null;
++  const b = Number(comboBid), a = Number(comboAsk);
++  if (!isFinite(b) || !isFinite(a) || !(win > 0) || !(legCount > 0)) return null;
++  const width = Math.abs(a - b);
++  if (!isFinite(width)) return null;
++  const spread$ = width * 100 * cfg.roundTripSpreads;          // per contract, round trip
++  const commission$ = cfg.commissionPerContract * legCount * 2; // both ways
++  const total$ = spread$ + commission$;
++  const pct = total$ / win;
++  const signal = pct < 0.05 ? 'clean' : pct < 0.10 ? 'acceptable'
++    : pct < 0.20 ? 'heavy' : 'prohibitive';
++  const action = pct < 0.05 ? 'Execution is not a factor in this trade'
++    : pct < 0.10 ? 'Normal cost of doing business - worth a limit order, not a worry'
++    : pct < 0.20 ? 'Getting in and out costs a meaningful slice of the best case - work the fill or widen the structure'
++    : 'The payoff is too thin to survive its own execution. Probability does not fix this - pick a structure with more to win.';
++  return {
++    comboBid: +b.toFixed(2), comboAsk: +a.toFixed(2), spreadWidth: +width.toFixed(2),
++    // Exact dollars; the UI rounds. Rounding here and again at contract scale
++    // made "$10 each, $99 for ten" — arithmetic the reader has to forgive.
++    spreadCost: spread$, commission: commission$, total: total$,
++    totalAll: total$ * (contracts || 1),
++    pct, signal, action, legCount
++  };
++}
++
+ export const STRATS_0DTE = [
+   'Chicken condor', 'Broken wing butterfly', 'Asymmetric butterfly',
+   'Standard butterfly', 'Iron Condor - Normal', 'Long Condor - Reversed',

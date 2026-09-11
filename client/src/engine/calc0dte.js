@@ -3,6 +3,7 @@
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
+import { eventRisk0DTE, nowET } from './events.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -2234,6 +2235,15 @@ export function calc0DTE(inputs) {
       warnings.push(`${v.label}: short strike ${v.otmEM.toFixed(1)}× EM remaining OTM — credit will be negligible`);
     }
   }
+  // ── Scheduled macro events (Aug 2026) ──
+  // Warn-only by design: a release is a fact about the day, not a verdict on the
+  // structure. Timing is the whole point — an 08:30 print is already out before a
+  // 0DTE is ever traded, while a 14:00 FOMC lands mid-position. The module also
+  // reports what it CANNOT see (no BLS dates, stale file), because on a ticket an
+  // empty calendar and a clear calendar look identical.
+  const _et = nowET();
+  const _ev0 = eventRisk0DTE(_et.dateISO, _et.minutes);
+  _ev0.warnings.forEach(w => warnings.push(w));
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -2405,6 +2415,7 @@ export function calc0DTE(inputs) {
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
     vertVariants, vertVariant: vertVariantId, priceCheck,
+    eventsToday: _ev0.events,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)
