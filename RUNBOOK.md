@@ -173,7 +173,65 @@ Safe to delete the row; the refresh token lives only in Railway's `GOOGLE_TOKENS
 
 ---
 
-## 4. Deploy
+## 4. Macro event calendar
+
+```bash
+cd ~/Options-Tracker
+node tools/refresh-calendar.mjs
+git add -A && git commit -m "Refresh macro event calendar" && git push origin main
+```
+
+Rewrites `client/src/engine/econ-calendar.js`. Railway redeploys on push — no bridge
+reload, this is client-side.
+
+### How often
+
+There is no cadence to remember: **the ticket tells you 30 days before a feed runs out**,
+and again once it actually has. Run it when you see either notice, or monthly if you
+prefer a habit. A scheduled task ("Macro calendar check") also checks the runway monthly.
+
+BLS is almost always the binding constraint — it schedules least far ahead. As of
+2026-09-11: Fed to 2026-12-30, BEA to 2026-12-23, **BLS to 2026-12-15**. Next year's
+schedules usually publish in autumn, so a refresh then should extend all three well
+into 2027.
+
+### The three feeds
+
+| Source | URL | Gives |
+|---|---|---|
+| Fed | `federalreserve.gov/json/calendar.json` | FOMC statements, minutes |
+| BLS | `bls.gov/schedule/news_release/bls.ics` | CPI, PPI, payrolls, ECI, JOLTS |
+| BEA | `bea.gov/news/schedule/ics/online-calendar-subscription.ics` | PCE, GDP |
+
+All three are automated. Two traps are already handled, and both would fail *silently*
+if reintroduced:
+
+- **BEA publishes UTC** (`DTSTART:...Z`); BLS publishes `TZID=US-Eastern`. Reading BEA's
+  digits raw turns an 08:30 pre-open PCE into a 12:30 intraday event — four hours wrong,
+  and wrong in the direction that inverts the entire 0DTE pre-open/intraday distinction.
+  Conversion goes through `Intl` so DST is handled, not assumed.
+- **BEA never says "PCE."** The release is titled `Personal Income and Outlays`. Matching
+  on the obvious word finds nothing and leaves a calendar that looks fine and is empty.
+
+`bls.gov/schedule/news_release/` (the HTML page) blocks automated requests. The `.ics`
+does not. Don't switch back to scraping the page.
+
+### Reading the ticket
+
+Three tiers, and the distinction is deliberate:
+
+- **Blockers** (red) — the trade isn't takeable as configured
+- **Warnings** (amber; violet + 📅 for calendar ones) — takeable, but they downgrade the
+  decision to "Trade with caution"
+- **Notices** (grey) — facts about the *data*, never about the trade. They never gate the
+  decision. Coverage gaps live here, because a permanent alarm is an ignored alarm.
+
+Silence means checked and clear, never "didn't know" — that is what the coverage notices
+are protecting.
+
+---
+
+## 5. Deploy
 
 ```bash
 cd ~/Options-Tracker
@@ -203,7 +261,7 @@ A Vite/Rollup failure is the definitive signal for a JSX or syntax error.
 
 ---
 
-## 5. Trade-log analysis
+## 6. Trade-log analysis
 
 ```bash
 node tools/vwap-backtest.mjs
