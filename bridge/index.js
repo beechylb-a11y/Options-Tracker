@@ -297,7 +297,11 @@ function buildOptionContract(underlying, expiry, strike, right) {
     tradingClass: (u === 'SPX') ? 'SPXW' : undefined  // 0DTE SPX uses weeklys
   };
 }
-function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES) {
+// `endDateTime` was hardcoded to '' (meaning "now"), so bars could only ever be pulled
+// as a trailing window from the present. Walking backwards needs an explicit end, in
+// IBKR's "yyyymmdd hh:mm:ss" form — that is what lets /api/history chunk a long span
+// into requests small enough that IBKR will actually serve them.
+function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES, endDateTime = '') {
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
     const bars = [];
@@ -319,7 +323,7 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 
     ib.on(EventName.historicalData, onBar);
     ib.on(EventName.historicalDataEnd, onEnd);
-    ib.reqHistoricalData(reqId, contract, '', duration, barSize, whatToShow, 1, 1, false);
+    ib.reqHistoricalData(reqId, contract, endDateTime, duration, barSize, whatToShow, 1, 1, false);
 
     setTimeout(() => {
       if (!resolved) {
@@ -712,6 +716,67 @@ app.get('/api/market-data', async (req, res) => {
 });
 
 // Health check
+// ── Historical intraday bars, for backtesting ────────────────────────────────
+// GET /api/history?underlying=QQQ&barSize=5%20mins&months=3
+//
+// IBKR will not serve a long span of intraday bars in one request — the duration it
+// accepts shrinks as the bar size does, and asking for too much returns an error or a
+// pacing violation rather than a short answer. So this walks backwards in one-month
+// chunks and merges. Pacing matters too: IBKR allows roughly 6 historical requests per
+// 2 seconds and 60 per 10 minutes, so there is a deliberate delay between chunks.
+//
+// Bars come back with formatDate=1 and useRTH=1: "yyyymmdd  hh:mm:ss" strings in the
+// INSTRUMENT's timezone (US/Eastern for QQQ), regular hours only. That is already the
+// timezone the engines reason in, so no conversion — but it does mean these timestamps
+// are exchange-local, not UTC, and must not be parsed as if they were.
+app.get('/api/history', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+    const underlying = (req.query.underlying || 'QQQ').toUpperCase();
+    const barSize = req.query.barSize || '5 mins';
+    const months = Math.max(1, Math.min(12, parseInt(req.query.months || '3', 10)));
+    const contract = contracts[underlying];
+    if (!contract) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
+    const whatToShow = (contract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
+
+    const pad = n => String(n).padStart(2, '0');
+    const stamp = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+    const seen = new Set();
+    const all = [];
+    const errors = [];
+    let end = new Date();
+
+    for (let i = 0; i < months; i++) {
+      try {
+        const chunk = await getHistoricalBars(contract, '1 M', barSize, whatToShow, stamp(end));
+        console.log(`[BRIDGE] history chunk ${i + 1}/${months} ending ${stamp(end)}: ${chunk.length} bars`);
+        // Chunks overlap at the seams; dedupe on the timestamp rather than assuming.
+        for (const b of chunk) { if (!seen.has(b.date)) { seen.add(b.date); all.push(b); } }
+        if (!chunk.length) { errors.push(`chunk ending ${stamp(end)} returned no bars`); break; }
+      } catch (e) {
+        errors.push(`chunk ending ${stamp(end)}: ${e.message}`);
+      }
+      end = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
+      if (i < months - 1) await new Promise(r => setTimeout(r, 2000));  // IBKR pacing
+    }
+
+    all.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    res.json({
+      underlying, barSize, months, bars: all, count: all.length,
+      first: all[0]?.date || null, last: all[all.length - 1]?.date || null,
+      // Partial results are returned WITH their errors rather than thrown away — a short
+      // history is usable for a backtest as long as you know it is short.
+      errors: errors.length ? errors : undefined,
+      timezone: 'exchange-local (US/Eastern for US equities), RTH only',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, connected, timestamp: new Date().toISOString() });
 });
