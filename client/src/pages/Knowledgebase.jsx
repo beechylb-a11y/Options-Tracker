@@ -290,8 +290,8 @@ export default function Knowledgebase() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-medium text-text">{s.name}</h3>
-                      <span className={`badge text-[9px] ${s.type === 'Credit' ? 'badge-green' : s.type === 'Debit' ? 'badge-red' : 'badge-amber'}`}>{s.type}</span>
-                      <span className="text-[10px] text-text-faint">{s.legs} legs</span>
+                      <span className={`badge text-[11px] ${s.type === 'Credit' ? 'badge-green' : s.type === 'Debit' ? 'badge-red' : 'badge-amber'}`}>{s.type}</span>
+                      <span className="text-[12px] text-text-faint">{s.legs} legs</span>
                     </div>
                     {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
                   </div>
@@ -300,7 +300,7 @@ export default function Knowledgebase() {
 
                   <div className="flex gap-1 mb-2">
                     {s.tags.map(t => (
-                      <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-bg-hover text-text-faint">{t}</span>
+                      <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-bg-hover text-text-faint">{t}</span>
                     ))}
                   </div>
 
@@ -313,7 +313,7 @@ export default function Knowledgebase() {
                           <CardRow label="Risk" value={s.risk} cls="text-red" />
                           <CardRow label="Management" value={s.manage} />
                           <CardRow label="Greeks profile" value={s.greeks} cls="text-accent" />
-                          <div className="text-[10px] text-text-faint mt-1">DTE: {s.dte}</div>
+                          <div className="text-[12px] text-text-faint mt-1">DTE: {s.dte}</div>
                         </div>
                         <div style={{flex:'0 0 180px'}}>
                           <StrategyDiagram name={s.name} type={s.type} />
@@ -340,7 +340,7 @@ export default function Knowledgebase() {
               <div className="space-y-2">
                 {group.rules.map((rule, j) => (
                   <div key={j} className="flex items-start gap-2.5">
-                    <div className="w-5 h-5 rounded flex items-center justify-center bg-bg-hover text-text-faint text-[10px] font-medium flex-shrink-0 mt-0.5">
+                    <div className="w-5 h-5 rounded flex items-center justify-center bg-bg-hover text-text-faint text-[12px] font-medium flex-shrink-0 mt-0.5">
                       {j + 1}
                     </div>
                     <span className="text-sm text-text-muted">{rule}</span>
@@ -360,7 +360,7 @@ export default function Knowledgebase() {
               <h3 className="text-sm font-medium text-text flex items-center gap-2">
                 <CheckSquare size={14} className="text-accent" /> 0DTE Pre-Trade Checklist
               </h3>
-              <button onClick={() => setChecks0({})} className="text-[10px] text-text-faint hover:text-text">Reset</button>
+              <button onClick={() => setChecks0({})} className="text-[12px] text-text-faint hover:text-text">Reset</button>
             </div>
             <div className="space-y-1">
               {CHECKLIST_0DTE.map(c => (
@@ -380,7 +380,7 @@ export default function Knowledgebase() {
               <h3 className="text-sm font-medium text-text flex items-center gap-2">
                 <CheckSquare size={14} className="text-accent" /> 45DTE Pre-Trade Checklist
               </h3>
-              <button onClick={() => setChecks45({})} className="text-[10px] text-text-faint hover:text-text">Reset</button>
+              <button onClick={() => setChecks45({})} className="text-[12px] text-text-faint hover:text-text">Reset</button>
             </div>
             <div className="space-y-1">
               {CHECKLIST_45DTE.map(c => (
@@ -453,7 +453,7 @@ export default function Knowledgebase() {
             <div className="space-y-2">
               {[
                 { band: '< -10% (cheap)', colour: '#f85149', note: 'Short-term vol cheap. Favour long gamma: BWB, Asymmetric, Long Condor.' },
-                { band: '-10% to +10% (neutral)', colour: '#8b949e', note: 'Balanced. BWB, Asymmetric, Chicken Condor all viable.' },
+                { band: '-10% to +10% (neutral)', colour: '#a8b2be', note: 'Balanced. BWB, Asymmetric, Chicken Condor all viable.' },
                 { band: '+10% to +25% (rich)', colour: '#3fb950', note: 'Short-term vol rich. Iron Condor, Iron Butterfly, Chicken Condor favoured.' },
                 { band: '> +25% (very rich)', colour: '#d29922', note: 'Extremely rich — excellent premium selling but check for event risk.' },
               ].map((r, i) => (
@@ -478,7 +478,7 @@ export default function Knowledgebase() {
 function StrategyDiagram({ name, type }) {
   const W = 180, H = 100;
   const z = 50; // zero line Y
-  const g = '#3fb950', r = '#f85149', gr = '#8b949e';
+  const g = '#3fb950', r = '#f85149', gr = '#a8b2be';
 
   // Each strategy has a characteristic payoff shape
   const shapes = {
@@ -560,10 +560,10 @@ function StrategyDiagram({ name, type }) {
   if (!shape) {
     return (
       <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
-        <text x={W/2} y={10} textAnchor="middle" fill="#8b949e" fontSize="8" fontWeight="600">Payoff at expiry</text>
-        <line x1="10" y1={z} x2="170" y2={z} stroke="#484f58" strokeWidth="0.5" strokeDasharray="2,2"/>
+        <text x={W/2} y={10} textAnchor="middle" fill="#a8b2be" fontSize="8" fontWeight="600">Payoff at expiry</text>
+        <line x1="10" y1={z} x2="170" y2={z} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="2,2"/>
         <text x={W/2} y={z-6} textAnchor="middle" fill={gr} fontSize="8">No diagram for this strategy</text>
-        <text x={W/2} y={z+12} textAnchor="middle" fill="#484f58" fontSize="7">See the structure description</text>
+        <text x={W/2} y={z+12} textAnchor="middle" fill="#8b949e" fontSize="7">See the structure description</text>
       </svg>
     );
   }
@@ -572,10 +572,10 @@ function StrategyDiagram({ name, type }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
-      <text x={W/2} y={10} textAnchor="middle" fill="#8b949e" fontSize="8" fontWeight="600">Payoff at expiry</text>
+      <text x={W/2} y={10} textAnchor="middle" fill="#a8b2be" fontSize="8" fontWeight="600">Payoff at expiry</text>
       {/* Zero line */}
-      <line x1="10" y1={z} x2="170" y2={z} stroke="#484f58" strokeWidth="0.5" strokeDasharray="2,2"/>
-      <text x="6" y={z+3} textAnchor="end" fill="#484f58" fontSize="7">$0</text>
+      <line x1="10" y1={z} x2="170" y2={z} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="2,2"/>
+      <text x="6" y={z+3} textAnchor="end" fill="#8b949e" fontSize="7">$0</text>
       {/* Green profit fill */}
       {shape.fill && <path d={shape.fill} fill={g} fillOpacity="0.2" />}
       {/* Red loss fill */}
@@ -583,9 +583,9 @@ function StrategyDiagram({ name, type }) {
       {/* P&L line */}
       <path d={shape.path} fill="none" stroke="#e6edf3" strokeWidth="2" strokeLinejoin="round" />
       {/* Labels */}
-      <text x="10" y={H-2} fill="#484f58" fontSize="7">Lower</text>
-      <text x={W-10} y={H-2} textAnchor="end" fill="#484f58" fontSize="7">Higher</text>
-      <text x={W/2} y={H-2} textAnchor="middle" fill="#484f58" fontSize="7">Price →</text>
+      <text x="10" y={H-2} fill="#8b949e" fontSize="7">Lower</text>
+      <text x={W-10} y={H-2} textAnchor="end" fill="#8b949e" fontSize="7">Higher</text>
+      <text x={W/2} y={H-2} textAnchor="middle" fill="#8b949e" fontSize="7">Price →</text>
     </svg>
   );
 }
@@ -593,7 +593,7 @@ function StrategyDiagram({ name, type }) {
 function CardRow({ label, value, cls }) {
   return (
     <div>
-      <span className="text-[10px] text-text-faint uppercase tracking-wider">{label}</span>
+      <span className="text-[12px] text-text-faint uppercase tracking-wider">{label}</span>
       <div className={`text-xs mt-0.5 ${cls || 'text-text-muted'}`}>{value}</div>
     </div>
   );

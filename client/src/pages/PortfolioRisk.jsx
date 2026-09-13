@@ -240,8 +240,8 @@ export default function PortfolioRisk({ authenticated, account }) {
               {underlyingData.filter(u => u.delta !== 0).length > 0 ? (
                 <ResponsiveContainer width="100%" height={Math.max(180, underlyingData.length * 28)}>
                   <BarChart data={underlyingData} layout="vertical" margin={{ left: 50 }}>
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={50} />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} width={50} />
                     <Tooltip contentStyle={ttStyle}
                       formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{v.toFixed(1)}</span>, 'Delta']} />
                     <ReferenceLine x={0} stroke="#30363d" />
@@ -261,8 +261,8 @@ export default function PortfolioRisk({ authenticated, account }) {
               {underlyingData.filter(u => u.theta !== 0).length > 0 ? (
                 <ResponsiveContainer width="100%" height={Math.max(180, underlyingData.length * 28)}>
                   <BarChart data={underlyingData} layout="vertical" margin={{ left: 50 }}>
-                    <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={50} />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} width={50} />
                     <Tooltip contentStyle={ttStyle}
                       formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{fmt$(v)}</span>, 'Theta/day']} />
                     <ReferenceLine x={0} stroke="#30363d" />
@@ -283,7 +283,7 @@ export default function PortfolioRisk({ authenticated, account }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-text-faint text-[10px] uppercase tracking-wider">
+                  <tr className="text-text-faint text-[12px] uppercase tracking-wider">
                     <th className="text-left py-2 pr-3">Underlying</th>
                     <th className="text-left py-2 pr-3">Strategy</th>
                     <th className="text-center py-2 pr-3">DTE</th>
@@ -306,18 +306,18 @@ export default function PortfolioRisk({ authenticated, account }) {
                           <td className="py-2 pr-3 font-medium">{p.underlying}</td>
                           <td className="py-2 pr-3 text-text-muted text-xs">{p.strategy}</td>
                           <td className="py-2 pr-3 text-center">
-                            <span className={`badge text-[10px] ${p.dte !== null && p.dte <= 3 ? 'badge-red' : p.dte !== null && p.dte <= 7 ? 'badge-amber' : 'badge-blue'}`}>
+                            <span className={`badge text-[12px] ${p.dte !== null && p.dte <= 3 ? 'badge-red' : p.dte !== null && p.dte <= 7 ? 'badge-amber' : 'badge-blue'}`}>
                               {p.dte !== null ? `${p.dte}d` : '--'}
                             </span>
                           </td>
                           <td className="py-2 pr-3 text-center mono">{p.qty}</td>
-                          <td className="py-2 pr-3 text-right mono" style={{ color: p.delta !== 0 ? pnlColor(p.delta) : '#484f58' }}>
+                          <td className="py-2 pr-3 text-right mono" style={{ color: p.delta !== 0 ? pnlColor(p.delta) : '#8b949e' }}>
                             {p.hasGreeks ? p.delta.toFixed(2) : '--'}
                           </td>
                           <td className="py-2 pr-3 text-right mono text-text-muted">
                             {p.hasGreeks ? p.gamma.toFixed(3) : '--'}
                           </td>
-                          <td className="py-2 pr-3 text-right mono" style={{ color: p.theta !== 0 ? pnlColor(p.theta) : '#484f58' }}>
+                          <td className="py-2 pr-3 text-right mono" style={{ color: p.theta !== 0 ? pnlColor(p.theta) : '#8b949e' }}>
                             {p.hasGreeks ? fmt$(p.theta) : '--'}
                           </td>
                           <td className="py-2 pr-3 text-right mono text-text-muted">
@@ -327,7 +327,7 @@ export default function PortfolioRisk({ authenticated, account }) {
                             {p.iv > 0 ? `${p.iv.toFixed(0)}%` : '--'}
                           </td>
                           <td className="py-2 pr-3 text-center">
-                            <span className="text-[10px] text-text-faint">{p.sector}</span>
+                            <span className="text-[12px] text-text-faint">{p.sector}</span>
                           </td>
                           <td className="py-2 text-center">
                             <button onClick={() => {
@@ -356,7 +356,7 @@ export default function PortfolioRisk({ authenticated, account }) {
                                   <Save size={12} /> Save
                                 </button>
                               </div>
-                              <div className="text-[10px] text-text-faint mt-1">
+                              <div className="text-[12px] text-text-faint mt-1">
                                 Enter per-contract Greeks from your broker. Values will be multiplied by quantity ({p.qty}) automatically.
                               </div>
                             </td>
@@ -379,7 +379,7 @@ export default function PortfolioRisk({ authenticated, account }) {
                 </tfoot>
               </table>
             </div>
-            <div className="text-[10px] text-text-faint mt-2">
+            <div className="text-[12px] text-text-faint mt-2">
               Greeks are entered per underlying — portfolio totals count each underlying once, even when multiple positions share it.
             </div>
           </div>
@@ -394,7 +394,7 @@ export default function PortfolioRisk({ authenticated, account }) {
                 <ScenarioCard title="IV +5pts" impact={totals.vega * 5} sub={`Vega: ${totals.vega.toFixed(0)}`} />
                 <ScenarioCard title="1 Day passes" impact={totals.theta} sub={`Theta: ${fmt$(totals.theta)}`} />
               </div>
-              <div className="text-[10px] text-text-faint mt-2">
+              <div className="text-[12px] text-text-faint mt-2">
                 Estimates based on first-order Greeks only. Actual P&L will differ due to gamma, higher-order effects, and changes in IV surface.
               </div>
             </div>
@@ -413,7 +413,7 @@ function GreekKPI({ label, value, sub, cls }) {
     <div className="kpi">
       <div className="kpi-label">{label}</div>
       <div className={`kpi-value mono ${cls || ''}`}>{value}</div>
-      {sub && <div className="text-[10px] text-text-faint mt-0.5">{sub}</div>}
+      {sub && <div className="text-[12px] text-text-faint mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -421,7 +421,7 @@ function GreekKPI({ label, value, sub, cls }) {
 function GInp({ label, value, onChange }) {
   return (
     <div className="flex-1">
-      <label className="text-[9px] text-text-muted block mb-0.5">{label}</label>
+      <label className="text-[11px] text-text-muted block mb-0.5">{label}</label>
       <input type="number" step="any" value={value} onChange={e => onChange(e.target.value)}
         className="w-full px-2 py-1 bg-bg-card border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
     </div>
@@ -435,7 +435,7 @@ function ScenarioCard({ title, impact, sub }) {
       <div className="mono text-lg font-bold" style={{ color: pnlColor(impact) }}>
         {impact >= 0 ? '+' : ''}{fmt$(impact)}
       </div>
-      <div className="text-[10px] text-text-faint mt-0.5">{sub}</div>
+      <div className="text-[12px] text-text-faint mt-0.5">{sub}</div>
     </div>
   );
 }

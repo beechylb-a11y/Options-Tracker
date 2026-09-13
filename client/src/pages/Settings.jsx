@@ -157,27 +157,27 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                   <div className="flex-1 fade-in">
                     <div className="grid grid-cols-3 gap-2 mb-2">
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Name</label>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Name</label>
                         <input value={accountForm.name} onChange={e => setAccountForm(f => ({ ...f, name: e.target.value }))}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Bankroll ($)</label>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Bankroll ($)</label>
                         <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Starting ($)</label>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Starting ($)</label>
                         <input type="number" value={accountForm.startingBankroll} onChange={e => setAccountForm(f => ({ ...f, startingBankroll: e.target.value }))}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#484f58"}}>default 20%</span></label>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#8b949e"}}>default 20%</span></label>
                         <input type="number" value={accountForm.maxDailyLoss} onChange={e => { setManualLoss(true); setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value })); }}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#484f58"}}>default 40%</span></label>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#8b949e"}}>default 40%</span></label>
                         <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
@@ -195,9 +195,9 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-text">{a.name}</span>
-                        <span className="text-[10px] text-text-faint">{a.id}</span>
+                        <span className="text-[12px] text-text-faint">{a.id}</span>
                       </div>
-                      <div className="flex gap-4 text-[10px] text-text-muted mt-0.5">
+                      <div className="flex gap-4 text-[12px] text-text-muted mt-0.5">
                         <span>Bankroll: <span className="mono text-text">{fmt$(a.bankroll)}</span></span>
                         <span>Max loss: <span className="mono text-text">{fmt$(a.maxDailyLoss)}</span></span>
                         <span>Max risk: <span className="mono text-text">{fmt$(a.maxOpenRisk)}</span></span>
@@ -213,7 +213,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       } catch (e) { setBackfillResult('Error: ' + e.message); }
                       setBackfilling(false);
                     }} disabled={backfilling}
-                      className="text-[10px] px-2 py-1 border border-bg-border rounded text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                      className="text-[12px] px-2 py-1 border border-bg-border rounded text-text-muted hover:bg-bg-hover disabled:opacity-50"
                       title="Tag all untagged trades to this account">
                       {backfilling ? '...' : 'Backfill'}
                     </button>
@@ -226,7 +226,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       } catch (e) { setBackfillResult('Error: ' + e.message); }
                       setBackfilling(false);
                     }} disabled={backfilling}
-                      className="text-[10px] px-2 py-1 border border-[#9e6a03] rounded text-[#d29922] hover:bg-[#1f1a0d] disabled:opacity-50"
+                      className="text-[12px] px-2 py-1 border border-[#9e6a03] rounded text-[#d29922] hover:bg-[#1f1a0d] disabled:opacity-50"
                       title="Re-tag ALL trades to this account (overwrites existing)">
                       Re-tag all
                     </button>
@@ -250,27 +250,27 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
           <div className="p-3 rounded-lg border border-accent/30 bg-accent/5 fade-in">
             <div className="grid grid-cols-3 gap-2 mb-2">
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Account name</label>
+                <label className="text-[12px] text-text-muted block mb-0.5">Account name</label>
                 <input value={accountForm.name} onChange={e => setAccountForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Main, IRA, Paper"
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text placeholder-text-faint outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Bankroll ($)</label>
+                <label className="text-[12px] text-text-muted block mb-0.5">Bankroll ($)</label>
                 <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Starting bankroll ($)</label>
+                <label className="text-[12px] text-text-muted block mb-0.5">Starting bankroll ($)</label>
                 <input type="number" value={accountForm.startingBankroll} onChange={e => setAccountForm(f => ({ ...f, startingBankroll: e.target.value }))}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#484f58"}}>default 20%</span></label>
+                <label className="text-[12px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#8b949e"}}>default 20%</span></label>
                 <input type="number" value={accountForm.maxDailyLoss} onChange={e => { setManualLoss(true); setAccountForm(f => ({ ...f, maxDailyLoss: e.target.value })); }}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#484f58"}}>default 40%</span></label>
+                <label className="text-[12px] text-text-muted block mb-0.5">Max open risk ($) <span style={{color:"#8b949e"}}>default 40%</span></label>
                 <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>

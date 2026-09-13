@@ -135,13 +135,13 @@ export default function App() {
       <aside className="w-[220px] bg-bg-card border-r border-bg-border flex flex-col fixed h-full z-10">
         <div className="p-5 border-b border-bg-border">
           <h1 className="font-display text-lg font-bold tracking-tight">Options Tracker</h1>
-          <p className="text-[11px] text-text-faint mt-0.5">Portfolio & Decision Engine</p>
+          <p className="text-[12.5px] text-text-faint mt-0.5">Portfolio & Decision Engine</p>
         </div>
 
         <nav className="flex-1 py-2 overflow-y-auto">
           {NAV_GROUPS.map(group => (
             <div key={group.label} className="mb-1">
-              <div className="px-5 pt-3 pb-1 text-[10px] text-text-faint uppercase tracking-wider">{group.label}</div>
+              <div className="px-5 pt-3 pb-1 text-[12px] text-text-faint uppercase tracking-wider">{group.label}</div>
               {group.tabs.map(t => {
                 const Icon = t.icon;
                 const active = tab === t.id;
@@ -157,7 +157,7 @@ export default function App() {
                   >
                     <Icon size={16} />
                     <span className="flex-1 text-left">{t.label}</span>
-                    {t.key && <span className="text-[10px] text-text-faint mono">{t.key}</span>}
+                    {t.key && <span className="text-[12px] text-text-faint mono">{t.key}</span>}
                   </button>
                 );
               })}

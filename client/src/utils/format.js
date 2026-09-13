@@ -34,7 +34,7 @@ export function pnlClass(n) {
 export function pnlColor(n) {
   if (n > 0) return '#3fb950';
   if (n < 0) return '#f85149';
-  return '#8b949e';
+  return '#a8b2be';
 }
 
 export function filterByAccount(trades, account) {

@@ -81,8 +81,8 @@ export default function Summary({ authenticated, account }) {
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={chartData} layout="vertical" margin={{ left: 100 }}>
-                <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={100} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} width={100} />
                 <Tooltip
                   contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#e6edf3' }}
@@ -133,7 +133,7 @@ export default function Summary({ authenticated, account }) {
         {chartData.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-text-faint text-[11px] uppercase tracking-wider">
+              <tr className="text-text-faint text-[12.5px] uppercase tracking-wider">
                 <th className="text-left py-2">{view === 'strategy' ? 'Strategy' : 'Underlying'}</th>
                 <th className="text-center py-2">Trades</th>
                 <th className="text-center py-2">Wins</th>

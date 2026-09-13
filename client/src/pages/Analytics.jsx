@@ -199,8 +199,8 @@ function StrategyBreakdown({ closed, accounts = [] }) {
         <h3 className="text-sm font-medium text-text-muted mb-3">P&L {GROUPINGS.find(g => g.id === groupBy).label.toLowerCase()}</h3>
         <ResponsiveContainer width="100%" height={chartHeight}>
           <BarChart data={chartData} layout="vertical" margin={{ left: 120 }}>
-            <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={120} />
+            <XAxis type="number" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} width={120} />
             <Tooltip contentStyle={ttStyle} formatter={(v, n, p) => {
               const d = p.payload;
               return [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
@@ -220,7 +220,7 @@ function StrategyBreakdown({ closed, accounts = [] }) {
         <h3 className="text-sm font-medium text-text-muted mb-3">Detailed Breakdown</h3>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-text-faint text-[11px] uppercase tracking-wider">
+            <tr className="text-text-faint text-[12.5px] uppercase tracking-wider">
               {HEADERS.map(h => (
                 <th key={h.key} onClick={() => setSortKey(h.key)}
                   className={`${h.align} py-2 cursor-pointer select-none hover:text-text-muted`}>
@@ -250,7 +250,7 @@ function StrategyBreakdown({ closed, accounts = [] }) {
             ))}
           </tbody>
         </table>
-        <p className="text-[10px] text-text-faint mt-2">
+        <p className="text-[12px] text-text-faint mt-2">
           PF = gross wins ÷ |gross losses|. Avg Days = entry to close. Faded rows have fewer than 10 trades (small sample).
         </p>
       </div>
@@ -323,9 +323,9 @@ function TimePatterns({ closed }) {
           <h3 className="text-sm font-medium text-text-muted mb-3">P&L by Day of Week</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={dowData}>
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-              <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#8b949e' }}
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+              <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#a8b2be' }}
                 formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{fmt$(v)}</span>, 'P&L']} />
               <ReferenceLine y={0} stroke="#30363d" strokeDasharray="3 3" />
               <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
@@ -336,8 +336,8 @@ function TimePatterns({ closed }) {
           <div className="flex gap-2 mt-2">
             {dowData.map((d, i) => (
               <div key={i} className="flex-1 text-center">
-                <div className="text-[10px] text-text-muted">{d.trades}t</div>
-                <div className={`text-[10px] mono font-medium ${d.ba >= 60 ? 'text-green' : d.ba >= 40 ? 'text-amber' : 'text-red'}`}>{d.ba}%</div>
+                <div className="text-[12px] text-text-muted">{d.trades}t</div>
+                <div className={`text-[12px] mono font-medium ${d.ba >= 60 ? 'text-green' : d.ba >= 40 ? 'text-amber' : 'text-red'}`}>{d.ba}%</div>
               </div>
             ))}
           </div>
@@ -349,9 +349,9 @@ function TimePatterns({ closed }) {
           {hasTimeData && hourData.length > 1 ? (
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={hourData}>
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-                <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#8b949e' }}
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#a8b2be' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#a8b2be' }}
                   formatter={(v, n, p) => {
                     const d = p.payload;
                     return [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
@@ -377,9 +377,9 @@ function TimePatterns({ closed }) {
         <h3 className="text-sm font-medium text-text-muted mb-3">Monthly Performance</h3>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={monthData}>
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-            <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#8b949e' }}
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#a8b2be' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+            <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#a8b2be' }}
               formatter={(v, n, p) => {
                 const d = p.payload;
                 return [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
@@ -465,8 +465,8 @@ function RegimePerformance({ closed, decisions }) {
           <h3 className="text-sm font-medium text-text-muted mb-3">Regime P&L Comparison</h3>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={regimeData} layout="vertical" margin={{ left: 120 }}>
-              <XAxis type="number" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} width={120} />
+              <XAxis type="number" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#a8b2be' }} axisLine={false} tickLine={false} width={120} />
               <Tooltip contentStyle={ttStyle} formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{fmt$(v)}</span>, 'P&L']} />
               <ReferenceLine x={0} stroke="#30363d" />
               <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
@@ -489,7 +489,7 @@ function RegimePerformance({ closed, decisions }) {
                 <div key={grade} className="p-3 rounded-lg border border-bg-border">
                   <div className="text-xs text-text-muted text-center mb-1">{grade}</div>
                   <div className="mono text-lg font-bold text-center" style={{ color: pnlColor(d.pnl) }}>{fmt$(d.pnl)}</div>
-                  <div className="flex justify-center gap-3 mt-1 text-[10px]">
+                  <div className="flex justify-center gap-3 mt-1 text-[12px]">
                     <span className="text-text-muted">{d.trades}t</span>
                     <span className={d.ba >= 60 ? 'text-green' : d.ba >= 40 ? 'text-amber' : 'text-red'}>{d.ba}% BA</span>
                   </div>
@@ -592,8 +592,8 @@ function DTEAnalysis({ closed }) {
             <>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={bucketData}>
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#a8b2be' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                   <Tooltip contentStyle={ttStyle} formatter={(v, n, p) => {
                     const d = p.payload;
                     return [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>
@@ -630,11 +630,11 @@ function DTEAnalysis({ closed }) {
           <h3 className="text-sm font-medium text-text-muted mb-3">P&L vs DTE at Entry (each dot = one trade)</h3>
           <ResponsiveContainer width="100%" height={250}>
             <ScatterChart>
-              <XAxis dataKey="dte" name="DTE" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
-              <YAxis dataKey="pnl" name="P&L" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+              <XAxis dataKey="dte" name="DTE" tick={{ fontSize: 10, fill: '#a8b2be' }} axisLine={false} tickLine={false} />
+              <YAxis dataKey="pnl" name="P&L" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <ZAxis range={[30, 30]} />
               <Tooltip contentStyle={ttStyle} formatter={(v, name) => [
-                <span style={{ fontFamily: 'JetBrains Mono', fontWeight: 600, color: name === 'P&L' ? (v >= 0 ? '#3fb950' : '#f85149') : '#8b949e' }}>
+                <span style={{ fontFamily: 'JetBrains Mono', fontWeight: 600, color: name === 'P&L' ? (v >= 0 ? '#3fb950' : '#f85149') : '#a8b2be' }}>
                   {name === 'P&L' ? fmt$(v) : v}
                 </span>, name
               ]} />
@@ -654,7 +654,7 @@ function DTEAnalysis({ closed }) {
             <div className="grid gap-1" style={{ gridTemplateColumns: '90px repeat(5, 1fr)' }}>
               <div />
               {HEAT_DOWS.map(d => (
-                <div key={d} className="text-center text-[10px] text-text-faint uppercase tracking-wider pb-1">{d}</div>
+                <div key={d} className="text-center text-[12px] text-text-faint uppercase tracking-wider pb-1">{d}</div>
               ))}
               {Object.keys(dteBuckets).map(bucket => (
                 <React.Fragment key={bucket}>
@@ -665,7 +665,7 @@ function DTEAnalysis({ closed }) {
                       {c.trades > 0 ? (
                         <>
                           <div className="mono text-xs font-medium" style={{ color: pnlColor(c.pnl) }}>{fmtShort$(c.pnl)}</div>
-                          <div className="text-[9px] text-text-faint">{c.trades}t</div>
+                          <div className="text-[11px] text-text-faint">{c.trades}t</div>
                         </>
                       ) : (
                         <div className="text-text-faint text-xs">--</div>
@@ -675,7 +675,7 @@ function DTEAnalysis({ closed }) {
                 </React.Fragment>
               ))}
             </div>
-            <p className="text-[10px] text-text-faint mt-2">Cell colour intensity scales with total P&L. Weekend entries are excluded.</p>
+            <p className="text-[12px] text-text-faint mt-2">Cell colour intensity scales with total P&L. Weekend entries are excluded.</p>
           </>
         ) : (
           <div className="h-[120px] flex items-center justify-center text-text-faint text-sm">Need weekday trades with DTE data</div>
@@ -802,7 +802,7 @@ function RollingStats({ closed }) {
         <MiniKPI label="Daily Sortino (ann.)" value={sortino !== null ? sortino.toFixed(2) : '--'}
           sub={nDays >= 10 ? `${nDays} trading days` : 'Need 10+ trading days'}
           cls={sortino !== null ? (sortino >= 0 ? 'text-green' : 'text-red') : ''} />
-        <div className="col-span-2 flex items-center text-[10px] text-text-faint px-2">
+        <div className="col-span-2 flex items-center text-[12px] text-text-faint px-2">
           Sharpe/Sortino are computed on daily $ P&L (grouped by close date), not % returns, annualised with √252.
         </div>
       </div>
@@ -814,8 +814,8 @@ function RollingStats({ closed }) {
           {rollingBA.length > 2 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={rollingBA}>
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={v => v + '%'} />
+                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={v => v + '%'} />
                 <Tooltip contentStyle={ttStyle} formatter={v => [<span style={{ color: v >= 50 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{v}%</span>, 'Win rate']} />
                 <ReferenceLine y={50} stroke="#d29922" strokeDasharray="3 3" label={{ value: '50%', fill: '#d29922', fontSize: 10 }} />
                 <Line type="monotone" dataKey="ba" stroke="#2f81f7" strokeWidth={2} dot={false} />
@@ -832,8 +832,8 @@ function RollingStats({ closed }) {
           {cumBA.length > 2 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={cumBA}>
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={v => v + '%'} />
+                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={v => v + '%'} />
                 <Tooltip contentStyle={ttStyle} formatter={v => [<span style={{ color: v >= 50 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{v}%</span>, 'Cumulative BA']} />
                 <ReferenceLine y={50} stroke="#d29922" strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="ba" stroke="#3fb950" strokeWidth={2} dot={false} />
@@ -852,8 +852,8 @@ function RollingStats({ closed }) {
           {rollingPnl.length > 2 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={rollingPnl}>
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                 <Tooltip contentStyle={ttStyle} formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{fmt$(v)}</span>, `Last ${WINDOW} trades`]} />
                 <ReferenceLine y={0} stroke="#30363d" strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="pnl" stroke="#2f81f7" strokeWidth={2} dot={false} />
@@ -870,8 +870,8 @@ function RollingStats({ closed }) {
           {expectancyCurve.length > 2 ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={expectancyCurve}>
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                 <Tooltip contentStyle={ttStyle} formatter={v => [<span style={{ color: v >= 0 ? '#3fb950' : '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{fmt$(v)}</span>, 'Expectancy/trade']} />
                 <ReferenceLine y={0} stroke="#30363d" strokeDasharray="3 3" />
                 <Line type="monotone" dataKey="expectancy" stroke="#d29922" strokeWidth={2} dot={false} />
@@ -890,16 +890,16 @@ function RollingStats({ closed }) {
           <>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={rData}>
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} interval={0} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#8b949e' }}
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#a8b2be' }} axisLine={false} tickLine={false} interval={0} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={ttStyle} labelStyle={{ color: '#a8b2be' }}
                   formatter={v => [<span style={{ color: '#e6edf3', fontWeight: 600, fontFamily: 'JetBrains Mono' }}>{v} trades</span>, 'Count']} />
                 <Bar dataKey="count" radius={[3, 3, 0, 0]}>
                   {rData.map((d, i) => <Cell key={i} fill={d.start >= 0 ? '#238636' : '#da3633'} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
-            <p className="text-[10px] text-text-faint mt-2">
+            <p className="text-[12px] text-text-faint mt-2">
               True per-trade risk isn't recorded, so R is proxied as trade P&L ÷ |average losing trade| ({fmt$(avgLossAbs)}) of the current filtered set.
               Buckets are 0.5R wide from -3R to +3R; outliers are clamped into the edge buckets.
             </p>
@@ -922,7 +922,7 @@ function MiniKPI({ label, value, sub, cls }) {
     <div className="kpi">
       <div className="kpi-label">{label}</div>
       <div className={`kpi-value ${cls || ''}`}>{value}</div>
-      {sub && <div className="text-[10px] text-text-faint mt-0.5">{sub}</div>}
+      {sub && <div className="text-[12px] text-text-faint mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -937,8 +937,8 @@ function BreakdownTable({ data }) {
             <div className="bg-green h-full" style={{ width: `${d.ba}%` }} />
             <div className="bg-red h-full" style={{ width: `${100 - d.ba}%` }} />
           </div>
-          <span className="mono text-[10px] w-8 text-right">{d.ba}%</span>
-          <span className="text-[10px] text-text-faint w-8 text-right">{d.trades}t</span>
+          <span className="mono text-[12px] w-8 text-right">{d.ba}%</span>
+          <span className="text-[12px] text-text-faint w-8 text-right">{d.trades}t</span>
           <span className="mono text-xs w-14 text-right font-medium" style={{ color: pnlColor(d.pnl) }}>{fmt$(d.pnl)}</span>
         </div>
       ))}

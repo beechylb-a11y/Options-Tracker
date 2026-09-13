@@ -20,7 +20,7 @@ function StatusDot({ state, label, title }) {
   return (
     <div className="flex items-center gap-1.5" title={title}>
       <div className={`w-2 h-2 rounded-full ${color}`} />
-      <span className="text-[11px] text-text-muted">{label}</span>
+      <span className="text-[12.5px] text-text-muted">{label}</span>
     </div>
   );
 }
@@ -120,22 +120,22 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         {authenticated && (
           <>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-[10px] text-text-faint uppercase tracking-wider">Today</span>
+              <span className="text-[12px] text-text-faint uppercase tracking-wider">Today</span>
               <span className="mono text-sm font-bold" style={{ color: pnlColor(todayPnl) }}>{fmt$(todayPnl)}</span>
             </div>
 
             {maxDailyLoss > 0 && (
               <div className="flex items-center gap-1.5" title={`Daily loss used: ${fmt$(todayPnl < 0 ? Math.abs(todayPnl) : 0)} of ${fmt$(maxDailyLoss)} cap`}>
-                <span className="text-[10px] text-text-faint uppercase tracking-wider">Loss cap</span>
+                <span className="text-[12px] text-text-faint uppercase tracking-wider">Loss cap</span>
                 <div className="w-16 h-1.5 bg-bg rounded-full overflow-hidden">
                   <div className={`h-full ${gaugeColor}`} style={{ width: `${lossUsedPct}%` }} />
                 </div>
-                <span className="text-[11px] text-text-muted mono">{Math.round(lossUsedPct)}%</span>
+                <span className="text-[12.5px] text-text-muted mono">{Math.round(lossUsedPct)}%</span>
               </div>
             )}
 
             <div className="flex items-baseline gap-1.5">
-              <span className="text-[10px] text-text-faint uppercase tracking-wider">Open</span>
+              <span className="text-[12px] text-text-faint uppercase tracking-wider">Open</span>
               <span className="mono text-sm font-bold text-text">{openCount}</span>
             </div>
           </>
@@ -145,7 +145,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
 
         <button
           onClick={handleRefresh}
-          className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text transition-colors"
+          className="flex items-center gap-1.5 text-[12.5px] text-text-muted hover:text-text transition-colors"
           title="Refresh all data"
         >
           <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />

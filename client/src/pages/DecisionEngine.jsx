@@ -431,13 +431,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           </div>
           <div className="grid grid-cols-4 gap-3 mb-3">
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Entry date</label>
+              <label className="text-[12px] text-text-muted block mb-1">Entry date</label>
               <input type="date" value={manualForm.entryDate}
                 onChange={e => setManualForm(f => ({ ...f, entryDate: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Underlying</label>
+              <label className="text-[12px] text-text-muted block mb-1">Underlying</label>
               <select value={manualForm.underlying}
                 onChange={e => setManualForm(f => ({ ...f, underlying: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
@@ -448,7 +448,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               </select>
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Strategy</label>
+              <label className="text-[12px] text-text-muted block mb-1">Strategy</label>
               <select value={manualForm.strategy}
                 onChange={e => setManualForm(f => ({ ...f, strategy: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
@@ -487,7 +487,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               </select>
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Expiry date</label>
+              <label className="text-[12px] text-text-muted block mb-1">Expiry date</label>
               <input type="date" value={manualForm.expiry}
                 onChange={e => setManualForm(f => ({ ...f, expiry: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
@@ -495,27 +495,27 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           </div>
           <div className="grid grid-cols-4 gap-3 mb-3">
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Win amount ($)</label>
+              <label className="text-[12px] text-text-muted block mb-1">Win amount ($)</label>
               <input type="number" step="0.01" value={manualForm.winAmount}
                 onChange={e => setManualForm(f => ({ ...f, winAmount: e.target.value }))}
                 placeholder="e.g. 65"
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Risk per contract ($)</label>
+              <label className="text-[12px] text-text-muted block mb-1">Risk per contract ($)</label>
               <input type="number" step="0.01" value={manualForm.riskPerContract}
                 onChange={e => setManualForm(f => ({ ...f, riskPerContract: e.target.value }))}
                 placeholder="e.g. 435"
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Contracts</label>
+              <label className="text-[12px] text-text-muted block mb-1">Contracts</label>
               <input type="number" min="1" value={manualForm.contracts}
                 onChange={e => setManualForm(f => ({ ...f, contracts: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Notes (optional)</label>
+              <label className="text-[12px] text-text-muted block mb-1">Notes (optional)</label>
               <input type="text" value={manualForm.notes}
                 onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="Entry rationale..."
@@ -540,7 +540,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                   <Clock size={12} /> Open tickets ({openTickets.length})
                 </h3>
                 <button onClick={handleReconcile} disabled={reconciling}
-                  className="text-[11px] px-3 py-1 border border-[#2f81f7] rounded-lg text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
+                  className="text-[12.5px] px-3 py-1 border border-[#2f81f7] rounded-lg text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
                   {reconciling ? 'Reconciling...' : '⚡ Reconcile with TWS'}
                 </button>
               </div>
@@ -548,15 +548,15 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               {/* Reconcile results */}
               {reconcileResults && (
                 <div className="mb-3 p-3 rounded-lg border border-[#30363d] bg-[#0d1117]">
-                  <div className="text-xs text-[#8b949e] mb-2">
+                  <div className="text-xs text-[#a8b2be] mb-2">
                     {reconcileResults.matches.length} matched, {reconcileResults.unmatchedCount} unmatched fills
                   </div>
                   {reconcileResults.matches.map((m, i) => (
                     <div key={i} className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0">
                       <div>
                         <span className="text-sm text-white font-medium">{m.ticket.underlying}</span>
-                        <span className="text-xs text-[#8b949e] ml-2">{m.ticket.strategy}</span>
-                        <span className="text-xs text-[#484f58] ml-2">{m.fillCount} fills</span>
+                        <span className="text-xs text-[#a8b2be] ml-2">{m.ticket.strategy}</span>
+                        <span className="text-xs text-[#8b949e] ml-2">{m.fillCount} fills</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? '#3fb950' : '#f85149'}}>{fmt$(m.totalPnl)}</span>
@@ -598,7 +598,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             }));
                           } catch (e) { alert('Error: ' + e.message); }
                         }}
-                          className="text-[10px] px-2 py-1 bg-[#238636] rounded text-white hover:bg-[#2ea043] font-semibold">
+                          className="text-[12px] px-2 py-1 bg-[#238636] rounded text-white hover:bg-[#2ea043] font-semibold">
                           Accept & close
                         </button>
                       </div>
@@ -636,7 +636,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       <div className="px-3 py-3 bg-bg border-t border-bg-border fade-in">
                         <div className="grid grid-cols-3 gap-4 text-sm mb-3">
                           <div className="space-y-1">
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Entry details</div>
+                            <div className="text-[12px] text-text-faint uppercase tracking-wider mb-1">Entry details</div>
                             <Row label="Strategy" value={stratName} />
                             <Row label="Direction" value={dec.Direction} />
                             <Row label="Contracts" value={dec.Contracts} />
@@ -645,7 +645,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             <Row label="Price" value={dec.Price ? '$' + dec.Price : '--'} />
                           </div>
                           <div className="space-y-1">
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Setup quality</div>
+                            <div className="text-[12px] text-text-faint uppercase tracking-wider mb-1">Setup quality</div>
                             <Row label="Score" value={dec['Setup Score']} />
                             <Row label="Grade" value={dec['Setup Grade']} />
                             <Row label="Regime" value={dec.Regime} />
@@ -654,7 +654,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             <Row label="IVR" value={dec.IVR} />
                           </div>
                           <div className="space-y-1">
-                            <div className="text-[10px] text-text-faint uppercase tracking-wider mb-1">Strikes & behaviour</div>
+                            <div className="text-[12px] text-text-faint uppercase tracking-wider mb-1">Strikes & behaviour</div>
                             <Row label="Strikes" value={dec['Wing Strikes']} />
                             <div className="text-xs text-text-muted italic mt-1">{dec['Market Behaviour']}</div>
                             {dec['Trade Notes'] && (
@@ -683,17 +683,17 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             <div className="text-xs text-text-faint uppercase tracking-wider mb-2">Close this trade ticket</div>
                             <div className="grid grid-cols-3 gap-3">
                               <div>
-                                <label className="text-[10px] text-text-muted block mb-1">Close date</label>
+                                <label className="text-[12px] text-text-muted block mb-1">Close date</label>
                                 <input type="date" value={closeForm.closeDate} onChange={e => setCloseForm(f => ({ ...f, closeDate: e.target.value }))}
                                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                               </div>
                               <div>
-                                <label className="text-[10px] text-text-muted block mb-1">Close price ($)</label>
+                                <label className="text-[12px] text-text-muted block mb-1">Close price ($)</label>
                                 <input type="number" step="0.01" value={closeForm.closePrice} onChange={e => setCloseForm(f => ({ ...f, closePrice: e.target.value }))}
                                   placeholder="e.g. 0.05" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                               </div>
                               <div>
-                                <label className="text-[10px] text-text-muted block mb-1">Actual P&L ($)</label>
+                                <label className="text-[12px] text-text-muted block mb-1">Actual P&L ($)</label>
                                 <input type="number" step="0.01" value={closeForm.actualPnl} onChange={e => setCloseForm(f => ({ ...f, actualPnl: e.target.value }))}
                                   placeholder="e.g. 65 or -435" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                               </div>
@@ -750,7 +750,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       <span className="text-sm font-medium">{dec.Underlying}</span>
                       <span className="text-xs text-text-muted flex-1">{stratName}</span>
                       <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
-                      <span className={`badge text-[10px] ${pnl >= 0 ? 'badge-green' : 'badge-red'}`}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
+                      <span className={`badge text-[12px] ${pnl >= 0 ? 'badge-green' : 'badge-red'}`}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
                       {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
                     </div>
                     {expanded && (
@@ -771,7 +771,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             <Row label="POP Margin" value={dec['POP Margin']} />
                           </div>
                           <div className="space-y-1">
-                            <div className="text-[10px] text-text-faint uppercase">Actual P&L</div>
+                            <div className="text-[12px] text-text-faint uppercase">Actual P&L</div>
                             <div className="mono text-xl font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</div>
                             {dec['Trade Notes'] && (
                               <div className="mt-2 p-2 bg-bg-card rounded text-xs text-text-muted">{dec['Trade Notes']}</div>
@@ -821,7 +821,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           ) : comparison?.matches?.length > 0 ? (
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-text-faint text-[10px] uppercase tracking-wider">
+                <tr className="text-text-faint text-[12px] uppercase tracking-wider">
                   <th className="text-left py-2 px-2">Date</th>
                   <th className="text-left py-2 px-2">Ticker</th>
                   <th className="text-left py-2 px-2">Engine said</th>
@@ -848,11 +848,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                         </span>
                       </td>
                       <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">--</span>}</td>
-                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : '#484f58' }}>
+                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : '#8b949e' }}>
                         {m.matchedTrade ? fmt$(pnl) : '--'}
                       </td>
                       <td className="py-2 px-2 text-center">
-                        {m.matchedTrade?.wl && <span className={`badge text-[10px] ${m.matchedTrade.wl === 'Win' ? 'badge-green' : 'badge-red'}`}>{m.matchedTrade.wl}</span>}
+                        {m.matchedTrade?.wl && <span className={`badge text-[12px] ${m.matchedTrade.wl === 'Win' ? 'badge-green' : 'badge-red'}`}>{m.matchedTrade.wl}</span>}
                       </td>
                       <td className="py-2 px-2 text-center">
                         {m.matched ? <Check size={12} className="text-green inline" /> : <X size={12} className="text-text-faint inline" />}
@@ -876,7 +876,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             <div key={t.id} onClick={() => setActiveId(t.id)} title={t.seed ? 'Seeded from multi-scan' : 'Manual ticket'}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
               <span className="font-medium">{t.label}</span>
-              <span className={`text-[9px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
+              <span className={`text-[11px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
                 {t.mode === '0dte' ? '0DTE' : '45D'}
               </span>
               {tabs.length > 1 && (
@@ -1168,18 +1168,18 @@ function MultiScanPanel({ mode, onSelect }) {
           <h3 className="text-sm font-medium text-white">Multi-Underlying Scan</h3>
           <p className="text-xs text-text-muted mt-0.5">Compare setups across underlyings — pick the best trade of the day</p>
           {scannedAt && (
-            <p className="text-[11px] mono mt-1" style={{ color: '#8b949e' }}>
+            <p className="text-[12.5px] mono mt-1" style={{ color: '#a8b2be' }}>
               Scanned {clockOf(scannedAt)} · {agoOf(scannedAt, scanNow)}
             </p>
           )}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowInputs(!showInputs)}
-            className={`px-3 py-2 text-xs border rounded-lg transition-colors ${showInputs ? 'border-accent bg-accent/10 text-accent' : 'border-[#30363d] text-[#8b949e] hover:bg-[#161b22]'}`}>
+            className={`px-3 py-2 text-xs border rounded-lg transition-colors ${showInputs ? 'border-accent bg-accent/10 text-accent' : 'border-[#30363d] text-[#a8b2be] hover:bg-[#161b22]'}`}>
             {showInputs ? 'Hide inputs' : 'Show inputs'}
           </button>
           <button onClick={handleRecalc} disabled={!results}
-            className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#8b949e] hover:bg-[#161b22] disabled:opacity-30">
+            className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#a8b2be] hover:bg-[#161b22] disabled:opacity-30">
             Recalculate
           </button>
           <button onClick={handleScan} disabled={scanning}
@@ -1203,13 +1203,13 @@ function MultiScanPanel({ mode, onSelect }) {
             </select>
             {underlyings.length > 2 && (
               <button onClick={() => setUnderlyings(underlyings.filter((_, j) => j !== i))}
-                className="text-[#484f58] hover:text-red text-xs">×</button>
+                className="text-[#8b949e] hover:text-red text-xs">×</button>
             )}
           </div>
         ))}
         {underlyings.length < 5 && (
           <button onClick={() => setUnderlyings([...underlyings, 'IWM'])}
-            className="px-2 py-1.5 border border-dashed border-[#30363d] rounded text-xs text-[#484f58] hover:text-white">+</button>
+            className="px-2 py-1.5 border border-dashed border-[#30363d] rounded text-xs text-[#8b949e] hover:text-white">+</button>
         )}
       </div>
 
@@ -1220,7 +1220,7 @@ function MultiScanPanel({ mode, onSelect }) {
         <div className="mb-4 overflow-x-auto fade-in">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-[9px] text-[#8b949e] uppercase tracking-wider">
+              <tr className="text-[11px] text-[#a8b2be] uppercase tracking-wider">
                 <th className="text-left py-1 px-1 w-28">Input</th>
                 {underlyings.map((u, i) => (
                   <th key={i} className="text-center py-1 px-1 text-white text-sm font-bold">{u}</th>
@@ -1230,13 +1230,13 @@ function MultiScanPanel({ mode, onSelect }) {
             <tbody>
               {inputFields.map(f => (
                 <tr key={f.key} className="border-t border-[#21262d]">
-                  <td className="py-1 px-1 text-[#8b949e] text-[10px]">{f.label}</td>
+                  <td className="py-1 px-1 text-[#a8b2be] text-[12px]">{f.label}</td>
                   {underlyings.map((u, i) => (
                     <td key={i} className="py-1 px-1">
                       <input type="number" step="any" value={getVal(u, f.key)}
                         onChange={e => setVal(u, f.key, e.target.value)}
                         placeholder="—"
-                        className="w-full px-2 py-1 bg-[#0d1117] border border-[#21262d] rounded text-[11px] text-white mono outline-none focus:border-[#2f81f7] text-center" />
+                        className="w-full px-2 py-1 bg-[#0d1117] border border-[#21262d] rounded text-[12.5px] text-white mono outline-none focus:border-[#2f81f7] text-center" />
                     </td>
                   ))}
                 </tr>
@@ -1251,15 +1251,15 @@ function MultiScanPanel({ mode, onSelect }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-[10px] text-[#8b949e] uppercase tracking-wider">
+              <tr className="text-[12px] text-[#a8b2be] uppercase tracking-wider">
                 <th className="text-left py-2 px-2"></th>
                 {results.map((r, i) => (
                   <th key={i} className="text-center py-2 px-3" style={{minWidth:140}}>
                     <span className="text-white text-sm font-bold">{r.underlying}</span>
-                    {i === 0 && r.result && r.result.setupScore > 0 && <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-green/10 text-green font-semibold">BEST</span>}
+                    {i === 0 && r.result && r.result.setupScore > 0 && <span className="ml-1.5 text-[11px] px-1.5 py-0.5 rounded bg-green/10 text-green font-semibold">BEST</span>}
                     {scanMeta[r.underlying] && (
-                      <div className="text-[9px] mono font-normal mt-0.5 normal-case tracking-normal"
-                        style={{ color: scanMeta[r.underlying].isLive ? '#3fb950' : '#8b949e' }}
+                      <div className="text-[11px] mono font-normal mt-0.5 normal-case tracking-normal"
+                        style={{ color: scanMeta[r.underlying].isLive ? '#3fb950' : '#a8b2be' }}
                         title={scanMeta[r.underlying].label + (scanMeta[r.underlying].asOf ? ' · quote ' + clockOf(scanMeta[r.underlying].asOf) : '')}>
                         {scanMeta[r.underlying].isLive ? '● live' : '○ close'} {clockOf(scanMeta[r.underlying].pulledAt)}
                       </div>
@@ -1274,11 +1274,11 @@ function MultiScanPanel({ mode, onSelect }) {
                 { label: 'Setup score', render: r => {
                   const s = r.result?.setupScore || 0;
                   const col = s >= 85 ? '#3fb950' : s >= 70 ? '#2f81f7' : s >= 50 ? '#d29922' : '#f85149';
-                  return <span style={{color:col}}>{s}/100 <span style={{fontSize:10,fontWeight:400}}>{r.result?.setup||''}</span></span>;
+                  return <span style={{color:col}}>{s}/100 <span style={{fontSize:12,fontWeight:400}}>{r.result?.setup||''}</span></span>;
                 }},
                 { label: 'Direction', render: r => <span style={{color: r.result?.dirScore > 0 ? '#3fb950' : r.result?.dirScore < 0 ? '#f85149' : '#c9d1d9'}}>{r.result?.dirLabel || '--'}</span> },
                 { label: 'Move consumed', render: r => r.result?.moveConsumed !== undefined ? (r.result.moveConsumed * 100).toFixed(0) + '%' : '--' },
-                { label: 'Regime', render: r => <span style={{fontSize:11,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
+                { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
                 { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
                 { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>{r.result?.trendPattern || '--'}</span> },
                 { label: 'VWAP trend', render: r => {
@@ -1296,13 +1296,13 @@ function MultiScanPanel({ mode, onSelect }) {
                 { label: '', render: (r, underlying) => {
                   if (!r.result || !r.data?.price) return null;
                   return <button onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data, scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null)); }}
-                    style={{padding:'4px 12px',borderRadius:6,border:'1px solid #238636',background:'transparent',color:'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                    style={{padding:'4px 12px',borderRadius:6,border:'1px solid #238636',background:'transparent',color:'#3fb950',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
                     Open tab →
                   </button>;
                 }},
               ].map((row, ri) => (
                 <tr key={ri} className="border-t border-[#21262d]">
-                  <td className="py-2 px-2 text-[#8b949e]">{row.label}</td>
+                  <td className="py-2 px-2 text-[#a8b2be]">{row.label}</td>
                   {results.map((r, i) => (
                     <td key={i} className="py-2 px-3 text-center mono text-xs">{row.render(r)}</td>
                   ))}
@@ -1314,7 +1314,7 @@ function MultiScanPanel({ mode, onSelect }) {
       )}
 
       {!results && !scanning && (
-        <div className="py-8 text-center text-[#484f58] text-sm">
+        <div className="py-8 text-center text-[#8b949e] text-sm">
           Select underlyings and click "Scan all" to fetch data, or "Show inputs" to enter manually
         </div>
       )}
@@ -1325,7 +1325,7 @@ function MultiScanPanel({ mode, onSelect }) {
 function Stat({ label, value, cls }) {
   return (
     <div className="text-center">
-      <div className="text-[10px] text-text-faint uppercase">{label}</div>
+      <div className="text-[12px] text-text-faint uppercase">{label}</div>
       <div className={`text-sm font-bold mono ${cls || ''}`}>{value}</div>
     </div>
   );

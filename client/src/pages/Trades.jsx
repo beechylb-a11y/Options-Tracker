@@ -323,23 +323,23 @@ export default function Trades({ authenticated, account, accounts }) {
           <div className="grid grid-cols-5 gap-2 mb-3">
             <div className="text-center p-2 rounded-lg border border-bg-border">
               <div className="text-lg font-bold mono text-text">{compareResult.summary.total}</div>
-              <div className="text-[10px] text-text-faint">Total</div>
+              <div className="text-[12px] text-text-faint">Total</div>
             </div>
             <div className="text-center p-2 rounded-lg border border-green/30 bg-green/5">
               <div className="text-lg font-bold mono text-green">{compareResult.summary.matched}</div>
-              <div className="text-[10px] text-text-faint">Matched</div>
+              <div className="text-[12px] text-text-faint">Matched</div>
             </div>
             <div className="text-center p-2 rounded-lg border border-amber/30 bg-amber/5">
               <div className="text-lg font-bold mono text-amber">{compareResult.summary.mismatched}</div>
-              <div className="text-[10px] text-text-faint">Mismatched</div>
+              <div className="text-[12px] text-text-faint">Mismatched</div>
             </div>
             <div className="text-center p-2 rounded-lg border border-accent/30 bg-accent/5">
               <div className="text-lg font-bold mono text-accent">{compareResult.summary.csvOnly}</div>
-              <div className="text-[10px] text-text-faint">CSV only</div>
+              <div className="text-[12px] text-text-faint">CSV only</div>
             </div>
             <div className="text-center p-2 rounded-lg border border-red/30 bg-red/5">
               <div className="text-lg font-bold mono text-red">{compareResult.summary.trackerOnly}</div>
-              <div className="text-[10px] text-text-faint">Tracker only</div>
+              <div className="text-[12px] text-text-faint">Tracker only</div>
             </div>
           </div>
           {compareResult.summary.totalPnlDiff !== 0 && (
@@ -349,14 +349,14 @@ export default function Trades({ authenticated, account, accounts }) {
           <div className="flex gap-1.5 mb-3">
             {[['all','All'],['mismatch','Mismatched'],['csv_only','CSV only'],['tracker_only','Tracker only'],['match','Matched']].map(([v,l]) => (
               <button key={v} onClick={() => setCompareFilter(v)}
-                className={`px-2.5 py-1 text-[10px] rounded-lg border transition-colors ${compareFilter === v ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-faint hover:bg-bg-hover'}`}>{l}</button>
+                className={`px-2.5 py-1 text-[12px] rounded-lg border transition-colors ${compareFilter === v ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-faint hover:bg-bg-hover'}`}>{l}</button>
             ))}
           </div>
           {/* Results table */}
           <div className="max-h-80 overflow-y-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-bg-card">
-                <tr className="text-text-faint text-[9px] uppercase tracking-wider">
+                <tr className="text-text-faint text-[11px] uppercase tracking-wider">
                   <th className="text-left py-1.5 pr-2">Status</th>
                   <th className="text-left py-1.5 pr-2">Date</th>
                   <th className="text-left py-1.5 pr-2">Ticker</th>
@@ -379,9 +379,9 @@ export default function Trades({ authenticated, account, accounts }) {
                         <td className="py-1.5 pr-2 mono text-text-muted">{csv?.entryDate || (ex?.['Entry Date'] || '').split('T')[0]}</td>
                         <td className="py-1.5 pr-2 font-medium">{csv?.underlying || ex?.Underlying}</td>
                         <td className="py-1.5 pr-2 text-text-muted">{r.diffs?.strategy ? <><span className="text-amber">{r.diffs.strategy.csv}</span> / <span className="text-text-faint">{r.diffs.strategy.existing}</span></> : (csv?.strategy || ex?.['Strategy (OIC)'])}</td>
-                        <td className="py-1.5 pr-2 text-right mono" style={{ color: csv ? pnlColor(csv.totalPnl) : '#484f58' }}>{csv ? fmt$(csv.totalPnl) : '--'}</td>
-                        <td className="py-1.5 pr-2 text-right mono" style={{ color: ex ? pnlColor(parseFloat(ex['Total P&L ($)']) || 0) : '#484f58' }}>{ex ? fmt$(parseFloat(ex['Total P&L ($)']) || 0) : '--'}</td>
-                        <td className="py-1.5 text-right mono font-medium" style={{ color: Math.abs(r.pnlDiff) >= 1 ? pnlColor(r.pnlDiff) : '#484f58' }}>{Math.abs(r.pnlDiff) >= 1 ? fmt$(r.pnlDiff) : '—'}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: csv ? pnlColor(csv.totalPnl) : '#8b949e' }}>{csv ? fmt$(csv.totalPnl) : '--'}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: ex ? pnlColor(parseFloat(ex['Total P&L ($)']) || 0) : '#8b949e' }}>{ex ? fmt$(parseFloat(ex['Total P&L ($)']) || 0) : '--'}</td>
+                        <td className="py-1.5 text-right mono font-medium" style={{ color: Math.abs(r.pnlDiff) >= 1 ? pnlColor(r.pnlDiff) : '#8b949e' }}>{Math.abs(r.pnlDiff) >= 1 ? fmt$(r.pnlDiff) : '—'}</td>
                       </tr>
                     );
                   })}
@@ -417,7 +417,7 @@ export default function Trades({ authenticated, account, accounts }) {
           </div>
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-text-faint text-[10px] uppercase tracking-wider">
+              <tr className="text-text-faint text-[12px] uppercase tracking-wider">
                 <th className="text-left py-2 px-2">Date</th>
                 <th className="text-left py-2 px-2">Ticker</th>
                 <th className="text-left py-2 px-2">Current</th>
@@ -551,7 +551,7 @@ export default function Trades({ authenticated, account, accounts }) {
         <div className="card p-0 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-text-faint text-[11px] uppercase tracking-wider bg-bg">
+              <tr className="text-text-faint text-[12.5px] uppercase tracking-wider bg-bg">
                 <th className="text-left py-3 px-4"></th>
                 <Th label="Date" col="entry" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <Th label="Ticker" col="ticker" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -603,7 +603,7 @@ export default function Trades({ authenticated, account, accounts }) {
                           </span>
                           {isOpen && (
                             <button onClick={(e) => { e.stopPropagation(); setClosingTrade(t); }}
-                              className="text-[10px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                              className="text-[12px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
                               Close
                             </button>
                           )}
@@ -792,7 +792,7 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
             <EditField label="Net Credit ($)" value={editForm.netCredit} onChange={v => setEditForm(f => ({ ...f, netCredit: v }))} type="number" />
             <EditField label="Qty" value={editForm.qty} onChange={v => setEditForm(f => ({ ...f, qty: v }))} type="number" />
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Status</label>
+              <label className="text-[12px] text-text-muted block mb-1">Status</label>
               <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
                 <option value="Open">Open</option>
@@ -802,7 +802,7 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
               </select>
             </div>
             <div>
-              <label className="text-[10px] text-text-muted block mb-1">Account</label>
+              <label className="text-[12px] text-text-muted block mb-1">Account</label>
               <select value={editForm.account || ''} onChange={e => setEditForm(f => ({ ...f, account: e.target.value }))}
                 className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent">
                 <option value="">No account</option>
@@ -829,7 +829,7 @@ function TradeTicket({ trade, legs, onEdit, onDelete, editingRow, editForm, setE
 function EditField({ label, value, onChange, type = 'text' }) {
   return (
     <div>
-      <label className="text-[10px] text-text-muted block mb-1">{label}</label>
+      <label className="text-[12px] text-text-muted block mb-1">{label}</label>
       <input type={type} step={type === 'number' ? '0.01' : undefined} value={value || ''}
         onChange={e => onChange(e.target.value)}
         className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />

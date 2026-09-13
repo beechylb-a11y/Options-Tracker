@@ -131,13 +131,13 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         onClick={e => e.stopPropagation()}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
           <h3 style={{fontSize:16,fontWeight:700,color:'#e6edf3'}}>Close Trade</h3>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'#8b949e',cursor:'pointer',fontSize:18}}>×</button>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#a8b2be',cursor:'pointer',fontSize:18}}>×</button>
         </div>
 
         {/* Trade summary */}
         <div style={{background:'#0d1117',borderRadius:8,padding:12,marginBottom:16}}>
           <div style={{fontSize:14,fontWeight:600,color:'#e6edf3'}}>{underlying} — {strategy}</div>
-          <div style={{fontSize:12,color:'#8b949e',marginTop:4}}>
+          <div style={{fontSize:13,color:'#a8b2be',marginTop:4}}>
             Qty: {qty} | Entry credit: {entryCredit ? fmt$(entryCredit) : '—'} | Entry: {trade['Entry Date'] || trade.Timestamp?.split('T')[0] || '—'}
           </div>
         </div>
@@ -145,8 +145,8 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         {/* TWS fetch button (live accounts) OR manual-entry note (paper) */}
         {isManualAccount ? (
           <div style={{marginBottom:12,padding:10,borderRadius:8,background:'#0d1117',border:'1px dashed #30363d'}}>
-            <div style={{fontSize:12,fontWeight:600,color:'#d29922',marginBottom:4}}>Manual close (paper / non-TWS account)</div>
-            <div style={{fontSize:11,color:'#8b949e',lineHeight:1.5}}>
+            <div style={{fontSize:13,fontWeight:600,color:'#d29922',marginBottom:4}}>Manual close (paper / non-TWS account)</div>
+            <div style={{fontSize:12.5,color:'#a8b2be',lineHeight:1.5}}>
               No TWS fills to fetch for this account — enter the close details below as they would have been filled: the <b style={{color:'#c9d1d9'}}>close price</b> (net credit/debit to exit) and the resulting <b style={{color:'#c9d1d9'}}>realised P&amp;L</b>. Entry credit was {entryCredit ? fmt$(entryCredit) : '—'} on {qty} contract{qty>1?'s':''}.
             </div>
           </div>
@@ -161,19 +161,19 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         {twsFills !== null && (
           <div style={{marginBottom:12,padding:8,borderRadius:6,background:'#0d1117',border:'1px solid #21262d'}}>
             {twsFills.length === 0 ? (
-              <div style={{fontSize:11,color:'#8b949e'}}>No fills found for {underlying} today</div>
+              <div style={{fontSize:12.5,color:'#a8b2be'}}>No fills found for {underlying} today</div>
             ) : (
               <>
-                <div style={{fontSize:10,color:'#8b949e',marginBottom:6}}>TWS fills for {underlying} today:</div>
+                <div style={{fontSize:12,color:'#a8b2be',marginBottom:6}}>TWS fills for {underlying} today:</div>
                 {twsFills.map((f, i) => (
                   <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:i < twsFills.length-1?'1px solid #21262d':'none'}}>
-                    <div style={{fontSize:11,color:'#c9d1d9'}}>
+                    <div style={{fontSize:12.5,color:'#c9d1d9'}}>
                       <span style={{color:f.side==='BOT'?'#3fb950':'#f85149',fontWeight:600}}>{f.side}</span>
                       {' '}{f.qty}x {f.symbol}
-                      {f.strike > 0 && <span style={{color:'#8b949e'}}> {f.strike}{f.right}</span>}
-                      {f.expiry && <span style={{color:'#484f58'}}> {f.expiry}</span>}
+                      {f.strike > 0 && <span style={{color:'#a8b2be'}}> {f.strike}{f.right}</span>}
+                      {f.expiry && <span style={{color:'#8b949e'}}> {f.expiry}</span>}
                     </div>
-                    <div style={{fontSize:11,fontFamily:'JetBrains Mono,monospace'}}>
+                    <div style={{fontSize:12.5,fontFamily:'JetBrains Mono,monospace'}}>
                       <span style={{color:'#c9d1d9'}}>@{f.price?.toFixed(2)}</span>
                       {f.realizedPnl && f.realizedPnl < 1e300 && (
                         <span style={{marginLeft:8,color:pnlColor(f.realizedPnl)}}>{fmt$(f.realizedPnl)}</span>
@@ -181,7 +181,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
                     </div>
                   </div>
                 ))}
-                {pnl !== 0 && <div style={{fontSize:10,color:'#3fb950',marginTop:6}}>✓ P&L auto-filled from TWS fills</div>}
+                {pnl !== 0 && <div style={{fontSize:12,color:'#3fb950',marginTop:6}}>✓ P&L auto-filled from TWS fills</div>}
               </>
             )}
           </div>
@@ -190,26 +190,26 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         {/* Partial toggle */}
         <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
           <button onClick={() => setPartial(false)}
-            style={{padding:'4px 12px',borderRadius:6,fontSize:12,fontWeight:600,border:'1px solid',
+            style={{padding:'4px 12px',borderRadius:6,fontSize:13,fontWeight:600,border:'1px solid',
               borderColor: !partial ? '#238636' : '#30363d',
               background: !partial ? '#0d2818' : 'transparent',
-              color: !partial ? '#3fb950' : '#8b949e',cursor:'pointer'}}>Full close</button>
+              color: !partial ? '#3fb950' : '#a8b2be',cursor:'pointer'}}>Full close</button>
           <button onClick={() => setPartial(true)}
-            style={{padding:'4px 12px',borderRadius:6,fontSize:12,fontWeight:600,border:'1px solid',
+            style={{padding:'4px 12px',borderRadius:6,fontSize:13,fontWeight:600,border:'1px solid',
               borderColor: partial ? '#d29922' : '#30363d',
               background: partial ? '#1f1a0d' : 'transparent',
-              color: partial ? '#d29922' : '#8b949e',cursor:'pointer'}}>Partial close</button>
+              color: partial ? '#d29922' : '#a8b2be',cursor:'pointer'}}>Partial close</button>
         </div>
 
         {/* Form */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
           <div>
-            <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Close date</label>
+            <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Close date</label>
             <input type="date" value={form.closeDate} onChange={e => setForm(f => ({...f, closeDate: e.target.value}))}
               style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none'}} />
           </div>
           <div>
-            <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Realised P&L ($)</label>
+            <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Realised P&L ($)</label>
             <input type="number" step="any" value={form.closePnl} onChange={e => setForm(f => ({...f, closePnl: e.target.value}))}
               placeholder="e.g. 150 or -200"
               style={{width:'100%',padding:'6px 10px',borderRadius:6,fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none',
@@ -218,7 +218,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
                 color: pnl > 0 ? '#3fb950' : pnl < 0 ? '#f85149' : '#e6edf3'}} />
           </div>
           <div>
-            <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Close price {isManualAccount ? '(net credit/debit to close)' : '(optional)'}</label>
+            <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Close price {isManualAccount ? '(net credit/debit to close)' : '(optional)'}</label>
             <input type="number" step="any" value={form.closePrice} onChange={e => {
                 const cp = e.target.value;
                 setForm(f => {
@@ -242,7 +242,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           </div>
           {partial && (
             <div>
-              <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Contracts to close</label>
+              <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Contracts to close</label>
               <input type="number" value={form.partialQty} onChange={e => setForm(f => ({...f, partialQty: e.target.value}))}
                 placeholder={`1 to ${qty}`} min="1" max={qty}
                 style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}} />
@@ -251,20 +251,20 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         </div>
 
         <div style={{marginTop:12}}>
-          <label style={{fontSize:10,color:'#8b949e',display:'block',marginBottom:4}}>Notes (optional)</label>
+          <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Notes (optional)</label>
           <textarea value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))}
             placeholder="Why did you close? What happened?"
             rows={2}
-            style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,outline:'none',resize:'vertical'}} />
+            style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none',resize:'vertical'}} />
         </div>
 
         {/* P&L preview */}
         {form.closePnl && (
           <div style={{marginTop:12,padding:8,borderRadius:6,background:pnl >= 0 ? '#0d2818' : '#2d0f0f',border:`1px solid ${pnl >= 0 ? '#238636' : '#da3633'}`}}>
-            <span style={{fontSize:12,color:'#8b949e'}}>Result: </span>
+            <span style={{fontSize:13,color:'#a8b2be'}}>Result: </span>
             <span style={{fontSize:16,fontWeight:700,fontFamily:'JetBrains Mono,monospace',color:pnlColor(pnl)}}>{fmt$(pnl)}</span>
-            <span style={{fontSize:12,color:'#8b949e',marginLeft:8}}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
-            {partial && form.partialQty && <span style={{fontSize:12,color:'#d29922',marginLeft:8}}>({form.partialQty} of {qty} contracts)</span>}
+            <span style={{fontSize:13,color:'#a8b2be',marginLeft:8}}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
+            {partial && form.partialQty && <span style={{fontSize:13,color:'#d29922',marginLeft:8}}>({form.partialQty} of {qty} contracts)</span>}
           </div>
         )}
 
@@ -276,7 +276,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
             {closing ? 'Closing...' : partial ? `Close ${form.partialQty || '?'} contracts` : 'Close trade'}
           </button>
           <button onClick={onClose}
-            style={{padding:'8px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:13,cursor:'pointer'}}>
+            style={{padding:'8px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>
             Cancel
           </button>
         </div>

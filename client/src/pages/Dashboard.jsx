@@ -302,13 +302,13 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                   <stop offset="95%" stopColor="#f85149" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-              <YAxis yAxisId="eq" tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="eq" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <YAxis yAxisId="dd" orientation="right" domain={['dataMin', 0]}
                 tick={{ fontSize: 10, fill: '#f85149', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <Tooltip
                 contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: '#8b949e' }}
+                labelStyle={{ color: '#a8b2be' }}
                 formatter={(v, name) => {
                   if (name === 'drawdown') {
                     return [<span style={{ color: '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(Math.abs(v))}</span>, 'Drawdown'];
@@ -334,11 +334,11 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           {pnlByDate.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={pnlByDate}>
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#484f58' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#484f58' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                 <Tooltip
                   contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#8b949e' }}
+                  labelStyle={{ color: '#a8b2be' }}
                   formatter={(v) => {
                     const color = v >= 0 ? '#3fb950' : '#f85149';
                     return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'P&L'];
@@ -408,7 +408,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                       <span className="text-xs text-text-muted ml-2">{t['Strategy (OIC)']}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {warningNote && <span className="text-[10px] text-[#d29922]">{warningNote}</span>}
+                      {warningNote && <span className="text-[12px] text-[#d29922]">{warningNote}</span>}
                       <span className={`badge ${urgentClass}`}>
                         {timeLabel}
                       </span>
@@ -488,7 +488,7 @@ function EventBanner() {
         <Calendar size={14} className="text-text-muted" />
         <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Macro calendar</span>
         {o.nextHigh && (
-          <span className="text-xs mono" style={{ color: '#8b949e' }}>
+          <span className="text-xs mono" style={{ color: '#a8b2be' }}>
             · next major: {o.nextHigh.label} {o.nextHigh.date}
             {o.daysUntilNextHigh === 0 ? ' (today)' : ` (${o.daysUntilNextHigh}d)`}
           </span>
@@ -502,7 +502,7 @@ function EventBanner() {
           </div>
         ))
       ) : (
-        <div className="text-sm" style={{ color: '#8b949e' }}>
+        <div className="text-sm" style={{ color: '#a8b2be' }}>
           Nothing scheduled inside today's session.
         </div>
       )}
@@ -517,7 +517,7 @@ function EventBanner() {
                   fontSize: 11, padding: '2px 7px', borderRadius: 4,
                   background: sev === 'high' ? '#2a1418' : '#161b22',
                   border: `1px solid ${sev === 'high' ? '#6e2427' : '#21262d'}`,
-                  color: sev === 'high' ? '#f85149' : '#8b949e',
+                  color: sev === 'high' ? '#f85149' : '#a8b2be',
                 }}>
                 {e.date.slice(5)} {e.label}{e.source === 'rule' ? ' ?' : ''}
               </span>
@@ -527,7 +527,7 @@ function EventBanner() {
       )}
 
       {o.notices.map((n, i) => (
-        <div key={'n' + i} className="text-xs mt-2" style={{ color: '#6e7681' }}>{n}</div>
+        <div key={'n' + i} className="text-xs mt-2" style={{ color: '#9aa4b0' }}>{n}</div>
       ))}
     </div>
   );
@@ -541,7 +541,7 @@ function KPI({ icon: Icon, label, value, cls, sub, small }) {
         {label}
       </div>
       <div className={`kpi-value ${cls}`} style={small ? { fontSize: 15 } : undefined}>{value}</div>
-      {sub && <div className="text-[10px] text-text-faint mt-0.5">{sub}</div>}
+      {sub && <div className="text-[12px] text-text-faint mt-0.5">{sub}</div>}
     </div>
   );
 }

@@ -107,14 +107,14 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
         padding:'8px 6px', minWidth:262, boxShadow:'0 8px 24px rgba(0,0,0,0.55)',
         cursor:'default', fontFamily:'JetBrains Mono,monospace', fontWeight:400}}>
       {ladder.loading && (
-        <div style={{fontSize:10,color:'#8b949e',padding:'0 6px 5px'}}>fetching ladder…</div>
+        <div style={{fontSize:12,color:'#a8b2be',padding:'0 6px 5px'}}>fetching ladder…</div>
       )}
       {!ladder.loading && ladder.error && (
-        <div style={{fontSize:10,color:'#8b949e',padding:'0 6px 5px'}}>bridge unavailable ·{' '}
+        <div style={{fontSize:12,color:'#a8b2be',padding:'0 6px 5px'}}>bridge unavailable ·{' '}
           <span onClick={onRetry} style={{color:'#2f81f7',textDecoration:'underline',cursor:'pointer'}}>retry</span>
         </div>
       )}
-      <div style={{...cols, fontSize:9, color:'#8b949e', letterSpacing:'0.04em', padding:'0 4px 3px'}}>
+      <div style={{...cols, fontSize:11, color:'#a8b2be', letterSpacing:'0.04em', padding:'0 4px 3px'}}>
         <span>STRIKE</span><span style={num}>Δ</span><span style={num}>θ/day</span><span style={num}>γ</span><span />
       </div>
       {ladder.strikes.map(s => {
@@ -125,13 +125,13 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
         return (
           <div key={s} onClick={() => onPick(s)}
             title={`Set this leg to ${s}`}
-            style={{...cols, fontSize:11, color:'#c9d1d9', padding:'2px 4px', borderRadius:4,
+            style={{...cols, fontSize:12.5, color:'#c9d1d9', padding:'2px 4px', borderRadius:4,
               cursor:'pointer', background:isCur ? 'rgba(47,129,247,0.16)' : 'transparent'}}>
             <span style={{fontWeight:isCur?700:400, color:isCur?'#fff':'#c9d1d9'}}>{s}</span>
             <span style={num}>{g ? fmt(g.delta, 2, true) : '--'}</span>
             <span style={num}>{g ? fmt(g.theta, 2, false) : '--'}</span>
             <span style={num}>{g ? fmt(g.gamma, 3, false) : '--'}</span>
-            <span style={{fontSize:9}}>
+            <span style={{fontSize:11}}>
               {isEng && <span style={{color:'#2f81f7'}}>engine</span>}
               {isEng && isMaxT && ' '}
               {isMaxT && <span style={{color:'#3fb950'}}>max θ</span>}
@@ -139,7 +139,7 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
           </div>
         );
       })}
-      <div style={{marginTop:6, fontSize:10, color:'#8b949e', padding:'0 4px', fontFamily:'inherit'}}>
+      <div style={{marginTop:6, fontSize:12, color:'#a8b2be', padding:'0 4px', fontFamily:'inherit'}}>
         click a row to set · payoff, P(max loss), EV recompute
       </div>
     </div>
@@ -183,7 +183,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
   }, [ladderOpen]);
 
   const box = {
-    padding:'3px 10px', borderRadius:8, fontSize:12, fontWeight:700,
+    padding:'3px 10px', borderRadius:8, fontSize:13, fontWeight:700,
     background:isShort?'#8b2025':'#0d2818', color:isShort?'#f85149':'#3fb950',
     fontFamily:'JetBrains Mono,monospace',
     border: edited || editing ? '1px solid #d29922' : '1px solid transparent'
@@ -205,17 +205,17 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
         onBlur={()=>{ if (escRef.current) { escRef.current = false; return; } setEditing(false); onCommit(idx, text); }}
         style={{width:(String(leg.strike).length + 2) + 'ch', background:'transparent', border:'none',
           outline:'none', color:'inherit', font:'inherit', padding:0}} />
-      <span style={{fontSize:10,fontWeight:400,opacity:0.8}}> {label}</span>
+      <span style={{fontSize:12,fontWeight:400,opacity:0.8}}> {label}</span>
     </div>
   ) : (
     <div onClick={()=>{ if (ladderOpen && onCloseLadder) onCloseLadder(); setText(String(leg.strike)); setEditing(true); }}
       title={edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike'}
       style={{...box, cursor:'pointer'}}>
-      {leg.strike}{edited && <span style={{fontSize:9,marginLeft:3,color:'#d29922'}}>✎</span>} <span style={{fontSize:10,fontWeight:400,opacity:0.8}}>{label}</span>
+      {leg.strike}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>} <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span>
       {onOpenLadder && (
         <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
           title="Strike ladder — nearby strikes with live greeks"
-          style={{fontSize:10,marginLeft:5,opacity:0.55,cursor:'pointer'}}>≡</span>
+          style={{fontSize:12,marginLeft:5,opacity:0.55,cursor:'pointer'}}>≡</span>
       )}
     </div>
   );
@@ -369,6 +369,28 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   // Banner zone-4 warning chips: which chip's "why" explanation is expanded (key or null)
   const [expandedWarning, setExpandedWarning] = useState(null);
+  // Advisories collapse by default. They were made visible in Aug 2026 after
+  // spending months reaching only the Print summary, so nothing is hidden
+  // silently: the collapsed row carries the counts, and events are counted
+  // separately because they are the ones that are time-critical rather than
+  // structural. Blockers never collapse — they stop the trade. (Sep 2026.)
+  const [showAdvisories, setShowAdvisories] = useState(false);
+  // The proposed trade used to scroll away long before the market data you are
+  // checking it against, so the two numbers you wanted to compare were never on
+  // screen together. A condensed bar takes over once the full block clears the
+  // top. HeaderStrip is 48px tall and z-20, so this sits just under it.
+  const decisionRef = useRef(null);
+  const [ticketStuck, setTicketStuck] = useState(false);
+  useEffect(() => {
+    const el = decisionRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      ([e]) => setTicketStuck(!e.isIntersecting && e.boundingClientRect.top < 0),
+      { rootMargin: '-48px 0px 0px 0px', threshold: 0 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   // ── Section completeness ──
   // "Required" mirrors the exact gates behind the banner's incomplete states:
@@ -798,7 +820,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
   // ── Trade Confidence colours (gated metric from the engine) ──
   const tc = r.tradeConfidence;
-  const confClr = tc==null?'#8b949e':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
+  const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
   const confBg  = tc==null?'#161b22':tc>=70?'#0d1f0d':tc>=50?'#0d1a0d':tc>=30?'#1f1a0d':'#1f0d0d';
 
   // Show VWAP scaling notice (vwapScaled defined above)
@@ -1129,18 +1151,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<style>' +
       'body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#e6edf3;background:#0d1117;padding:20px}' +
       'h1{font-size:22px;margin-bottom:4px}' +
-      'h2{font-size:14px;color:#8b949e;font-weight:400;margin-top:0}' +
+      'h2{font-size:14px;color:#a8b2be;font-weight:400;margin-top:0}' +
       '.decision{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:' + dcColor + ';margin-bottom:4px}' +
       '.override{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:#9e6a03;color:#fff;margin-left:8px}' +
       '.section{margin-top:20px;padding-top:12px;border-top:1px solid #21262d}' +
-      '.section-title{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8b949e;margin-bottom:8px}' +
+      '.section-title{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#a8b2be;margin-bottom:8px}' +
       '.row{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}' +
-      '.row .label{color:#8b949e}.row .value{font-weight:600;font-family:monospace}' +
+      '.row .label{color:#a8b2be}.row .value{font-weight:600;font-family:monospace}' +
       '.green{color:#3fb950}.red{color:#f85149}.amber{color:#d29922}.white{color:#e6edf3}' +
       '.leg{display:inline-block;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;font-family:monospace;margin:2px 4px 2px 0}' +
       '.leg-short{background:#8b2025;color:#f85149}.leg-long{background:#0d2818;color:#3fb950}' +
       '.warn{font-size:12px;color:#d29922;margin:2px 0}' +
-      '.timestamp{font-size:11px;color:#484f58;margin-top:24px}' +
+      '.timestamp{font-size:11px;color:#8b949e;margin-top:24px}' +
       '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#1a7f37}.leg-short{color:#cf222e}}' +
       '</style></head><body>' +
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
@@ -1150,8 +1172,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       (r.tradeConfidence != null ?
         '<div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:' + confBg + ';border:1px solid ' + confClr + '">' +
           '<div style="display:flex;align-items:center;gap:12px">' +
-            '<span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#8b949e">Trade Confidence</span>' +
-            '<span style="font-size:22px;font-weight:800;font-family:monospace;color:' + confClr + '">' + r.tradeConfidence + '<span style="font-size:12px;color:#8b949e">/100</span></span>' +
+            '<span style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#a8b2be">Trade Confidence</span>' +
+            '<span style="font-size:22px;font-weight:800;font-family:monospace;color:' + confClr + '">' + r.tradeConfidence + '<span style="font-size:12px;color:#a8b2be">/100</span></span>' +
             '<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:10px;background:' + confClr + ';color:#0d1117;text-transform:uppercase;letter-spacing:0.04em">' + r.confidenceTier + '</span>' +
           '</div>' +
           '<div style="font-size:12px;color:#c9d1d9;margin-top:5px">' + r.confidenceDriver + '</div>' +
@@ -1163,24 +1185,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         '</div>' : '') +
       '<div style="display:flex;gap:20px;margin-top:8px;font-size:12px">' +
         '<div style="padding:6px 12px;border-radius:6px;background:' + sBg + ';border:1px solid ' + sClr + '">' +
-          '<span style="color:#8b949e">Setup Quality</span> <span style="color:' + sClr + ';font-weight:700;font-family:monospace">' + r.setup + ' ' + r.setupScore + '/100</span>' +
+          '<span style="color:#a8b2be">Setup Quality</span> <span style="color:' + sClr + ';font-weight:700;font-family:monospace">' + r.setup + ' ' + r.setupScore + '/100</span>' +
         '</div>' +
         '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
-          '<span style="color:#8b949e">Adj Kelly</span> <span style="color:' + (r.kellyOverRisk ? '#f85149' : '#3fb950') + ';font-weight:700;font-family:monospace">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + ' (' + (r.adjustedKelly ? (r.adjustedKelly*100).toFixed(1) : '0') + '%)</span>' +
+          '<span style="color:#a8b2be">Adj Kelly</span> <span style="color:' + (r.kellyOverRisk ? '#f85149' : '#3fb950') + ';font-weight:700;font-family:monospace">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + ' (' + (r.adjustedKelly ? (r.adjustedKelly*100).toFixed(1) : '0') + '%)</span>' +
         '</div>' +
         '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
-          '<span style="color:#8b949e">Fair Value</span> <span style="color:' + (r.fairValueScore >= 80 ? '#3fb950' : r.fairValueScore >= 70 ? '#d29922' : '#f85149') + ';font-weight:700;font-family:monospace">' + r.fairValueScore + '/100 ' + r.fairValueGrade + '</span>' +
+          '<span style="color:#a8b2be">Fair Value</span> <span style="color:' + (r.fairValueScore >= 80 ? '#3fb950' : r.fairValueScore >= 70 ? '#d29922' : '#f85149') + ';font-weight:700;font-family:monospace">' + r.fairValueScore + '/100 ' + r.fairValueGrade + '</span>' +
         '</div>' +
         '<div style="padding:6px 12px;border-radius:6px;background:#161b22;border:1px solid #30363d">' +
-          '<span style="color:#8b949e">Score</span> <span style="color:' + dcColor + ';font-weight:700;font-family:monospace">' + compositeScore + '/100</span>' +
+          '<span style="color:#a8b2be">Score</span> <span style="color:' + dcColor + ';font-weight:700;font-family:monospace">' + compositeScore + '/100</span>' +
         '</div>' +
       '</div>' +
       (warningsHtml ? '<div style="margin-top:10px;padding:8px 12px;background:#1f1a0d;border:1px solid #9e6a03;border-radius:6px">' + warningsHtml + '</div>' : '') +
       '<div style="margin-top:12px">' + legsHtml + '</div>' +
-      (variantTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + variantTxt + '</div>' : '') +
-      (r.wingTxt ? '<div style="font-size:11px;color:#8b949e;margin-top:4px">' + r.wingTxt + '</div>' : '') +
-      (is0 && r.holdToExpiry ? '<div style="font-size:11px;color:#8b949e;margin-top:4px"><b>Expiry:</b> ' + r.holdToExpiry.label + ' — ' + r.holdToExpiry.note + '</div>' : '') +
-      (r.behaviour ? '<div style="font-size:12px;color:#8b949e;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
+      (variantTxt ? '<div style="font-size:11px;color:#a8b2be;margin-top:4px">' + variantTxt + '</div>' : '') +
+      (r.wingTxt ? '<div style="font-size:11px;color:#a8b2be;margin-top:4px">' + r.wingTxt + '</div>' : '') +
+      (is0 && r.holdToExpiry ? '<div style="font-size:11px;color:#a8b2be;margin-top:4px"><b>Expiry:</b> ' + r.holdToExpiry.label + ' — ' + r.holdToExpiry.note + '</div>' : '') +
+      (r.behaviour ? '<div style="font-size:12px;color:#a8b2be;margin-top:8px;font-style:italic">Profit if: ' + r.behaviour + '</div>' : '') +
       '<div class="section"><div class="section-title">Setup Quality</div>' + criteriaHtml + '</div>' +
       (r.payoff ? '<div class="section"><div class="section-title">Payoff at Expiry</div>' +
       '<div class="row"><span class="label">Max profit</span><span class="value green">$' + r.payoff.maxProfit.toFixed(0) + '</span></div>' +
@@ -1369,35 +1391,64 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   return (
     <div className="space-y-4">
+      {/* Condensed ticket — only while the full block is scrolled past. display:none
+          when idle so it takes no space and creates no gap in the space-y stack. */}
+      <div style={{position:'sticky',top:48,zIndex:10,display:ticketStuck?'block':'none',
+        margin:'0 -4px',padding:'8px 12px',borderRadius:10,
+        background:'rgba(13,17,23,0.94)',backdropFilter:'blur(8px)',
+        border:`1px solid ${dcBorder}`,boxShadow:'0 6px 18px rgba(0,0,0,0.45)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'nowrap',
+          overflowX:'auto',fontSize:13,whiteSpace:'nowrap'}}>
+          <span style={{fontWeight:700,color:dcColor}}>
+            {secBag.underlying} · {effectiveStrat} · {r.contracts}x
+          </span>
+          <span className="mono" style={{color:'#a8b2be'}}>
+            {r.legs?.map(l => l.strike).join(' / ')}
+          </span>
+          <span style={{marginLeft:'auto',display:'flex',gap:14,alignItems:'baseline'}}>
+            <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>COMP </span>
+              <span style={{color:dcColor,fontWeight:700}}>{compositeScore}</span></span>
+            <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>EV </span>
+              <span style={{color:r.ev>0?'#3fb950':'#f85149',fontWeight:700}}>
+                ${Math.round(r.ev||0)}</span></span>
+            <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>KELLY </span>
+              <span style={{fontWeight:700}}>${Math.round(r.kellyDollar||0)}</span></span>
+            {r.tradeConfidence != null && (
+              <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>CONF </span>
+                <span style={{color:dcColor,fontWeight:700}}>{r.tradeConfidence}</span></span>
+            )}
+          </span>
+        </div>
+      </div>
       {/* Decision Block */}
-      <div style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
+      <div ref={decisionRef} style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
         <div style={{display:'flex',gap:20,alignItems:'flex-start'}}>
           {/* Left: strategy info */}
           <div style={{flex:'1 1 auto',minWidth:0}}>
             {/* Zone 1 — identity row: status pill · title · badges */}
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              <span style={{fontSize:12,fontWeight:700,padding:'2px 10px',borderRadius:999,
+              <span style={{fontSize:13,fontWeight:700,padding:'2px 10px',borderRadius:999,
                 color:(missingInputs && !hasBlocker)?'#d29922':dcColor,
                 border:`1px solid ${(missingInputs && !hasBlocker)?'#9e6a03':dcBorder}`,
                 background:'rgba(255,255,255,0.04)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</span>
               <span style={{fontSize:16,fontWeight:600,color:'#fff'}}>
                 {r.hardBlocker || `${is0?i0.underlying:i45.underlying} · ${effectiveStrat}${missingInputs ? '' : ` · ${r.contracts}x`}`}
               </span>
-              {isOverride && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+              {isOverride && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
               {(() => {
                 const net = parseFloat(ticketNet);
                 const hasNet = !isNaN(net) && net !== 0;
                 const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
                 const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
-                const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#8b949e';
+                const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#a8b2be';
                 // Per-share net, to 2dp. toFixed(0) rounded a real 0.46 debit to "-$0",
                 // which reads as a free trade on the one badge whose job is the price.
                 const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(2)}` : '';
                 return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
-                  style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
+                  style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
               })()}
               {r.tradeConfidence != null && (
-                <span title={r.confidenceDriver} style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,background:confBg,border:`1px solid ${confClr}`,color:confClr,letterSpacing:'0.04em'}}>
+                <span title={r.confidenceDriver} style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:confBg,border:`1px solid ${confClr}`,color:confClr,letterSpacing:'0.04em'}}>
                   CONF {r.tradeConfidence} · {r.confidenceTier.toUpperCase()}
                 </span>
               )}
@@ -1416,7 +1467,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 {r.vertVariants.map(v => {
                   const on = v.id === (r.vertVariant || 'engine');
                   const thin = v.rrCeil != null && v.rrCeil < 0.25;
-                  const clr = on ? (thin ? '#d29922' : '#58a6ff') : '#8b949e';
+                  const clr = on ? (thin ? '#d29922' : '#58a6ff') : '#a8b2be';
                   return (
                     <button key={v.id} onClick={() => setVertVariant(v.id)}
                       title={v.id === 'engine'
@@ -1429,10 +1480,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                       style={{textAlign:'left',padding:'5px 9px',borderRadius:6,cursor:'pointer',
                         background: on ? (thin ? '#1f1a0d' : '#0d1a2b') : '#0d1117',
                         border:`1px solid ${on ? clr : '#21262d'}`, color: clr}}>
-                      <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.03em'}}>
+                      <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.03em'}}>
                         {v.label}{v.shift > 0 ? ` · ${v.shift.toFixed(2)}` : ''}{v.capped ? ' · capped' : ''}
                       </div>
-                      <div className="mono" style={{fontSize:11,color: on ? '#c9d1d9' : '#6e7681'}}>
+                      <div className="mono" style={{fontSize:12.5,color: on ? '#c9d1d9' : '#9aa4b0'}}>
                         {(v.id === 'engine' ? v.legs.slice(0,2) : v.legs).map(l => l.strike).join(' / ')}
                         {v.rrCeil != null
                           ? `  ≤+${v.maxProfitCeil.toFixed(2)} / ${v.intrinsic.toFixed(2)} (${v.rrCeil.toFixed(2)}:1)`
@@ -1447,7 +1498,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               // Dual EM suggestions for spreads
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(VIX):</span>
+                  <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(VIX):</span>
                   {r.legs.slice(0,2).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
                       step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')}
@@ -1456,14 +1507,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   ))}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                  <span style={{fontSize:10,color:'#8b949e',width:50}}>EM(1D):</span>
+                  <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(1D):</span>
                   {r.legs.slice(2,4).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i+2} engineStrike={r.engineLegs?.[i+2]?.strike}
                       step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')}
                       ladderOpen={ladder?.idx === i+2} ladder={ladder}
                       onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                   ))}
-                  {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
+                  {(r.wingTxt || r.strikeLine) && <span style={{fontSize:12.5,color:'#a8b2be'}}>{r.wingTxt || r.strikeLine}</span>}
                 </div>
               </div>
             ) : (
@@ -1475,18 +1526,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     ladderOpen={ladder?.idx === i} ladder={ladder}
                     onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                 ))}
-                {(r.wingTxt || r.strikeLine) && <span style={{fontSize:11,color:'#8b949e'}}>{r.wingTxt || r.strikeLine}</span>}
+                {(r.wingTxt || r.strikeLine) && <span style={{fontSize:12.5,color:'#a8b2be'}}>{r.wingTxt || r.strikeLine}</span>}
               </div>
             )}
             {editedCount > 0 && (
-              <div style={{marginTop:4,fontSize:11,color:'#d29922'}}>
+              <div style={{marginTop:4,fontSize:12.5,color:'#d29922'}}>
                 ✎ {editedCount} leg{editedCount>1?'s':''} edited ·{' '}
                 <span onClick={resetStrikes} title="Clear every hand-edited strike and take the engine's suggestion back"
                   style={{textDecoration:'underline',cursor:'pointer'}}>reset to engine</span>
               </div>
             )}
             {r.strikeOrderWarning && (
-              <div style={{marginTop:4,fontSize:11,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
+              <div style={{marginTop:4,fontSize:12.5,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
             )}
           </div>
         )}
@@ -1496,11 +1547,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         {!r.hardBlocker && (() => {
           const tile = (label, value, dim, tip) => (
             <div title={tip} style={{background:'rgba(255,255,255,0.04)',borderRadius:8,padding:'8px 10px',opacity:dim?0.55:1}}>
-              <div style={{fontSize:11,color:'#8b949e',letterSpacing:'0.04em'}}>{label}</div>
+              <div style={{fontSize:12.5,color:'#a8b2be',letterSpacing:'0.04em'}}>{label}</div>
               {value}
             </div>
           );
-          const needs = txt => <div style={{fontSize:12,color:'#8b949e',marginTop:3}}>{txt}</div>;
+          const needs = txt => <div style={{fontSize:13,color:'#a8b2be',marginTop:3}}>{txt}</div>;
           const val = (node) => <div style={{fontSize:19,fontWeight:700,fontFamily:'JetBrains Mono,monospace',marginTop:1}}>{node}</div>;
           return (
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginTop:10}}>
@@ -1514,8 +1565,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 : val(<span style={{color: r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(r.pMaxLoss*100).toFixed(1)}%</span>),
                 r.pMaxLoss==null)}
               {tile('EV', missingInputs ? needs('needs sizing')
-                : val(<><span style={{color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#8b949e'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</span>
-                  {r.evBasis && <span style={{fontSize:10,fontWeight:400,color:'#8b949e'}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</>),
+                : val(<><span style={{color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#a8b2be'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</span>
+                  {r.evBasis && <span style={{fontSize:12,fontWeight:400,color:'#a8b2be'}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</>),
                 missingInputs)}
               {tile('KELLY', missingInputs ? needs('needs sizing')
                 : val(<span style={{color: r.kellyOverRisk?'#f85149':'#3fb950'}}>{r.contracts}x · ${r.kellyDollar?.toFixed(0)||0}</span>),
@@ -1527,20 +1578,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         {!r.hardBlocker && (
           <div style={{marginTop:8}}>
             <span style={{fontSize:14,fontWeight:700,color:'#fff'}}>{`${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'}`}</span>
-            <span style={{fontSize:13,color:'#8b949e'}}>
+            <span style={{fontSize:13,color:'#a8b2be'}}>
               {skewClause ? ` — ${skewClause}.` : ''}
               {r.behaviour ? ` Profit if: ${r.behaviour}` : ''}
             </span>
           </div>
         )}
         {!r.hardBlocker && r.tradeConfidence != null && (
-          <div style={{marginTop:6,fontSize:12,color:'#8b949e'}}>
+          <div style={{marginTop:6,fontSize:13,color:'#a8b2be'}}>
             <span style={{color:confClr,fontWeight:600}}>Confidence {r.tradeConfidence}/100 · {r.confidenceTier}</span>
             {' — '}{r.confidenceDriver}
             {r.confConflicts && r.confConflicts.length > 0 && (
               <span style={{display:'inline-flex',flexWrap:'wrap',gap:6,marginLeft:8,verticalAlign:'middle'}}>
                 {r.confConflicts.map((c,i) => (
-                  <span key={i} title={c.label} style={{fontSize:10,fontWeight:600,padding:'1px 7px',borderRadius:4,
+                  <span key={i} title={c.label} style={{fontSize:12,fontWeight:600,padding:'1px 7px',borderRadius:4,
                     background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
                 ))}
               </span>
@@ -1555,21 +1606,30 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               blockers — the trade is not takeable as configured
               warnings — takeable, but they downgrade the decision
               notices  — facts about the DATA, never about the trade; they never gate */}
-        {(r.blockers?.length > 0 || r.warnings?.length > 0 || r.notices?.length > 0) && (
+        {(r.blockers?.length > 0 || r.warnings?.length > 0 || r.notices?.length > 0) && (() => {
+          const warns = r.warnings || [], notes = r.notices || [];
+          const isEventW = w => /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
+          const nEvent = warns.filter(isEventW).length;
+          const nWarn = warns.length - nEvent;
+          const parts = [];
+          if (nWarn) parts.push(`\u26a0 ${nWarn} warning${nWarn > 1 ? 's' : ''}`);
+          if (nEvent) parts.push(`\ud83d\udcc5 ${nEvent} event${nEvent > 1 ? 's' : ''}`);
+          if (notes.length) parts.push(`${notes.length} notice${notes.length > 1 ? 's' : ''}`);
+          return (
           <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
             {r.blockers?.map((b,i) => (
-              <div key={'b'+i} style={{fontSize:12,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
+              <div key={'b'+i} style={{fontSize:13,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
                 background:'#2d0f11',border:'1px solid #6e2427',color:'#f85149'}}>
                 <b>Blocker</b> · {b}
               </div>
             ))}
-            {r.warnings?.map((w,i) => {
+            {showAdvisories && r.warnings?.map((w,i) => {
               // Event warnings earn a distinct colour: they are the only ones that are
               // about the calendar rather than the structure, and they are actionable
               // in a different way — you wait, or you size down, you do not re-strike.
               const isEvent = /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
               return (
-                <div key={'w'+i} style={{fontSize:12,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
+                <div key={'w'+i} style={{fontSize:13,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
                   background: isEvent ? '#1a1726' : '#1f1a0d',
                   border:`1px solid ${isEvent ? '#4b3f7a' : '#9e6a03'}`,
                   color: isEvent ? '#b9a7ff' : '#d29922'}}>
@@ -1577,15 +1637,28 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 </div>
               );
             })}
-            {r.notices?.map((n,i) => (
+            {showAdvisories && r.notices?.map((n,i) => (
               <div key={'n'+i} title="A fact about the calendar data, not about this trade — it does not affect the decision."
-                style={{fontSize:11,lineHeight:1.45,padding:'5px 10px',borderRadius:6,
-                  background:'#0d1117',border:'1px solid #21262d',color:'#8b949e'}}>
+                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,
+                  background:'#0d1117',border:'1px solid #21262d',color:'#a8b2be'}}>
                 {n}
               </div>
             ))}
+            {parts.length > 0 && (
+              <div onClick={() => setShowAdvisories(v => !v)} role="button" tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setShowAdvisories(v => !v); }}
+                title={showAdvisories ? 'Collapse' : parts.join(' \u00b7 ')}
+                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,cursor:'pointer',
+                  userSelect:'none',background:'#161b22',border:'1px solid #30363d',color:'#a8b2be',
+                  display:'flex',alignItems:'center',gap:8}}>
+                <span style={{color:'#a8b2be'}}>{showAdvisories ? '\u25be' : '\u25b8'}</span>
+                <span>{parts.join(' \u00b7 ')}</span>
+                <span style={{marginLeft:'auto',color:'#8b949e'}}>{showAdvisories ? 'hide' : 'show'}</span>
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
         {/* Zone 4 — warning chips: hold-to-expiry verdict, expandable "why" */}
         {is0 && r.holdToExpiry && (() => {
           const h = r.holdToExpiry;
@@ -1593,13 +1666,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           const fg = h.verdict==='hold'?'#3fb950':h.verdict==='watch'?'#d29922':'#f85149';
           return (
             <div style={{marginTop:8}}>
-              <div style={{display:'inline-flex',alignItems:'center',gap:8,borderRadius:6,padding:'4px 10px',fontSize:12,background:bg,color:fg}}>
+              <div style={{display:'inline-flex',alignItems:'center',gap:8,borderRadius:6,padding:'4px 10px',fontSize:13,background:bg,color:fg}}>
                 <span>Expiry · {h.label} · cushion {h.cushionEM.toFixed(2)} EM (need {h.needed.toFixed(2)}) · {h.isCashSettled?'cash-settled':'settles into shares'}</span>
                 <span onClick={()=>setExpandedWarning(expandedWarning==='expiry'?null:'expiry')}
                   style={{textDecoration:'underline',cursor:'pointer',opacity:0.85}}>why</span>
               </div>
               {expandedWarning==='expiry' && (
-                <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>{h.note}</div>
+                <div style={{fontSize:12.5,color:'#a8b2be',marginTop:4}}>{h.note}</div>
               )}
             </div>
           );
@@ -1618,7 +1691,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 ✓ Logged · {new Date(loggedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
               </span>
               <span onClick={handleLog} title="Log a second ticket for these same strikes — for legging in, not for correcting a mistake"
-                style={{fontSize:12,color:'#8b949e',textDecoration:'underline',cursor:'pointer'}}>Log again</span>
+                style={{fontSize:13,color:'#a8b2be',textDecoration:'underline',cursor:'pointer'}}>Log again</span>
             </div>
           ) : (
             <button onClick={handleLog} disabled={logging}
@@ -1630,7 +1703,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           )
         )}
         {isOverride && (
-          <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Clear override</button>
+          <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>Clear override</button>
         )}
         {logNoteOpen && (
           <div style={{marginTop:10,display:'flex',gap:6,alignItems:'center',maxWidth:560}}>
@@ -1638,10 +1711,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               onChange={e=>setLogNote(e.target.value)}
               onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); confirmLog(); } else if (e.key==='Escape') { setLogNoteOpen(false); } }}
               placeholder="Add a note for this trade (optional) — your rationale, plan, or anything to remember"
-              style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,outline:'none'}} />
-            <button onClick={confirmLog} style={{padding:'6px 14px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}}>Log</button>
+              style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none'}} />
+            <button onClick={confirmLog} style={{padding:'6px 14px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log</button>
             <button onClick={()=>setLogNoteOpen(false)} title="Abort logging (nothing is written)"
-              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#8b949e',fontSize:12,cursor:'pointer'}}>Cancel</button>
+              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>Cancel</button>
           </div>
         )}
           </div>
@@ -1657,10 +1730,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               if (bes.length) parts.push(`BE ${bes.map(b => Math.round(b)).join(' / ')}`);
               if (Number.isFinite(mp)) parts.push(`max +$${mp >= 1000 ? (mp/1000).toFixed(1).replace(/\.0$/,'') + 'k' : Math.round(mp)}`);
               return parts.length > 0 ? (
-                <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:'#8b949e',textAlign:'center'}}>{parts.join(' · ')}</div>
+                <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:12.5,color:'#a8b2be',textAlign:'center'}}>{parts.join(' · ')}</div>
               ) : null;
             })()}
-            <button onClick={handlePrint} style={{padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>Print summary</button>
+            <button onClick={handlePrint} style={{padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:13,cursor:'pointer'}}>Print summary</button>
           </div>
         </div>
       </div>
@@ -1672,10 +1745,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {/* Source legend — the SAME colours the per-field states already use:
               green = the feed / LIVE badge, amber = Inp's manual (held) state,
               dim grey = Inp's stale (not returned by the last pull) state. */}
-          <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',fontSize:10,color:'#8b949e',lineHeight:1,marginBottom:2}}>
+          <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',fontSize:12,color:'#a8b2be',lineHeight:1,marginBottom:2}}>
             <span style={{display:'inline-flex',alignItems:'center',gap:4}}><span style={{width:6,height:6,borderRadius:'50%',background:'#3fb950',display:'inline-block'}}/>live feed</span>
             <span style={{display:'inline-flex',alignItems:'center',gap:4}}><span style={{width:6,height:6,borderRadius:'50%',background:'#d29922',display:'inline-block'}}/>manual ✎</span>
-            <span style={{display:'inline-flex',alignItems:'center',gap:4}}><span style={{width:6,height:6,borderRadius:'50%',background:'#6e7681',display:'inline-block'}}/>stale</span>
+            <span style={{display:'inline-flex',alignItems:'center',gap:4}}><span style={{width:6,height:6,borderRadius:'50%',background:'#9aa4b0',display:'inline-block'}}/>stale</span>
           </div>
 
           {/* Market Data */}
@@ -1690,9 +1763,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {dataFresh && (
                 <span title={(dataFresh.label || '') + (dataFresh.asOf ? ' \u00b7 quote stamped ' + new Date(dataFresh.asOf).toLocaleString('en-AU') : '')
                   + (feed && feed.missing && feed.missing.length ? '\n' + feed.missing.length + ' field(s) not returned by this pull: ' + feed.missing.join(', ') : '')}
-                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
+                  style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
                     background: dataFresh.isLive ? '#0d2818' : '#161b22',
-                    color: dataFresh.isLive ? '#3fb950' : '#8b949e',
+                    color: dataFresh.isLive ? '#3fb950' : '#a8b2be',
                     border: '1px solid ' + (dataFresh.isLive ? '#238636' : '#30363d')}}>
                   {dataFresh.isLive ? '\u25cf LIVE' : '\u25cb LAST CLOSE'}
                   {(dataFresh.pulledAt || dataFresh.asOf) && <span style={{fontWeight:600}}> {clockOf(dataFresh.pulledAt || dataFresh.asOf)}</span>}
@@ -1700,7 +1773,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 </span>
               )}
               {justRefreshed && (
-                <span style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
+                <span style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
                   background:'#0d2818',color:'#3fb950',border:'1px solid #238636'}}>
                   ✓ REFRESHED{feed && feed.missing && feed.missing.length ? ' · ' + feed.missing.length + ' missing' : ''}
                 </span>
@@ -1708,32 +1781,32 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {heldKeys.length > 0 && (
                 <button onClick={releaseHolds}
                   title={'You are holding ' + heldKeys.length + ' hand-typed market field(s); auto-fill leaves them alone. Click to release them and take the last feed value back.'}
-                  style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
+                  style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap',
                     background:'#2d1a0d',color:'#d29922',border:'1px solid #5a3a1a',cursor:'pointer'}}>
                   ✎ {heldKeys.length} MANUAL
                 </button>
               )}
               <button onClick={handleLoadFromTWS} disabled={loadingTws}
                 title="Load an open option position from TWS into the ticket, then pull market data"
-                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:loadingTws?'#161b22':'transparent',color:loadingTws?'#8b949e':'#3fb950',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:loadingTws?'#161b22':'transparent',color:loadingTws?'#a8b2be':'#3fb950',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
                 {loadingTws ? 'Loading…' : '📥 Load position (TWS)'}
               </button>
               <button onClick={handleAutoFill} disabled={autoFilling}
-                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:autoFilling?'#161b22':'transparent',color:autoFilling?'#a8b2be':'#2f81f7',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
                 {autoFilling ? 'Fetching...' : '⚡ Auto-fill'}
               </button>
             </>}
             pinned={twsStructures && twsStructures.length > 1 && (
             <div style={{border:'1px solid #30363d',borderRadius:8,padding:10,marginBottom:8,background:'#0d1117'}}>
-              <div style={{fontSize:12,color:'#8b949e',marginBottom:6}}>Multiple open positions in TWS — pick one:</div>
+              <div style={{fontSize:13,color:'#a8b2be',marginBottom:6}}>Multiple open positions in TWS — pick one:</div>
               {twsStructures.map((s, i) => (
                 <button key={i} onClick={() => applyTwsStructure(s)}
-                  style={{display:'block',width:'100%',textAlign:'left',padding:'6px 8px',marginBottom:4,borderRadius:6,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:12,cursor:'pointer'}}>
+                  style={{display:'block',width:'100%',textAlign:'left',padding:'6px 8px',marginBottom:4,borderRadius:6,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:13,cursor:'pointer'}}>
                   <b>{s.underlying}</b> {s.shape} · {s.legCount} legs · strikes {s.strikes.join('/')} · {s.isCredit ? 'credit' : 'debit'} ${Math.abs(Math.round((s.netCreditDebit||0)*100))} · exp {s.expiry}
                 </button>
               ))}
               <button onClick={() => setTwsStructures(null)}
-                style={{marginTop:4,padding:'3px 8px',borderRadius:5,border:'none',background:'transparent',color:'#8b949e',fontSize:11,cursor:'pointer'}}>Cancel</button>
+                style={{marginTop:4,padding:'3px 8px',borderRadius:5,border:'none',background:'transparent',color:'#a8b2be',fontSize:12.5,cursor:'pointer'}}>Cancel</button>
             </div>
           )}>
           <div className="grid grid-cols-2 gap-2.5">
@@ -1763,29 +1836,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {is0 && r.emDetail && (
             <div style={{marginTop:6,padding:'7px 10px',borderRadius:8,background:'#0d1117',border:`1px solid ${r.emDisagree ? '#5a3a1a' : '#21262d'}`}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-                <div style={{fontSize:12,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
+                <div style={{fontSize:13,lineHeight:1.4,color: r.emIsStraddle ? '#3fb950' : i0.emSource==='manual' ? '#58a6ff' : '#e3a008'}}>
                   <b>EM {r.emIsStraddle ? '(straddle)' : i0.emSource==='manual' ? '(manual)' : '(VIX model)'}:</b><Info text="Expected move - how far the market is priced to travel, in points. The engine keeps TWO rulers and uses both. REMAINING (now to the close) sets strikes, breakevens and POP. SESSION (open to close) sets move-consumed, regime and every '% EM' score. They differ by sqrt(fraction of session left), so Remaining is always the smaller number - that is scale, not disagreement. SOURCE: straddle (green) = ATM call + put x 1.2533, the market's own priced move with skew and events baked in - preferred. VIX model (amber) = VIX1D / sqrt(252) x the cash open, the fallback when option data is not subscribed. Manual (blue) = your number, always read as a SESSION EM. SD mult converts a straddle to 1 SD: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave it at 1.2533. The line underneath cross-checks the two sources like-for-like by putting the straddle back on the session ruler and comparing its implied session vol against VIX1D; more than 15% apart reads DISAGREE and raises a warning. 'Single source - no cross-check available' means only one source is live, so nothing is validating it. What-if re-runs every EM-driven reading off the other volatility input, so you can see which numbers actually depend on the EM source and which do not." /> {r.emDetail}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:5}}>
-                  <span style={{fontSize:11,color:'#8b949e'}} title="Straddle to 1 SD. Black-Scholes ATM identity: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave at 1.2533 unless you know why you're changing it.">SD mult</span>
+                  <span style={{fontSize:12.5,color:'#a8b2be'}} title="Straddle to 1 SD. Black-Scholes ATM identity: straddle = 0.7979 x S x sigma x sqrt(T), so 1 SD = straddle x 1.2533. Leave at 1.2533 unless you know why you're changing it.">SD mult</span>
                   <input type="number" step="0.01" value={i0.straddleHaircut}
                     onChange={e=>set0('straddleHaircut', e.target.value)}
-                    style={{width:60,padding:'3px 6px',borderRadius:5,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:12,fontFamily:'JetBrains Mono,monospace'}} />
+                    style={{width:60,padding:'3px 6px',borderRadius:5,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace'}} />
                 </div>
               </div>
               {(r.emRemainingDetail || r.emSessionDetail) && (
-                <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:6,fontSize:11,lineHeight:1.5,fontFamily:'JetBrains Mono,monospace',color:'#e6edf3'}}>
-                  <div><span style={{color:'#8b949e'}}>Remaining</span> (strikes, POP, breakevens): {r.emRemainingDetail}</div>
-                  <div><span style={{color:'#8b949e'}}>Session</span> (move-consumed, regime, % EM): {r.emSessionDetail}</div>
+                <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:6,fontSize:12.5,lineHeight:1.5,fontFamily:'JetBrains Mono,monospace',color:'#e6edf3'}}>
+                  <div><span style={{color:'#a8b2be'}}>Remaining</span> (strikes, POP, breakevens): {r.emRemainingDetail}</div>
+                  <div><span style={{color:'#a8b2be'}}>Session</span> (move-consumed, regime, % EM): {r.emSessionDetail}</div>
                 </div>
               )}
               {r.emAgreeDetail && (
-                <div style={{marginTop:4,fontSize:11,lineHeight:1.4,color: r.emDisagree ? '#e3a008' : '#8b949e'}}>
+                <div style={{marginTop:4,fontSize:12.5,lineHeight:1.4,color: r.emDisagree ? '#e3a008' : '#a8b2be'}}>
                   {r.emDisagree ? '\u26a0 ' : ''}{r.emAgreeDetail}
                 </div>
               )}
               {r.emScaleShift != null && Math.abs(r.emScaleShift - 1) > 0.08 && r.moveConsumedLegacy != null && (
-                <div style={{marginTop:4,fontSize:11,lineHeight:1.4,color:'#8b949e'}}>
+                <div style={{marginTop:4,fontSize:12.5,lineHeight:1.4,color:'#a8b2be'}}>
                   Scale fix: move-consumed reads {(r.moveConsumed*100).toFixed(0)}% on the session ruler
                   (old build showed {(r.moveConsumedLegacy*100).toFixed(0)}%).
                 </div>
@@ -1793,7 +1866,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {altVol && (
                 <div style={{marginTop:7,paddingTop:6,borderTop:'1px solid #21262d'}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
-                    <div style={{fontSize:11,color:'#8b949e',lineHeight:1.4}}>
+                    <div style={{fontSize:12.5,color:'#a8b2be',lineHeight:1.4}}>
                       What if EM came from <b style={{color:'#e6edf3'}}>{altVol.label}</b>?
                       {altVol.changed === 0
                         ? ' \u2014 nothing changes.'
@@ -1801,22 +1874,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     </div>
                     <button onClick={()=>setShowWhatIf(v=>!v)}
                       style={{padding:'3px 9px',borderRadius:5,border:'1px solid #30363d',background:showWhatIf?'#1f2937':'#0d1117',
-                        color:'#8b949e',fontSize:11,cursor:'pointer',whiteSpace:'nowrap'}}>
+                        color:'#a8b2be',fontSize:12.5,cursor:'pointer',whiteSpace:'nowrap'}}>
                       {showWhatIf ? 'Hide' : 'Show'} what-if
                     </button>
                   </div>
                   {showWhatIf && (
                     <div style={{marginTop:6,display:'grid',gridTemplateColumns:'auto 1fr 1fr',gap:'3px 12px',
-                      fontSize:11,fontFamily:'JetBrains Mono,monospace',alignItems:'baseline'}}>
-                      <div style={{color:'#8b949e'}} />
-                      <div style={{color:'#8b949e',textAlign:'right'}}>now</div>
-                      <div style={{color:'#8b949e',textAlign:'right'}}>{altVol.short}</div>
+                      fontSize:12.5,fontFamily:'JetBrains Mono,monospace',alignItems:'baseline'}}>
+                      <div style={{color:'#a8b2be'}} />
+                      <div style={{color:'#a8b2be',textAlign:'right'}}>now</div>
+                      <div style={{color:'#a8b2be',textAlign:'right'}}>{altVol.short}</div>
                       {altVol.rows.flatMap((row, ix) => {
                         const moved = row.now !== row.alt;
                         return [
-                          <div key={ix+'k'} style={{color:'#8b949e'}}>{row.k}</div>,
+                          <div key={ix+'k'} style={{color:'#a8b2be'}}>{row.k}</div>,
                           <div key={ix+'n'} style={{textAlign:'right',color:'#e6edf3'}}>{row.now}</div>,
-                          <div key={ix+'a'} style={{textAlign:'right',color:moved?'#e3a008':'#484f58',
+                          <div key={ix+'a'} style={{textAlign:'right',color:moved?'#e3a008':'#8b949e',
                             fontWeight:moved?600:400}}>{row.alt}</div>
                         ];
                       })}
@@ -1873,7 +1946,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               onToggle={() => toggleSection('es')}
               onExpand={() => expandSection('es')}>
               {i0.esDelayed && (
-                <div style={{margin:'2px 0 8px',padding:'5px 9px',borderRadius:6,background:'#2d1a0d',border:'1px solid #5a3a1a',fontSize:11,color:'#e3a008',lineHeight:1.4}}>
+                <div style={{margin:'2px 0 8px',padding:'5px 9px',borderRadius:6,background:'#2d1a0d',border:'1px solid #5a3a1a',fontSize:12.5,color:'#e3a008',lineHeight:1.4}}>
                   ⚠ ES data is <b>delayed ~10 min</b> — no CME real-time subscription. Overnight range, move-consumed and continuation/reversal detection may be stale. Subscribe to CME Real-Time in IBKR for live ES.
                 </div>
               )}
@@ -1886,7 +1959,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <Inp label={i0.underlying + ' Open'} {...mk('cashOpen')} value={i0.cashOpen} onChange={v=>set0('cashOpen',v)}/>
               </div>
               {r.onSwapped && (
-                <div style={{margin:'8px 0 0',padding:'5px 9px',borderRadius:6,background:'#3d1418',border:'1px solid #7d2b2b',fontSize:11,color:'#f85149',lineHeight:1.4}}>
+                <div style={{margin:'8px 0 0',padding:'5px 9px',borderRadius:6,background:'#3d1418',border:'1px solid #7d2b2b',fontSize:12.5,color:'#f85149',lineHeight:1.4}}>
                   ⚠ <b>High is below Low</b> — these two look swapped. Scoring has been corrected to a {(r.onHigh-r.onLow).toFixed(1)} pt range, but fix the inputs: an inverted range distorts move-consumed, the regime and the strategy pick.
                   <button type="button" onClick={()=>setI0(prev=>({...prev, esOvernightHigh:prev.esOvernightLow, esOvernightLow:prev.esOvernightHigh}))}
                     style={{marginLeft:8,padding:'1px 7px',borderRadius:4,border:'1px solid #7d2b2b',background:'#5a1e22',color:'#ffb4b4',cursor:'pointer'}}>Swap</button>
@@ -1908,7 +1981,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <label className="text-xs block mb-1" style={{ fontWeight: 600, color: (() => {
                 const v = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit);
                 const t = (!isNaN(v) && v !== 0) ? (v > 0 ? 'credit' : 'debit') : cashType;
-                return t === 'credit' ? '#3fb950' : t === 'debit' ? '#f85149' : '#8b949e';
+                return t === 'credit' ? '#3fb950' : t === 'debit' ? '#f85149' : '#a8b2be';
               })() }}>{(() => {
                 const v = parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit);
                 const t = (!isNaN(v) && v !== 0) ? (v > 0 ? 'credit' : 'debit') : cashType;
@@ -1917,7 +1990,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   : 'Net credit/debit ($)';
               })()}{netIsTarget && (
                 <span title="Pre-filled from the engine's target for this structure — not a fill. Overwrite it with your actual price; this number is logged."
-                  style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:9,fontWeight:700,
+                  style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:11,fontWeight:700,
                     letterSpacing:'0.04em',background:'#3a2d00',color:'#e3b341',verticalAlign:'1px'}}>
                   TARGET — REPLACE WITH FILL
                 </span>
@@ -1970,7 +2043,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   })()
                 }}
               />
-              {r.bePop > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
+              {r.bePop > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
             </div>
             <div>
               <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
@@ -2006,7 +2079,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   })()
                 }}
               />
-              {r.kellyDollar > 0 && <div style={{fontSize:9,color:'#8b949e',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
+              {r.kellyDollar > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
               <PrefillChip payoffVal={r.payoff?.maxLoss} fieldVal={is0?i0.risk:i45.risk}
                 onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
             </div>
@@ -2023,7 +2096,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {(() => {
             const f = r.frictions;
             if (!f) return (
-              <div style={{marginTop:8,fontSize:11,color:'#6e7681',lineHeight:1.5}}>
+              <div style={{marginTop:8,fontSize:12.5,color:'#9aa4b0',lineHeight:1.5}}>
                 Enter the combo bid/ask above (or press Fetch Greeks) to price what getting
                 in and out of this structure costs against its maximum profit.
               </div>
@@ -2041,13 +2114,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     {(f.pct * 100).toFixed(0)}% of max profit · {f.signal}
                   </span>
                 </div>
-                <div style={{fontSize:11,color:'#8b949e',marginTop:3}}>
+                <div style={{fontSize:12.5,color:'#a8b2be',marginTop:3}}>
                   spread {f.spreadWidth.toFixed(2)} wide → ${Math.round(f.spreadCost)} round trip · commission
                   ${f.commission.toFixed(2)} on {f.legCount} legs · <strong style={{color:'#c9d1d9'}}>${Math.round(f.total)}</strong> to
                   get in and out of ${Math.round(fv(is0?i0:i45,'win'))} max profit
                   {r.contracts > 1 && <> · ${Math.round(f.totalAll)} at {r.contracts} contracts</>}
                 </div>
-                <div style={{fontSize:11,color:col,marginTop:4}}>{f.action}</div>
+                <div style={{fontSize:12.5,color:col,marginTop:4}}>{f.action}</div>
               </div>
             );
           })()}
@@ -2057,13 +2130,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {(() => {
             const b = is0 ? i0 : i45;
             return (
-              <div style={{marginTop:6,fontSize:11,color:'#8b949e',lineHeight:1.5}}>
+              <div style={{marginTop:6,fontSize:12.5,color:'#a8b2be',lineHeight:1.5}}>
                 <span onClick={()=>setShowRiskBudget(v=>!v)} style={{cursor:'pointer',userSelect:'none'}}
                   title="What Kelly sizing is computed against — click to expand">
                   {showRiskBudget ? '▾' : '▸'} Risk budget: bankroll ${fv(b,'bankroll').toFixed(0)} · max loss/trade ${fv(b,'maxLoss').toFixed(0)} · max open ${fv(b,'maxOpen').toFixed(0)}
                 </span>
                 {showRiskBudget && (
-                  <div style={{marginTop:2,paddingLeft:14,color:'#6e7681'}}>
+                  <div style={{marginTop:2,paddingLeft:14,color:'#9aa4b0'}}>
                     Start-of-day bankroll ${fv(b,'startBR').toFixed(0)} · account {acfg.id || 'default'} — seeded from account settings
                     (bankroll / max daily loss / max open risk). Adj Kelly $ and the contract cap are computed against these numbers.
                   </div>
@@ -2083,7 +2156,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               label={r.targetLabel}
             />;
           })()}
-          {r.targetLabel && !r.targetMax && <div style={{fontSize:11,color:'#8b949e',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
+          {r.targetLabel && !r.targetMax && <div style={{fontSize:12.5,color:'#a8b2be',marginTop:4,fontStyle:'italic'}}>{r.targetLabel}</div>}
           {is0 && (
             <div className="grid grid-cols-2 gap-2.5 mt-2">
               <div>
@@ -2097,7 +2170,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     border:'1px solid #30363d', background:'#0d1117', color:'#c9d1d9'
                   }}
                 />
-                <div style={{fontSize:9,color:'#484f58',marginTop:2}}>Auto: 3pm ET minus current time</div>
+                <div style={{fontSize:11,color:'#8b949e',marginTop:2}}>Auto: 3pm ET minus current time</div>
               </div>
             </div>
           )}
@@ -2129,14 +2202,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 const srcTxt = mixed ? ' \u00b7 ' + String(greeksFresh.greekSource || 'non-model').toUpperCase() : '';
                 return <span title={(greeksFresh.label || '') + (greeksFresh.undPrice ? ' \u00b7 model px ' + greeksFresh.undPrice : '')
                     + (mixed ? ' \u00b7 not model greeks: legs served by ' + greeksFresh.greekSource + ' computation, so the net sum is unreliable - refetch' : '')}
-                  style={{fontSize:10,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
+                  style={{fontSize:12,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
                     background: mixed ? '#2d1e0a' : rt ? '#0d2818' : '#161b22',
-                    color: mixed ? '#e3a008' : rt ? '#3fb950' : dl ? '#e3a008' : '#8b949e',
+                    color: mixed ? '#e3a008' : rt ? '#3fb950' : dl ? '#e3a008' : '#a8b2be',
                     border: '1px solid ' + (mixed ? '#9e6a03' : rt ? '#238636' : '#30363d')}}>{txt}{ageTxt}{srcTxt}</span>;
               })()}
               <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
                 title="Pull fresh model Greeks + underlying price for the current strikes — use right before entry"
-                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#8b949e':'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingGreeks?'#161b22':'transparent',color:fetchingGreeks?'#a8b2be':'#2f81f7',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
                 {fetchingGreeks ? 'Fetching…' : '🔄 Refresh (live)'}
               </button>
             </>}>
@@ -2160,9 +2233,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {r.pMaxLoss != null && (
             <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
               <span style={{color:'#fff',fontWeight:700,fontSize:14}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
-              <span style={{marginLeft:8,padding:'2px 7px',borderRadius:4,fontSize:10,fontWeight:600,
+              <span style={{marginLeft:8,padding:'2px 7px',borderRadius:4,fontSize:12,fontWeight:600,
                 background: r.pMaxLossSource==='blend'?'#0d2818':r.pMaxLossSource==='delta'?'#1f1a0d':'#161b22',
-                color: r.pMaxLossSource==='blend'?'#3fb950':r.pMaxLossSource==='delta'?'#d29922':'#8b949e'}}>
+                color: r.pMaxLossSource==='blend'?'#3fb950':r.pMaxLossSource==='delta'?'#d29922':'#a8b2be'}}>
                 {r.pMaxLossSource==='blend'?'MODEL + DELTA':r.pMaxLossSource==='delta'?'DELTA (skew)':'MODEL (flat vol)'}
               </span>
               <div style={{marginTop:6,color:'#e6edf3'}}>
@@ -2171,7 +2244,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 {r.pMaxLossDelta==null && <> · enter |Δ| of each outer long leg above (put or call — the engine converts by right) for the skew-aware cross-check</>}
               </div>
               {r.pMaxLossLow!=null && r.pMaxLossHigh!=null && (
-                <div style={{marginTop:3,color:'#8b949e'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
+                <div style={{marginTop:3,color:'#a8b2be'}}>Down tail {(r.pMaxLossLow*100).toFixed(1)}% · Up tail {(r.pMaxLossHigh*100).toFixed(1)}%</div>
               )}
             </div>
           )}
@@ -2187,10 +2260,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           <div className="card">
             <div className="flex items-center justify-between mb-1">
               <SectionLabel white info="Each strategy rated EXCELLENT, GOOD, MARGINAL, or POOR based on current regime, direction strength, and move consumed. Every row is clickable - including POOR - so you can override the engine and push any structure through; the rating stays on the ticket as information, not as a gate. BWB preferred for strong direction, Asymmetric for mild, Standard butterfly for neutral.">Strategy ratings — {r.regime}</SectionLabel>
-              {isOverride && <span style={{fontSize:10,color:'#d29922'}}>Override active</span>}
+              {isOverride && <span style={{fontSize:12,color:'#d29922'}}>Override active</span>}
             </div>
             {r.runnerUp && !isOverride && (
-              <div style={{fontSize:11,color:'#8b949e',marginBottom:6,lineHeight:1.5}}>
+              <div style={{fontSize:12.5,color:'#a8b2be',marginBottom:6,lineHeight:1.5}}>
                 {r.tiebreakApplied ? <>Tiebreak: chose <b style={{color:'#c9d1d9'}}>{r.bestStrat}</b> over </> : <>Also {r.runnerUp.rating.toLowerCase()}: </>}
                 <span onClick={()=>setOverrideStrat(r.runnerUp.name)} title="Switch to this structure"
                   style={{color:'#58a6ff',cursor:'pointer',textDecoration:'underline'}}>{r.runnerUp.name}</span>
@@ -2213,14 +2286,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     {(() => {
                       const ct = resolveCashType(s.name, null);
                       const t = ct === 'credit' ? 'CR' : ct === 'debit' ? 'DR' : 'CR/DR';
-                      const c = ct === 'credit' ? '#3fb950' : ct === 'debit' ? '#e3a008' : '#6e7681';
+                      const c = ct === 'credit' ? '#3fb950' : ct === 'debit' ? '#e3a008' : '#9aa4b0';
                       return <span title={ct==='credit'?'Credit — collect premium':ct==='debit'?'Debit — pay premium':'Credit or debit'}
-                        style={{marginLeft:6,fontSize:9,fontWeight:700,color:c,letterSpacing:'0.03em'}}>{t}</span>;
+                        style={{marginLeft:6,fontSize:11,fontWeight:700,color:c,letterSpacing:'0.03em'}}>{t}</span>;
                     })()}
                   </span>
                   <div className="flex items-center gap-2">
-                    {isSelected && <span style={{fontSize:9,color:'#d29922',fontWeight:600}}>SELECTED</span>}
-                    <span className={`badge text-[10px] ${cls}`}>{s.rating}</span>
+                    {isSelected && <span style={{fontSize:11,color:'#d29922',fontWeight:600}}>SELECTED</span>}
+                    <span className={`badge text-[12px] ${cls}`}>{s.rating}</span>
                   </div>
                 </div>);
               })}
@@ -2242,9 +2315,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                           title={c.current ? 'Selected structure' : 'Open this structure in its own tab \u2014 same market data, sizing cleared'}
                           className="text-center py-1.5 px-2 cursor-pointer hover:bg-[#161b22]"
                           style={{minWidth:104,borderRadius:6}}>
-                          <div style={{fontSize:11,fontWeight:700,color:c.current?'#fff':'#c9d1d9'}}>{c.name}</div>
+                          <div style={{fontSize:12.5,fontWeight:700,color:c.current?'#fff':'#c9d1d9'}}>{c.name}</div>
                           <div style={{fontSize:8,fontWeight:600,marginTop:1,letterSpacing:'0.04em',
-                            color: c.current ? (isOverride ? '#d29922' : '#3fb950') : '#6e7681'}}>
+                            color: c.current ? (isOverride ? '#d29922' : '#3fb950') : '#9aa4b0'}}>
                             {c.current ? (isOverride ? '✓ OVERRIDE' : '✓ ENGINE PICK') : c.rating}
                           </div>
                         </th>
@@ -2272,7 +2345,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                           <span style={{color: c.res.kellyOverRisk?'#f85149':'#e6edf3'}}>{c.res.contracts}x · ${c.res.kellyDollar?.toFixed(0)||0}</span> },
                     ].map((row, ri) => (
                       <tr key={ri} className="border-t border-[#21262d]">
-                        <td className="py-1.5 px-1 text-[#8b949e]">{row.label}</td>
+                        <td className="py-1.5 px-1 text-[#a8b2be]">{row.label}</td>
                         {stratCompare.map((c, i) => (
                           <td key={i} className="py-1.5 px-2 text-center mono">{row.render(c)}</td>
                         ))}
@@ -2339,7 +2412,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   {r.evBasis.pMaxLoss != null && (
                     <div style={{marginTop:4,color:'#c9d1d9'}}>
                       P(max loss) used in sizing: <b style={{color:'#fff'}}>{(r.evBasis.pMaxLoss*100).toFixed(1)}%</b>
-                      <span style={{marginLeft:5,fontSize:10,fontWeight:600,color:r.evBasis.pMaxLossSource==='blend'?'#3fb950':r.evBasis.pMaxLossSource==='delta'?'#d29922':'#8b949e'}}>
+                      <span style={{marginLeft:5,fontSize:12,fontWeight:600,color:r.evBasis.pMaxLossSource==='blend'?'#3fb950':r.evBasis.pMaxLossSource==='delta'?'#d29922':'#a8b2be'}}>
                         ({r.evBasis.pMaxLossSource==='blend'?'model+delta':r.evBasis.pMaxLossSource==='delta'?'delta/skew':'model'})
                       </span>
                     </div>
@@ -2347,7 +2420,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   {r.evBasis.winBreakeven != null && (
                     <div style={{marginTop:2,color:'#c9d1d9'}}>
                       Win needed for EV = 0: <b style={{color: r.ev>=0 ? '#3fb950' : '#e3a008'}}>${r.evBasis.winBreakeven}</b>
-                      {r.ev < 0 && r.evBasis.maxWin>0 && <span style={{color:'#8b949e',fontSize:11}}> (currently ${r.evBasis.maxWin.toFixed(0)} max — need +${Math.max(0, r.evBasis.winBreakeven - r.evBasis.maxWin)})</span>}
+                      {r.ev < 0 && r.evBasis.maxWin>0 && <span style={{color:'#a8b2be',fontSize:12.5}}> (currently ${r.evBasis.maxWin.toFixed(0)} max — need +${Math.max(0, r.evBasis.winBreakeven - r.evBasis.maxWin)})</span>}
                     </div>
                   )}
                 </div>
@@ -2369,10 +2442,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <div className="flex items-center justify-between mb-1">
                 <SectionLabel white info="Directional Edge compares how much price movement can still benefit the position (delta × remaining expected move) against remaining time decay (theta pressure). Enter Greeks — or fetch them from TWS — to unlock the survivability gauges and Edge Ratio.">Trade survivability · Directional Edge</SectionLabel>
               </div>
-              <div style={{fontSize:12,color:'#8b949e',lineHeight:1.5}}>
+              <div style={{fontSize:13,color:'#a8b2be',lineHeight:1.5}}>
                 Enter <span style={{color:'#c9d1d9'}}>Delta</span> and <span style={{color:'#c9d1d9'}}>Theta</span>{is0 && <> (and optionally Gamma)</>} above to compute Directional Edge — the metric that tells you whether expected price movement still outweighs time decay.
                 <button onClick={handleFetchGreeks} disabled={fetchingGreeks}
-                  style={{marginLeft:8,padding:'2px 8px',borderRadius:5,border:'1px solid #30363d',background:'transparent',color:'#2f81f7',fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                  style={{marginLeft:8,padding:'2px 8px',borderRadius:5,border:'1px solid #30363d',background:'transparent',color:'#2f81f7',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
                   {fetchingGreeks ? 'Fetching…' : '⚡ Fetch from TWS'}
                 </button>
               </div>
@@ -2384,7 +2457,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <div className="card">
               <div className="flex items-center justify-between mb-2">
                 <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Gamma Risk = how fast delta changes vs theta (< 0.70 safe). Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates. SIGNED THETA: if the position PAYS decay (negative theta - a long butterfly before the body is reached, a debit spread) every gauge inverts. Theta Edge becomes Decay Cost and small is good, Gamma Risk becomes Gamma Offset and large is good, Max Tolerable Move disappears because there is no theta cushion to consume, and Edge Ratio wants to be HIGH whatever the strategy name says - only the move can pay the decay bill.">Trade survivability</SectionLabel>
-                {r.greeks.sweetSpot && <span style={{fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
+                {r.greeks.sweetSpot && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
                 {/* Both gauges invert when the position PAYS decay: a small theta ratio
@@ -2404,7 +2477,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   display={r.greeks.gRisk.toFixed(3)}
                   sublabel={r.greeks.gRiskSignal + ' — ' + r.greeks.gRiskAction} />
                 {r.greeks.thetaPaid ? (
-                  <div className="text-[10px] text-[#8b949e]" style={{padding:'6px 8px',borderRadius:4,background:'#0d1117',border:'1px solid #21262d'}}>
+                  <div className="text-[12px] text-[#a8b2be]" style={{padding:'6px 8px',borderRadius:4,background:'#0d1117',border:'1px solid #21262d'}}>
                     <b style={{color:'#e3a008'}}>Position pays decay</b> · {r.greeks.dsAction}
                   </div>
                 ) : (
@@ -2419,24 +2492,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <div style={{marginTop:12,paddingTop:10,borderTop:'1px solid #21262d'}}>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs text-white font-semibold">Directional Edge</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
+                      <span className="text-[12px] px-2 py-0.5 rounded font-semibold" style={{
                         background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d',
                         color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'
                       }}>{r.greeks.edgePhase}</span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 mb-2">
                       <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                        <div className="text-[9px] text-[#8b949e]">Directional $</div>
+                        <div className="text-[11px] text-[#a8b2be]">Directional $</div>
                         <div className="mono text-sm font-bold text-white">${r.greeks.directionalGain?.toFixed(0)}</div>
-                        <div className="text-[8px] text-[#484f58]">{r.greeks.remainingMove?.toFixed(1)} pts left</div>
+                        <div className="text-[8px] text-[#8b949e]">{r.greeks.remainingMove?.toFixed(1)} pts left</div>
                       </div>
                       <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                        <div className="text-[9px] text-[#8b949e]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'}</div>
+                        <div className="text-[11px] text-[#a8b2be]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'}</div>
                         <div className="mono text-sm font-bold" style={{color: r.greeks.thetaPaid ? '#e3a008' : '#fff'}}>{r.greeks.thetaPaid ? '-' : ''}${r.greeks.thetaPressure?.toFixed(0)}</div>
-                        <div className="text-[8px] text-[#484f58]">to planned exit</div>
+                        <div className="text-[8px] text-[#8b949e]">to planned exit</div>
                       </div>
                       <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d'}}>
-                        <div className="text-[9px] text-[#8b949e]">Edge Ratio</div>
+                        <div className="text-[11px] text-[#a8b2be]">Edge Ratio</div>
                         <div className="mono text-lg font-bold" style={{color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'}}>{r.greeks.edgeRatio?.toFixed(2)}</div>
                       </div>
                     </div>
@@ -2449,7 +2522,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                       }
                       display={r.greeks.edgeRatio?.toFixed(2)}
                       sublabel={r.greeks.edgeAction} />
-                    <div className="text-[9px] text-[#484f58] mt-1">Time threshold: {r.greeks.edgeThreshold?.toFixed(1)} | {r.greeks.thetaPaid ? 'Paying decay: higher = better' : r.greeks.isCreditStrat ? 'Credit: lower = better' : r.greeks.isBflyCondor ? 'Butterfly: transitions through phases' : 'Debit: higher = better'}</div>
+                    <div className="text-[11px] text-[#8b949e] mt-1">Time threshold: {r.greeks.edgeThreshold?.toFixed(1)} | {r.greeks.thetaPaid ? 'Paying decay: higher = better' : r.greeks.isCreditStrat ? 'Credit: lower = better' : r.greeks.isBflyCondor ? 'Butterfly: transitions through phases' : 'Debit: higher = better'}</div>
                   </div>
                 )}
               </div>
@@ -2461,23 +2534,23 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <div className="card">
               <SectionLabel white info="Directional Edge for 45DTE trades. Compares expected directional P&L (delta × remaining expected move) against total theta earned over the holding period to 21 DTE exit. Remaining EM = price × IV × √(remaining DTE / 365). Credit sellers (IC, spreads): want Edge Ratio < 0.5 (theta strongly dominates over the holding period). Debit directional (bull call, calendars): want Edge Ratio > 2.0 (move potential exceeds decay). Theta efficiency = daily theta as % of buying power reduction. Vega/Theta = IV sensitivity per unit of decay — high ratio means IV changes matter more than time. If theta is NEGATIVE the position pays decay over the hold, and the Edge Ratio wants to be high regardless of strategy class — only the move can cover the bill.">Directional Edge (45DTE)</SectionLabel>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-[#8b949e]">Holding: {r.greeks.daysToExit} days to 21 DTE exit | Remaining EM: {r.greeks.remainingEM?.toFixed(1)} pts</span>
-                <span className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{
+                <span className="text-xs text-[#a8b2be]">Holding: {r.greeks.daysToExit} days to 21 DTE exit | Remaining EM: {r.greeks.remainingEM?.toFixed(1)} pts</span>
+                <span className="text-[12px] px-2 py-0.5 rounded font-semibold" style={{
                   background: r.greeks.edgeSignal==='excellent'?'#0d2818':r.greeks.edgeSignal==='good'?'#0d1a0d':r.greeks.edgeSignal==='marginal'?'#1f1a0d':'#1f0d0d',
                   color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'
                 }}>{r.greeks.edgePhase}</span>
               </div>
               <div className="grid grid-cols-3 gap-2 mb-2">
                 <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                  <div className="text-[9px] text-[#8b949e]">Directional $</div>
+                  <div className="text-[11px] text-[#a8b2be]">Directional $</div>
                   <div className="mono text-sm font-bold text-white">${r.greeks.directionalGain?.toFixed(0)}</div>
                 </div>
                 <div className="text-center p-2 rounded" style={{background:'#0d1117'}}>
-                  <div className="text-[9px] text-[#8b949e]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'} ({r.greeks.daysToExit}d)</div>
+                  <div className="text-[11px] text-[#a8b2be]">{r.greeks.thetaPaid ? 'Decay $ paid' : 'Theta $'} ({r.greeks.daysToExit}d)</div>
                   <div className="mono text-sm font-bold" style={{color: r.greeks.thetaPaid ? '#e3a008' : '#fff'}}>{r.greeks.thetaPaid ? '-' : ''}${r.greeks.thetaPressure?.toFixed(0)}</div>
                 </div>
                 <div className="text-center p-2 rounded" style={{background: r.greeks.edgeSignal==='excellent'?'#0d2818':'#0d1117'}}>
-                  <div className="text-[9px] text-[#8b949e]">Edge Ratio</div>
+                  <div className="text-[11px] text-[#a8b2be]">Edge Ratio</div>
                   <div className="mono text-lg font-bold" style={{color: r.greeks.edgeSignal==='excellent'?'#3fb950':r.greeks.edgeSignal==='good'?'#7bc74d':r.greeks.edgeSignal==='marginal'?'#d29922':'#f85149'}}>{r.greeks.edgeRatio?.toFixed(2)}</div>
                 </div>
               </div>
@@ -2529,7 +2602,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   display={`${r.regimeScore}/100 — ${r.regimeGrade}`}
                   sublabel={`Move ${(r.moveConsumed*100).toFixed(0)}% consumed, comp ${r.comp?.toFixed(2)||'--'}`} />
               </div>
-              <div className="mt-3 pt-2 text-xs text-[#8b949e]" style={{borderTop:'1px solid #21262d'}}>
+              <div className="mt-3 pt-2 text-xs text-[#a8b2be]" style={{borderTop:'1px solid #21262d'}}>
                 Weights ({r.legStrat||'--'}): Vol {((r.fvWeightVol||0.3)*100).toFixed(0)}% + Structure {((r.fvWeightStruct||0.3)*100).toFixed(0)}% + Regime {((r.fvWeightRegime||0.4)*100).toFixed(0)}%
               </div>
             </div>
@@ -2597,11 +2670,11 @@ function SetupQualityCard({ r, sBg, sClr }) {
         <span className="text-xs font-semibold text-white uppercase tracking-wider flex items-center">Setup quality<Info text="8 criteria scored out of 100: Compression (15), Move consumed (15), Tail risk / P(max loss) (10), Strategy fit (15), VWAP structure (15), VIX gap (10), ES overnight direction (10), Overnight range (5), Gamma distance (5). VWAP structure merges the former VWAP slope (10) and VWAP distance (5), which were scoring the same measurement twice. A+ = 85+, A = 70+, B = 50+, No setup = below 50. Segment width = criterion weight; fill = points earned." /></span>
         <div className="flex items-center gap-2">
           <span style={{background:sBg,color:sClr,padding:'3px 10px',borderRadius:20,fontSize:13,fontWeight:700}}>{r.setup}</span>
-          <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:12,fontWeight:600}}>{score}/100</span>
+          <span className="mono" style={{background:sBg,color:sClr,padding:'3px 8px',borderRadius:6,fontSize:13,fontWeight:600}}>{score}/100</span>
         </div>
       </div>
       {nextUp && nextUp.pts > 0 && (
-        <div style={{fontSize:11,color:'#8b949e',marginBottom:6}}>{nextUp.pts} pt{nextUp.pts !== 1 ? 's' : ''} to {nextUp.grade}</div>
+        <div style={{fontSize:12.5,color:'#a8b2be',marginBottom:6}}>{nextUp.pts} pt{nextUp.pts !== 1 ? 's' : ''} to {nextUp.grade}</div>
       )}
       {crits.length > 0 && (
         <div style={{display:'flex',gap:1,height:12,borderRadius:4,overflow:'hidden',marginBottom:4}}>
@@ -2615,10 +2688,10 @@ function SetupQualityCard({ r, sBg, sClr }) {
           })}
         </div>
       )}
-      <div style={{fontSize:10,color:'#484f58',marginBottom:8}}>Segment width = weight · fill = points earned · hover for detail</div>
+      <div style={{fontSize:12,color:'#8b949e',marginBottom:8}}>Segment width = weight · fill = points earned · hover for detail</div>
       {lost.length > 0 && (
         <div style={{borderTop:'1px solid #21262d',paddingTop:6,marginBottom:2}}>
-          <div style={{fontSize:11,color:'#8b949e',marginBottom:3}}>Costing you the most</div>
+          <div style={{fontSize:12.5,color:'#a8b2be',marginBottom:3}}>Costing you the most</div>
           {lost.map((c, i) => (
             <div key={i} className="flex items-center justify-between" style={{padding:'2px 0'}}>
               <span className="text-xs text-white">{c.label}</span>
@@ -2628,7 +2701,7 @@ function SetupQualityCard({ r, sBg, sClr }) {
         </div>
       )}
       <div onClick={() => setShowDetail(s => !s)}
-        style={{fontSize:11,color:'#58a6ff',cursor:'pointer',userSelect:'none',marginTop:4}}>
+        style={{fontSize:12.5,color:'#58a6ff',cursor:'pointer',userSelect:'none',marginTop:4}}>
         {showDetail ? 'Hide all criteria ▴' : 'Show all criteria ▾'}
       </div>
       {showDetail && (
@@ -2752,7 +2825,7 @@ function ProfitScale({ netCreditDebit, isCredit, win }) {
 
   return (
     <div style={{marginTop:8,marginBottom:4}}>
-      <div style={{fontSize:10,color:'#8b949e',marginBottom:6,fontWeight:600}}>
+      <div style={{fontSize:12,color:'#a8b2be',marginBottom:6,fontWeight:600}}>
         Profit targets — TWS limit order values
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(6, 1fr)',gap:4}}>
@@ -2776,17 +2849,17 @@ function ProfitScale({ netCreditDebit, isCredit, win }) {
               border: `1px solid ${highlight ? '#238636' : '#21262d'}`,
               borderRadius: 6, padding: '6px 4px', textAlign: 'center'
             }}>
-              <div style={{fontSize:12,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
+              <div style={{fontSize:13,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
               <div style={{fontSize:16,fontWeight:700,color:'#fff',fontFamily:'JetBrains Mono,monospace',marginTop:3}}>
                 ${closePrice.toFixed(2)}
               </div>
-              <div style={{fontSize:10,color:'#8b949e',marginTop:2}}>{closeType}</div>
-              <div style={{fontSize:12,fontWeight:600,color: highlight ? '#3fb950' : '#c9d1d9',marginTop:2}}>+${profitDollars.toFixed(0)}</div>
+              <div style={{fontSize:12,color:'#a8b2be',marginTop:2}}>{closeType}</div>
+              <div style={{fontSize:13,fontWeight:600,color: highlight ? '#3fb950' : '#c9d1d9',marginTop:2}}>+${profitDollars.toFixed(0)}</div>
             </div>
           );
         })}
       </div>
-      <div style={{fontSize:9,color:'#484f58',marginTop:4}}>
+      <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>
         {isCredit || netCreditDebit > 0
           ? `Sold at $${ncd.toFixed(2)} credit — enter limit debit to close`
           : `Bought at $${ncd.toFixed(2)} debit — enter limit credit to close`}
@@ -2804,7 +2877,7 @@ function CreditTape({ value, low, high, max, isCredit, label }) {
 
   let grade, gradeColor;
   if (value === 0) {
-    grade = 'Enter value'; gradeColor = '#8b949e';
+    grade = 'Enter value'; gradeColor = '#a8b2be';
   } else if (value >= low && value <= high) {
     grade = 'Fair value'; gradeColor = '#3fb950';
   } else if (isCredit && value > high) {
@@ -2816,14 +2889,14 @@ function CreditTape({ value, low, high, max, isCredit, label }) {
   } else if (!isCredit && value > high) {
     grade = 'Expensive'; gradeColor = '#f85149';
   } else {
-    grade = ''; gradeColor = '#8b949e';
+    grade = ''; gradeColor = '#a8b2be';
   }
 
   return (
     <div style={{marginTop:6}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-        <span style={{fontSize:10,color:'#8b949e'}}>{isCredit ? 'Credit received' : 'Debit paid'}</span>
-        <span style={{fontSize:10,fontWeight:600,color:gradeColor}}>{grade}</span>
+        <span style={{fontSize:12,color:'#a8b2be'}}>{isCredit ? 'Credit received' : 'Debit paid'}</span>
+        <span style={{fontSize:12,fontWeight:600,color:gradeColor}}>{grade}</span>
       </div>
       <div style={{position:'relative',height:14,borderRadius:7,overflow:'hidden',background:'#161b22'}}>
         {isCredit ? (
@@ -2844,10 +2917,10 @@ function CreditTape({ value, low, high, max, isCredit, label }) {
         )}
       </div>
       <div style={{position:'relative',height:16,marginTop:2}}>
-        <span style={{position:'absolute',left:0,fontSize:9,color:'#484f58'}}>$0</span>
-        <span style={{position:'absolute',left:lowPct+'%',transform:'translateX(-50%)',fontSize:9,color:'#3fb950',fontWeight:600}}>${low.toFixed(2)}</span>
-        <span style={{position:'absolute',left:highPct+'%',transform:'translateX(-50%)',fontSize:9,color:'#3fb950',fontWeight:600}}>${high.toFixed(2)}</span>
-        <span style={{position:'absolute',right:0,fontSize:9,color:'#484f58'}}>${safeMax.toFixed(1)}</span>
+        <span style={{position:'absolute',left:0,fontSize:11,color:'#8b949e'}}>$0</span>
+        <span style={{position:'absolute',left:lowPct+'%',transform:'translateX(-50%)',fontSize:11,color:'#3fb950',fontWeight:600}}>${low.toFixed(2)}</span>
+        <span style={{position:'absolute',left:highPct+'%',transform:'translateX(-50%)',fontSize:11,color:'#3fb950',fontWeight:600}}>${high.toFixed(2)}</span>
+        <span style={{position:'absolute',right:0,fontSize:11,color:'#8b949e'}}>${safeMax.toFixed(1)}</span>
       </div>
     </div>
   );
@@ -2857,7 +2930,7 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
   const range = max - min;
   const pct = Math.max(0, Math.min(100, ((value - min) / range) * 100));
   // Determine color at current position
-  let markerColor = '#8b949e';
+  let markerColor = '#a8b2be';
   let cumPct = 0;
   for (const z of zones) {
     const zonePct = ((z.to - min) / range) * 100;
@@ -2871,7 +2944,7 @@ function SpeedTape({ label, value, min, max, zones, display, sublabel }) {
         <span className="text-xs text-text-muted">{label}</span>
         <div className="flex items-center gap-2">
           <span className="text-xs mono font-bold" style={{color:markerColor}}>{display}</span>
-          {sublabel && <span className="text-[10px] text-text-faint">{sublabel}</span>}
+          {sublabel && <span className="text-[12px] text-text-faint">{sublabel}</span>}
         </div>
       </div>
       <div style={{position:'relative',height:8,borderRadius:4,overflow:'hidden',background:'#21262d'}}>
@@ -2923,7 +2996,7 @@ function Info({ text }) {
         onClick={(e) => { e.stopPropagation(); setShow(!show); if (!show) updatePos(); }}
         onMouseEnter={() => { setShow(true); updatePos(); }}
         onMouseLeave={() => setShow(false)}
-        style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:15,height:15,borderRadius:'50%',background:'#21262d',color:'#8b949e',fontSize:9,fontWeight:700,cursor:'pointer',border:'1px solid #30363d',lineHeight:1,userSelect:'none'}}>?</span>
+        style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:15,height:15,borderRadius:'50%',background:'#21262d',color:'#a8b2be',fontSize:11,fontWeight:700,cursor:'pointer',border:'1px solid #30363d',lineHeight:1,userSelect:'none'}}>?</span>
       {show && ReactDOM.createPortal(
         <div style={{
           position:'fixed',
@@ -2933,7 +3006,7 @@ function Info({ text }) {
           transform:'translateX(-50%)',
           width:300,padding:'12px 14px',
           background:'#1c2128',border:'1px solid #444c56',borderRadius:10,
-          fontSize:11,color:'#e6edf3',lineHeight:1.6,
+          fontSize:12.5,color:'#e6edf3',lineHeight:1.6,
           zIndex:9999,boxShadow:'0 8px 24px rgba(0,0,0,0.6)',whiteSpace:'normal',
           maxWidth:'calc(100vw - 32px)',pointerEvents:'none'
         }}>
@@ -2961,8 +3034,8 @@ function InputSection({ title, info, missing, collapsed, onToggle, onExpand, act
         className="sticky top-0 bg-bg-card flex items-center justify-between gap-2 flex-wrap cursor-pointer select-none"
         style={{ zIndex: 5, padding: '5px 0 7px' }}>
         <div className="flex items-center min-w-0">
-          <span aria-hidden="true" style={{ width: 13, display: 'inline-block', fontSize: 9, color: '#8b949e', flex: 'none' }}>{collapsed ? '▸' : '▾'}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-text-faint flex items-center whitespace-nowrap">{title}{info && <Info text={info} />}</span>
+          <span aria-hidden="true" style={{ width: 13, display: 'inline-block', fontSize: 9, color: '#a8b2be', flex: 'none' }}>{collapsed ? '▸' : '▾'}</span>
+          <span className="text-[12.5px] font-semibold uppercase tracking-wider text-text-faint flex items-center whitespace-nowrap">{title}{info && <Info text={info} />}</span>
           {missing != null && (missing === 0 ? (
             <span title="All required inputs entered" style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: '#3fb950' }}>✓</span>
           ) : (
@@ -3004,17 +3077,17 @@ function Inp({label,value,onChange,type,bad,manual,stale,feedVal}) {
   const tip = manual
     ? 'Manual — you typed this, so auto-fill left it alone.' + (differs ? ' The last pull said ' + feedVal + '.' : '')
     : stale ? 'The last auto-fill did not return this field, so this value is older than the badge above.' : undefined;
-  return (<div><label className={`text-[11px] block mb-1 ${lblCls}`} title={tip}>
+  return (<div><label className={`text-[12.5px] block mb-1 ${lblCls}`} title={tip}>
       {label}{manual ? ' ✎' : ''}
-      {differs && <span className="text-[#6e7681] font-normal"> feed {feedVal}</span>}
-      {!manual && stale && <span className="text-[#6e7681] font-normal"> · no feed</span>}
+      {differs && <span className="text-[#9aa4b0] font-normal"> feed {feedVal}</span>}
+      {!manual && stale && <span className="text-[#9aa4b0] font-normal"> · no feed</span>}
     </label>
     <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—" title={tip}
       style={(!bad && !manual && stale) ? {borderStyle:'dashed'} : undefined}
       className={`w-full px-3 py-2 bg-[#0d1117] border rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7] ${border}`}/></div>);
 }
 function Sel({label,value,onChange,options}) {
-  return (<div><label className="text-[11px] text-[#c9d1d9] block mb-1">{label}</label>
+  return (<div><label className="text-[12.5px] text-[#c9d1d9] block mb-1">{label}</label>
     <select value={value} onChange={e=>onChange(e.target.value)}
       className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
       {options.map(o=><option key={o} value={o}>{o}</option>)}</select></div>);
@@ -3031,7 +3104,7 @@ function PrefillChip({ payoffVal, fieldVal, onFill }) {
   return (
     <button type="button" onClick={() => onFill(String(v))}
       title="Computed from the payoff at expiry. Click to fill — your typed value is never overwritten automatically."
-      style={{marginTop:3,padding:'1px 7px',borderRadius:4,border:'1px solid #1f6feb55',background:'#0d1a2e',color:'#58a6ff',fontSize:10,fontWeight:600,cursor:'pointer'}}>
+      style={{marginTop:3,padding:'1px 7px',borderRadius:4,border:'1px solid #1f6feb55',background:'#0d1a2e',color:'#58a6ff',fontSize:12,fontWeight:600,cursor:'pointer'}}>
       ← {v} from payoff
     </button>
   );

@@ -278,7 +278,7 @@ export default function Journal({ authenticated, account }) {
             </div>
             <div className="grid grid-cols-8 gap-1">
               {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'WEEK'].map(d => (
-                <div key={d} className="text-center text-[10px] text-text-faint uppercase tracking-wider py-2">{d}</div>
+                <div key={d} className="text-center text-[12px] text-text-faint uppercase tracking-wider py-2">{d}</div>
               ))}
               {weekRows.map((row, wi) => (
                 <React.Fragment key={wi}>
@@ -305,18 +305,18 @@ export default function Journal({ authenticated, account }) {
                       <div key={di} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
                         style={bg ? { backgroundColor: bg } : undefined}
                         className={`h-16 px-1.5 py-1 border rounded-lg relative transition-all cursor-pointer hover:border-accent/50 ${borderCls}${hasTrades && data.pnl === 0 ? ' bg-bg-hover' : ''}${isSelected ? ' ring-2 ring-accent' : ''}${dimmed ? ' opacity-40' : ''}`}>
-                        <span className={`text-[10px] ${isToday ? 'bg-accent text-white w-4 h-4 rounded-full inline-flex items-center justify-center' : 'text-text-muted'}`}>{day}</span>
+                        <span className={`text-[12px] ${isToday ? 'bg-accent text-white w-4 h-4 rounded-full inline-flex items-center justify-center' : 'text-text-muted'}`}>{day}</span>
                         {hasTrades && (
                           <div className="mt-0.5">
                             <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(data.pnl) }}>{fmt$(data.pnl)}</div>
-                            <div className="text-[10px] text-text-faint leading-tight">
+                            <div className="text-[12px] text-text-faint leading-tight">
                               {data.count}t · {data.wins}-{data.losses}
                               {data.ticketCount > 0 && <span className="text-amber"> ⚡{data.ticketCount}</span>}
                             </div>
                           </div>
                         )}
                         {data && !data.count && data.openCount > 0 && (
-                          <div className="text-[10px] text-amber leading-tight mt-0.5">⚡{data.openCount} open</div>
+                          <div className="text-[12px] text-amber leading-tight mt-0.5">⚡{data.openCount} open</div>
                         )}
                         {data && data.count > 0 && data.openCount > 0 && (
                           <div className="absolute bottom-1 right-1"><span className="text-[8px] text-amber">⚡{data.openCount}</span></div>
@@ -326,20 +326,20 @@ export default function Journal({ authenticated, account }) {
                     );
                   })}
                   <div className="h-16 px-1.5 py-1 border border-bg-border rounded-lg bg-bg flex flex-col justify-center">
-                    <div className="text-[9px] text-text-faint uppercase tracking-wider">W{wi + 1}</div>
+                    <div className="text-[11px] text-text-faint uppercase tracking-wider">W{wi + 1}</div>
                     {weekStats[wi].trades > 0 ? (<>
                       <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(weekStats[wi].pnl) }}>{fmt$(weekStats[wi].pnl)}</div>
-                      <div className="text-[10px] text-text-faint leading-tight">{weekStats[wi].trades}t</div>
+                      <div className="text-[12px] text-text-faint leading-tight">{weekStats[wi].trades}t</div>
                     </>) : (
-                      <div className="text-[10px] text-text-faint">—</div>
+                      <div className="text-[12px] text-text-faint">—</div>
                     )}
                   </div>
                 </React.Fragment>
               ))}
-              <div className="col-span-7 flex items-center justify-end pr-1 text-[10px] text-text-faint uppercase tracking-wider">Month</div>
+              <div className="col-span-7 flex items-center justify-end pr-1 text-[12px] text-text-faint uppercase tracking-wider">Month</div>
               <div className="h-12 px-1.5 py-1 border border-accent/40 rounded-lg flex flex-col justify-center">
                 <div className="mono text-[12px] font-bold leading-tight" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
-                <div className="text-[10px] text-text-faint leading-tight">{monthTrades}t</div>
+                <div className="text-[12px] text-text-faint leading-tight">{monthTrades}t</div>
               </div>
             </div>
           </div>
@@ -367,7 +367,7 @@ export default function Journal({ authenticated, account }) {
               {/* CSV trades */}
               {selDayTrades.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     <FileText size={10} /> CSV trades ({selDayTrades.length})
                   </h4>
                   <div className="space-y-1">
@@ -379,14 +379,14 @@ export default function Journal({ authenticated, account }) {
                       const isClose = closeDate === selectedDay;
                       return (
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${isEntry && isClose ? 'bg-amber-bg text-amber' : isEntry ? 'bg-accent/10 text-accent' : 'bg-bg-hover text-text-muted'}`}>
+                          <span className={`text-[12px] font-medium px-2 py-0.5 rounded ${isEntry && isClose ? 'bg-amber-bg text-amber' : isEntry ? 'bg-accent/10 text-accent' : 'bg-bg-hover text-text-muted'}`}>
                             {isEntry && isClose ? 'SAME DAY' : isEntry ? 'ENTRY' : 'CLOSE'}
                           </span>
                           <span className="text-sm font-medium text-white">{t.Underlying}</span>
                           <span className="text-xs text-[#c9d1d9] flex-1">{t['Strategy (OIC)']}</span>
                           {t.Status !== 'Open' && <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>}
-                          {t['W / L'] && <span className={`badge text-[10px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
-                          <span className={`badge text-[10px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
+                          {t['W / L'] && <span className={`badge text-[12px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
+                          <span className={`badge text-[12px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
                         </div>
                       );
                     })}
@@ -397,7 +397,7 @@ export default function Journal({ authenticated, account }) {
               {/* Decision engine closed tickets */}
               {selDayTickets.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     <Zap size={10} className="text-amber" /> Engine tickets — closed ({selDayTickets.length})
                   </h4>
                   <div className="space-y-1">
@@ -410,14 +410,14 @@ export default function Journal({ authenticated, account }) {
                       return (
                         <div key={i} className="py-2 px-3 rounded-lg border border-amber/20 bg-amber/5">
                           <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
+                            <span className="text-[12px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
                             <span className="text-sm font-medium text-white">{d.Underlying}</span>
                             <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
                             <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
-                            <span className={`badge text-[10px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
-                            <span className={`badge text-[10px] ${isMatched ? 'badge-green' : 'badge-amber'}`}>{isMatched ? 'Matched' : 'Unmatched'}</span>
+                            <span className={`badge text-[12px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
+                            <span className={`badge text-[12px] ${isMatched ? 'badge-green' : 'badge-amber'}`}>{isMatched ? 'Matched' : 'Unmatched'}</span>
                           </div>
-                          {d.Notes && <div className="text-[10px] text-[#8b949e] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
+                          {d.Notes && <div className="text-[12px] text-[#a8b2be] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
                         </div>
                       );
                     })}
@@ -428,7 +428,7 @@ export default function Journal({ authenticated, account }) {
               {/* Open decision entries (not yet closed) */}
               {selDayOpenDec.length > 0 && (
                 <div className="mb-4">
-                  <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     <Camera size={10} /> Engine entries — open ({selDayOpenDec.length})
                   </h4>
                   <div className="space-y-1">
@@ -437,12 +437,12 @@ export default function Journal({ authenticated, account }) {
                       const stratName = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : d.Strategy;
                       return (
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent">{d.Engine || '0DTE'}</span>
+                          <span className="text-[12px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent">{d.Engine || '0DTE'}</span>
                           <span className="text-sm font-medium text-white">{d.Underlying}</span>
                           <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
                           <span className="text-xs text-text-faint mono">{d['Setup Score']}</span>
                           <button onClick={() => setClosingTrade({ trade: d, type: 'ticket' })}
-                            className="text-[10px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                            className="text-[12px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
                             Close
                           </button>
                         </div>
@@ -454,7 +454,7 @@ export default function Journal({ authenticated, account }) {
 
               {/* Notes */}
               <div>
-                <h4 className="text-[10px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5"><Edit3 size={10} /> Daily review</h4>
+                <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5"><Edit3 size={10} /> Daily review</h4>
                 {selData?.notes && <div className="text-sm text-[#c9d1d9] mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>}
                 <textarea value={reviewText} onChange={e => setReviewText(e.target.value)} rows={3}
                   placeholder="What went well? What would you do differently?..."
