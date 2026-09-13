@@ -18,6 +18,9 @@ export default function Journal({ authenticated, account }) {
   const [noteText, setNoteText] = useState('');
   const [reviewText, setReviewText] = useState('');
   const [closingTrade, setClosingTrade] = useState(null);
+  // The sale log. A ticket closed in three pieces shows ONE blended P&L above;
+  // the day it actually earned each piece only exists here. (Sep 2026.)
+  const [closes, setCloses] = useState([]);
   const [savingReview, setSavingReview] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -25,10 +28,12 @@ export default function Journal({ authenticated, account }) {
     Promise.all([
       api.getJournal().catch(() => []),
       api.getTracker().catch(() => []),
-      api.getDecisions().catch(() => [])
-    ]).then(([j, t, d]) => {
+      api.getDecisions().catch(() => []),
+      api.getCloses().catch(() => [])
+    ]).then(([j, t, d, c]) => {
       setJournal(j);
       setTracker(t);
+      setCloses(Array.isArray(c) ? c : []);
       if (Array.isArray(d) && d.length > 0) {
         if (d[0]._rowIndex !== undefined) {
           setDecisions(d);
@@ -230,6 +235,9 @@ export default function Journal({ authenticated, account }) {
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
   const selDayTickets = selectedDay ? getTicketsForDate(selectedDay) : [];
   const selDayOpenDec = selectedDay ? getOpenDecisionsForDate(selectedDay) : [];
+  const selDayCloses = selectedDay
+    ? closes.filter(c => String(c['Close Date'] || '').slice(0, 10) === selectedDay)
+    : [];
   const allClosedOnDay = [...selDayTrades.filter(t => t.Status !== 'Open'), ...selDayTickets];
   const selDayPnl = allClosedOnDay.reduce((s, t) => s + (parseFloat(t['Total P&L ($)'] || t['Actual P&L']) || 0), 0);
   const selDayWins = allClosedOnDay.filter(t => (t['W / L'] === 'Win') || (parseFloat(t['Actual P&L']) >= 0 && t['Actual P&L'])).length;
@@ -387,6 +395,46 @@ export default function Journal({ authenticated, account }) {
                           {t.Status !== 'Open' && <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>}
                           {t['W / L'] && <span className={`badge text-[12px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
                           <span className={`badge text-[12px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Tranches banked on this day. Deliberately ABOVE the closed-ticket
+                  list: a ticket there shows its blended result, and the pieces that
+                  produced it are easier to read before the total than after. */}
+              {selDayCloses.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    Tranches closed ({selDayCloses.length})
+                    <span className="mono" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                      {(() => {
+                        const t = selDayCloses.reduce((a, c) => a + (parseFloat(c['P&L ($)']) || 0), 0);
+                        return <span style={{ color: pnlColor(t) }}>{fmt$(t)}</span>;
+                      })()}
+                    </span>
+                  </h4>
+                  <div className="space-y-1">
+                    {selDayCloses.map((c, i) => {
+                      const pnl = parseFloat(c['P&L ($)']) || 0;
+                      const rem = parseFloat(c['Qty Remaining']);
+                      return (
+                        <div key={c['Close ID'] || i} className="py-2 px-3 rounded-lg border border-bg-border bg-bg-card">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-sm font-medium text-white">{c.Underlying}</span>
+                            <span className="mono text-xs text-text-muted">
+                              {c['Qty Closed']} @ {c['Close Price']}
+                            </span>
+                            <span className="text-xs text-text-muted flex-1">
+                              {isFinite(rem) && rem > 0
+                                ? `${rem} still open`
+                                : 'position closed out'}
+                              {c.Notes ? ` · ${c.Notes}` : ''}
+                            </span>
+                            <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
+                          </div>
                         </div>
                       );
                     })}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Filter, ChevronDown, ChevronUp, RefreshCw, AlertTriangle, Check, Edit3, Trash2, Save, X, DollarSign } from 'lucide-react';
 import { api } from '../utils/api';
+import OpenPositions from '../components/OpenPositions';
 import CloseTradeModal from '../components/CloseTradeModal';
 import ErrorBanner from '../components/ErrorBanner';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
@@ -296,6 +297,13 @@ export default function Trades({ authenticated, account, accounts }) {
               }} />
           </label>
         </div>
+      </div>
+
+      {/* What is still at risk, and where a part-closed position stands. The
+          tracker table below is positions as BOOKED; this is positions as they
+          are right now. (Sep 2026.) */}
+      <div className="mb-4">
+        <OpenPositions authenticated={authenticated} account={account} />
       </div>
 
       {error && <ErrorBanner message={error} onRetry={loadData} />}

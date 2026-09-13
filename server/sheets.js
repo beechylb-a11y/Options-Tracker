@@ -146,7 +146,16 @@ const REQUIRED_TABS = {
   // one trade while this tab keeps every fill. Doubles as the sale log.
   Closes: [['Close ID', 'Ticket Ref', 'Ticket Timestamp', 'Engine', 'Underlying',
     'Strategy', 'Entry Date', 'Close Date', 'Qty Closed', 'Qty Remaining',
-    'Close Price', 'P&L ($)', 'Fees ($)', 'Account', 'Notes']]
+    'Close Price', 'P&L ($)', 'Fees ($)', 'Account', 'Notes']],
+  // Sep 2026. Decisions is 47 columns of what the ENGINE thought; this is what
+  // was actually done and how it turned out — one row per position, joining the
+  // ticket to its tranches. It is a materialised view, rebuilt from Decisions +
+  // Closes on every log and every close, never edited by hand: three tables that
+  // can disagree is how a trade log stops being trusted.
+  TradeLog: [['Ticket Ref', 'Entry Date', 'Entry Time', 'Engine', 'Underlying',
+    'Strategy', 'Legs', 'Qty', 'Entry Price', 'Max Risk', 'Max Profit', 'EV',
+    'Confidence', 'Qty Closed', 'Qty Open', 'Avg Exit', 'Realised P&L',
+    'R Multiple', 'Status', 'Tranches', 'Last Close', 'Account']]
 };
 
 export async function ensureSheetStructure() {
@@ -827,6 +836,124 @@ export async function getJournal() {
 // ================================================================
 //  TRADE TICKET LIFECYCLE
 // ================================================================
+// ════════════════════════════════════════════════════════════════════════
+//  TRADE LOG — one row per position (materialised from Decisions + Closes)
+// ════════════════════════════════════════════════════════════════════════
+// Pure so it can be tested without a spreadsheet. Columns are resolved BY NAME
+// from the header row — Decisions has grown from 27 to 47 columns in two months
+// and positional reads are how that becomes a silent data corruption.
+export function projectTradeLog(decRows, closeRows) {
+  const H = decRows[0] || [];
+  const ix = name => H.indexOf(name);
+  const c = {
+    ts: ix('Timestamp'), engine: ix('Engine'), und: ix('Underlying'),
+    strat: ix('Strategy'), qty: ix('Contracts'), legs: ix('Wing Strikes'),
+    status: ix('Status'), acct: ix('Account'), net: ix('Net Debit/Credit'),
+    risk: ix('Max Risk'), profit: ix('Max Profit'), ev: ix('EV'),
+    conf: ix('Confidence'),
+  };
+  // tranches grouped by ticket ref (Closes col B)
+  const byTicket = new Map();
+  for (const r of (closeRows || []).slice(1)) {
+    const k = String(r[1]);
+    if (!byTicket.has(k)) byTicket.set(k, []);
+    byTicket.get(k).push(r);
+  }
+  const num = v => { const n = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
+  const out = [];
+  for (let i = 1; i < decRows.length; i++) {
+    const d = decRows[i];
+    if (!d || !d[c.ts]) continue;
+    const ref = i + 1;                       // 1-based sheet row, matches Closes
+    const tr = byTicket.get(String(ref)) || [];
+    const qty = num(d[c.qty]) || 0;
+    const qtyClosed = tr.reduce((a, r) => a + (num(r[8]) || 0), 0);
+    const pnl = tr.reduce((a, r) => a + (num(r[11]) || 0), 0);
+    const notional = tr.reduce((a, r) => a + (num(r[8]) || 0) * (num(r[10]) || 0), 0);
+    const maxRisk = num(d[c.risk]);
+    const ts = String(d[c.ts] || '');
+    const status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qty ? 'Closed' : 'Partial');
+    out.push([
+      ref,
+      ts.split('T')[0] || '',
+      (ts.split('T')[1] || '').slice(0, 5),
+      d[c.engine] ?? '', d[c.und] ?? '', d[c.strat] ?? '', d[c.legs] ?? '',
+      qty,
+      c.net >= 0 ? (d[c.net] ?? '') : '',
+      c.risk >= 0 ? (d[c.risk] ?? '') : '',
+      c.profit >= 0 ? (d[c.profit] ?? '') : '',
+      c.ev >= 0 ? (d[c.ev] ?? '') : '',
+      c.conf >= 0 ? (d[c.conf] ?? '') : '',
+      qtyClosed,
+      Math.max(0, qty - qtyClosed),
+      qtyClosed > 0 ? +(notional / qtyClosed).toFixed(4) : '',
+      qtyClosed > 0 ? +pnl.toFixed(2) : '',
+      // R multiple against the risk actually taken on the closed portion, so a
+      // half-closed winner is not flattered by the whole position's risk.
+      (qtyClosed > 0 && maxRisk > 0 && qty > 0)
+        ? +(pnl / (maxRisk * (qtyClosed / qty))).toFixed(2) : '',
+      status,
+      tr.length,
+      tr.length ? tr.map(r => String(r[7] || '')).sort().pop() : '',
+      d[c.acct] ?? ''
+    ]);
+  }
+  return out;
+}
+
+// Overwrite the tab with the projection. Cheap (one clear + one write) and the
+// only thing that keeps the three tables from drifting apart.
+export async function rebuildTradeLog() {
+  const sheets = getSheets();
+  const [decRows, closeRows] = await Promise.all([getDecisions(), getCloses()]);
+  const rows = projectTradeLog(decRows, closeRows);
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SHEET_ID(), range: 'TradeLog!A2:V'
+  });
+  if (rows.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID(), range: 'TradeLog!A2',
+      valueInputOption: 'RAW', requestBody: { values: rows }
+    });
+  }
+  return rows.length;
+}
+
+export async function getTradeLog() {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(), range: 'TradeLog!A:V'
+  });
+  return res.data.values || [];
+}
+
+// Open and partially-closed positions, each with its tranches attached. This is
+// what the UI needs and it is derived, never stored.
+export async function getOpenPositions() {
+  const [decRows, closeRows] = await Promise.all([getDecisions(), getCloses()]);
+  const rows = projectTradeLog(decRows, closeRows);
+  const byTicket = new Map();
+  for (const r of closeRows.slice(1)) {
+    const k = String(r[1]);
+    if (!byTicket.has(k)) byTicket.set(k, []);
+    byTicket.get(k).push({
+      closeId: r[0], closeDate: r[7], qtyClosed: Number(r[8]) || 0,
+      qtyRemaining: Number(r[9]) || 0, closePrice: r[10],
+      pnl: Number(r[11]) || 0, fees: r[12], notes: r[14] || ''
+    });
+  }
+  const K = ['ticketRef','entryDate','entryTime','engine','underlying','strategy','legs',
+    'qty','entryPrice','maxRisk','maxProfit','ev','confidence','qtyClosed','qtyOpen',
+    'avgExit','realisedPnl','rMultiple','status','tranches','lastClose','account'];
+  return rows
+    .filter(r => r[18] !== 'Closed')
+    .map(r => {
+      const o = {}; K.forEach((k, i) => { o[k] = r[i]; });
+      o.closes = byTicket.get(String(r[0])) || [];
+      return o;
+    });
+}
+
 // ════════════════════════════════════════════════════════════════════════
 //  CLOSES — one row per tranche (the sale log)
 // ════════════════════════════════════════════════════════════════════════

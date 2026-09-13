@@ -17,6 +17,7 @@ import {
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
   closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
+  getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
   scanTastyTradeEmails
 } from './sheets.js';
@@ -642,10 +643,49 @@ app.get('/api/stats', requireAuth, async (req, res) => {
 app.post('/api/decisions', requireAuth, async (req, res) => {
   try {
     const row = await logDecision(req.body);
-    res.json({ ok: true, row });
+    // TradeLog is a materialised view; rebuilding it here is what stops the log
+    // and the tickets from drifting. Best-effort — a failed projection must never
+    // cost the user the trade they just logged.
+    let logRows = null;
+    try { logRows = await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); }
+    res.json({ ok: true, row, tradeLogRows: logRows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Trade log / sale log / open positions ────────────────────────────────
+app.get('/api/tradelog', requireAuth, async (req, res) => {
+  try {
+    const rows = await getTradeLog();
+    const headers = rows[0] || [];
+    res.json(rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? '']))));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/tradelog/rebuild', requireAuth, async (req, res) => {
+  try { res.json({ ok: true, rows: await rebuildTradeLog() }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The sale log: every tranche, newest first.
+app.get('/api/closes', requireAuth, async (req, res) => {
+  try {
+    const rows = await getCloses();
+    const headers = rows[0] || [];
+    const out = rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+    const acct = req.query.account;
+    res.json((acct && acct !== 'all' ? out.filter(o => o.Account === acct) : out).reverse());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Open and partially-closed positions with their tranches attached.
+app.get('/api/positions/open', requireAuth, async (req, res) => {
+  try {
+    const all = await getOpenPositions();
+    const acct = req.query.account;
+    res.json(acct && acct !== 'all' ? all.filter(p => p.account === acct) : all);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/decisions', requireAuth, async (req, res) => {
@@ -965,6 +1005,7 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     // Journal no longer populated from close ticket — P&L derived from TradeTracker
 
     console.log(`[CLOSE TICKET] rowIndex=${rowIndex}, statusAfterClose=${dec.Status}, rowLen=${row?.length}, headerLen=${headers.length}, statusIdx=${headers.indexOf('Status')}`);
+    try { await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); }
     res.json({ ok: true, ...closeResult,
       debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });
   } catch (err) {

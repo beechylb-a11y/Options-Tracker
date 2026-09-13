@@ -104,6 +104,12 @@ export const api = {
   getStats: (account) => fetchJSON(`/api/stats${account && account !== 'all' ? '?account=' + account : ''}`),
   getPerformance: (account) => fetchJSON(`/api/performance${account && account !== 'all' ? '?account=' + account : ''}`),
 
+  // Trade log (opens), sale log (tranches), open positions
+  getTradeLog: () => fetchJSON('/api/tradelog'),
+  rebuildTradeLog: () => fetchJSON('/api/tradelog/rebuild', { method: 'POST' }),
+  getCloses: (account) => fetchJSON(`/api/closes${account && account !== 'all' ? '?account=' + account : ''}`),
+  getOpenPositions: (account) => fetchJSON(`/api/positions/open${account && account !== 'all' ? '?account=' + account : ''}`),
+
   // Decisions
   logDecision: (data) => fetchJSON('/api/decisions', {
     method: 'POST', body: JSON.stringify(data)

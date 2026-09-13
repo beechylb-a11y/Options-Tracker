@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, ComposedChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar } from 'lucide-react';
 import { api } from '../utils/api';
+import OpenPositions from '../components/OpenPositions';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
@@ -255,6 +256,12 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
         <KPI icon={Activity} label="Expectancy" value={fmt$(expectancy)} cls={expectancy >= 0 ? 'green' : 'red'} />
         <KPI icon={TrendingUp} label="Avg Win" value={fmt$(avgWin)} cls="green" />
         <KPI icon={TrendingDown} label="Avg Loss" value={fmt$(avgLoss)} cls="red" />
+      </div>
+
+      {/* Every number above is history. This is the only thing on the Dashboard
+          that is still live, so it sits directly under them. (Sep 2026.) */}
+      <div className="mb-6">
+        <OpenPositions authenticated={authenticated} account={account} compact />
       </div>
 
       {/* KPI Cards - Row 2: secondary metrics + risk (smaller, muted) */}
