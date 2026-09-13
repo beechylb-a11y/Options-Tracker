@@ -909,20 +909,23 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     const rowIndex = parseInt(req.params.rowIndex);
     if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
     const { closeDate, closePrice, actualPnl, closeIV, closeVix, sessionHigh, sessionLow,
-      closeUnderlyingPrice, closeVix1d } = req.body;
+      closeUnderlyingPrice, closeVix1d, qtyClosed, fees, notes } = req.body;
 
     // 0. Check if already closed (prevent duplicate writes)
     const decRowsPre = await getDecisions();
     const headersPre = decRowsPre[0] || [];
     const statusIdx = headersPre.indexOf('Status');
     const existingRow = decRowsPre[rowIndex - 1];
+    // Only a FULLY closed ticket is a duplicate. 'Partial' must fall through, or
+    // the second tranche would be rejected as a double-write. (Sep 2026.)
     if (existingRow && statusIdx >= 0 && existingRow[statusIdx] === 'Closed') {
       return res.json({ ok: true, note: 'Already closed' });
     }
 
     // 1. Update the Decisions sheet
-    await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl, closeIV, closeVix,
-      sessionHigh, sessionLow, closeUnderlyingPrice, closeVix1d });
+    const closeResult = await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl,
+      closeIV, closeVix, sessionHigh, sessionLow, closeUnderlyingPrice, closeVix1d,
+      qtyClosed, fees, notes });
 
     // 2. Get the decision row to extract details for TradeTracker + Journal
     const decRows = await getDecisions();
@@ -962,7 +965,8 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     // Journal no longer populated from close ticket — P&L derived from TradeTracker
 
     console.log(`[CLOSE TICKET] rowIndex=${rowIndex}, statusAfterClose=${dec.Status}, rowLen=${row?.length}, headerLen=${headers.length}, statusIdx=${headers.indexOf('Status')}`);
-    res.json({ ok: true, debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });
+    res.json({ ok: true, ...closeResult,
+      debug: { rowIndex, statusAfterClose: dec.Status, rowLen: row?.length, headerLen: headers.length } });
   } catch (err) {
     console.error('[CLOSE TICKET ERROR]', err);
     res.status(500).json({ error: err.message });

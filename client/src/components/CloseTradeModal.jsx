@@ -28,6 +28,19 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
   const MANUAL_ACCOUNT_PREFIXES = ['papertrade']; // extend if other accounts don't use TWS
   const isManualAccount = MANUAL_ACCOUNT_PREFIXES.some(p => acct.startsWith(p));
 
+  // Derive P&L on the contracts ACTUALLY being closed. This used the whole
+  // position qty, so a 1-of-3 tranche auto-filled three contracts' P&L —
+  // harmless while every close was all-or-nothing, a 3x overstatement written
+  // straight into the sale log once closes became tranched. (Sep 2026.)
+  const effectiveQty = f =>
+    (partial && Number(f.partialQty) > 0) ? Math.min(Number(f.partialQty), qty) : qty;
+  const derivePnl = (f, cp) => {
+    if (!isManualAccount || cp === '' || cp == null || isNaN(parseFloat(cp))) return null;
+    const perContractEntry = qty ? entryCredit / qty : entryCredit;
+    const d = Math.round((perContractEntry - parseFloat(cp)) * effectiveQty(f) * 100) / 100;
+    return isNaN(d) ? null : String(d);
+  };
+
   // Fetch executions from TWS bridge
   async function fetchFromTWS() {
     setFetchingTWS(true);
@@ -106,6 +119,12 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           closeDate: form.closeDate,
           closePrice: form.closePrice,
           actualPnl: form.closePnl,
+          // The partial toggle already existed but only reached the TRACKER path --
+          // a ticket closed in tranches wrote the whole position out on the first
+          // exit. Each tranche now lands as its own row in Closes and the ticket
+          // stays 'Partial' until the last contract is out. (Sep 2026.)
+          qtyClosed: partial && form.partialQty ? Number(form.partialQty) : null,
+          notes: form.notes || '',
           sessionHigh: snap.sessionHigh ?? null,
           sessionLow: snap.sessionLow ?? null,
           account: trade.Account || '',
@@ -227,13 +246,8 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
                   // Credit strategy: P&L = (entry credit − close debit) × qty × 100.
                   // entryCredit here is already in $ for the position; closePrice
                   // is per-contract net. Best-effort auto-fill; user can override.
-                  if (isManualAccount && cp !== '' && !isNaN(parseFloat(cp))) {
-                    const closeVal = parseFloat(cp);
-                    const perContractEntry = qty ? entryCredit / qty : entryCredit;
-                    const pnlPerContract = perContractEntry - closeVal;
-                    const derived = Math.round(pnlPerContract * qty * 100) / 100;
-                    if (!isNaN(derived)) next.closePnl = String(derived);
-                  }
+                  const derived = derivePnl(next, cp);
+                  if (derived != null) next.closePnl = derived;
                   return next;
                 });
               }}
@@ -243,7 +257,12 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
           {partial && (
             <div>
               <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Contracts to close</label>
-              <input type="number" value={form.partialQty} onChange={e => setForm(f => ({...f, partialQty: e.target.value}))}
+              <input type="number" value={form.partialQty} onChange={e => setForm(f => {
+                  const next = { ...f, partialQty: e.target.value };
+                  const d = derivePnl(next, next.closePrice);
+                  if (d != null) next.closePnl = d;
+                  return next;
+                })}
                 placeholder={`1 to ${qty}`} min="1" max={qty}
                 style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}} />
             </div>

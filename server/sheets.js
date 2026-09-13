@@ -137,7 +137,16 @@ const REQUIRED_TABS = {
     ['Expectancy', '0'],
     ['Total P&L', '0']
   ],
-  Journal: [['Date', 'Day P&L', 'Trades Count', 'Win Count', 'Loss Count', 'Notes', 'Week Number']]
+  Journal: [['Date', 'Day P&L', 'Trades Count', 'Win Count', 'Loss Count', 'Notes', 'Week Number']],
+  // Sep 2026. A position is closed in pieces far more often than in one go, and the
+  // Decisions row has exactly ONE Close Date / Close Price / Actual P&L between it --
+  // so a second exit silently overwrote the first, and the only number that survived
+  // was whichever tranche happened to be last. Every tranche now gets its own row
+  // here; the Decisions row carries the blended result, so a ticket still reads as
+  // one trade while this tab keeps every fill. Doubles as the sale log.
+  Closes: [['Close ID', 'Ticket Ref', 'Ticket Timestamp', 'Engine', 'Underlying',
+    'Strategy', 'Entry Date', 'Close Date', 'Qty Closed', 'Qty Remaining',
+    'Close Price', 'P&L ($)', 'Fees ($)', 'Account', 'Notes']]
 };
 
 export async function ensureSheetStructure() {
@@ -818,19 +827,121 @@ export async function getJournal() {
 // ================================================================
 //  TRADE TICKET LIFECYCLE
 // ================================================================
+// ════════════════════════════════════════════════════════════════════════
+//  CLOSES — one row per tranche (the sale log)
+// ════════════════════════════════════════════════════════════════════════
+export async function getCloses() {
+  const sheets = getSheets();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(), range: 'Closes!A:O'
+  });
+  return res.data.values || [];
+}
+
+// Every tranche recorded against one ticket, oldest first.
+export async function getClosesForTicket(ticketRef) {
+  const rows = await getCloses();
+  const want = String(ticketRef);
+  return rows.slice(1).filter(r => String(r[1]) === want);
+}
+
+export async function appendClose(c) {
+  const sheets = getSheets();
+  const row = [
+    c.closeId || ('C' + Date.now()),
+    c.ticketRef ?? '',
+    c.ticketTimestamp || '',
+    c.engine || '',
+    c.underlying || '',
+    c.strategy || '',
+    c.entryDate || '',
+    c.closeDate || new Date().toISOString().split('T')[0],
+    c.qtyClosed ?? '',
+    c.qtyRemaining ?? '',
+    c.closePrice ?? '',
+    c.pnl ?? 0,
+    c.fees ?? '',
+    c.account || '',
+    c.notes || ''
+  ];
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID(), range: 'Closes!A1',
+    valueInputOption: 'RAW', requestBody: { values: [row] }
+  });
+  return row;
+}
+
+// Blend the tranches into the single set of numbers the Decisions row holds.
+// Close Price is quantity-weighted -- a straight average would let a 1-lot scratch
+// cancel a 5-lot winner. P&L is a plain sum. Exported for the tests.
+export function blendCloses(tranches) {
+  let qty = 0, notional = 0, pnl = 0;
+  for (const t of tranches) {
+    const q = Number(t.qtyClosed) || 0, p = Number(t.closePrice);
+    const l = Number(t.pnl) || 0;
+    qty += q;
+    if (isFinite(p)) notional += q * p;
+    pnl += l;
+  }
+  return {
+    qty,
+    closePrice: qty > 0 ? +(notional / qty).toFixed(4) : null,
+    pnl: +pnl.toFixed(2)
+  };
+}
+
 export async function closeTradeTicket(rowIndex, closeData) {
   const sheets = getSheets();
   await ensureDecisionVolHeaders();
+
+  // ── tranche accounting ──────────────────────────────────────────────────
+  // qtyClosed absent means "close whatever is left", which is the old behaviour
+  // and what every existing caller wants.
+  const decRows = await getDecisions();
+  const decRow = decRows[rowIndex - 1] || [];
+  const totalQty = Number(decRow[5]) || 1;              // F = Contracts
+  const prior = await getClosesForTicket(rowIndex);
+  const priorQty = prior.reduce((a, r) => a + (Number(r[8]) || 0), 0);
+  const openQty = Math.max(0, totalQty - priorQty);
+  const reqQty = Number(closeData.qtyClosed);
+  const qtyClosed = (isFinite(reqQty) && reqQty > 0) ? Math.min(reqQty, openQty) : openQty;
+  const qtyRemaining = Math.max(0, openQty - qtyClosed);
+
+  await appendClose({
+    ticketRef: rowIndex,
+    ticketTimestamp: decRow[0] || '',
+    engine: decRow[1] || '',
+    underlying: decRow[2] || '',
+    strategy: decRow[3] || '',
+    entryDate: (decRow[0] || '').split('T')[0],
+    closeDate: closeData.closeDate,
+    qtyClosed,
+    qtyRemaining,
+    closePrice: closeData.closePrice ?? '',
+    pnl: closeData.actualPnl ?? 0,
+    fees: closeData.fees ?? '',
+    account: closeData.account || decRow[26] || '',
+    notes: closeData.notes || ''
+  });
+
+  // The Decisions row carries the BLENDED result across every tranche so far, so
+  // the ticket keeps reading as one trade. Status stays 'Partial' until the last
+  // contract is out -- which is also what stops the endpoint's duplicate guard
+  // from rejecting the second tranche.
+  const all = [...prior.map(r => ({ qtyClosed: r[8], closePrice: r[10], pnl: r[11] })),
+               { qtyClosed, closePrice: closeData.closePrice, pnl: closeData.actualPnl }];
+  const blended = blendCloses(all);
+
   // Columns: V=Status(22), W=Close Date(23), X=Close Price(24), Y=Actual P&L(25)
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID(),
     range: `Decisions!V${rowIndex}:Y${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[
-      'Closed',
+      qtyRemaining > 0 ? 'Partial' : 'Closed',
       closeData.closeDate || new Date().toISOString().split('T')[0],
-      closeData.closePrice || '',
-      closeData.actualPnl || 0
+      blended.closePrice ?? (closeData.closePrice || ''),
+      blended.pnl
     ]] }
   });
   // Close IV (AF) + Close VIX (AG) -- optional, written only if captured at close
@@ -872,6 +983,10 @@ export async function closeTradeTicket(rowIndex, closeData) {
       ]] }
     });
   }
+  // What the caller needs to tell the user: how much went, how much is left, and
+  // the blended position-level result so far.
+  return { qtyClosed, qtyRemaining, totalQty, fullyClosed: qtyRemaining === 0,
+           blendedClosePrice: blended.closePrice, totalPnl: blended.pnl };
 }
 
 // Backfill vol-snapshot fields on an ALREADY-CLOSED decision row. Used by the
