@@ -131,6 +131,15 @@ async function loadTokensFromConfig() {
       try {
         await ensureSheetStructure();
         console.log('[AUTH] Startup: sheet reachable, auth healthy.');
+        // TradeLog is a materialised view of Decisions + Closes. It is rebuilt on
+        // every log and every close, but a tab that has just been created — or a
+        // deploy that changed the projection — leaves it empty or stale with no
+        // event to trigger. Rebuilding once at boot is what makes it self-healing.
+        // Best-effort: a failed projection must never stop the server coming up.
+        try {
+          const n = await rebuildTradeLog();
+          console.log('[TRADELOG] Startup: rebuilt', n, 'rows.');
+        } catch (e) { console.log('[TRADELOG] Startup rebuild failed:', e.message); }
         // Opportunistically refresh the sheet backup copy.
         try { await saveTokensToConfig(getCurrentTokens() || storedTokens); } catch (e) {}
       } catch (e) {

@@ -851,6 +851,10 @@ export function projectTradeLog(decRows, closeRows) {
     status: ix('Status'), acct: ix('Account'), net: ix('Net Debit/Credit'),
     risk: ix('Max Risk'), profit: ix('Max Profit'), ev: ix('EV'),
     conf: ix('Confidence'),
+    // Pre-tranche history. Everything closed before the Closes tab existed was
+    // recorded straight onto the Decisions row and has no tranche to derive from.
+    closeDate: ix('Close Date'), closePrice: ix('Close Price'),
+    actualPnl: ix('Actual P&L'),
   };
   // tranches grouped by ticket ref (Closes col B)
   const byTicket = new Map();
@@ -867,12 +871,27 @@ export function projectTradeLog(decRows, closeRows) {
     const ref = i + 1;                       // 1-based sheet row, matches Closes
     const tr = byTicket.get(String(ref)) || [];
     const qty = num(d[c.qty]) || 0;
-    const qtyClosed = tr.reduce((a, r) => a + (num(r[8]) || 0), 0);
-    const pnl = tr.reduce((a, r) => a + (num(r[11]) || 0), 0);
-    const notional = tr.reduce((a, r) => a + (num(r[8]) || 0) * (num(r[10]) || 0), 0);
+    let qtyClosed = tr.reduce((a, r) => a + (num(r[8]) || 0), 0);
+    let pnl = tr.reduce((a, r) => a + (num(r[11]) || 0), 0);
+    let notional = tr.reduce((a, r) => a + (num(r[8]) || 0) * (num(r[10]) || 0), 0);
+    let lastClose = tr.length ? tr.map(r => String(r[7] || '')).sort().pop() : '';
     const maxRisk = num(d[c.risk]);
     const ts = String(d[c.ts] || '');
-    const status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qty ? 'Closed' : 'Partial');
+    let status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qty ? 'Closed' : 'Partial');
+
+    // A ticket the Decisions row already calls Closed, with no tranche rows, is
+    // pre-tranche history. Without this it projects as Open — and forty finished
+    // trades reappearing as live positions, carrying their full max risk into the
+    // "risk live" total, is worse than having no trade log at all. (Sep 2026.)
+    const decStatus = String(d[c.status] ?? '').trim();
+    if (!tr.length && /^(closed|expired|stopped\s*out)$/i.test(decStatus)) {
+      qtyClosed = qty;
+      pnl = num(d[c.actualPnl]) || 0;
+      notional = qty * (num(d[c.closePrice]) || 0);
+      lastClose = String(d[c.closeDate] ?? '');
+      status = 'Closed';
+    }
+
     out.push([
       ref,
       ts.split('T')[0] || '',
@@ -886,7 +905,9 @@ export function projectTradeLog(decRows, closeRows) {
       c.conf >= 0 ? (d[c.conf] ?? '') : '',
       qtyClosed,
       Math.max(0, qty - qtyClosed),
-      qtyClosed > 0 ? +(notional / qtyClosed).toFixed(4) : '',
+      // Legacy rows often have a P&L but no close price; a blank reads honestly,
+      // a 0.0000 reads as "closed at zero".
+      (qtyClosed > 0 && notional > 0) ? +(notional / qtyClosed).toFixed(4) : '',
       qtyClosed > 0 ? +pnl.toFixed(2) : '',
       // R multiple against the risk actually taken on the closed portion, so a
       // half-closed winner is not flattered by the whole position's risk.
@@ -894,7 +915,7 @@ export function projectTradeLog(decRows, closeRows) {
         ? +(pnl / (maxRisk * (qtyClosed / qty))).toFixed(2) : '',
       status,
       tr.length,
-      tr.length ? tr.map(r => String(r[7] || '')).sort().pop() : '',
+      lastClose,
       d[c.acct] ?? ''
     ]);
   }
