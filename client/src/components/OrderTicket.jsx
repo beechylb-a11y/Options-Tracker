@@ -6,6 +6,7 @@ import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, feesFor, ibkrLines,
   ladder, LADDER_PRESETS, rollSummary, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
 } from '../utils/ticketMath';
+import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -304,7 +305,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
                     </tr>
                     {ib && (
                       <tr><td></td><td colSpan={7} className="mono" style={{ padding: '0 4px 6px', fontSize: 11.5, color: '#8b949e' }}>
-                        IBKR: {ib.buyConv}{pos.isCredit ? ` · or ${ib.sellConv}` : ''}
+                        <span title={`${OFFSET_TIP}\n\nThis row: offset ${ib.offset >= 0 ? '+' : ''}${ib.offset.toFixed(2)} = ${ib.offsetPctOfEntry != null ? ib.offsetPctOfEntry.toFixed(0) : '—'}% of entry.`} style={{ cursor: 'help' }}>IBKR: {ib.buyConv}</span>{pos.isCredit ? ` · or ${ib.sellConv}` : ''}
                       </td></tr>
                     )}
                   </React.Fragment>
@@ -316,7 +317,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 10, alignItems: 'end' }}>
             <div>
               <label style={lbl}>Stop (loss as % of entry)</label>
-              <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? '100 = close at 2× credit' : '50 = sell at half the debit'} onChange={e => setStopPct(e.target.value)} style={inp} />
+              <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? 'e.g. 100' : 'e.g. 50'} title={pos.isCredit ? '100 = buy back at 2x the credit' : '50 = sell at half what you paid'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
               {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - feesFor(pos.qtyOpen, pos.legs, commission))} on {pos.qtyOpen}</> : 'No stop set'}
@@ -403,6 +404,8 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
           <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder={tab === 'roll' ? 'Why roll? Tested side, delta, days left…' : 'Why this exit?'}
             style={{ ...inp, fontFamily: 'inherit', resize: 'vertical' }} />
         </div>
+
+        <TicketHelp kind="sell" />
 
         {msg && <div style={{ marginTop: 8, fontSize: 12.5, color: msg.err ? '#f85149' : '#3fb950' }}>{msg.text}</div>}
 

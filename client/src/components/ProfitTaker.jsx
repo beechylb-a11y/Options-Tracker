@@ -3,6 +3,7 @@ import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines, ladder,
   LADDER_PRESETS, snap, defaultTick, round2, stopToPrice
 } from '../utils/ticketMath';
+import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 
 // BUY ticket — the IBKR "Attach ▸ Profit Taker" check, done before you click
 // Transmit. Replaces the old ProfitScale tile row.
@@ -78,7 +79,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         <span style={{ color: net >= 0 ? '#3fb950' : '#f85149' }}>{net >= 0 ? '+' : '−'}${Math.abs(net).toFixed(0)} net</span>
         <span> of {q} ({pct}% max)</span><br />
         {ib.buyConv}{pos.isCredit && <>&nbsp;&nbsp;·&nbsp;&nbsp;{ib.sellConv}</>}<br />
-        TWS offset <b style={{ color: '#e6edf3' }}>{ib.offset >= 0 ? '+' : ''}{ib.offset.toFixed(2)}</b>
+        <span title={OFFSET_TIP} style={{ borderBottom: '1px dotted #8b949e', cursor: 'help' }}>TWS offset</span> <b style={{ color: '#e6edf3' }}>{ib.offset >= 0 ? '+' : ''}{ib.offset.toFixed(2)}</b>
         {pctOfEntry != null && <> = <b style={{ color: Math.abs(pctOfEntry - pct) > 10 ? '#d29922' : '#e6edf3' }}>{pctOfEntry.toFixed(0)}%</b> of entry price</>}
         {pctOfEntry != null && Math.abs(pctOfEntry - pct) > 10 && <span style={{ color: '#d29922' }}> — a % preset would need {pctOfEntry.toFixed(0)}%, not {pct}%</span>}
       </div>
@@ -149,7 +150,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid #21262d', paddingTop: 6 }}>
         <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop loss</span>
-        <input type="number" step="25" placeholder="% entry" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 88 }} />
+        <input type="number" step="25" placeholder="e.g. 50" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 88 }} />
         {stop != null && (
           <span className="mono" style={{ fontSize: 12, color: '#f85149' }}>
             LMT {stop.toFixed(2)} {pos.isCredit ? 'db' : 'cr'} · {ibkrLines(pos, stop).buyConv} · −${Math.abs(pnlAt(pos, stop, qty)).toFixed(0)}
@@ -166,6 +167,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
       <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>
         The plan is written into the trade notes on Log trade and pre-loads the Sell ticket for this position.
       </div>
+      <TicketHelp kind="buy" />
     </div>
   );
 }

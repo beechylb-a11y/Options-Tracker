@@ -6,6 +6,7 @@ import EnginePanel from '../components/EnginePanel';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
+import OrderTicket from '../components/OrderTicket';
 
 // ── Trade tabs (Aug 2026) ──
 // One mounted EnginePanel per tab, inactive ones hidden with display:none so
@@ -176,7 +177,23 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const [expandedIdx, setExpandedIdx] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // Close ticket state
+  // SELL ticket (tranches / roll) for an open engine ticket. The Decisions row
+  // does not carry what has already been closed, so the Closes tab is read when
+  // the ticket opens. { dec, tab, qtyClosed, realised } | null
+  const [orderTicket, setOrderTicket] = useState(null);
+  async function openOrderTicket(dec, tab) {
+    let qtyClosed = 0, realised = 0;
+    try {
+      const closes = await api.getCloses();
+      const mine = (closes || []).filter(c => String(c['Ticket Ref']) === String(dec._rowIndex));
+      qtyClosed = mine.reduce((a, c) => a + (parseFloat(c['Qty Closed']) || 0), 0);
+      realised = mine.reduce((a, c) => a + (parseFloat(c['P&L ($)']) || 0), 0);
+    } catch (e) { /* no Closes read -> treat as nothing closed yet */ }
+    setOrderTicket({ dec, tab, qtyClosed, realised });
+  }
+  const hasEntryPrice = d => { const v = parseFloat(d?.['Net Debit/Credit']); return isFinite(v) && v !== 0; };
+
+  // Close ticket state (quick close -- kept for tickets with no Net Debit/Credit)
   const [closingIdx, setClosingIdx] = useState(null);
   const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', actualPnl: '' });
   // Vol snapshot at close: started when the close form opens (so the bridge has
@@ -413,6 +430,18 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         </div>
       </div>
 
+      {orderTicket && (
+        <OrderTicket
+          position={{ ...orderTicket.dec, qtyClosed: orderTicket.qtyClosed, realisedPnl: orderTicket.realised }}
+          initialTab={orderTicket.tab}
+          onClose={() => setOrderTicket(null)}
+          onDone={async () => {
+            setOrderTicket(null);
+            showToast('Recorded', 'success');
+            await new Promise(r => setTimeout(r, 500));
+            await loadDecisions();
+          }} />
+      )}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-lg text-sm font-medium fade-in ${
           toast.type === 'success' ? 'bg-green-bg border border-green text-green' : 'bg-red-bg border border-red text-red'}`}>
@@ -665,11 +694,26 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
                         {/* Action buttons */}
                         <div className="flex items-center gap-2 pt-2 border-t border-bg-border">
-                          <button onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' });
+                          {hasEntryPrice(dec) && (<>
+                            <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'close'); }}
+                              title="Sell ticket: close in tranches, with IBKR limit prices"
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
+                              style={{ background: '#da3633', color: '#fff' }}>
+                              <DollarSign size={12} /> Sell / scale out
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'roll'); }}
+                              title="Roll: close the old legs and open new ones as one combo"
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
+                              style={{ border: '1px solid #9e6a03', color: '#d29922' }}>
+                              Roll
+                            </button>
+                          </>)}
+                          <button title={hasEntryPrice(dec) ? 'Quick close: type the close price and P&L by hand' : 'This ticket has no Net Debit/Credit, so close it by typing the P&L'}
+                            onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' });
                             closeSnapRef.current = isClosing ? {} : startCloseVolSnapshot(dec.Underlying,
                               { expiry: dec.Engine === '0DTE' ? (dec.Timestamp || '').split('T')[0] : '' }); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors">
-                            <DollarSign size={12} /> Close ticket
+                            {hasEntryPrice(dec) ? <>Quick close</> : <><DollarSign size={12} /> Close ticket</>}
                           </button>
                           <button onClick={(e) => { e.stopPropagation(); setEditingNotesIdx(isEditingNotes ? null : globalIdx); setNotesText(dec['Trade Notes'] || dec.Notes || ''); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-bg-border text-text-muted rounded-lg hover:bg-bg-hover transition-colors">
