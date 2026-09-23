@@ -83,6 +83,14 @@ export function targetToPrice(pos, pct) {
   return pos.isCredit ? e - profit : e + profit;
 }
 
+// Stop: loss as a % of the ENTRY price, not of max profit. Credit: 100% = close for
+// 2x the credit. Debit: 50% = close for half the debit. Measuring a debit fly's stop
+// against max profit produced negative closing prices (Sep 2026).
+export function stopToPrice(pos, lossPct) {
+  const e = Math.abs(pos.ncd || 0), l = e * Math.abs(lossPct) / 100;
+  return pos.isCredit ? e + l : Math.max(0, e - l);
+}
+
 // Closing limit → % of max profit (inverse of the above).
 export function priceToTarget(pos, price) {
   const e = Math.abs(pos.ncd || 0), mp = maxProfitPerShare(pos);
@@ -170,8 +178,8 @@ export function planText(pos, rows, stopPct) {
     return `  T${i + 1}: ${r.qty}x @ ${p.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (${r.pct}% max profit, +$${pnlAt(pos, p, r.qty).toFixed(0)})`;
   });
   if (stopPct) {
-    const sp = targetToPrice(pos, -Math.abs(stopPct));
-    lines.push(`  Stop: all @ ${sp.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (−${Math.abs(stopPct)}% of max profit)`);
+    const sp = stopToPrice(pos, stopPct);
+    lines.push(`  Stop: all @ ${sp.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (lose ${Math.abs(stopPct)}% of entry, ${pnlAt(pos, sp, 1).toFixed(0)}/ct)`);
   }
   return '--- Exit plan ---\n' + lines.join('\n');
 }

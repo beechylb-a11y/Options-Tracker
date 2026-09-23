@@ -4,7 +4,7 @@ import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, feesFor, ibkrLines,
-  ladder, LADDER_PRESETS, rollSummary, snap, defaultTick, loadPlan, savePlan, round2
+  ladder, LADDER_PRESETS, rollSummary, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
 } from '../utils/ticketMath';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
@@ -81,7 +81,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - feesFor(q, pos.legs, commission) : 0; };
   const planNet = rows.reduce((a, r) => a + rowNet(r), 0);
   const filledNet = filled.reduce((a, r) => a + rowNet(r), 0);
-  const stopPrice = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(targetToPrice(pos, -Math.abs(parseFloat(stopPct))), tick) : null;
+  const stopPrice = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
   // Vol snapshot + TWS fills, both best-effort, both started on open.
   const snapRef = useRef({});
@@ -315,8 +315,8 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 10, alignItems: 'end' }}>
             <div>
-              <label style={lbl}>Stop (loss as % of max profit)</label>
-              <input type="number" step="25" value={stopPct} placeholder="e.g. 100 = 2× credit" onChange={e => setStopPct(e.target.value)} style={inp} />
+              <label style={lbl}>Stop (loss as % of entry)</label>
+              <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? '100 = close at 2× credit' : '50 = sell at half the debit'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
               {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - feesFor(pos.qtyOpen, pos.legs, commission))} on {pos.qtyOpen}</> : 'No stop set'}

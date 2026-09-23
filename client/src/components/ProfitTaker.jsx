@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines, ladder,
-  LADDER_PRESETS, snap, defaultTick, round2
+  LADDER_PRESETS, snap, defaultTick, round2, stopToPrice
 } from '../utils/ticketMath';
 
 // BUY ticket — the IBKR "Attach ▸ Profit Taker" check, done before you click
@@ -53,7 +53,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
 
   const priceOf = pct => snap(targetToPrice(pos, Number(pct) || 0), tick);
   const effRows = mode === 'single' ? [{ qty, pct: single.pct }] : rows;
-  const stop = stopPct !== '' && isFinite(parseFloat(stopPct)) ? priceOf(-Math.abs(parseFloat(stopPct))) : null;
+  const stop = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
   // Hand the plan up so Log trade can write it into the notes and save it for the
   // SELL ticket to open with.
@@ -149,7 +149,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid #21262d', paddingTop: 6 }}>
         <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop loss</span>
-        <input type="number" step="25" placeholder="% max" value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 72 }} />
+        <input type="number" step="25" placeholder="% entry" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 88 }} />
         {stop != null && (
           <span className="mono" style={{ fontSize: 12, color: '#f85149' }}>
             LMT {stop.toFixed(2)} {pos.isCredit ? 'db' : 'cr'} · {ibkrLines(pos, stop).buyConv} · −${Math.abs(pnlAt(pos, stop, qty)).toFixed(0)}
