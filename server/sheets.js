@@ -971,6 +971,9 @@ export async function getOpenPositions() {
     .map(r => {
       const o = {}; K.forEach((k, i) => { o[k] = r[i]; });
       o.closes = byTicket.get(String(r[0])) || [];
+      // Full ISO timestamp of the ticket — the key the engine's exit plan is saved
+      // under at log time, so the sell ticket opens with the ladder set at entry.
+      o.timestamp = (decRows[Number(r[0]) - 1] || [])[0] || '';
       return o;
     });
 }

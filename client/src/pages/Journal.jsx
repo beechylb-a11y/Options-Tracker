@@ -4,6 +4,11 @@ import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
 import { filterTracker } from '../utils/stats';
 import CloseTradeModal from '../components/CloseTradeModal';
+import OrderTicket from '../components/OrderTicket';
+
+// Tickets logged before Net Debit/Credit was recorded can't derive targets or P&L,
+// so they keep the plain close form where P&L is typed by hand.
+const hasEntry = d => { const v = parseFloat(d?.['Net Debit/Credit']); return isFinite(v) && v !== 0; };
 import ErrorBanner from '../components/ErrorBanner';
 
 export default function Journal({ authenticated, account }) {
@@ -577,7 +582,19 @@ export default function Journal({ authenticated, account }) {
       </div>
     </div>
 
-      {closingTrade && (
+      {closingTrade && closingTrade.type === 'ticket' && hasEntry(closingTrade.trade) && (() => {
+        // Engine tickets get the SELL ticket (tranches / roll). It needs what has
+        // already gone out of the position, which lives in Closes, not on the row.
+        const mine = closes.filter(c => String(c['Ticket Ref']) === String(closingTrade.trade._rowIndex));
+        const done = mine.reduce((a, c) => a + (parseFloat(c['Qty Closed']) || 0), 0);
+        const banked = mine.reduce((a, c) => a + (parseFloat(c['P&L ($)']) || 0), 0);
+        return (
+          <OrderTicket position={{ ...closingTrade.trade, qtyClosed: done, realisedPnl: banked }}
+            onClose={() => setClosingTrade(null)}
+            onDone={() => { setClosingTrade(null); loadData(); }} />
+        );
+      })()}
+      {closingTrade && !(closingTrade.type === 'ticket' && hasEntry(closingTrade.trade)) && (
         <CloseTradeModal
           trade={closingTrade.trade}
           type={closingTrade.type}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import OrderTicket from './OrderTicket';
 
 // Open and partially-closed positions, each expandable to its tranches.
 //
@@ -15,6 +16,8 @@ export default function OpenPositions({ authenticated, account, compact = false 
   const [open, setOpen] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
+  const [ticket, setTicket] = useState(null);   // { row, tab } — the SELL ticket in play
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -25,7 +28,7 @@ export default function OpenPositions({ authenticated, account, compact = false 
       .catch(e => { if (!dead) setErr(e.message); })
       .finally(() => { if (!dead) setLoading(false); });
     return () => { dead = true; };
-  }, [authenticated, account]);
+  }, [authenticated, account, reload]);
 
   const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
   // Risk still live is the OPEN portion only — the closed contracts cannot lose
@@ -88,6 +91,7 @@ export default function OpenPositions({ authenticated, account, compact = false 
               {!compact && <th className="text-right py-2 pr-2">Avg exit</th>}
               <th className="text-right py-2 pr-2">Banked</th>
               <th className="text-left py-2 pl-2">Status</th>
+              <th className="py-2 pl-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -116,6 +120,18 @@ export default function OpenPositions({ authenticated, account, compact = false 
                       {r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
                     </td>
                     <td className="py-2 pl-2"><Pill s={r.status} /></td>
+                    <td className="py-2 pl-2 text-right" style={{ whiteSpace: 'nowrap' }}>
+                      <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'close' }); }}
+                        title="Sell ticket — close in tranches"
+                        className="text-[12px] px-2 py-0.5 rounded"
+                        style={{ border: '1px solid #da3633', color: '#f85149', background: 'transparent', cursor: 'pointer' }}>Sell</button>
+                      {/45/.test(r.engine || '') && (
+                        <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'roll' }); }}
+                          title="Roll — close old legs, open new ones as one combo"
+                          className="text-[12px] px-2 py-0.5 rounded ml-1"
+                          style={{ border: '1px solid #9e6a03', color: '#d29922', background: 'transparent', cursor: 'pointer' }}>Roll</button>
+                      )}
+                    </td>
                   </tr>
                   {isOpen && r.closes.map((c, i) => (
                     <tr key={c.closeId || i} style={{ background: '#0d1117' }}>
@@ -128,6 +144,7 @@ export default function OpenPositions({ authenticated, account, compact = false 
                       {!compact && <td className="py-1.5 pr-2"></td>}
                       <td className={'py-1.5 pr-2 text-right mono text-[12px] ' + (c.pnl >= 0 ? 'win' : 'loss')}>{money(c.pnl)}</td>
                       <td className="py-1.5 pl-2"></td>
+                      <td></td>
                     </tr>
                   ))}
                 </React.Fragment>
@@ -136,6 +153,11 @@ export default function OpenPositions({ authenticated, account, compact = false 
           </tbody>
         </table>
       </div>
+      {ticket && (
+        <OrderTicket position={ticket.row} initialTab={ticket.tab}
+          onClose={() => setTicket(null)}
+          onDone={() => { setTicket(null); setReload(x => x + 1); }} />
+      )}
     </div>
   );
 }

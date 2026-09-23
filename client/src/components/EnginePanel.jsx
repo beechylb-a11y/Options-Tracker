@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import ProfitTaker from './ProfitTaker';
+import { normalisePosition, planText, savePlan } from '../utils/ticketMath';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
@@ -275,6 +277,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   }, []);
   const [showWhatIf, setShowWhatIf] = useState(false);
   const [showRiskBudget, setShowRiskBudget] = useState(false);
+  // Exit plan from the BUY ticket's profit-taker ladder; written into the notes and
+  // saved under the log timestamp so the Sell ticket opens with it.
+  const [exitPlan, setExitPlan] = useState(null);
   // Inline log-note input (replaces the old window.prompt on Log trade).
   const [logNoteOpen, setLogNoteOpen] = useState(false);
   // Set only after the write is CONFIRMED (onLogTrade resolves true). `loggedSig` is a
@@ -1303,7 +1308,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   function confirmLog() {
     const inp = is0 ? i0 : i45;
     const engineSummary = buildTradeSummary();
-    const fullNotes = engineSummary
+    // One timestamp for the row AND the saved exit plan — it is the key the Sell
+    // ticket looks the plan up by.
+    const logTs = new Date().toISOString();
+    const ncdNow = fv(inp, 'netCreditDebit');
+    const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: ncdNow,
+      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '' });
+    const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
+      ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
+    const fullNotes = engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
@@ -1324,7 +1337,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       notes: fullNotes,
       price:fv(inp,'price'), vix:fv(inp,'vix'),
       vix1d:is0?fv(inp,'vix1d'):0, iv:is0?0:fv(inp,'iv'), ivr:is0?0:fv(inp,'ivr'),
-      em:is0?fv(inp,'em'):0, timestamp:new Date().toISOString(),
+      em:is0?fv(inp,'em'):0, timestamp:logTs,
       // Expiry-specific IV at log time (IVx Open, col AR): the per-leg average
       // from Fetch Greeks when it ran; 45DTE falls back to the typed IV. Blank
       // when nothing is known — never a fake zero.
@@ -1369,6 +1382,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         // all leave the button alone — "Logged" is a claim about the sheet, so it needs
         // the sheet to have said yes, not merely the absence of a no.
         if (ok !== true) return;
+        if (exitPlan && exitPlan.rows?.length) savePlan(logTs, { ...exitPlan, openAtSave: r.contracts });
         setLoggedAt(Date.now());
         setLoggedSig(sigAtLog);
       })
@@ -2177,7 +2191,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           {/* Profit target scale */}
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
-            <ProfitScale netCreditDebit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} isCredit={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) > 0} win={parseFloat(is0?i0.win:i45.win) || 0} />
+            <ProfitTaker ncd={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} win={parseFloat(is0?i0.win:i45.win) || 0}
+              contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan} />
           )}
 
           </InputSection>
@@ -2803,70 +2818,7 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   );
 }
 
-function ProfitScale({ netCreditDebit, isCredit, win }) {
-  const ncd = Math.abs(netCreditDebit);
-  const pcts = [25, 30, 40, 50, 75, 100];
-  const multiplier = 100; // options multiplier
-  // Profit targets are a % of MAX PROFIT (the Win amount), NOT a % of the entry
-  // debit/credit. For credit trades max profit ≈ the credit, so the two coincide;
-  // for debit butterflies they diverge — 100% must mean the FULL max profit
-  // (close at the wing width), not a 100% return on the debit. Falls back to the
-  // old entry-based figure only when no Win amount has been entered.
-  const maxProfit = win > 0 ? win : ncd * multiplier;
-
-  // For credit trades: profit target = close for LESS than credit received
-  //   e.g. sold for $2.00 credit, 50% profit = buy back at $1.00 (debit $1.00)
-  //   TWS entry: limit debit = credit × (1 - target%)
-  // For debit trades: profit target = close for MORE than debit paid
-  //   e.g. bought for $1.50 debit, 50% profit = sell at $2.25 ($1.50 + 50% of $1.50)
-  //   TWS entry: limit credit = debit × (1 + target%)
-  //   Actually for butterflies: 50% of max profit, not 50% of debit
-  //   Simpler: profit $ = ncd × target%, close price = ncd ± profit
-
-  return (
-    <div style={{marginTop:8,marginBottom:4}}>
-      <div style={{fontSize:12,color:'#a8b2be',marginBottom:6,fontWeight:600}}>
-        Profit targets — TWS limit order values
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(6, 1fr)',gap:4}}>
-        {pcts.map(pct => {
-          const profitDollars = maxProfit * (pct / 100);
-          const profitPerShare = profitDollars / multiplier;
-          let closePrice, closeType;
-          if (isCredit || netCreditDebit > 0) {
-            // Credit: buy back cheaper — close price = credit - profit
-            closePrice = ncd - profitPerShare;
-            closeType = 'debit';
-          } else {
-            // Debit: sell higher — close price = |debit| + profit
-            closePrice = ncd + profitPerShare;
-            closeType = 'credit';
-          }
-          const highlight = pct === 50;
-          return (
-            <div key={pct} style={{
-              background: highlight ? '#0d2818' : '#161b22',
-              border: `1px solid ${highlight ? '#238636' : '#21262d'}`,
-              borderRadius: 6, padding: '6px 4px', textAlign: 'center'
-            }}>
-              <div style={{fontSize:13,fontWeight:700,color: highlight ? '#3fb950' : '#c9d1d9'}}>{pct}%</div>
-              <div style={{fontSize:16,fontWeight:700,color:'#fff',fontFamily:'JetBrains Mono,monospace',marginTop:3}}>
-                ${closePrice.toFixed(2)}
-              </div>
-              <div style={{fontSize:12,color:'#a8b2be',marginTop:2}}>{closeType}</div>
-              <div style={{fontSize:13,fontWeight:600,color: highlight ? '#3fb950' : '#c9d1d9',marginTop:2}}>+${profitDollars.toFixed(0)}</div>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{fontSize:11,color:'#8b949e',marginTop:4}}>
-        {isCredit || netCreditDebit > 0
-          ? `Sold at $${ncd.toFixed(2)} credit — enter limit debit to close`
-          : `Bought at $${ncd.toFixed(2)} debit — enter limit credit to close`}
-      </div>
-    </div>
-  );
-}
+// ProfitScale (the six % tiles) was replaced by ProfitTaker.jsx — Sep 2026.
 
 function CreditTape({ value, low, high, max, isCredit, label }) {
   const safeMax = max || 1;
