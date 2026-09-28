@@ -82,6 +82,38 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     const st = panelStateRef.current[t.id] || t.state;
     return st && st.i45 ? st.i45.dte : undefined;
   }
+  // Per-tab verdicts, reported up by each panel. Kept out of `tabs` so that a score
+  // ticking over cannot rewrite the tab objects (and therefore localStorage) on every
+  // keystroke — this is derived, disposable data.
+  const [summaries, setSummaries] = useState({});
+  function handlePanelSummary(id, sum) {
+    setSummaries(prev => {
+      const old = prev[id];
+      if (old && old.confidence === sum.confidence && old.ready === sum.ready
+        && old.blocked === sum.blocked && old.tier === sum.tier) return prev;
+      return { ...prev, [id]: sum };
+    });
+  }
+
+  // Tab order, best first.
+  //
+  // Ranking only kicks in once EVERY ticket has a Trade Confidence — which is the
+  // engine's own test for having the sizing inputs, so it is the same thing as "they
+  // all have price data". Until then the strip keeps insertion order: tabs rearranging
+  // themselves while you are still typing into the first one would be worse than
+  // useless. A blocked ticket sorts last whatever it scores, because its number is
+  // describing a trade you cannot take.
+  const rankable = tabs.length > 1 && tabs.every(t => summaries[t.id] && summaries[t.id].ready);
+  const orderedTabs = React.useMemo(() => {
+    if (!rankable) return tabs;
+    return tabs.slice().sort((a, b) => {
+      const sa = summaries[a.id], sb = summaries[b.id];
+      if (!!sa.blocked !== !!sb.blocked) return sa.blocked ? 1 : -1;
+      if (sb.confidence !== sa.confidence) return sb.confidence - sa.confidence;
+      return a.createdAt - b.createdAt;          // stable for ties
+    });
+  }, [tabs, summaries, rankable]);
+
   function handlePanelState(id, st) {
     panelStateRef.current[id] = st;
     setTabs(prev => {
@@ -914,13 +946,29 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       )}
 
       {/* Trade tabs */}
-      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-        {tabs.map(t => {
+      <div className="flex items-center gap-1.5 mb-3 flex-wrap" data-testid="tab-strip">
+        {orderedTabs.map((t, i) => {
           const on = t.id === (activeTab && activeTab.id);
+          const sum = summaries[t.id];
+          const conf = sum && sum.ready ? sum.confidence : null;
+          const confClr = conf == null || sum.blocked ? '#8b949e'
+            : conf >= 70 ? '#3fb950' : conf >= 50 ? '#d29922' : conf >= 30 ? '#f0883e' : '#f85149';
           return (
-            <div key={t.id} onClick={() => setActiveId(t.id)} title={t.seed ? 'Seeded from multi-scan' : 'Manual ticket'}
+            <div key={t.id} data-testid="tab" data-tab-id={t.id} onClick={() => setActiveId(t.id)}
+              title={(t.seed ? 'Seeded from multi-scan' : 'Manual ticket')
+                + (conf != null ? ` \u00b7 Trade Confidence ${conf}/100 ${sum.tier}` : '')
+                + (sum && sum.blocked ? ' \u00b7 blocked' : '')
+                + (rankable ? ` \u00b7 ranked #${i + 1}` : '')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+              {rankable && (
+                <span className="mono text-[11px] text-text-faint" style={{ minWidth: 12 }}>{i + 1}</span>
+              )}
               <span className="font-medium">{t.label}</span>
+              {conf != null && (
+                <span className="mono text-[11px]" style={{ color: confClr, fontWeight: 700 }}>
+                  {sum.blocked ? '\u2298 ' : ''}{conf}
+                </span>
+              )}
               <span className={`text-[11px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
                 {t.mode === '0dte' ? '0DTE' : '45D'}
               </span>
@@ -931,6 +979,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             </div>
           );
         })}
+        {tabs.length > 1 && !rankable && (
+          <span className="text-[11px] text-text-faint" title="Trade Confidence needs the sizing inputs on every ticket before the tabs can be ordered">
+            ranking once all priced
+          </span>
+        )}
         <button onClick={() => addTab(null)} title="New blank ticket"
           className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors">
           + Trade
@@ -954,7 +1007,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             seed={t.seed} initialState={t.state}
             toast={showToast}
             onOpenInTab={addStateTab}
-            onStateChange={st => handlePanelState(t.id, st)} />
+            onStateChange={st => handlePanelState(t.id, st)}
+            onSummary={sum => handlePanelSummary(t.id, sum)} />
         </div>
       ))}
     </div>

@@ -234,7 +234,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
   );
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, toast, onOpenInTab }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, onSummary, toast, onOpenInTab }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -439,6 +439,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig });
   }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig]);
 
+  // Does the ES overnight block describe the session this ticket is for? The bridge
+  // reports its own session date, so prefer comparing the two; without one (snapshot
+  // source, or a bridge that predates the field) fall back to the only thing we can
+  // know locally — that we are past the close, so the coming session's overnight has
+  // not happened yet. (Sep 2026.)
+  const overnightStale = (() => {
+    const ses = tradingSession();
+    if (esMeta && esMeta.session) return esMeta.session !== ses.dateISO;
+    return ses.isNextSession;
+  })();
+
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
     const price = fv(i0, 'price');
@@ -463,6 +474,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
           esOvernightHigh:fv(i0,'esOvernightHigh'), esOvernightLow:fv(i0,'esOvernightLow'),
           esClose:fv(i0,'esClose'), priorDayClose:fv(i0,'priorDayClose'), cashOpen:fv(i0,'cashOpen'), esEM:fv(i0,'esEM'),
+          overnightStale,
           bankroll:fv(i0,'bankroll'), startBR:fv(i0,'startBR'),
           risk:fv(i0,'risk'), maxLoss:fv(i0,'maxLoss'), win:fv(i0,'win'),
         netCreditDebit:fv(i0,'netCreditDebit'),
@@ -826,6 +838,26 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const sBg = r.setupScore>=85?'#0d1f0d':r.setupScore>=70?'#0d1a2e':r.setupScore>=50?'#1f1a0d':'#1f0d0d';
   const sClr = r.setupScore>=85?'#3fb950':r.setupScore>=70?'#2f81f7':r.setupScore>=50?'#d29922':'#f85149';
   // ── Trade Confidence colours (gated metric from the engine) ──
+  // A one-line verdict for the parent, so the tab strip can rank tickets without
+  // reaching into the panel's state or recomputing the engine a second time.
+  // Deliberately separate from onStateChange above: that payload is persisted to
+  // localStorage and describes INPUTS, while this is derived and disposable.
+  //
+  // `ready` is the honest test for "has this ticket got enough to be compared" —
+  // tradeConfidence is null exactly when sizing inputs are missing, which is the
+  // engine's own answer to the same question.
+  const sumRef = useRef(onSummary);
+  sumRef.current = onSummary;
+  // Only what the strip actually uses. Carrying spare fields here means the parent's
+  // change-guard has to know about every one of them or quietly serve stale numbers.
+  const confidence = r && r.tradeConfidence != null ? r.tradeConfidence : null;
+  const confTier = r ? r.confidenceTier : '--';
+  const isBlocked = !!(r && r.blockers && r.blockers.length);
+  useEffect(() => {
+    if (!sumRef.current) return;
+    sumRef.current({ confidence, tier: confTier, ready: confidence != null, blocked: isBlocked });
+  }, [confidence, confTier, isBlocked]);
+
   const tc = r.tradeConfidence;
   const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
   const confBg  = tc==null?'#161b22':tc>=70?'#0d1f0d':tc>=50?'#0d1a0d':tc>=30?'#1f1a0d':'#1f0d0d';
@@ -1010,6 +1042,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       if (is0) setEsMeta({
         source: d.esSource || 'snapshot', prior: d.esPriorCloseLabel || '', pre: d.esPreOpenLabel || '',
         preFinal: d.esPreOpenFinal, window: d.esOvernightLabel || '',
+        session: d.esSessionDate || '',
         basis: d.esBasis, esNow: d.esNow, cash: d.price, underlying
       });
 

@@ -723,6 +723,11 @@ app.get('/api/market-data', async (req, res) => {
       esPreOpenLabel: esOn?.preOpenLabel || '',
       esPreOpenFinal: esOn ? esOn.preOpenFinal : null,
       esOvernightLabel: esOn?.overnightLabel || '',
+      // The RTH session these overnight values belong to. esOvernight resolves it as
+      // "the session whose 08:45 pre-open has passed", so after the close it is the
+      // session just traded — correct for what this block measures, and NOT the
+      // session a ticket built at that hour is for. The client compares the two.
+      esSessionDate: esOn?.sessionDate || '',
       esNow: Math.round(esNow * 100) / 100,
       esBasis,                                    // ES − cash (index points), SPX/XSP only
       // Which ES futures contract these overnight values come from (e.g. "Sep 2026")

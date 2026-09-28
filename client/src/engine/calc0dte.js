@@ -198,6 +198,11 @@ export function calc0DTE(inputs) {
     theta, delta, gamma, hours, underlying,
     // Overnight inputs
     esOvernightHigh, esOvernightLow, esClose, priorDayClose, cashOpen, esEM,
+    // True when the overnight numbers describe a session that is not the one this
+    // ticket is for. Run after the close, the bridge reports the overnight that
+    // preceded the session just traded — real data about the wrong night. Scoring it
+    // as current is worse than not having it. (Sep 2026.)
+    overnightStale,
     // Optional per-strategy realized history: { trades, winRate, avgWin, avgLoss }
     // (avgWin/avgLoss as positive dollar magnitudes per contract). When trades
     // >= EV_HISTORY_THRESHOLD, measured expectancy replaces estimates.
@@ -224,6 +229,12 @@ export function calc0DTE(inputs) {
   const hasGreeks = thetaAbs > 0 && Math.abs(delta) > 0;
   const popFrac = pop / 100;
   const hasOvernight = esOvernightHigh > 0 && esOvernightLow > 0 && priorDayClose > 0;
+  // Staleness is deliberately NOT folded into hasOvernight. That flag also feeds
+  // totalDirConsumed and therefore move-consumed, the regime and half the scorecard —
+  // hiding the overnight numbers there cost 13 setup points and 22 of Fair Value, which
+  // is not what "we don't know about tonight" should mean. Only the two criteria that
+  // read the overnight AS A FORECAST abstain. (Sep 2026.)
+  const overnightScorable = hasOvernight && !overnightStale;
 
   // ── ES overnight High/Low validation (Jul 2026) ──
   // A swapped High/Low used to flow straight through the engine. It made
@@ -1264,7 +1275,15 @@ export function calc0DTE(inputs) {
   if (em <= 0) movePts = 5;
   else if (isCentred || pinLike) {
     // Butterflies (incl. near-money broken-wing flies) want high move consumed
-    movePts = moveConsumed>0.80?15:moveConsumed>0.60?12:moveConsumed>0.40?8:moveConsumed>0.25?4:2;
+    // Exhaustion is a BAND, not a ray. Past roughly 1.25 EM the move has stopped
+    // looking spent and started looking like a trend day, which is the one regime a
+    // pin structure cannot survive — and the engine already says so in the advisory
+    // ("continuation trend, avoid chasing") while this line handed the same ticket
+    // full marks. The two now agree. (Sep 2026.)
+    // Bands sit under the 1.5 ceiling moveConsumed is clamped to further up — a
+    // threshold above it would be dead code.
+    movePts = moveConsumed>1.35?8:moveConsumed>1.15?11
+      :moveConsumed>0.80?15:moveConsumed>0.60?12:moveConsumed>0.40?8:moveConsumed>0.25?4:2;
   } else {
     // Spreads AND the reversed condor want low move consumed (room to run)
     movePts = moveConsumed<0.30?15:moveConsumed<0.50?12:moveConsumed<0.60?8:moveConsumed<0.80?4:0;
@@ -1333,7 +1352,7 @@ export function calc0DTE(inputs) {
 
   // 6. ES overnight trend alignment (10)
   let overnightPts;
-  if (!hasOvernight) overnightPts = 5;
+  if (!overnightScorable) overnightPts = 5;
   else {
     const dirAligned = (overnightDir === 'bullish' && dirScore >= 1) || (overnightDir === 'bearish' && dirScore <= -1);
     const dirConflict = (overnightDir === 'bullish' && dirScore <= -1) || (overnightDir === 'bearish' && dirScore >= 1);
@@ -1344,15 +1363,15 @@ export function calc0DTE(inputs) {
     else overnightPts = 5;
   }
   setupScore += overnightPts;
-  criteria.push({ label: `ES overnight ${hasOvernight?overnightDir:'--'}`, pts: overnightPts, max: 10 });
+  criteria.push({ label: `ES overnight ${overnightScorable ? overnightDir : overnightStale ? 'prior session' : '--'}`, pts: overnightPts, max: 10 });
 
   // 7. Overnight range utilization (5)
   let rangePts;
-  if (!hasOvernight || emSession <= 0) rangePts = 3;
+  if (!overnightScorable || emSession <= 0) rangePts = 3;
   else if (isCentred) rangePts = overnightRangePct>0.60?5:overnightRangePct>0.30?3:1;
   else rangePts = overnightRangePct<0.30?5:overnightRangePct<0.60?3:1;
   setupScore += rangePts;
-  criteria.push({ label: `Overnight range ${hasOvernight?(overnightRangePct*100).toFixed(0)+'% EM':'--'}`, pts: rangePts, max: 5 });
+  criteria.push({ label: `Overnight range ${overnightScorable ? (overnightRangePct*100).toFixed(0)+'% EM' : overnightStale ? 'prior session' : '--'}`, pts: rangePts, max: 5 });
 
   // 8. VWAP distance — REMOVED (Aug 2026). Folded into criterion 4 above as the
   // `posPts` term; it was scoring the same measurement the slope already carried.
@@ -1535,8 +1554,13 @@ export function calc0DTE(inputs) {
   }
 
   // Greeks adjustments (apply to all strategies)
-  if (hasGreeks && thetaAbs > 0 && Math.abs(delta) > 0 && atr5 > 0) {
-    const tEdge = thetaAbs / (Math.abs(delta) * atr5);
+  // Theta is a DAILY number, so the move it is measured against has to be a daily
+  // one. Pairing it with the 5-minute ATR inflated tEdge by the ratio of the two and
+  // deflated gRisk by the same factor, which pinned BOTH adjustments below at their
+  // extreme band on every ticket — a knob that never moves is not a knob. Now the
+  // same numbers the greeks panel displays. (Sep 2026.)
+  if (hasGreeks && thetaAbs > 0 && Math.abs(delta) > 0 && atr > 0) {
+    const tEdge = thetaAbs / (Math.abs(delta) * atr);
     if (thetaPaid) {
       // Decay runs against the position, so a large tEdge is a large BILL per unit of
       // directional risk - the same number the credit branch rewards, inverted.
@@ -1552,18 +1576,24 @@ export function calc0DTE(inputs) {
       if (tEdge < 0.03) structScore = Math.max(0, structScore - 5);
     }
   }
-  if (hasGreeks && gamma > 0 && thetaAbs > 0 && atr5 > 0) {
-    const gRisk = gamma * atr5 / thetaAbs;
-    if (isCredit && !thetaPaid) {
-      // Credit sellers fear gamma
-      if (gRisk > 1.20) structScore = Math.max(0, structScore - 15);
-      else if (gRisk > 0.70) structScore = Math.max(0, structScore - 5);
-      else if (gRisk < 0.30) structScore = Math.min(100, structScore + 5);
+  // The `gamma > 0` gate meant this block was SKIPPED for every short-gamma
+  // position — which is every long butterfly and condor at the body, the structures
+  // that actually get hurt by gamma. They received no penalty at all, and the credit
+  // branch was standing in for "short gamma" by proxy. Band on the magnitude and
+  // branch on the SIGN, which is the thing that decides whether gamma is a bill or a
+  // hedge. (Sep 2026 — same class as the Aug display fix a few hundred lines down.)
+  if (hasGreeks && gamma !== 0 && thetaAbs > 0 && atr > 0) {
+    const gMag = Math.abs(gamma) * atr / thetaAbs;
+    if (gamma < 0) {
+      // Short gamma: a move against the body costs more the further it goes.
+      if (gMag > 1.20) structScore = Math.max(0, structScore - 15);
+      else if (gMag > 0.70) structScore = Math.max(0, structScore - 5);
+      else if (gMag < 0.30) structScore = Math.min(100, structScore + 5);
     } else if (isReversed || thetaPaid) {
-      // Reversed condor WANTS gamma — high gamma is good. So does anything paying
-      // decay: convexity is the only thing buying back what theta takes.
-      if (gRisk > 1.20) structScore = Math.min(100, structScore + 10);
-      else if (gRisk > 0.70) structScore = Math.min(100, structScore + 5);
+      // Long gamma, and paying for it: convexity is the only thing buying back what
+      // theta takes, so more of it is the point.
+      if (gMag > 1.20) structScore = Math.min(100, structScore + 10);
+      else if (gMag > 0.70) structScore = Math.min(100, structScore + 5);
     }
   }
   const structGrade = structScore >= 80 ? 'Excellent' : structScore >= 60 ? 'Good' : structScore >= 40 ? 'Fair' : 'Poor';
@@ -1572,8 +1602,11 @@ export function calc0DTE(inputs) {
   let regimeScore = 50;
   if (moveConsumed > 0) {
     if (isDebitBfly) {
-      // Butterflies want high move consumed (exhaustion = pinning)
-      if (moveConsumed > 0.80) regimeScore = 95;
+      // Butterflies want high move consumed (exhaustion = pinning) — up to the point
+      // where it is no longer exhaustion. Same taper as criterion 2 above.
+      if (moveConsumed > 1.35) regimeScore = 65;
+      else if (moveConsumed > 1.15) regimeScore = 82;
+      else if (moveConsumed > 0.80) regimeScore = 95;
       else if (moveConsumed > 0.60) regimeScore = 80;
       else if (moveConsumed > 0.40) regimeScore = 55;
       else regimeScore = 30;
@@ -2043,13 +2076,32 @@ export function calc0DTE(inputs) {
     const dsMax = dsCapped ? beDist : dsRaw;
     const dsATR = atr > 0 ? dsMax / atr : 0;
 
-    // Theta edge interpretation
-    let tEdgeSignal = tEdge < 0.05 ? 'weak' : tEdge < 0.15 ? 'marginal' : tEdge < 0.30 ? 'solid' : tEdge < 0.50 ? 'strong' : 'pinning';
+    // Theta edge interpretation.
+    //
+    // tEdge is decay per unit of LINEAR directional risk, and on a delta-flat pin
+    // structure the denominator is a rounding error: the ratio runs away, every fly
+    // reads 3-4 against a top band of 0.50, and the gauge has been stuck on "pinning"
+    // for months while saying nothing. dsCapped is already the test for exactly this —
+    // it is true when theta/|delta| implies a tolerance wider than the distance to the
+    // nearest breakeven, i.e. when the linear model has stopped describing the trade.
+    // Where that holds, refuse to grade it rather than grade it wrongly. (Sep 2026,
+    // same reasoning as the Aug dsMax cap immediately above.)
+    // Bands run past 0.50 now. They stopped there, so every pin structure read
+    // "pinning" — 3.96 and 0.51 shared one label and one piece of advice, which is the
+    // same as having no gauge. Above 1.00 the number is usually telling you that delta
+    // is flat rather than that decay is enormous, and dsCapped is the existing test for
+    // exactly that state, so the advice says which it is instead of guessing.
+    const tEdgeFlat = tEdge >= 1.00 && dsCapped;
+    let tEdgeSignal = tEdge < 0.05 ? 'weak' : tEdge < 0.15 ? 'marginal' : tEdge < 0.30 ? 'solid'
+      : tEdge < 0.50 ? 'strong' : tEdge < 1.00 ? 'very strong'
+      : tEdgeFlat ? 'extreme · delta-flat' : 'extreme';
     let tEdgeAction = tEdge < 0.05 ? 'Do not trade — one candle erases hours of theta'
       : tEdge < 0.15 ? 'Use only on A+ setup with low realised vol'
       : tEdge < 0.30 ? 'Preferred zone — good reward-to-gamma-risk'
       : tEdge < 0.50 ? 'Excellent if Gamma Risk < 0.7'
-      : 'Check Gamma Risk — looks great until it explodes';
+      : tEdge < 1.00 ? 'Check Gamma Risk — looks great until it explodes'
+      : tEdgeFlat ? 'Delta is flat by design, so this ratio is near-unbounded and not a grade — read Max tolerable move instead'
+      : 'Decay dwarfs the directional risk on offer — check delta and theta are for the same structure';
 
     // Gamma risk interpretation
     let gRiskSignal = gMag < 0.30 ? 'low' : gMag < 0.70 ? 'moderate' : gMag < 1.20 ? 'elevated' : 'high';
@@ -2178,7 +2230,7 @@ export function calc0DTE(inputs) {
       edgePhase = 'neutral';
     }
 
-    greeks = { tEdge, gRisk, gShort, dsMax, dsRaw, dsCapped, beDist, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
+    greeks = { tEdge, tEdgeFlat, gRisk, gMag, gShort, dsMax, dsRaw, dsCapped, beDist, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
       // Directional Edge
       directionalGain, thetaPressure, edgeRatio, edgeThreshold, edgeSignal, edgeAction, edgePhase,
       remainingMove, isCreditStrat, isDebitDir, isBflyCondor
@@ -2204,12 +2256,27 @@ export function calc0DTE(inputs) {
       + `${priceCheck.fair.toFixed(2)} fair for these strikes at spot (${priceCheck.gap > 0 ? '+' : ''}${priceCheck.gap.toFixed(2)}) — `
       + `the price and the strikes describe different trades; EV, Kelly and the payoff all run off this number`);
   }
+  // Both gated on the measurement actually meaning something. "Theta edge too weak"
+  // off a delta-flat denominator would be arithmetic, not a finding.
   if (greeks && !greeks.thetaPaid && greeks.tEdge < 0.05) blockers.push('Theta edge too weak');
-  if (greeks && !greeks.thetaPaid && greeks.gRisk > 1.20) blockers.push('Gamma risk too high');
+  // Was `greeks.gRisk > 1.20` on the SIGNED value, so on a short-gamma position — the
+  // only kind where gamma is a threat — the comparison was against a negative number
+  // and this blocker could never fire. The display was fixed in Aug and left a note
+  // saying the gate still had it wrong; this is that note being paid off. (Sep 2026.)
+  // ...and only when SHORT gamma. Long gamma of the same magnitude is the convexity
+  // you bought, not a hazard, so blocking on it would refuse the trade for succeeding.
+  if (greeks && !greeks.thetaPaid && greeks.gShort && greeks.gMag > 1.20) {
+    blockers.push('Gamma risk too high');
+  }
   if (frictions && frictions.signal === 'prohibitive') {
     warnings.push(`Frictions ${(frictions.pct * 100).toFixed(0)}% of max profit `
       + `($${Math.round(frictions.total)} to get in and out of $${Math.round(win)}) — the payoff is too thin `
       + `to survive its own execution`);
+  }
+  // Say it out loud rather than letting two criteria quietly read "--".
+  if (overnightStale) {
+    warnings.push('ES overnight is for a different session — the coming session\'s overnight has not happened yet, '
+      + 'so overnight trend and range are scored as unknown rather than as current');
   }
   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
