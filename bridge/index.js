@@ -7,6 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
 import net from 'net';
+import { computeOvernight } from './esOvernight.js';
 
 const app = express();
 app.use(cors({
@@ -301,7 +302,10 @@ function buildOptionContract(underlying, expiry, strike, right) {
 // as a trailing window from the present. Walking backwards needs an explicit end, in
 // IBKR's "yyyymmdd hh:mm:ss" form — that is what lets /api/history chunk a long span
 // into requests small enough that IBKR will actually serve them.
-function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES, endDateTime = '') {
+// useRTH 0 = include the overnight (Globex) session; formatDate 2 = epoch seconds,
+// which is timezone-proof (formatDate 1 comes back in TWS's LOGIN timezone, which
+// here is Melbourne, not New York). Defaults keep every existing caller unchanged.
+function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES, endDateTime = '', useRTH = 1, formatDate = 1) {
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
     const bars = [];
@@ -309,6 +313,13 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 
     const onBar = (id, date, open, high, low, close, volume, count, WAP) => {
       if (id !== reqId) return;
+      // IBKR signals the end of a series by emitting a final row whose date is
+      // "finished-<start>-<end>" rather than a timestamp. @stoqey/ib delivers it through
+      // the same historicalData event as real bars, so it was being pushed into the
+      // array: one junk row per chunk, inflating the count and making the reported date
+      // range nonsense. Downstream parsers that require a leading yyyymmdd drop it
+      // silently, which is exactly why it survived unnoticed.
+      if (typeof date === 'string' && date.startsWith('finished')) return;
       if (bars.length === 0) console.log('[BRIDGE] BAR DATA: date=' + date + ' o=' + open + ' h=' + high + ' l=' + low + ' c=' + close + ' v=' + volume);
       bars.push({ date, open, high, low, close, volume: volume || 0, count, WAP });
     };
@@ -323,7 +334,7 @@ function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.
 
     ib.on(EventName.historicalData, onBar);
     ib.on(EventName.historicalDataEnd, onEnd);
-    ib.reqHistoricalData(reqId, contract, endDateTime, duration, barSize, whatToShow, 1, 1, false);
+    ib.reqHistoricalData(reqId, contract, endDateTime, duration, barSize, whatToShow, useRTH, formatDate, false);
 
     setTimeout(() => {
       if (!resolved) {
@@ -501,11 +512,31 @@ app.get('/api/market-data', async (req, res) => {
     const vix = vixSnap.mid || vixSnap.last || 0;
     const vix1d = vix1dSnap.mid || vix1dSnap.last || 0;
 
-    // ES overnight data
-    const esClose = esSnap.mid || esSnap.last || 0;
-    const esPrevClose = esSnap.prevClose || 0;
-    const esHigh = esSnap.high || 0;
-    const esLow = esSnap.low || 0;
+    // ES overnight data — from 5-min Globex bars when they arrive, so the values
+    // are the same whatever time Auto-fill is clicked (see esOvernight.js). The
+    // snapshot is the fallback only: its close flips at the session end, its mid is
+    // "now" rather than 08:45, and its high/low span the whole session.
+    let esClose = esSnap.last || esSnap.mid || 0;
+    let esPrevClose = esSnap.prevClose || 0;
+    let esHigh = esSnap.high || 0;
+    let esLow = esSnap.low || 0;
+    let esOn = null, esSource = 'snapshot';
+    try {
+      const esBars = await getHistoricalBars(esContract, '5 D', BarSizeSetting.MINUTES_FIVE, WhatToShow.TRADES, '', 0, 2);
+      esOn = computeOvernight(esBars, Date.now() / 1000);
+      console.log('[BRIDGE] ES bars=' + esBars.length + ' overnight=' + JSON.stringify(esOn));
+    } catch (e) { console.log('[BRIDGE] ES bars error:', e.message); }
+    if (esOn) {
+      esClose = esOn.preOpen; esPrevClose = esOn.priorClose;
+      esHigh = esOn.overnightHigh; esLow = esOn.overnightLow;
+      esSource = 'bars';
+    }
+    // ES trades above cash by carry until expiry (~60 pts in late Sep for Dec), so
+    // an SPX chart and the ES fields never line up without it. Latest ES vs latest
+    // cash; both are last/close after hours, so it holds then too.
+    const esNow = esSnap.last || esSnap.mid || 0;
+    const esBasis = (esNow > 0 && price > 0 && (underlying === 'SPX' || underlying === 'XSP'))
+      ? Math.round((esNow - price * (underlying === 'XSP' ? 10 : 1)) * 100) / 100 : null;
 
     // 2. Calculate EM — VIX/√252 model estimate (fast, always available).
     // The straddle EM (market-priced, preferred) is fetched SEPARATELY by the
@@ -686,6 +717,14 @@ app.get('/api/market-data', async (req, res) => {
       esOvernightHigh: Math.round(esHigh * 100) / 100,
       esOvernightLow: Math.round(esLow * 100) / 100,
       esEM: Math.round(esEM * 10) / 10,
+      // Where the four ES values came from and what time each one is.
+      esSource,                                   // 'bars' | 'snapshot'
+      esPriorCloseLabel: esOn?.priorCloseLabel || '',
+      esPreOpenLabel: esOn?.preOpenLabel || '',
+      esPreOpenFinal: esOn ? esOn.preOpenFinal : null,
+      esOvernightLabel: esOn?.overnightLabel || '',
+      esNow: Math.round(esNow * 100) / 100,
+      esBasis,                                    // ES − cash (index points), SPX/XSP only
       // Which ES futures contract these overnight values come from (e.g. "Sep 2026")
       esContractMonth: esContract.lastTradeDateOrContractMonth || '',
       esContractLabel: (() => { const _y = esContract.lastTradeDateOrContractMonth || ''; const _M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return _y.length === 6 ? (_M[parseInt(_y.slice(4,6),10)-1] + ' ' + _y.slice(0,4)) : _y; })(),
@@ -775,6 +814,27 @@ app.get('/api/history', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Debug view of the ES overnight derivation: what the bars say vs the snapshot.
+app.get('/api/es-overnight', async (req, res) => {
+  try {
+    await connectTWS();
+    try { ib.reqMarketDataType(3); } catch (e) {}
+    const esContract = getESContract();
+    const [snap, bars] = await Promise.all([
+      getSnapshot(esContract),
+      getHistoricalBars(esContract, '5 D', BarSizeSetting.MINUTES_FIVE, WhatToShow.TRADES, '', 0, 2).catch(() => [])
+    ]);
+    res.json({
+      contract: esContract.lastTradeDateOrContractMonth,
+      bars: bars.length,
+      firstBar: bars[0]?.date ? new Date(Number(bars[0].date) * 1000).toISOString() : null,
+      lastBar: bars.length ? new Date(Number(bars[bars.length - 1].date) * 1000).toISOString() : null,
+      fromBars: computeOvernight(bars, Date.now() / 1000),
+      snapshot: { last: snap.last, mid: snap.mid, bid: snap.bid, ask: snap.ask, close: snap.prevClose, high: snap.high, low: snap.low, delayed: !!snap.delayed }
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/health', (req, res) => {

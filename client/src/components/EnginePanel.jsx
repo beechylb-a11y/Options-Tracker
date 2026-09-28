@@ -247,6 +247,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [autoFilling, setAutoFilling] = useState(false);
   const [dataFresh, setDataFresh] = useState(init?.dataFresh ?? (seed?._meta || null)); // market-data freshness (live vs last close) + when it was pulled
   const [esContract, setEsContract] = useState(init?.esContract ?? ''); // ES front-month label from bridge
+  // What time each ES value actually is, from the bridge (Sep 2026). Empty when the
+  // bridge fell back to the live snapshot — the labels then say so.
+  const [esMeta, setEsMeta] = useState(init?.esMeta ?? null);
   const [fetchingGreeks, setFetchingGreeks] = useState(false);
   const [greeksFresh, setGreeksFresh] = useState(init?.greeksFresh ?? null); // option-feed freshness (real-time/delayed) + asOf
   // Market fields you have typed by hand. Auto-fill will not overwrite these;
@@ -435,8 +438,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed, loggedAt, loggedSig });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, greeksFresh, held, feed, loggedAt, loggedSig]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig]);
 
   // SPX VWAP fix: if underlying is SPX and values look like SPY, scale x10
   function scaleVWAP(val) {
@@ -748,7 +751,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     onOpenInTab({
       i0: strip(i0), i45: strip(i45),
       overrideStrat: nextOverride,
-      dataFresh, esContract, greeksFresh, held, feed
+      dataFresh, esContract, esMeta, greeksFresh, held, feed
     }, mode, name);
     if (toast) toast(name + ' opened in a new tab \u2014 re-enter win/risk/POP from your broker preview');
   }
@@ -1005,6 +1008,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       const pulledAt = new Date().toISOString();
       setDataFresh({ isLive: !!d.isLive, label: d.dataTypeLabel || d.dataType || '', dataType: d.dataType || '', asOf: d.asOf || d.timestamp || pulledAt, pulledAt });
       if (d.esContractLabel || d.esContractMonth) setEsContract(d.esContractLabel || d.esContractMonth);
+      if (is0) setEsMeta({
+        source: d.esSource || 'snapshot', prior: d.esPriorCloseLabel || '', pre: d.esPreOpenLabel || '',
+        preFinal: d.esPreOpenFinal, window: d.esOvernightLabel || '',
+        basis: d.esBasis, esNow: d.esNow, cash: d.price, underlying
+      });
 
       // Fetch the straddle EM separately, with a short timeout so a slow/after-
       // hours option fetch can't hang the essential price+VIX auto-fill.
@@ -1400,8 +1408,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   if (_pdow === 0) _esPriorDate.setDate(_esPriorDate.getDate() - 2);
   else if (_pdow === 6) _esPriorDate.setDate(_esPriorDate.getDate() - 1);
   const _fmtDM = (dt) => dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-  const esPriorCloseLabel = `ES ${_fmtDM(_esPriorDate)} 16:00`;
-  const esPreOpenLabel = `ES ${_fmtDM(_esPreDate)} 08:45`;
+  // Bridge-supplied labels win: they name the bar each value was read from. The
+  // date-arithmetic ones are only a fallback for old bridges / snapshot mode.
+  const esBars = esMeta && esMeta.source === 'bars';
+  const esPriorCloseLabel = esBars && esMeta.prior ? `ES ${esMeta.prior}` : `ES ${_fmtDM(_esPriorDate)} 16:00`;
+  const esPreOpenLabel = esBars && esMeta.pre ? `ES ${esMeta.pre}` : `ES ${_fmtDM(_esPreDate)} 08:45`;
 
   return (
     <div className="space-y-4">
@@ -1955,13 +1966,23 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {is0 && (
             <InputSection
               title={<>ES overnight{esContract && ` \u00b7 ${esContract}`}</>}
-              info="ES futures data for overnight analysis. Prior Close = yesterday's 4pm settle. Pre-open = current ES price. Overnight High/Low = session range. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection."
+              info="ES futures (the contract named in the title) read from 5-minute Globex bars, so the numbers don't depend on when you click Auto-fill. Prior close = the 16:00 ET bar of the previous session. Pre-open = the 08:45 ET bar of this session (before 08:45 it is the latest bar, marked 'latest'). Overnight High/Low = 18:00 ET previous session to 09:30 ET. ES trades ABOVE the cash index by carry until expiry — the basis line shows by how much — so compare these with an ES quote, not an SPX chart. ES EM = expected move for ES. Used for move consumed and continuation/reversal detection."
               collapsed={isCollapsed('es')}
               onToggle={() => toggleSection('es')}
               onExpand={() => expandSection('es')}>
               {i0.esDelayed && (
                 <div style={{margin:'2px 0 8px',padding:'5px 9px',borderRadius:6,background:'#2d1a0d',border:'1px solid #5a3a1a',fontSize:12.5,color:'#e3a008',lineHeight:1.4}}>
                   ⚠ ES data is <b>delayed ~10 min</b> — no CME real-time subscription. Overnight range, move-consumed and continuation/reversal detection may be stale. Subscribe to CME Real-Time in IBKR for live ES.
+                </div>
+              )}
+              {esMeta && (
+                <div style={{margin:'2px 0 8px',fontSize:12.5,color:'#a8b2be',lineHeight:1.5}}>
+                  {esBars
+                    ? <>Overnight window <span className="mono" style={{color:'#c9d1d9'}}>{esMeta.window}</span>{esMeta.preFinal === false && <span style={{color:'#d29922'}}> · pre-open not final until 08:45 ET</span>}</>
+                    : <span style={{color:'#d29922'}}>⚠ From the live ES quote, not bars — values depend on the time of the pull (close flips at the session end; high/low are the whole session).</span>}
+                  {esMeta.basis != null && (
+                    <div>ES {esMeta.esNow} − {esMeta.underlying} {esMeta.cash} = basis <b className="mono" style={{color:'#c9d1d9'}}>{esMeta.basis >= 0 ? '+' : ''}{Number(esMeta.basis).toFixed(2)}</b> — subtract this to read ES levels on an {esMeta.underlying} chart.</div>
+                  )}
                 </div>
               )}
               <div className="grid grid-cols-2 gap-2.5">
