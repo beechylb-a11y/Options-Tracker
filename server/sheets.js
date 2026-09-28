@@ -842,6 +842,39 @@ export async function getJournal() {
 // Pure so it can be tested without a spreadsheet. Columns are resolved BY NAME
 // from the header row — Decisions has grown from 27 to 47 columns in two months
 // and positional reads are how that becomes a silent data corruption.
+// Which US trading session a stored instant belongs to, and the ET wall clock of
+// that instant. Mirrors client/src/engine/session.js — the rule has to be identical
+// in both places or a printed ticket and its trade-log row disagree about the date.
+//
+// Decisions timestamps are UTC instants. Taking .split('T')[0] read the UTC date,
+// which for an engine run from Australia in the US evening is the session that had
+// already finished. Market holidays are not handled here either; see the client.
+export function etSessionParts(iso) {
+  if (!iso) return { date: '', time: '' };
+  const at = new Date(iso);
+  if (isNaN(at)) return { date: '', time: '' };
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short'
+  });
+  const p = {};
+  for (const part of f.formatToParts(at)) p[part.type] = part.value;
+  const hour = p.hour === '24' ? '00' : p.hour;          // en-CA renders midnight as 24
+  const time = `${hour}:${p.minute}`;
+  const dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[p.weekday];
+  const afterClose = Number(hour) >= 16;
+
+  let date = `${p.year}-${p.month}-${p.day}`;
+  if (afterClose || dow === 0 || dow === 6) {
+    // Roll to the next weekday. Built from the ET calendar date at midday so the
+    // arithmetic cannot slip a day across a DST boundary.
+    const d = new Date(`${date}T12:00:00Z`);
+    do { d.setUTCDate(d.getUTCDate() + 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+    date = d.toISOString().slice(0, 10);
+  }
+  return { date, time };
+}
+
 export function projectTradeLog(decRows, closeRows) {
   const H = decRows[0] || [];
   const ix = name => H.indexOf(name);
@@ -877,6 +910,7 @@ export function projectTradeLog(decRows, closeRows) {
     let lastClose = tr.length ? tr.map(r => String(r[7] || '')).sort().pop() : '';
     const maxRisk = num(d[c.risk]);
     const ts = String(d[c.ts] || '');
+    const et = etSessionParts(ts);
     let status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qty ? 'Closed' : 'Partial');
 
     // A ticket the Decisions row already calls Closed, with no tranche rows, is
@@ -894,8 +928,8 @@ export function projectTradeLog(decRows, closeRows) {
 
     out.push([
       ref,
-      ts.split('T')[0] || '',
-      (ts.split('T')[1] || '').slice(0, 5),
+      et.date,
+      et.time,
       d[c.engine] ?? '', d[c.und] ?? '', d[c.strat] ?? '', d[c.legs] ?? '',
       qty,
       c.net >= 0 ? (d[c.net] ?? '') : '',

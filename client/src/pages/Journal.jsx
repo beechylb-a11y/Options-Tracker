@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap 
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
 import { filterTracker } from '../utils/stats';
+import { sessionDateOf } from '../engine/session';
 import CloseTradeModal from '../components/CloseTradeModal';
 import OrderTicket from '../components/OrderTicket';
 
@@ -98,7 +99,7 @@ export default function Journal({ authenticated, account }) {
   const closedDecisions = accountDecisions.filter(d => d.Status === 'Closed' && d['Actual P&L']);
   closedDecisions.forEach(d => {
     const closeDate = (d['Close Date'] || '').split('T')[0];
-    const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+    const entryDate = sessionDateOf(d.Timestamp);
     const dt = closeDate || entryDate;
     if (!dt) return;
     const pnl = parseFloat(d['Actual P&L']) || 0;
@@ -114,7 +115,7 @@ export default function Journal({ authenticated, account }) {
   // 3. Open (unmatched) decision engine entries — show on calendar with indicator
   const openDecisions = accountDecisions.filter(d => d.Status !== 'Closed');
   openDecisions.forEach(d => {
-    const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+    const entryDate = sessionDateOf(d.Timestamp);
     if (!entryDate) return;
     if (!dayStats[entryDate]) dayStats[entryDate] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0, openCount: 0 };
     if (!dayStats[entryDate].openCount) dayStats[entryDate].openCount = 0;
@@ -158,7 +159,7 @@ export default function Journal({ authenticated, account }) {
   function getTicketsForDate(dateStr) {
     return closedDecisions.filter(d => {
       const closeDate = (d['Close Date'] || '').split('T')[0];
-      const entryDate = d.Timestamp ? d.Timestamp.split('T')[0] : '';
+      const entryDate = sessionDateOf(d.Timestamp);
       return closeDate === dateStr || entryDate === dateStr;
     });
   }
@@ -167,7 +168,10 @@ export default function Journal({ authenticated, account }) {
     return accountDecisions.filter(d => {
       if (d.Status === 'Closed') return false;
       if (!d.Timestamp) return false;
-      try { return localISODate(new Date(d.Timestamp)) === dateStr; }
+      // Was localISODate, i.e. the BROWSER's date, while the three derivations above
+      // used the UTC date — so from Australia the same ticket landed on two different
+      // days depending on which code path asked. One rule now.
+      try { return sessionDateOf(d.Timestamp) === dateStr; }
       catch (e) { return false; }
     });
   }

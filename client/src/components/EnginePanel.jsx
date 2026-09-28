@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
+import { tradingSession } from '../engine/session';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
@@ -317,15 +318,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Auto-calculate hours remaining on mount
   useEffect(() => {
     if (!is0) return;
-    const now = new Date();
-    const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const marketClose = new Date(et);
-    marketClose.setHours(15, 0, 0, 0);
-    const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
-    const hoursRounded = Math.round(hoursLeft * 10) / 10;
-    if (hoursRounded > 0 && !i0.hours) {
-      setI0(prev => ({ ...prev, hours: hoursRounded }));
-    }
+    // Always overwrite. The old `!i0.hours` guard meant a structure-comparison tab,
+    // which is seeded from the ticket it was opened from, kept the hours figure
+    // computed when THAT ticket was created — a print made hours later still claimed
+    // the original time remaining. Session data is meant to be recomputed per tab.
+    const { hoursLeft } = tradingSession();
+    if (hoursLeft > 0) setI0(prev => ({ ...prev, hours: hoursLeft }));
   }, [is0]);
 
   // A multi-scan pick no longer merges into whatever ticket happens to be open —
@@ -624,15 +622,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // + the DTE input. Shared by Fetch Greeks and the strike ladder so the two can
   // never disagree about which expiry they priced.
   function deriveExpiryYYYYMMDD() {
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    let expDate = nowET;
-    if (!is0) {
-      const dte = parseInt(i45.dte, 10);
-      if (dte > 0) { expDate = new Date(nowET); expDate.setDate(expDate.getDate() + dte); }
-    }
-    return expDate.getFullYear().toString()
-      + String(expDate.getMonth() + 1).padStart(2, '0')
-      + String(expDate.getDate()).padStart(2, '0');
+    const ses = tradingSession();
+    // 0DTE = the session's own expiry. Run after the close this used to ask for the
+    // expiry that had just expired, and the greeks came back off a dead chain.
+    if (is0) return ses.yyyymmdd;
+    const base = new Date(ses.dateISO + 'T12:00:00');
+    const dte = parseInt(i45.dte, 10);
+    if (dte > 0) base.setDate(base.getDate() + dte);
+    return base.getFullYear().toString()
+      + String(base.getMonth() + 1).padStart(2, '0')
+      + String(base.getDate()).padStart(2, '0');
   }
 
   // ── Strike ladder popover (phase 2) ──
@@ -1019,7 +1018,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       let straddle = null;
       if (is0) {
         try {
-          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+          const today = tradingSession().yyyymmdd;
           const hc = parseFloat(i0.straddleHaircut) || 1.2533;  // 1 SD = straddle x 1.2533
           const ctrl = new AbortController();
           const t = setTimeout(() => ctrl.abort(), 7000);
@@ -1055,13 +1054,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       setTimeout(() => setJustRefreshed(false), 6000);
 
       if (is0) {
-        // Calculate hours remaining until 3pm ET (15:00 New York)
-        const now = new Date();
-        const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        const marketClose = new Date(et);
-        marketClose.setHours(15, 0, 0, 0);
-        const hoursLeft = Math.max(0, (marketClose - et) / 3600000);
-        const hoursRounded = Math.round(hoursLeft * 10) / 10;
+        // Hours to the 15:00 ET working close OF THE SESSION THIS BELONGS TO — a
+        // refresh run before the open gets the full session, not zero.
+        const hoursRounded = tradingSession().hoursLeft;
 
         setI0(prev => {
           const out = { ...prev };
@@ -1154,11 +1149,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // browser's timezone. A filed summary with no timestamp is unfileable: two tickets
     // on the same underlying and structure are indistinguishable a week later, and the
     // printed date is also what the browser puts in the PDF filename by default.
-    var _printET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    var _pad = function (n) { return String(n).padStart(2, '0'); };
-    var _printDate = _printET.getFullYear() + '-' + _pad(_printET.getMonth() + 1) + '-' + _pad(_printET.getDate());
-    var _printTime = _pad(_printET.getHours()) + ':' + _pad(_printET.getMinutes());
-    var _printStamp = _printDate + ' ' + _printTime + ' ET';
+    // The SESSION the trade belongs to, which after the close is not the same as the
+    // calendar day in ET. Both go on the ticket: the session date is what files it,
+    // the wall clock is what tells you when you looked at it, and when they disagree
+    // saying so is the whole point.
+    var _ses = tradingSession();
+    var _printDate = _ses.dateISO;
+    var _printTime = _ses.etTime;
+    var _printStamp = _printDate + ' session \u00b7 printed ' + _ses.etDateISO + ' ' + _printTime + ' ET'
+      + (_ses.isNextSession ? ' (' + _ses.phase + ')' : '');
 
     var html = '<!DOCTYPE html><html><head><title>' + underlying + ' ' + effectiveStrat + ' — ' + _printDate + '</title>' +
       '<style>' +
@@ -1383,7 +1382,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       vwapDistEM: is0 && r.vwapDistPctEM ? `${(r.vwapDistPctEM * 100).toFixed(0)}%` : '',
       // Expiry info for tracking
       dte: is0 ? '0DTE' : '45DTE',
-      expiryDate: is0 ? new Date().toISOString().split('T')[0] : '' // 0DTE expires today
+      // The SESSION's expiry, not the UTC calendar date — logged from an Australian
+      // morning the latter is the expiry that has already expired. Close dates
+      // elsewhere in the app deliberately keep the UTC date: a close looks BACK at the
+      // session that just ended, which is the one the UTC date already names.
+      expiryDate: is0 ? tradingSession().dateISO : ''
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing

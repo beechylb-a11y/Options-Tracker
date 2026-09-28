@@ -5,6 +5,7 @@ import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
+import { tradingSession } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 
@@ -1090,7 +1091,7 @@ function MultiScanPanel({ mode, onSelect }) {
         // generous (13s) because each bridge getSnapshot waits its full ~6s window,
         // so spot+legs can approach ~12s — a 7s timeout was aborting even SPX.
         if (is0) {
-          const today = new Date().toLocaleString('en-CA', { timeZone: 'America/New_York' }).split(',')[0].replace(/-/g, '');
+          const today = tradingSession().yyyymmdd;
           const sFetches = underlyings.filter(u => u).map(underlying => {
             const spot = parseFloat(mergedData[underlying]?.price) || 0;
             const spotQ = spot > 0 ? '&spot=' + spot : '';
