@@ -1,5 +1,4 @@
 import pg from 'pg';
-import { createClient } from '@supabase/supabase-js';
 
 // ================================================================
 //  DATABASE SERVICE (Supabase Postgres)
@@ -244,14 +243,27 @@ export function publicAuthConfig() {
   return { supabaseUrl: SUPABASE_URL() || '', publishableKey: SUPABASE_KEY() || '' };
 }
 
-// A Supabase client that acts AS the signed-in user (their JWT), so Storage
-// policies decide what it can touch. The server holds no service/secret key.
-function userClient(token) {
-  return createClient(SUPABASE_URL(), SUPABASE_KEY(), {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${token}` } }
+// Supabase REST calls made AS the signed-in user (their JWT), so Auth and the
+// Storage bucket policies decide what is allowed. The server holds no
+// service/secret key. Plain fetch on purpose: @supabase/supabase-js refuses to
+// construct on Node 20 (no native WebSocket), which is what Railway runs.
+async function sbFetch(path, token, opts = {}) {
+  const res = await fetch(`${SUPABASE_URL()}${path}`, {
+    ...opts,
+    headers: { apikey: SUPABASE_KEY(), Authorization: `Bearer ${token}`, ...(opts.headers || {}) }
   });
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = text; }
+  if (!res.ok) {
+    const msg = (body && (body.message || body.msg || body.error_description || body.error)) || res.statusText;
+    const err = new Error(String(msg));
+    err.status = res.status;
+    throw err;
+  }
+  return body;
 }
+const encPath = (p) => p.split('/').map(encodeURIComponent).join('/');
 
 const tokenCache = new Map(); // token -> { email, until }
 let allowCache = { at: 0, emails: new Set() };
@@ -268,10 +280,11 @@ export async function verifyUser(token) {
   if (!token) return null;
   const hit = tokenCache.get(token);
   if (hit && hit.until > Date.now()) return hit.email;
-  const sb = createClient(SUPABASE_URL(), SUPABASE_KEY(), { auth: { persistSession: false } });
-  const { data, error } = await sb.auth.getUser(token);
-  if (error || !data?.user?.email) return null;
-  const email = data.user.email.toLowerCase();
+  let user;
+  try { user = await sbFetch('/auth/v1/user', token); }
+  catch (e) { if (e.status === 401 || e.status === 403) return null; throw e; }
+  if (!user?.email) return null;
+  const email = user.email.toLowerCase();
   if (!(await allowedEmails()).has(email)) return null;
   tokenCache.set(token, { email, until: Date.now() + 5 * 60 * 1000 });
   if (tokenCache.size > 200) tokenCache.clear();
@@ -1174,11 +1187,13 @@ function docOut(r) {
 export async function uploadDocument(fileBuffer, filename, mimeType, metadata, userToken) {
   const safe = String(filename || 'file').replace(/[^\w.\- ]+/g, '_').slice(-120);
   const path = `${new Date().toISOString().slice(0, 10)}/${Date.now()}-${safe}`;
-  const sb = userClient(userToken);
-  const { error } = await sb.storage.from(DOC_BUCKET).upload(path, fileBuffer, {
-    contentType: mimeType || 'application/octet-stream', upsert: false
-  });
-  if (error) throw new Error('Storage upload failed: ' + error.message);
+  try {
+    await sbFetch(`/storage/v1/object/${DOC_BUCKET}/${encPath(path)}`, userToken, {
+      method: 'POST',
+      headers: { 'Content-Type': mimeType || 'application/octet-stream', 'x-upsert': 'false' },
+      body: fileBuffer
+    });
+  } catch (e) { throw new Error('Storage upload failed: ' + e.message); }
   const r = await q(
     `insert into options.documents (name, mime_type, size, storage_path, meta)
      values ($1, $2, $3, $4, $5) returning *`,
@@ -1194,9 +1209,13 @@ export async function listDocuments() {
 export async function deleteDocument(fileId, userToken) {
   const r = await q('select storage_path from options.documents where id = $1', [fileId]);
   if (!r.rows[0]) return;
-  const sb = userClient(userToken);
-  const { error } = await sb.storage.from(DOC_BUCKET).remove([r.rows[0].storage_path]);
-  if (error) throw new Error('Storage delete failed: ' + error.message);
+  try {
+    await sbFetch(`/storage/v1/object/${DOC_BUCKET}`, userToken, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefixes: [r.rows[0].storage_path] })
+    });
+  } catch (e) { throw new Error('Storage delete failed: ' + e.message); }
   await q('delete from options.documents where id = $1', [fileId]);
 }
 
@@ -1204,8 +1223,14 @@ export async function deleteDocument(fileId, userToken) {
 export async function getDocumentUrl(fileId, userToken) {
   const r = await q('select storage_path from options.documents where id = $1', [fileId]);
   if (!r.rows[0]) throw new Error('Document not found');
-  const sb = userClient(userToken);
-  const { data, error } = await sb.storage.from(DOC_BUCKET).createSignedUrl(r.rows[0].storage_path, 3600);
-  if (error) throw new Error('Could not create link: ' + error.message);
-  return { webViewLink: data.signedUrl, webContentLink: data.signedUrl };
+  let data;
+  try {
+    data = await sbFetch(`/storage/v1/object/sign/${DOC_BUCKET}/${encPath(r.rows[0].storage_path)}`, userToken, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: 3600 })
+    });
+  } catch (e) { throw new Error('Could not create link: ' + e.message); }
+  const url = `${SUPABASE_URL()}/storage/v1${data.signedURL || data.signedUrl}`;
+  return { webViewLink: url, webContentLink: url };
 }
