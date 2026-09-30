@@ -74,6 +74,13 @@ export function tradingSession(at = new Date()) {
     isNextSession,
     phase,
     hoursLeft: Math.round(hoursLeft * 10) / 10,
+    // Hours to the 16:00 CASH BELL, which is when options actually expire. hoursLeft
+    // above measures to the 15:00 working close and is what every 0DTE score is
+    // calibrated against; the two are different questions and both are needed —
+    // one for scoring, one for anything that models time to expiry.
+    hoursToBell: Math.round(Math.max(0,
+      isNextSession || minutes < OPEN_MINUTES ? FULL_SESSION_H + 1
+        : (SESSION_END_H * 60 - minutes) / 60) * 10) / 10,
     // The real ET wall clock, for the "generated at" line. The session date and the
     // clock time can legitimately disagree and the print should show both.
     etTime: pad(et.getHours()) + ':' + pad(et.getMinutes()),

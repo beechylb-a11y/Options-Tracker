@@ -6,6 +6,7 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
 import { tradingSession } from '../engine/session';
+import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
@@ -245,6 +246,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const defMaxOpen = acfg.maxOpenRisk || 450;
   const init = initialState || null;
   const [overrideStrat, setOverrideStrat] = useState(init?.overrideStrat ?? null);
+  // Whole sessions AFTER today's before the structure expires. 0 = a true 0DTE;
+  // 1 = tomorrow's expiry, which is what gets traded late in the session and which
+  // the engine otherwise has no way to express. Feeds the accrual table ONLY — every
+  // score still runs on today's clock, and the table says so.
+  const [expirySessions, setExpirySessions] = useState(init?.expirySessions ?? 0);
   const [autoFilling, setAutoFilling] = useState(false);
   const [dataFresh, setDataFresh] = useState(init?.dataFresh ?? (seed?._meta || null)); // market-data freshness (live vs last close) + when it was pulled
   const [esContract, setEsContract] = useState(init?.esContract ?? ''); // ES front-month label from bridge
@@ -762,7 +768,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     onOpenInTab({
       i0: strip(i0), i45: strip(i45),
       overrideStrat: nextOverride,
-      dataFresh, esContract, esMeta, greeksFresh, held, feed
+      dataFresh, esContract, esMeta, greeksFresh, held, feed, expirySessions
     }, mode, name);
     if (toast) toast(name + ' opened in a new tab \u2014 re-enter win/risk/POP from your broker preview');
   }
@@ -857,6 +863,36 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (!sumRef.current) return;
     sumRef.current({ confidence, tier: confTier, ready: confidence != null, blocked: isBlocked });
   }, [confidence, confTier, isBlocked]);
+
+  // ── When the value arrives ──────────────────────────────────────────────
+  // A pin structure is a terminal-value trade: it converges on its payoff only as
+  // the distribution of expiry prices collapses onto the body. Held 11:35 → 15:35 on
+  // the session before expiry, the SPY 759/763/768 fly of 29 Sep collected about a
+  // tenth of that — and the whole of that fact was computable at entry. (Sep 2026.)
+  const accrual = useMemo(() => {
+    if (!is0 || !r.payoff || !Array.isArray(r.payoff.legs) || r.payoff.legs.length < 3) return null;
+    const spot = fv(i0, 'price');
+    const em = r.emSession > 0 ? r.emSession : fv(i0, 'em');
+    if (!(spot > 0) || !(em > 0)) return null;
+    // payoff.legs carries side/qty, not a signed ratio. qty only ever detects "x2"
+    // from the label, so a 1.5x wing arrives here as 1 — the same blind spot that let
+    // a 1.5x print stand against a 1/-2/+1 fill. Worth knowing when reading this.
+    const legs = r.payoff.legs.map(l => ({
+      strike: l.strike,
+      right: l.type === 'put' ? 'P' : 'C',
+      ratio: (l.side === 'sell' ? -1 : 1) * (l.qty || 1),
+    }));
+    const ses = tradingSession();
+    const sessionsLeft = sessionsToExpiry(ses.hoursToBell, expirySessions);
+    if (!(sessionsLeft > 0)) return null;
+    const table = accrualTable({ legs, spot, em, sessionsLeft });
+    if (!table) return null;
+    // What closing at the working close of TODAY would capture — the plan most
+    // likely to be run by default, and the one worth pricing before it is run.
+    const outToday = windowShare({ legs, spot, em, sessionsLeft,
+      exitSessionsLeft: sessionsToExpiry(Math.max(0, ses.hoursToBell - 1), expirySessions) });
+    return { ...table, sessionsLeft, outToday, legs };
+  }, [is0, r.payoff, r.emSession, i0.price, i0.em, expirySessions]);
 
   const tc = r.tradeConfidence;
   const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
@@ -1255,6 +1291,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<div class="row"><span class="label">Breakeven(s)</span><span class="value white">' + (r.payoff.breakevens.length > 0 ? r.payoff.breakevens.map(function(b){return b.toFixed(1)}).join(', ') : '--') + '</span></div>' +
       '<div class="row"><span class="label">Profit band</span><span class="value white">' + (r.payoff.profitBandWidth > 0 ? r.payoff.profitBandLow.toFixed(0) + '\u2013' + r.payoff.profitBandHigh.toFixed(0) + ' (' + r.payoff.profitBandWidth.toFixed(0) + ' pts)' : '--') + '</span></div>' +
       '</div>' : '') +
+      // When the value arrives. A printed ticket that shows the payoff but not its
+      // timing invites exactly the plan that collects a tenth of it.
+      (accrual ? '<div class="section"><div class="section-title">When the Value Arrives ('
+        + accrual.sessionsLeft.toFixed(2) + ' sessions left, body ' + accrual.bodyStrike + ')</div>' +
+        (accrual.outToday && accrual.outToday.pct != null
+          ? '<div class="row"><span class="label">Out at today\u2019s 15:00</span><span class="value '
+            + (accrual.outToday.pct >= 60 ? 'green' : accrual.outToday.pct >= 30 ? 'amber' : 'red') + '">'
+            + accrual.outToday.pct.toFixed(0) + '% of the move \u2014 ' + accrual.outToday.verdict + '</span></div>'
+          : '') +
+        accrual.rows.map(function (row, i) {
+          return '<div class="row"><span class="label">' + row.label + '</span><span class="value white">'
+            + row.atBody.toFixed(2) + ' (' + (row.pctOfMax == null ? '--' : row.pctOfMax.toFixed(0) + '%')
+            + ')' + (i && row.shareOfRemaining != null ? ' \u00b7 ' + row.shareOfRemaining.toFixed(0) + '% of the move' : '')
+            + '</span></div>';
+        }).join('') +
+        '</div>' : '') +
       '<div class="section"><div class="section-title">Sizing (Sharpe-Adjusted Kelly)</div>' +
       '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
       '<div class="row"><span class="label">Adj Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
@@ -2425,6 +2477,68 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* When the value arrives — the time dimension of the payoff below */}
+          {accrual && (
+            <div className="card">
+              <SectionLabel white info="A butterfly or condor converges on its payoff only as the spread of possible expiry prices collapses onto the body, so most of its value arrives in the final hours of expiry day. This table prices that: what the structure is worth at each point from now to expiry, assuming price sits AT the body (the time question, isolated from the direction question), and what share of the remaining move each window carries. Display only — no score, gate or sizing reads this.">
+                When the value arrives
+              </SectionLabel>
+
+              <div className="flex items-center gap-3 flex-wrap mb-2">
+                <span className="text-[12px] text-text-muted">Expires</span>
+                {[[0, 'today'], [1, 'next session']].map(([v, lbl]) => (
+                  <button key={v} onClick={() => setExpirySessions(v)}
+                    className={`text-[12px] px-2 py-0.5 rounded border transition-colors ${expirySessions === v
+                      ? 'border-accent text-white bg-accent/10' : 'border-bg-border text-text-muted hover:text-white'}`}>
+                    {lbl}
+                  </button>
+                ))}
+                <span className="text-[12px] text-text-faint">
+                  {accrual.sessionsLeft.toFixed(2)} sessions left · body {accrual.bodyStrike} · ceiling {accrual.maxValue.toFixed(2)}
+                </span>
+              </div>
+
+              {accrual.outToday && accrual.outToday.pct != null && (
+                <div className="text-[12px] mb-2" style={{
+                  padding: '6px 8px', borderRadius: 4, background: '#0d1117', border: '1px solid #21262d',
+                  color: accrual.outToday.pct >= 60 ? '#3fb950' : accrual.outToday.pct >= 30 ? '#d29922' : '#f85149'
+                }}>
+                  Closing at today's 15:00 captures <b>{accrual.outToday.pct.toFixed(0)}%</b> of the value still to come — {accrual.outToday.verdict}
+                </div>
+              )}
+
+              <div style={{ overflowX: 'auto' }}>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-text-faint text-[12px] uppercase tracking-wider">
+                      <th className="text-left py-1 pr-2">Point</th>
+                      <th className="text-right py-1 pr-2">At body</th>
+                      <th className="text-right py-1 pr-2">At spot</th>
+                      <th className="text-right py-1 pr-2">% of max</th>
+                      <th className="text-right py-1 pl-2">Share of the move</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accrual.rows.map((row, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid #21262d' }}>
+                        <td className="py-1 pr-2 text-text-muted">{row.label}</td>
+                        <td className="py-1 pr-2 text-right mono">{row.atBody.toFixed(2)}</td>
+                        <td className="py-1 pr-2 text-right mono text-text-muted">{row.atSpot.toFixed(2)}</td>
+                        <td className="py-1 pr-2 text-right mono text-text-muted">{row.pctOfMax == null ? '--' : row.pctOfMax.toFixed(0) + '%'}</td>
+                        <td className="py-1 pl-2 text-right mono">
+                          {row.shareOfRemaining == null || !i ? '—' : row.shareOfRemaining.toFixed(0) + '%'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[12px] text-text-faint mt-2">
+                Modelled at {(accrual.sigmaAnnual * 100).toFixed(1)}% annualised, from the session EM. Scores still use today's clock — this table is the payoff's timing, nothing else.
               </div>
             </div>
           )}
