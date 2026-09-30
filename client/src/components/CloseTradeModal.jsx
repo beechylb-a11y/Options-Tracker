@@ -3,7 +3,41 @@ import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 
-export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
+import { inferLegs, fetchReplay, buildPack, downloadPack, yyyymmdd } from '../utils/replay';
+
+// Pull the value series and save the postmortem pack.
+//
+// This runs AFTER the close is written and never blocks or fails it — the sheet is
+// the record, the pack is a convenience. It runs at close time rather than on demand
+// because IBKR stops serving historical bars for an option once it expires: a pack
+// you forgot to pull on the day can never be pulled at all.
+async function capturePack(trade, form, toast) {
+  let bridgeUrl = '';
+  try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+  if (!bridgeUrl) return;
+
+  const inferred = inferLegs(trade['Wing Strikes'], trade.Strategy);
+  if (!inferred) return;                       // not a three-strike structure
+
+  const entryTs = trade.Timestamp || '';
+  const expiry = yyyymmdd(trade.expiryDate || form.closeDate || entryTs);
+  const date = yyyymmdd(form.closeDate || entryTs);
+  if (!expiry || !date) return;
+
+  try {
+    const replay = await fetchReplay(bridgeUrl, {
+      underlying: trade.Underlying, expiry, date, legs: inferred.legs,
+    });
+    downloadPack(buildPack({ decision: trade, closes: [], replay, legsInferred: inferred }));
+    if (toast) toast('Replay saved — drop it in TradePrints', 'success');
+  } catch (e) {
+    // Expected whenever TWS is shut or the contract has already expired. Say so
+    // once and move on; the close itself is already safely written.
+    if (toast) toast('Replay unavailable: ' + e.message, 'warn');
+  }
+}
+
+export default function CloseTradeModal({ trade, type, onClose, onClosed, toast }) {
   const [closing, setClosing] = useState(false);
   const [partial, setPartial] = useState(false);
   const [fetchingTWS, setFetchingTWS] = useState(false);
@@ -135,6 +169,9 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed }) {
         });
       }
       if (onClosed) onClosed();
+      // Best-effort, after the write. Deliberately not awaited into the failure
+      // path above: a missing pack must never look like a failed close.
+      capturePack(trade, form, toast);
     } catch (e) {
       alert('Error closing trade: ' + e.message);
     }

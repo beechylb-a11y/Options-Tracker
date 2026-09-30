@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
 import { filterTracker } from '../utils/stats';
 import { sessionDateOf } from '../engine/session';
+import { inferLegs, fetchReplay, buildPack, downloadPack, yyyymmdd } from '../utils/replay';
 import CloseTradeModal from '../components/CloseTradeModal';
 import OrderTicket from '../components/OrderTicket';
 
@@ -27,6 +28,33 @@ export default function Journal({ authenticated, account }) {
   // The sale log. A ticket closed in three pieces shows ONE blended P&L above;
   // the day it actually earned each piece only exists here. (Sep 2026.)
   const [closes, setCloses] = useState([]);
+  // Manual replay pulls, keyed by ticket timestamp: 'loading' | 'ok' | an error string.
+  const [replayState, setReplayState] = useState({});
+
+  // Pull the value series for one closed ticket and save the pack. The automatic
+  // capture on close covers the normal path; this is for tickets closed before the
+  // feature existed, or where TWS was shut at the time. It only works while the
+  // contract is still alive — IBKR stops serving bars for an expired option.
+  async function pullReplay(d) {
+    const key = d.Timestamp;
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) { setReplayState(p => ({ ...p, [key]: 'Set the IBKR Bridge URL in Settings' })); return; }
+    const inferred = inferLegs(d['Wing Strikes'], d.Strategy);
+    if (!inferred) { setReplayState(p => ({ ...p, [key]: 'Needs three strikes on the ticket' })); return; }
+    setReplayState(p => ({ ...p, [key]: 'loading' }));
+    try {
+      const date = yyyymmdd(d['Close Date'] || d.Timestamp);
+      const replay = await fetchReplay(bridgeUrl, {
+        underlying: d.Underlying, expiry: date, date, legs: inferred.legs,
+      });
+      const mine = closes.filter(c => String(c['Ticket Timestamp']) === String(d.Timestamp));
+      downloadPack(buildPack({ decision: d, closes: mine, replay, legsInferred: inferred }));
+      setReplayState(p => ({ ...p, [key]: 'ok' }));
+    } catch (e) {
+      setReplayState(p => ({ ...p, [key]: e.message }));
+    }
+  }
   const [savingReview, setSavingReview] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -475,6 +503,23 @@ export default function Journal({ authenticated, account }) {
                             <span className={`badge text-[12px] ${isMatched ? 'badge-green' : 'badge-amber'}`}>{isMatched ? 'Matched' : 'Unmatched'}</span>
                           </div>
                           {d.Notes && <div className="text-[12px] text-[#a8b2be] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
+                          {(() => {
+                            const st = replayState[d.Timestamp];
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <button onClick={() => pullReplay(d)} disabled={st === 'loading'}
+                                  title="Rebuild what this structure was worth through the session, from per-leg quotes, and save it as a postmortem pack"
+                                  className="text-[12px] px-2 py-0.5 rounded border border-bg-border text-text-muted hover:text-white hover:border-accent transition-colors disabled:opacity-50">
+                                  {st === 'loading' ? 'Pulling…' : 'Replay'}
+                                </button>
+                                {st && st !== 'loading' && (
+                                  <span className={'text-[12px] ' + (st === 'ok' ? 'text-green' : 'text-amber')}>
+                                    {st === 'ok' ? 'saved — drop it in TradePrints' : st}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}

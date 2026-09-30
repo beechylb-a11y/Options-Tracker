@@ -8,6 +8,7 @@ import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
 import net from 'net';
 import { computeOvernight } from './esOvernight.js';
+import { parseLegs, composeCombo, summarise, geometry, legKey } from './replay.js';
 
 const app = express();
 app.use(cors({
@@ -817,6 +818,107 @@ app.get('/api/history', async (req, res) => {
       timezone: 'exchange-local (US/Eastern for US equities), RTH only',
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Trade replay ──────────────────────────────────────────────────────────
+// GET /api/trade-replay?underlying=SPY&expiry=20260930&legs=759C:1,763C:-2,768C:1
+//                      &date=20260929[&barSize=5 mins][&entry=11:35][&exit=15:35]
+//
+// Returns the structure's own value series, rebuilt from per-leg BID and ASK bars
+// rather than from TWS's synthetic COMBO quote — see bridge/replay.js for why that
+// distinction is the whole point of this endpoint.
+//
+// IBKR serves historical data for an option only while the contract lives. Once it
+// expires the bars are gone, so this is a same-day / pre-expiry tool: pull the
+// replay when the trade closes, not next week.
+app.get('/api/trade-replay', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+    const underlying = (req.query.underlying || '').toUpperCase();
+    const expiry = String(req.query.expiry || '');
+    const date = String(req.query.date || '');
+    const barSize = req.query.barSize || '5 mins';
+    if (!contracts[underlying]) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
+    if (!/^\d{8}$/.test(expiry)) return res.status(400).json({ error: 'expiry must be YYYYMMDD' });
+    if (!/^\d{8}$/.test(date)) return res.status(400).json({ error: 'date must be YYYYMMDD' });
+
+    let legs;
+    try { legs = parseLegs(req.query.legs); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    if (!legs.length) return res.status(400).json({ error: 'legs required, e.g. 759C:1,763C:-2,768C:1' });
+    if (legs.length > 6) return res.status(400).json({ error: 'at most 6 legs' });
+
+    // End of the session being replayed, in IBKR's local-exchange form.
+    const endDateTime = `${date} 16:00:00`;
+    const warnings = [];
+
+    // IBKR paces historical requests hard (roughly 6 in 2 seconds, 60 in 10 min).
+    // Two requests per leg plus the underlying, spaced, is well inside that.
+    const pace = () => new Promise(r => setTimeout(r, 1100));
+    const pull = async (contract, what, label) => {
+      const bars = await getHistoricalBars(contract, '1 D', barSize, what, endDateTime, 1, 2);
+      if (!bars.length) warnings.push(`${label} ${what}: no bars returned`);
+      await pace();
+      return bars;
+    };
+
+    const legBars = {};
+    for (const l of legs) {
+      const c = buildOptionContract(underlying, expiry, l.strike, l.right);
+      const k = legKey(l);
+      legBars[k] = {
+        bid: await pull(c, WhatToShow.BID, k),
+        ask: await pull(c, WhatToShow.ASK, k),
+      };
+    }
+    const und = await pull(contracts[underlying],
+      contracts[underlying].secType === SecType.IND ? WhatToShow.MIDPOINT : WhatToShow.TRADES,
+      underlying);
+
+    const { bars, dropped } = composeCombo(legs, legBars, und);
+    if (dropped) warnings.push(`${dropped} bars dropped — a leg was unquoted or crossed at those times`);
+    if (!bars.length) {
+      return res.status(502).json({
+        error: 'No aligned bars. If the expiry has passed, IBKR no longer serves this contract.',
+        warnings, legs, underlying, expiry, date
+      });
+    }
+
+    // Optional entry/exit clock times (ET, HH:MM) mark the hold inside the session.
+    const clockToEpoch = (hhmm) => {
+      if (!/^\d{1,2}:\d{2}$/.test(hhmm || '')) return null;
+      const [h, m] = hhmm.split(':').map(Number);
+      // Bars carry epoch seconds; find the bar whose ET wall clock matches.
+      const want = h * 60 + m;
+      let best = null, bestGap = Infinity;
+      for (const b of bars) {
+        const d = new Date(b.t * 1000);
+        const et = new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const gap = Math.abs(et.getHours() * 60 + et.getMinutes() - want);
+        if (gap < bestGap) { bestGap = gap; best = b.t; }
+      }
+      return best;
+    };
+    const entryEpoch = clockToEpoch(req.query.entry);
+    const exitEpoch = clockToEpoch(req.query.exit);
+
+    res.json({
+      underlying, expiry, date, barSize,
+      legs: legs.map(l => ({ ...l, key: legKey(l) })),
+      geometry: geometry(legs),
+      summary: summarise(legs, bars, { entryEpoch, exitEpoch }),
+      bars,
+      dropped,
+      warnings: warnings.length ? warnings : undefined,
+      source: 'per-leg BID/ASK historical bars, summed by ratio — not the TWS COMBO quote',
+      pulledAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[BRIDGE] trade-replay error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
