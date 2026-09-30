@@ -1,5 +1,19 @@
 const BASE = '';
 
+// ── Auth: the Supabase access token is attached to every server call. ──
+// App.jsx keeps it current (sign-in, silent refresh, sign-out).
+let accessToken = null;
+let onUnauthorized = null;
+export function setAccessToken(t) { accessToken = t || null; }
+export function setOnUnauthorized(fn) { onUnauthorized = fn; }
+function authHeaders() {
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+}
+function check401(res) {
+  if (res.status === 401 && onUnauthorized) onUnauthorized();
+  return res;
+}
+
 // ── Lightweight GET cache: in-flight request dedupe + 30s TTL ──
 const GET_TTL_MS = 30 * 1000;
 const getCache = new Map();   // url -> { time, data }
@@ -35,11 +49,11 @@ function fetchJSON(url, opts = {}) {
 }
 
 async function doFetchJSON(url, opts = {}) {
-  const res = await fetch(`${BASE}${url}`, {
+  const res = check401(await fetch(`${BASE}${url}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    ...opts
-  });
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...opts.headers }
+  }));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
@@ -50,7 +64,7 @@ async function doFetchJSON(url, opts = {}) {
 export const api = {
   // Auth
   authStatus: () => fetchJSON('/auth/status'),
-  authUrl: () => fetchJSON('/auth/google'),
+  authConfig: () => fetch(`${BASE}/auth/config`).then(r => r.json()),
 
   // Config
   getConfig: () => fetchJSON('/api/config'),
@@ -72,14 +86,14 @@ export const api = {
     if (account) form.append('account', account);
     clearApiCache();
     return fetch(`${BASE}/api/upload-csv`, {
-      method: 'POST', credentials: 'include', body: form
+      method: 'POST', credentials: 'include', headers: authHeaders(), body: form
     }).then(r => r.json());
   },
   compareCSV: (file) => {
     const form = new FormData();
     form.append('file', file);
     return fetch(`${BASE}/api/compare-csv`, {
-      method: 'POST', credentials: 'include', body: form
+      method: 'POST', credentials: 'include', headers: authHeaders(), body: form
     }).then(r => r.json());
   },
 
@@ -152,13 +166,11 @@ export const api = {
     Object.entries(metadata || {}).forEach(([k, v]) => form.append(k, v));
     clearApiCache();
     return fetch(`${BASE}/api/documents`, {
-      method: 'POST', credentials: 'include', body: form
+      method: 'POST', credentials: 'include', headers: authHeaders(), body: form
     }).then(r => r.json());
   },
   getDocuments: () => fetchJSON('/api/documents'),
   deleteDocument: (fileId) => fetchJSON(`/api/documents/${fileId}`, { method: 'DELETE' }),
   getDocumentUrl: (fileId) => fetchJSON(`/api/documents/${fileId}/url`),
 
-  // Gmail
-  scanEmails: (max, after) => fetchJSON(`/api/gmail/scan?max=${max || 50}${after ? '&after=' + after : ''}`)
 };

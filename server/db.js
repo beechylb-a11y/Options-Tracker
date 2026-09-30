@@ -1,243 +1,339 @@
-import { google } from 'googleapis';
+import pg from 'pg';
+import { createClient } from '@supabase/supabase-js';
 
 // ================================================================
-//  GOOGLE SHEETS SERVICE
-//  Handles all interactions with the Google Sheet backend.
-//  Sheet tabs: Config | Trades | TradeTracker | Decisions | BattingAverage | Journal
+//  DATABASE SERVICE (Supabase Postgres)
+//  Replaces the Google Sheets backend (Sep 2026). Every export keeps the exact
+//  signature and return shape the Sheets version had, so index.js and the client
+//  did not have to change: tab reads still come back as [headerRow, ...rows] of
+//  strings, and a row is still addressed by its 1-based "sheet row" number
+//  (header = row 1). That number lives in each table's row_no column, which is
+//  what keeps Closes.ticket_ref -> Decisions row references valid.
+//
+//  Tables live in the `options` schema of the Supabase project and are accessed
+//  with a dedicated role (options_app) that can see nothing else in the project.
 // ================================================================
 
-let sheetsClient = null;
-let authClient = null;
+// ---- Connection ----
+const url = process.env.DATABASE_URL || '';
+const isLocal = /@(localhost|127\.0\.0\.1)|host=\/|^postgres(ql)?:\/\/[^@]*$/.test(url);
+export const pool = new pg.Pool({
+  connectionString: url,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 5,
+  idleTimeoutMillis: 30000
+});
+pool.on('error', (e) => console.error('[DB] idle client error:', e.message));
 
-// ---- Auth setup ----
-let onTokensRefreshed = null; // callback set by index.js to persist refreshed tokens
-let currentTokens = null;     // last-known full token set (incl. refresh_token)
-
-export function initAuth(credentials) {
-  authClient = new google.auth.OAuth2(
-    credentials.clientId,
-    credentials.clientSecret,
-    credentials.redirectUri
-  );
-  // The google-auth library auto-refreshes the access token when it expires and
-  // emits a 'tokens' event. The refresh response does NOT include refresh_token,
-  // so we merge it back in and hand the full set to the persistence callback.
-  authClient.on('tokens', (tokens) => {
-    currentTokens = {
-      ...(currentTokens || {}),
-      ...tokens,
-      refresh_token: tokens.refresh_token || currentTokens?.refresh_token
-    };
-    if (onTokensRefreshed) {
-      Promise.resolve(onTokensRefreshed(currentTokens)).catch(() => {});
-    }
-  });
-  return authClient;
+async function q(text, params) {
+  return pool.query(text, params);
+}
+async function tx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn(client);
+    await client.query('COMMIT');
+    return out;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
-// Register a callback invoked whenever tokens are refreshed (for persistence).
-export function setOnTokensRefreshed(cb) {
-  onTokensRefreshed = cb;
-}
-
-export function getAuthUrl() {
-  return authClient.generateAuthUrl({
-    access_type: 'offline',
-    scope: [
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/userinfo.email'
-    ],
-    prompt: 'consent'
-  });
-}
-
-export async function handleAuthCallback(code) {
-  const { tokens } = await authClient.getToken(code);
-  currentTokens = { ...tokens };
-  authClient.setCredentials(tokens);
-  sheetsClient = google.sheets({ version: 'v4', auth: authClient });
-  return tokens;
-}
-
-export function setTokens(tokens) {
-  // Preserve an existing refresh_token if a partial token set is passed in.
-  currentTokens = {
-    ...(currentTokens || {}),
-    ...tokens,
-    refresh_token: tokens.refresh_token || currentTokens?.refresh_token
-  };
-  authClient.setCredentials(currentTokens);
-  sheetsClient = google.sheets({ version: 'v4', auth: authClient });
-}
-
-// Read-only accessor for the current full token set.
-export function getCurrentTokens() {
-  return currentTokens;
-}
-
-function getSheets() {
-  if (!sheetsClient) throw new Error('Not authenticated');
-  return sheetsClient;
-}
-
-const SHEET_ID = () => process.env.SPREADSHEET_ID;
-
-// ================================================================
-//  SHEET STRUCTURE -- auto-create tabs if missing
-// ================================================================
-const REQUIRED_TABS = {
-  Config: [['Setting', 'Value'],
-    ['currentBankroll', '3000'],
-    ['startingBankroll', '3000'],
-    ['maxDailyLoss', '300'],
-    ['maxOpenRisk', '450'],
-    ['riskPerContract', '435'],
-    ['winAmount', '65'],
-    ['accounts', '[]']
-  ],
-  Trades: [['Date/Time', 'Order #', 'Strategy (OIC)', 'Underlying', 'Instrument Type',
-    'Description', 'Subcode', 'Symbol', 'Expiry', 'Strike', 'Call/Put',
-    'Quantity', 'Avg Price', 'Fees', 'Net Value', 'Currency']],
-  TradeTracker: [['Order #', 'Entry Date', 'Expiry Date', 'Close Date', 'Strategy (OIC)',
-    'Underlying', 'Qty', 'Net Credit ($)', 'Total P&L ($)', 'W / L',
-    'Cumul BA (%)', 'Status', 'Account']],
-  Decisions: [['Timestamp', 'Engine', 'Underlying', 'Strategy', 'Direction', 'Contracts',
-    'Kelly $', 'POP Margin', 'Setup Score', 'Setup Grade', 'Regime',
-    'Wing Strikes', 'Market Behaviour', 'Notes',
-    'Price', 'VIX', 'VIX1D', 'IV', 'IVR', 'EM', 'Matched Trade',
-    'Status', 'Close Date', 'Close Price', 'Actual P&L', 'Trade Notes', 'Account',
-    'Delta', 'Theta', 'Gamma', 'Vega', 'Close IV', 'Close VIX',
-    // AH-AQ (Aug 2026). The log recorded Kelly $ and Setup Score but NOT the numbers
-    // that define the trade or the engine's own verdict on it, so every review had to
-    // reopen the ticket PDF and re-key them by hand -- and "did the EV gate predict the
-    // outcome" could only be asked through Kelly $ as a proxy. Appended after Close VIX
-    // so no existing column index moves.
-    'Net Debit/Credit', 'Max Risk', 'Max Profit', 'EV', 'Confidence',
-    'P(max loss)', 'EM Basis', 'Cushion EM', 'Session High', 'Session Low',
-    // AR-AT (Aug 2026): vol-snapshot completion for implied-vs-realized and
-    // vega-attribution reviews. The OPEN side mostly already lives in
-    // Price/VIX/VIX1D/IV/IVR/EM (cols O-T); IVx Open adds the one thing those
-    // lack, the expiry-specific IV of the structure at log time. The CLOSE side
-    // completes Close IV (=IVx at close) / Close VIX with the close spot and
-    // VIX1D. Strictly appended — no existing column index moves.
-    'IVx Open', 'Underlying Price Close', 'VIX1D Close',
-    // AU (Aug 2026): the engine's OWN suggested strikes before any hand edit.
-    // Wing Strikes (col L) is the FINAL legs as traded — once strikes became
-    // user-editable the two can differ, and "did my nudges beat the engine" is
-    // only answerable if both are recorded. Identical when nothing was edited.
-    // Strictly appended — no existing column index moves.
-    'Engine Strikes']],
-  BattingAverage: [['Metric', 'Value'],
-    ['Total Trades', '0'],
-    ['Batting Average', '0'],
-    ['Avg Win', '0'],
-    ['Avg Loss', '0'],
-    ['Expectancy', '0'],
-    ['Total P&L', '0']
-  ],
-  Journal: [['Date', 'Day P&L', 'Trades Count', 'Win Count', 'Loss Count', 'Notes', 'Week Number']],
-  // Sep 2026. A position is closed in pieces far more often than in one go, and the
-  // Decisions row has exactly ONE Close Date / Close Price / Actual P&L between it --
-  // so a second exit silently overwrote the first, and the only number that survived
-  // was whichever tranche happened to be last. Every tranche now gets its own row
-  // here; the Decisions row carries the blended result, so a ticket still reads as
-  // one trade while this tab keeps every fill. Doubles as the sale log.
-  Closes: [['Close ID', 'Ticket Ref', 'Ticket Timestamp', 'Engine', 'Underlying',
-    'Strategy', 'Entry Date', 'Close Date', 'Qty Closed', 'Qty Remaining',
-    'Close Price', 'P&L ($)', 'Fees ($)', 'Account', 'Notes']],
-  // Sep 2026. Decisions is 47 columns of what the ENGINE thought; this is what
-  // was actually done and how it turned out — one row per position, joining the
-  // ticket to its tranches. It is a materialised view, rebuilt from Decisions +
-  // Closes on every log and every close, never edited by hand: three tables that
-  // can disagree is how a trade log stops being trusted.
-  TradeLog: [['Ticket Ref', 'Entry Date', 'Entry Time', 'Engine', 'Underlying',
-    'Strategy', 'Legs', 'Qty', 'Entry Price', 'Max Risk', 'Max Profit', 'EV',
-    'Confidence', 'Qty Closed', 'Qty Open', 'Avg Exit', 'Realised P&L',
-    'R Multiple', 'Status', 'Tranches', 'Last Close', 'Account']]
+// ---- Tab definitions: [db column, original sheet header] in sheet column order ----
+const C = (pairs) => pairs.map(([col, header]) => ({ col, header }));
+export const TABS = {
+  Trades: { table: 'trades', cols: C([
+    ['date_time', 'Date/Time'], ['order_no', 'Order #'], ['strategy_oic', 'Strategy (OIC)'],
+    ['underlying', 'Underlying'], ['instrument_type', 'Instrument Type'], ['description', 'Description'],
+    ['subcode', 'Subcode'], ['symbol', 'Symbol'], ['expiry', 'Expiry'], ['strike', 'Strike'],
+    ['call_put', 'Call/Put'], ['quantity', 'Quantity'], ['avg_price', 'Avg Price'], ['fees', 'Fees'],
+    ['net_value', 'Net Value'], ['currency', 'Currency']]) },
+  TradeTracker: { table: 'trade_tracker', cols: C([
+    ['order_no', 'Order #'], ['entry_date', 'Entry Date'], ['expiry_date', 'Expiry Date'],
+    ['close_date', 'Close Date'], ['strategy_oic', 'Strategy (OIC)'], ['underlying', 'Underlying'],
+    ['qty', 'Qty'], ['net_credit_usd', 'Net Credit ($)'], ['total_pnl_usd', 'Total P&L ($)'],
+    ['win_loss', 'W / L'], ['cumul_ba_pct', 'Cumul BA (%)'], ['status', 'Status'], ['account', 'Account']]) },
+  Decisions: { table: 'decisions', cols: C([
+    ['timestamp', 'Timestamp'], ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'],
+    ['direction', 'Direction'], ['contracts', 'Contracts'], ['kelly_usd', 'Kelly $'], ['pop_margin', 'POP Margin'],
+    ['setup_score', 'Setup Score'], ['setup_grade', 'Setup Grade'], ['regime', 'Regime'],
+    ['wing_strikes', 'Wing Strikes'], ['market_behaviour', 'Market Behaviour'], ['notes', 'Notes'],
+    ['price', 'Price'], ['vix', 'VIX'], ['vix1d', 'VIX1D'], ['iv', 'IV'], ['ivr', 'IVR'], ['em', 'EM'],
+    ['matched_trade', 'Matched Trade'], ['status', 'Status'], ['close_date', 'Close Date'],
+    ['close_price', 'Close Price'], ['actual_pnl', 'Actual P&L'], ['trade_notes', 'Trade Notes'],
+    ['account', 'Account'], ['delta', 'Delta'], ['theta', 'Theta'], ['gamma', 'Gamma'], ['vega', 'Vega'],
+    ['close_iv', 'Close IV'], ['close_vix', 'Close VIX'], ['net_debit_credit', 'Net Debit/Credit'],
+    ['max_risk', 'Max Risk'], ['max_profit', 'Max Profit'], ['ev', 'EV'], ['confidence', 'Confidence'],
+    ['p_max_loss', 'P(max loss)'], ['em_basis', 'EM Basis'], ['cushion_em', 'Cushion EM'],
+    ['session_high', 'Session High'], ['session_low', 'Session Low'], ['ivx_open', 'IVx Open'],
+    ['underlying_price_close', 'Underlying Price Close'], ['vix1d_close', 'VIX1D Close'],
+    ['engine_strikes', 'Engine Strikes'], ['vwap_anchored', 'VWAP Anchored'], ['vwap_roll30', 'VWAP Roll30'],
+    ['vwap_roll30_prior', 'VWAP Roll30 Prior'], ['vwap_acceptance', 'VWAP Acceptance'],
+    ['vwap_trend', 'VWAP Trend'], ['vwap_dist_em', 'VWAP Dist EM']]) },
+  Journal: { table: 'journal', cols: C([
+    ['date', 'Date'], ['day_pnl', 'Day P&L'], ['trades_count', 'Trades Count'], ['win_count', 'Win Count'],
+    ['loss_count', 'Loss Count'], ['notes', 'Notes'], ['week_number', 'Week Number']]) },
+  Closes: { table: 'closes', cols: C([
+    ['close_id', 'Close ID'], ['ticket_ref', 'Ticket Ref'], ['ticket_timestamp', 'Ticket Timestamp'],
+    ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'], ['entry_date', 'Entry Date'],
+    ['close_date', 'Close Date'], ['qty_closed', 'Qty Closed'], ['qty_remaining', 'Qty Remaining'],
+    ['close_price', 'Close Price'], ['pnl_usd', 'P&L ($)'], ['fees_usd', 'Fees ($)'], ['account', 'Account'],
+    ['notes', 'Notes']]) },
+  TradeLog: { table: 'trade_log', cols: C([
+    ['ticket_ref', 'Ticket Ref'], ['entry_date', 'Entry Date'], ['entry_time', 'Entry Time'],
+    ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'], ['legs', 'Legs'],
+    ['qty', 'Qty'], ['entry_price', 'Entry Price'], ['max_risk', 'Max Risk'], ['max_profit', 'Max Profit'],
+    ['ev', 'EV'], ['confidence', 'Confidence'], ['qty_closed', 'Qty Closed'], ['qty_open', 'Qty Open'],
+    ['avg_exit', 'Avg Exit'], ['realised_pnl', 'Realised P&L'], ['r_multiple', 'R Multiple'],
+    ['status', 'Status'], ['tranches', 'Tranches'], ['last_close', 'Last Close'], ['account', 'Account']]) }
 };
 
-export async function ensureSheetStructure() {
-  const sheets = getSheets();
-  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID() });
-  const existingTabs = spreadsheet.data.sheets.map(s => s.properties.title);
+const qi = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+const T = (tab) => {
+  const d = TABS[tab];
+  if (!d) throw new Error(`Unknown tab ${tab}`);
+  return d;
+};
 
-  for (const [tabName, headerData] of Object.entries(REQUIRED_TABS)) {
-    const isNew = !existingTabs.includes(tabName);
-    if (isNew) {
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId: SHEET_ID(),
-        requestBody: {
-          requests: [{ addSheet: { properties: { title: tabName } } }]
-        }
-      });
-    }
+// A cell as the Sheets API would have handed it back: a string. Blank -> null in
+// the database, '' on the way out.
+function toDb(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+  if (typeof v === 'number') return isFinite(v) ? String(v) : null;
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+function rowToArray(r, cols) {
+  const arr = cols.map(c => (r[c.col] == null ? '' : r[c.col]));
+  // Sheets trims trailing empty cells; so do we, so row.length checks behave the same.
+  while (arr.length && arr[arr.length - 1] === '') arr.pop();
+  return arr;
+}
 
-    if (tabName === 'Config') {
-      if (isNew) {
-        // Only write full Config (headers + defaults) for brand new tabs
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SHEET_ID(),
-          range: `${tabName}!A1`,
-          valueInputOption: 'RAW',
-          requestBody: { values: headerData }
-        });
-      }
-      // For existing Config, never overwrite — data rows contain user settings
-    } else {
-      // For all other tabs, update header row only (row 1)
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID(),
-        range: `${tabName}!A1`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [headerData[0]] }
-      });
+// Whole tab as [header, ...rows]; rows[i] is sheet row i+1. Gaps come back as [].
+async function readTab(tab, client = pool) {
+  const { table, cols } = T(tab);
+  const res = await client.query(
+    `select row_no, ${cols.map(c => qi(c.col)).join(', ')} from options.${qi(table)} order by row_no`);
+  const out = [cols.map(c => c.header)];
+  for (const r of res.rows) {
+    const i = r.row_no - 1;
+    while (out.length < i) out.push([]);
+    out[i] = rowToArray(r, cols);
+  }
+  return out;
+}
+
+async function readRow(tab, rowNo, client = pool) {
+  const { table, cols } = T(tab);
+  const res = await client.query(
+    `select ${cols.map(c => qi(c.col)).join(', ')} from options.${qi(table)} where row_no = $1`, [rowNo]);
+  return res.rows[0] ? cols.map(c => (res.rows[0][c.col] == null ? '' : res.rows[0][c.col])) : [];
+}
+
+async function insertRows(client, tab, startRowNo, rows) {
+  const { table, cols } = T(tab);
+  if (!rows.length) return;
+  const colList = ['row_no', ...cols.map(c => c.col)].map(qi).join(', ');
+  // Chunk so a large CSV import stays under the parameter limit.
+  const per = cols.length + 1;
+  const chunk = Math.max(1, Math.floor(60000 / per));
+  for (let s = 0; s < rows.length; s += chunk) {
+    const part = rows.slice(s, s + chunk);
+    const params = [];
+    const tuples = part.map((row, k) => {
+      const vals = [startRowNo + s + k, ...cols.map((_, j) => toDb(row[j]))];
+      const base = params.length;
+      params.push(...vals);
+      return '(' + vals.map((_, j) => '$' + (base + j + 1)).join(', ') + ')';
+    });
+    await client.query(`insert into options.${qi(table)} (${colList}) values ${tuples.join(', ')}`, params);
+  }
+}
+
+// values.append equivalent: rows go after the last used row.
+async function appendRows(tab, rows) {
+  const { table } = T(tab);
+  return tx(async (client) => {
+    await client.query(`lock table options.${qi(table)} in share row exclusive mode`);
+    const r = await client.query(`select coalesce(max(row_no), 1) as m from options.${qi(table)}`);
+    const start = Number(r.rows[0].m) + 1;
+    await insertRows(client, tab, start, rows);
+    return start;
+  });
+}
+
+// values.update equivalent for a run of cells on one row, starting at column
+// index startCol (0 = column A). Creates the row if it does not exist.
+async function setCells(tab, rowNo, startCol, values, client = pool) {
+  const { table, cols } = T(tab);
+  const targets = values.map((v, i) => ({ col: cols[startCol + i]?.col, v }))
+    .filter(t => t.col);
+  if (!targets.length) return;
+  const colList = ['row_no', ...targets.map(t => t.col)].map(qi).join(', ');
+  const ph = ['$1', ...targets.map((_, i) => '$' + (i + 2))].join(', ');
+  const upd = targets.map(t => `${qi(t.col)} = excluded.${qi(t.col)}`).join(', ');
+  await client.query(
+    `insert into options.${qi(table)} (${colList}) values (${ph})
+     on conflict (row_no) do update set ${upd}, updated_at = now()`,
+    [rowNo, ...targets.map(t => toDb(t.v))]);
+}
+
+// clear + write from row 2: the whole data area is replaced atomically.
+async function replaceData(tab, rows) {
+  const { table } = T(tab);
+  await tx(async (client) => {
+    await client.query(`delete from options.${qi(table)}`);
+    await insertRows(client, tab, 2, rows);
+  });
+  return rows.length;
+}
+
+// deleteDimension equivalent: remove the row and shift everything below up one.
+async function deleteRowShift(tab, rowNo) {
+  const { table } = T(tab);
+  await tx(async (client) => {
+    await client.query(`delete from options.${qi(table)} where row_no = $1`, [rowNo]);
+    // Two steps so the primary key never sees a transient duplicate.
+    await client.query(`update options.${qi(table)} set row_no = row_no + 1000000 where row_no > $1`, [rowNo]);
+    await client.query(`update options.${qi(table)} set row_no = row_no - 1000001 where row_no > 1000000`);
+  });
+}
+
+// ================================================================
+//  STRUCTURE -- seed defaults (replaces ensureSheetStructure)
+// ================================================================
+const CONFIG_DEFAULTS = [
+  ['currentBankroll', '3000'],
+  ['startingBankroll', '3000'],
+  ['maxDailyLoss', '300'],
+  ['maxOpenRisk', '450'],
+  ['riskPerContract', '435'],
+  ['winAmount', '65'],
+  ['accounts', '[]']
+];
+const BA_METRICS = ['Total Trades', 'Batting Average', 'Avg Win', 'Avg Loss', 'Expectancy', 'Total P&L'];
+
+export async function ensureDatabase() {
+  await q('select 1 from options.config limit 1');
+  const n = await q('select count(*)::int as n from options.config');
+  if (n.rows[0].n === 0) {
+    for (let i = 0; i < CONFIG_DEFAULTS.length; i++) {
+      await q('insert into options.config (key, value, sort_order) values ($1, $2, $3) on conflict do nothing',
+        [CONFIG_DEFAULTS[i][0], CONFIG_DEFAULTS[i][1], i + 1]);
     }
   }
+  for (let i = 0; i < BA_METRICS.length; i++) {
+    await q('insert into options.batting_average (metric, value, sort_order) values ($1, $2, $3) on conflict do nothing',
+      [BA_METRICS[i], '0', i + 1]);
+  }
+}
+
+// ================================================================
+//  AUTH -- Supabase Auth, single-user allowlist
+// ================================================================
+const SUPABASE_URL = () => process.env.SUPABASE_URL;
+const SUPABASE_KEY = () => process.env.SUPABASE_PUBLISHABLE_KEY;
+
+export function publicAuthConfig() {
+  return { supabaseUrl: SUPABASE_URL() || '', publishableKey: SUPABASE_KEY() || '' };
+}
+
+// A Supabase client that acts AS the signed-in user (their JWT), so Storage
+// policies decide what it can touch. The server holds no service/secret key.
+function userClient(token) {
+  return createClient(SUPABASE_URL(), SUPABASE_KEY(), {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } }
+  });
+}
+
+const tokenCache = new Map(); // token -> { email, until }
+let allowCache = { at: 0, emails: new Set() };
+
+async function allowedEmails() {
+  if (Date.now() - allowCache.at < 60000) return allowCache.emails;
+  const r = await q('select email from options.allowed_users');
+  allowCache = { at: Date.now(), emails: new Set(r.rows.map(x => x.email.toLowerCase())) };
+  return allowCache.emails;
+}
+
+// Returns the user's email if the token is valid AND on the allowlist, else null.
+export async function verifyUser(token) {
+  if (!token) return null;
+  const hit = tokenCache.get(token);
+  if (hit && hit.until > Date.now()) return hit.email;
+  const sb = createClient(SUPABASE_URL(), SUPABASE_KEY(), { auth: { persistSession: false } });
+  const { data, error } = await sb.auth.getUser(token);
+  if (error || !data?.user?.email) return null;
+  const email = data.user.email.toLowerCase();
+  if (!(await allowedEmails()).has(email)) return null;
+  tokenCache.set(token, { email, until: Date.now() + 5 * 60 * 1000 });
+  if (tokenCache.size > 200) tokenCache.clear();
+  return email;
 }
 
 // ================================================================
 //  CONFIG
 // ================================================================
+// Config values may be simple formulas carried over from the sheet, e.g.
+// maxDailyLoss = "=currentBankroll*0.2". They are evaluated on read so the
+// derived limits keep tracking the bankroll exactly as the sheet did.
+function evalConfig(raw) {
+  const out = {};
+  const resolving = new Set();
+  const val = (key) => {
+    if (key in out) return out[key];
+    let v = raw[key];
+    if (typeof v === 'string' && v.startsWith('=')) {
+      if (resolving.has(key)) return '#REF!';
+      resolving.add(key);
+      const expr = v.slice(1).replace(/[A-Za-z_][A-Za-z0-9_]*/g, (name) => {
+        const r = val(name);
+        const n = parseFloat(r);
+        return isNaN(n) ? 'NaN' : `(${n})`;
+      });
+      resolving.delete(key);
+      if (/^[-+*/().\d\seNa]+$/.test(expr)) {
+        try {
+          // eslint-disable-next-line no-new-func
+          const n = Function(`"use strict"; return (${expr});`)();
+          v = isFinite(n) ? String(Number(n.toPrecision(12))) : '#VALUE!';
+        } catch (e) { v = '#ERROR!'; }
+      } else v = '#ERROR!';
+    }
+    out[key] = v;
+    return v;
+  };
+  Object.keys(raw).forEach(val);
+  return out;
+}
+
 export async function getConfig() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Config!A:B'
-  });
-  const rows = res.data.values || [];
+  const res = await q('select key, value from options.config order by sort_order, key');
+  const raw = {};
+  res.rows.forEach(r => { if (r.key) raw[r.key] = r.value == null ? '' : r.value; });
+  const vals = evalConfig(raw);
   const config = {};
-  rows.slice(1).forEach(([key, val]) => {
-    if (key) config[key] = isNaN(val) ? val : parseFloat(val);
+  Object.entries(vals).forEach(([key, val]) => {
+    // Same coercion the sheet version applied (note: isNaN('') is false -> NaN
+    // is avoided by keeping blank as '').
+    config[key] = (val === '' || isNaN(val)) ? val : parseFloat(val);
   });
   return config;
 }
 
 export async function updateConfig(key, value) {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Config!A:B'
-  });
-  const rows = res.data.values || [];
-  const rowIndex = rows.findIndex(r => r[0] === key);
-  if (rowIndex >= 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `Config!B${rowIndex + 1}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[value]] }
-    });
-  } else {
-    // Key doesn't exist, append it
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID(),
-      range: 'Config!A1',
-      valueInputOption: 'RAW',
-      requestBody: { values: [[key, value]] }
-    });
-  }
+  await q(
+    `insert into options.config (key, value, sort_order)
+     values ($1, $2, (select coalesce(max(sort_order), 0) + 1 from options.config))
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+    [key, toDb(value) ?? '']);
 }
 
 // Account format: [{ id, name, bankroll, startingBankroll, maxDailyLoss, maxOpenRisk }]
@@ -269,18 +365,12 @@ export async function saveAccounts(accounts) {
 }
 
 export async function backfillAccountColumn(accountId, force = false) {
-  const sheets = getSheets();
   const rows = await getTradeTracker();
   let updated = 0;
   for (let i = 1; i < rows.length; i++) {
     const currentAccount = rows[i][12] || '';
     if (!currentAccount || force) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID(),
-        range: `TradeTracker!M${i + 1}`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [[accountId]] }
-      });
+      await setCells('TradeTracker', i + 1, 12, [accountId]);
       updated++;
     }
   }
@@ -313,7 +403,6 @@ export async function retagAccountsByDate({
   if (!monthId) throw new Error(`Account "${monthAccountName}" not found in config. Configured: ${accounts.map(a => a.name).join(', ')}`);
   if (!defaultId) throw new Error(`Account "${defaultAccountName}" not found in config. Configured: ${accounts.map(a => a.name).join(', ')}`);
 
-  const sheets = getSheets();
   const rows = await getTradeTracker();
   const dataRows = rows.slice(1);
 
@@ -349,12 +438,8 @@ export async function retagAccountsByDate({
   });
 
   if (!dryRun && newColumn.length > 0) {
-    // Single batch write to M2:M{n} — one API call, not N.
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `TradeTracker!M2:M${newColumn.length + 1}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: newColumn }
+    await tx(async (client) => {
+      for (let k = 0; k < newColumn.length; k++) await setCells('TradeTracker', k + 2, 12, newColumn[k], client);
     });
   }
 
@@ -384,7 +469,6 @@ export async function retagDecisionAccountsByDate({
   const defaultId = findId(defaultAccountName);
   if (!monthId || !defaultId) throw new Error(`Account name not found. Configured: ${accounts.map(a => a.name).join(', ')}`);
 
-  const sheets = getSheets();
   const rows = await getDecisions();
   const dataRows = rows.slice(1);
   const inTargetMonth = (s) => {
@@ -402,17 +486,13 @@ export async function retagDecisionAccountsByDate({
     const effective = (ts.split('T')[0]) || closeDate;
     const newId = inTargetMonth(effective) ? monthId : defaultId;
     const rowNum = idx + 2;
-    updates.push({ range: `Decisions!AA${rowNum}`, value: newId });
+    updates.push({ rowNum, value: newId });
     preview.push({ row: rowNum, timestamp: ts, from: existing || '(blank)', to: newId });
   });
 
   if (!dryRun && updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: SHEET_ID(),
-      requestBody: {
-        valueInputOption: 'RAW',
-        data: updates.map(u => ({ range: u.range, values: [[u.value]] }))
-      }
+    await tx(async (client) => {
+      for (const u of updates) await setCells('Decisions', u.rowNum, 26, [u.value], client);
     });
   }
 
@@ -423,61 +503,27 @@ export async function retagDecisionAccountsByDate({
 //  TRADES (raw legs from tastytrade CSV)
 // ================================================================
 export async function appendTrades(rows) {
-  const sheets = getSheets();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID(),
-    range: 'Trades!A1',
-    valueInputOption: 'RAW',
-    requestBody: { values: rows }
-  });
+  await appendRows('Trades', rows);
   return rows.length;
 }
 
 export async function getTrades() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Trades!A:P'
-  });
-  return res.data.values || [];
+  return readTab('Trades');
 }
 
 export async function clearTrades() {
-  const sheets = getSheets();
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID(),
-    range: 'Trades!A2:P'
-  });
+  await q('delete from options.trades');
 }
 
 // ================================================================
 //  TRADE TRACKER (grouped positions)
 // ================================================================
 export async function writeTradeTracker(rows) {
-  const sheets = getSheets();
-  // Clear existing data (keep header)
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID(),
-    range: 'TradeTracker!A2:M'
-  });
-  if (rows.length > 0) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: 'TradeTracker!A2',
-      valueInputOption: 'RAW',
-      requestBody: { values: rows }
-    });
-  }
-  return rows.length;
+  return replaceData('TradeTracker', rows);
 }
 
 export async function getTradeTracker() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'TradeTracker!A:M'
-  });
-  return res.data.values || [];
+  return readTab('TradeTracker');
 }
 
 // Per-strategy realized expectancy from closed TradeTracker rows. Used by the
@@ -569,23 +615,11 @@ export async function getStrategyHistory(account = null) {
 }
 
 export async function appendTradeTrackerRow(row) {
-  const sheets = getSheets();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID(),
-    range: 'TradeTracker!A1',
-    valueInputOption: 'RAW',
-    requestBody: { values: [row] }
-  });
+  await appendRows('TradeTracker', [row]);
 }
 
 export async function updateTradeTrackerRow(rowIndex, updates) {
-  const sheets = getSheets();
-  // Read current row
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: `TradeTracker!A${rowIndex}:M${rowIndex}`
-  });
-  const current = res.data.values?.[0] || [];
+  const current = await readRow('TradeTracker', rowIndex);
   // Headers: Order#(0), EntryDate(1), ExpiryDate(2), CloseDate(3), Strategy(4),
   //          Underlying(5), Qty(6), NetCredit(7), TotalP&L(8), W/L(9), CumulBA(10), Status(11), Account(12)
   const row = [...current];
@@ -603,95 +637,17 @@ export async function updateTradeTrackerRow(rowIndex, updates) {
   }
   if (updates.status !== undefined) row[11] = updates.status;
   if (updates.account !== undefined) row[12] = updates.account;
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: `TradeTracker!A${rowIndex}:M${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [row] }
-  });
+  await setCells('TradeTracker', rowIndex, 0, row);
 }
 
 export async function deleteTradeTrackerRow(rowIndex) {
-  const sheets = getSheets();
-  // Get the sheet ID for TradeTracker tab
-  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID() });
-  const tab = spreadsheet.data.sheets.find(s => s.properties.title === 'TradeTracker');
-  if (!tab) throw new Error('TradeTracker tab not found');
-  const sheetId = tab.properties.sheetId;
-  // Delete the row (rowIndex is 1-based)
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SHEET_ID(),
-    requestBody: {
-      requests: [{
-        deleteDimension: {
-          range: {
-            sheetId,
-            dimension: 'ROWS',
-            startIndex: rowIndex - 1, // 0-based
-            endIndex: rowIndex        // exclusive
-          }
-        }
-      }]
-    }
-  });
+  await deleteRowShift('TradeTracker', rowIndex);
 }
 
 // ================================================================
 //  DECISIONS (logged from decision engine)
 // ================================================================
-// The appended columns AR:AU ('IVx Open', 'Underlying Price Close',
-// 'VIX1D Close' — Aug 2026 vol snapshot — plus 'Engine Strikes', the engine's
-// pre-edit strike suggestion) postdate older sheets, which stop at AQ (or AT).
-// Before any write that targets them, read row 1 and — only if AR1:AU1 do
-// not already hold the expected names — write those four header cells. A1:AQ1
-// is never touched, so existing columns can neither move nor be overwritten.
-// Runs once per process (cached on success) and is strictly best-effort: a
-// failure here must never block a log or a close.
-const DECISION_VOL_HEADERS = ['IVx Open', 'Underlying Price Close', 'VIX1D Close', 'Engine Strikes'];
-// AV:BA — the VWAP block (Aug 2026). Raw inputs first so ANY future VWAP rule can
-// be recomputed from the log, then the reads this build produced so a rule change
-// can be compared against the rule it replaced. Added because the Aug 2026 VWAP
-// rework had 11 weeks of logged trades and could not be validated against a single
-// one of them: not one VWAP number had ever been persisted.
-const DECISION_VWAP_HEADERS = ['VWAP Anchored', 'VWAP Roll30', 'VWAP Roll30 Prior',
-  'VWAP Acceptance', 'VWAP Trend', 'VWAP Dist EM'];
-let decisionVolHeadersEnsured = false;
-async function ensureDecisionVolHeaders() {
-  if (decisionVolHeadersEnsured) return;
-  try {
-    const sheets = getSheets();
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID(),
-      range: 'Decisions!1:1'
-    });
-    const header = (res.data.values && res.data.values[0]) || [];
-    const ok = DECISION_VOL_HEADERS.every((h, i) => header[43 + i] === h); // AR = col 44 (idx 43) … AU = idx 46
-    if (!ok) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID(),
-        range: 'Decisions!AR1:AU1',
-        valueInputOption: 'RAW',
-        requestBody: { values: [DECISION_VOL_HEADERS] }
-      });
-    }
-    // AV = idx 47 … BA = idx 52. Same contract as above: A1:AU1 is never touched,
-    // so existing columns cannot move or be overwritten.
-    const vwapOk = DECISION_VWAP_HEADERS.every((h, i) => header[47 + i] === h);
-    if (!vwapOk) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID(),
-        range: 'Decisions!AV1:BA1',
-        valueInputOption: 'RAW',
-        requestBody: { values: [DECISION_VWAP_HEADERS] }
-      });
-    }
-    decisionVolHeadersEnsured = true;
-  } catch (e) { /* retried on the next write */ }
-}
-
 export async function logDecision(decision) {
-  const sheets = getSheets();
-  await ensureDecisionVolHeaders();
   const row = [
     decision.timestamp || new Date().toISOString(),
     decision.engine || '0DTE',
@@ -749,29 +705,18 @@ export async function logDecision(decision) {
     decision.vwapTrend ?? '',        // AZ e.g. "mild rising +0.62EM30 confirmed"
     decision.vwapDistEM ?? ''        // BA price-to-VWAP distance as % of session EM
   ];
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A1',
-    valueInputOption: 'RAW',
-    requestBody: { values: [row] }
-  });
+  await appendRows('Decisions', [row]);
   return row;
 }
 
 export async function getDecisions() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Decisions!A:BA'  // 53 cols: … + Engine Strikes (AU) + VWAP block (AV:BA)
-  });
-  return res.data.values || [];
+  return readTab('Decisions');
 }
 
 // ================================================================
 //  BATTING AVERAGE / STATS
 // ================================================================
 export async function updateBattingAverage(stats) {
-  const sheets = getSheets();
   const values = [
     ['Total Trades', stats.totalTrades || 0],
     ['Batting Average', stats.battingAvg || 0],
@@ -780,23 +725,20 @@ export async function updateBattingAverage(stats) {
     ['Expectancy', stats.expectancy || 0],
     ['Total P&L', stats.totalPnl || 0]
   ];
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: 'BattingAverage!A2',
-    valueInputOption: 'RAW',
-    requestBody: { values }
+  await tx(async (client) => {
+    for (let i = 0; i < values.length; i++) {
+      await client.query(
+        `insert into options.batting_average (metric, value, sort_order) values ($1, $2, $3)
+         on conflict (metric) do update set value = excluded.value, updated_at = now()`,
+        [values[i][0], toDb(values[i][1]) ?? '0', i + 1]);
+    }
   });
 }
 
 export async function getBattingAverage() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'BattingAverage!A:B'
-  });
-  const rows = res.data.values || [];
+  const res = await q('select metric, value from options.batting_average order by sort_order, metric');
   const stats = {};
-  rows.slice(1).forEach(([key, val]) => {
+  res.rows.forEach(({ metric: key, value: val }) => {
     if (key) stats[key.replace(/\s/g, '')] = isNaN(val) ? val : parseFloat(val);
   });
   return stats;
@@ -806,7 +748,6 @@ export async function getBattingAverage() {
 //  JOURNAL (daily P&L entries)
 // ================================================================
 export async function appendJournalEntry(entry) {
-  const sheets = getSheets();
   const row = [
     entry.date,
     entry.dayPnl || 0,
@@ -816,21 +757,11 @@ export async function appendJournalEntry(entry) {
     entry.notes || '',
     entry.weekNumber || ''
   ];
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID(),
-    range: 'Journal!A1',
-    valueInputOption: 'RAW',
-    requestBody: { values: [row] }
-  });
+  await appendRows('Journal', [row]);
 }
 
 export async function getJournal() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Journal!A:G'
-  });
-  return res.data.values || [];
+  return readTab('Journal');
 }
 
 // ================================================================
@@ -956,30 +887,17 @@ export function projectTradeLog(decRows, closeRows) {
   return out;
 }
 
-// Overwrite the tab with the projection. Cheap (one clear + one write) and the
-// only thing that keeps the three tables from drifting apart.
+// Overwrite the table with the projection. The only thing that keeps the three
+// tables from drifting apart.
 export async function rebuildTradeLog() {
-  const sheets = getSheets();
   const [decRows, closeRows] = await Promise.all([getDecisions(), getCloses()]);
   const rows = projectTradeLog(decRows, closeRows);
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID(), range: 'TradeLog!A2:V'
-  });
-  if (rows.length) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(), range: 'TradeLog!A2',
-      valueInputOption: 'RAW', requestBody: { values: rows }
-    });
-  }
+  await replaceData('TradeLog', rows);
   return rows.length;
 }
 
 export async function getTradeLog() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(), range: 'TradeLog!A:V'
-  });
-  return res.data.values || [];
+  return readTab('TradeLog');
 }
 
 // Open and partially-closed positions, each with its tranches attached. This is
@@ -1016,11 +934,7 @@ export async function getOpenPositions() {
 //  CLOSES — one row per tranche (the sale log)
 // ════════════════════════════════════════════════════════════════════════
 export async function getCloses() {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(), range: 'Closes!A:O'
-  });
-  return res.data.values || [];
+  return readTab('Closes');
 }
 
 // Every tranche recorded against one ticket, oldest first.
@@ -1031,7 +945,6 @@ export async function getClosesForTicket(ticketRef) {
 }
 
 export async function appendClose(c) {
-  const sheets = getSheets();
   const row = [
     c.closeId || ('C' + Date.now()),
     c.ticketRef ?? '',
@@ -1049,10 +962,7 @@ export async function appendClose(c) {
     c.account || '',
     c.notes || ''
   ];
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID(), range: 'Closes!A1',
-    valueInputOption: 'RAW', requestBody: { values: [row] }
-  });
+  await appendRows('Closes', [row]);
   return row;
 }
 
@@ -1076,8 +986,6 @@ export function blendCloses(tranches) {
 }
 
 export async function closeTradeTicket(rowIndex, closeData) {
-  const sheets = getSheets();
-  await ensureDecisionVolHeaders();
 
   // ── tranche accounting ──────────────────────────────────────────────────
   // qtyClosed absent means "close whatever is left", which is the old behaviour
@@ -1118,55 +1026,35 @@ export async function closeTradeTicket(rowIndex, closeData) {
   const blended = blendCloses(all);
 
   // Columns: V=Status(22), W=Close Date(23), X=Close Price(24), Y=Actual P&L(25)
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: `Decisions!V${rowIndex}:Y${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[
+  await setCells('Decisions', rowIndex, 21, [
       qtyRemaining > 0 ? 'Partial' : 'Closed',
       closeData.closeDate || new Date().toISOString().split('T')[0],
       blended.closePrice ?? (closeData.closePrice || ''),
       blended.pnl
-    ]] }
-  });
+    ]);
   // Close IV (AF) + Close VIX (AG) -- optional, written only if captured at close
   if (closeData.closeIV != null || closeData.closeVix != null) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `Decisions!AF${rowIndex}:AG${rowIndex}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[
+    await setCells('Decisions', rowIndex, 31, [
         closeData.closeIV ?? '',
         closeData.closeVix ?? ''
-      ]] }
-    });
+      ]);
   }
   // Session High (AP) + Low (AQ) -- what the day ACTUALLY did, so realised range can be
   // compared with the expected move the ticket was priced on without re-reading a chart.
   // Same best-effort contract as Close VIX: absent bridge -> blank, close still proceeds.
   if (closeData.sessionHigh != null || closeData.sessionLow != null) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `Decisions!AP${rowIndex}:AQ${rowIndex}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[
+    await setCells('Decisions', rowIndex, 41, [
         closeData.sessionHigh ?? '',
         closeData.sessionLow ?? ''
-      ]] }
-    });
+      ]);
   }
   // Underlying Price Close (AS) + VIX1D Close (AT) -- the rest of the close vol
   // snapshot. Same best-effort contract: absent bridge -> blank, close proceeds.
   if (closeData.closeUnderlyingPrice != null || closeData.closeVix1d != null) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID(),
-      range: `Decisions!AS${rowIndex}:AT${rowIndex}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [[
+    await setCells('Decisions', rowIndex, 44, [
         closeData.closeUnderlyingPrice ?? '',
         closeData.closeVix1d ?? ''
-      ]] }
-    });
+      ]);
   }
   // What the caller needs to tell the user: how much went, how much is left, and
   // the blended position-level result so far.
@@ -1179,99 +1067,58 @@ export async function closeTradeTicket(rowIndex, closeData) {
 // snapshot land a few seconds later. Fill-only-blank: an existing value in any
 // cell is never overwritten, so a normal close's data always wins.
 export async function backfillDecisionVol(rowIndex, snap) {
-  const sheets = getSheets();
-  await ensureDecisionVolHeaders();
-  // One read covering AF..AT; offsets within it:
-  // AF=0 Close IV, AG=1 Close VIX, AP=10 Session High, AQ=11 Session Low,
-  // AS=13 Underlying Price Close, AT=14 VIX1D Close.
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: `Decisions!AF${rowIndex}:AT${rowIndex}`
-  });
-  const cur = (res.data.values && res.data.values[0]) || [];
+  const cur = await readRow('Decisions', rowIndex);
+  // Column indexes: AF=31 Close IV, AG=32 Close VIX, AP=41 Session High,
+  // AQ=42 Session Low, AS=44 Underlying Price Close, AT=45 VIX1D Close.
   const CELLS = [
-    { col: 'AF', idx: 0,  val: snap.closeIV },
-    { col: 'AG', idx: 1,  val: snap.closeVix },
-    { col: 'AP', idx: 10, val: snap.sessionHigh },
-    { col: 'AQ', idx: 11, val: snap.sessionLow },
-    { col: 'AS', idx: 13, val: snap.closeUnderlyingPrice },
-    { col: 'AT', idx: 14, val: snap.closeVix1d }
+    { idx: 31, val: snap.closeIV },
+    { idx: 32, val: snap.closeVix },
+    { idx: 41, val: snap.sessionHigh },
+    { idx: 42, val: snap.sessionLow },
+    { idx: 44, val: snap.closeUnderlyingPrice },
+    { idx: 45, val: snap.closeVix1d }
   ];
-  const data = CELLS
-    .filter(c => c.val != null && c.val !== '' && !(cur[c.idx] != null && cur[c.idx] !== ''))
-    .map(c => ({ range: `Decisions!${c.col}${rowIndex}`, values: [[c.val]] }));
+  const data = CELLS.filter(c => c.val != null && c.val !== '' && !(cur[c.idx] != null && cur[c.idx] !== ''));
   if (!data.length) return { updated: 0 };
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: SHEET_ID(),
-    requestBody: { valueInputOption: 'RAW', data }
+  await tx(async (client) => {
+    for (const c of data) await setCells('Decisions', rowIndex, c.idx, [c.val], client);
   });
   return { updated: data.length };
 }
 
 export async function updateTradeNotes(rowIndex, notes) {
-  const sheets = getSheets();
-  // Column Z = Trade Notes (26)
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: `Decisions!Z${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[notes]] }
-  });
+  // Column Z = Trade Notes (index 25)
+  await setCells('Decisions', rowIndex, 25, [notes]);
 }
 
 export async function updateTradeStatus(rowIndex, status) {
-  const sheets = getSheets();
-  // Column V = Status (22)
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: `Decisions!V${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[status]] }
-  });
+  // Column V = Status (index 21)
+  await setCells('Decisions', rowIndex, 21, [status]);
 }
 
 // ================================================================
 //  UPDATE TRACKER STRATEGY -- manual categorisation
 // ================================================================
 export async function updateTrackerStrategy(rowIndex, strategy) {
-  const sheets = getSheets();
-  // Column E = Strategy (OIC) = column 5 (1-based)
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID(),
-    range: `TradeTracker!E${rowIndex}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[strategy]] }
-  });
+  // Column E = Strategy (OIC) (index 4)
+  await setCells('TradeTracker', rowIndex, 4, [strategy]);
 }
 
-// Also update the raw Trades sheet for matching legs
+// Also update the raw Trades table for matching legs
 export async function updateTradesStrategy(orderId, strategy) {
-  const sheets = getSheets();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID(),
-    range: 'Trades!A:P'
-  });
-  const rows = res.data.values || [];
+  const rows = await getTrades();
   // Find rows with this order ID (column B = index 1) and update strategy (column C = index 2)
-  const updates = [];
+  const targets = [];
   rows.forEach((row, i) => {
     if (i === 0) return; // skip header
     const oid = (row[1] || '').trim();
-    // Check if any of the order IDs match
-    if (orderId.split(',').some(id => oid.includes(id.trim()))) {
-      updates.push({ range: `Trades!C${i + 1}`, values: [[strategy]] });
-    }
+    if (orderId.split(',').some(id => oid.includes(id.trim()))) targets.push(i + 1);
   });
-  if (updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: SHEET_ID(),
-      requestBody: {
-        valueInputOption: 'RAW',
-        data: updates
-      }
-    });
+  if (targets.length > 0) {
+    await q('update options.trades set strategy_oic = $1, updated_at = now() where row_no = any($2::int[])',
+      [strategy, targets]);
   }
-  return updates.length;
+  return targets.length;
 }
 
 // ================================================================
@@ -1306,320 +1153,59 @@ export function calculateStats(trackerRows) {
 }
 
 // ================================================================
-//  GOOGLE DRIVE — DOCUMENT MANAGEMENT
+//  DOCUMENTS — Supabase Storage (bucket options-docs) + options.documents
+//  Storage calls run as the signed-in user; bucket policies only admit
+//  allowlisted users. Return shapes mirror what the Drive version returned.
 // ================================================================
-const DOC_FOLDER_NAME = 'Options Tracker Docs';
-let docFolderId = null;
+const DOC_BUCKET = 'options-docs';
 
-function getDrive() {
-  return google.drive({ version: 'v3', auth: authClient });
+function docOut(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    mimeType: r.mime_type,
+    size: r.size != null ? String(r.size) : undefined,
+    createdTime: new Date(r.created_at).toISOString(),
+    description: JSON.stringify(r.meta || {}),
+    meta: r.meta || {}
+  };
 }
 
-async function ensureDocFolder() {
-  if (docFolderId) return docFolderId;
-  const drive = getDrive();
-  // Check if folder already exists
-  const res = await drive.files.list({
-    q: `name='${DOC_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: 'files(id,name)',
-    spaces: 'drive'
+export async function uploadDocument(fileBuffer, filename, mimeType, metadata, userToken) {
+  const safe = String(filename || 'file').replace(/[^\w.\- ]+/g, '_').slice(-120);
+  const path = `${new Date().toISOString().slice(0, 10)}/${Date.now()}-${safe}`;
+  const sb = userClient(userToken);
+  const { error } = await sb.storage.from(DOC_BUCKET).upload(path, fileBuffer, {
+    contentType: mimeType || 'application/octet-stream', upsert: false
   });
-  if (res.data.files.length > 0) {
-    docFolderId = res.data.files[0].id;
-    return docFolderId;
-  }
-  // Create folder
-  const folder = await drive.files.create({
-    requestBody: {
-      name: DOC_FOLDER_NAME,
-      mimeType: 'application/vnd.google-apps.folder'
-    },
-    fields: 'id'
-  });
-  docFolderId = folder.data.id;
-  return docFolderId;
-}
-
-export async function uploadDocument(fileBuffer, filename, mimeType, metadata) {
-  const drive = getDrive();
-  const folderId = await ensureDocFolder();
-  const { Readable } = await import('stream');
-  const stream = new Readable();
-  stream.push(fileBuffer);
-  stream.push(null);
-
-  const file = await drive.files.create({
-    requestBody: {
-      name: filename,
-      parents: [folderId],
-      description: JSON.stringify(metadata || {})
-    },
-    media: {
-      mimeType,
-      body: stream
-    },
-    fields: 'id,name,mimeType,size,createdTime,webViewLink'
-  });
-  return file.data;
+  if (error) throw new Error('Storage upload failed: ' + error.message);
+  const r = await q(
+    `insert into options.documents (name, mime_type, size, storage_path, meta)
+     values ($1, $2, $3, $4, $5) returning *`,
+    [filename, mimeType, fileBuffer?.length ?? null, path, metadata || {}]);
+  return docOut(r.rows[0]);
 }
 
 export async function listDocuments() {
-  const drive = getDrive();
-  const folderId = await ensureDocFolder();
-  const res = await drive.files.list({
-    q: `'${folderId}' in parents and trashed=false`,
-    fields: 'files(id,name,mimeType,size,createdTime,webViewLink,description)',
-    orderBy: 'createdTime desc',
-    pageSize: 100
-  });
-  return res.data.files.map(f => {
-    let meta = {};
-    try { meta = JSON.parse(f.description || '{}'); } catch (e) {}
-    return { ...f, meta };
-  });
+  const r = await q('select * from options.documents order by created_at desc limit 100');
+  return r.rows.map(docOut);
 }
 
-export async function deleteDocument(fileId) {
-  const drive = getDrive();
-  await drive.files.delete({ fileId });
+export async function deleteDocument(fileId, userToken) {
+  const r = await q('select storage_path from options.documents where id = $1', [fileId]);
+  if (!r.rows[0]) return;
+  const sb = userClient(userToken);
+  const { error } = await sb.storage.from(DOC_BUCKET).remove([r.rows[0].storage_path]);
+  if (error) throw new Error('Storage delete failed: ' + error.message);
+  await q('delete from options.documents where id = $1', [fileId]);
 }
 
-export async function getDocumentUrl(fileId) {
-  const drive = getDrive();
-  // Make the file viewable by anyone with the link
-  await drive.permissions.create({
-    fileId,
-    requestBody: { role: 'reader', type: 'anyone' }
-  });
-  const file = await drive.files.get({
-    fileId,
-    fields: 'webViewLink,webContentLink'
-  });
-  return file.data;
-}
-
-// ================================================================
-//  GMAIL — TASTYTRADE EMAIL SCANNING
-// ================================================================
-function getGmail() {
-  return google.gmail({ version: 'v1', auth: authClient });
-}
-
-export async function scanTastyTradeEmails(maxResults = 50, afterDate = null) {
-  const gmail = getGmail();
-  
-  // Build search query for TastyTrade emails
-  let query = 'from:tastytrade.com subject:(order OR confirmation OR assigned OR exercised)';
-  if (afterDate) query += ` after:${afterDate}`;
-  
-  const res = await gmail.users.messages.list({
-    userId: 'me',
-    q: query,
-    maxResults
-  });
-
-  const messages = res.data.messages || [];
-  const parsed = [];
-
-  for (const msg of messages) {
-    const full = await gmail.users.messages.get({
-      userId: 'me',
-      id: msg.id,
-      format: 'full'
-    });
-
-    const headers = full.data.payload.headers;
-    const subject = headers.find(h => h.name === 'Subject')?.value || '';
-    const from = headers.find(h => h.name === 'From')?.value || '';
-    const date = headers.find(h => h.name === 'Date')?.value || '';
-    
-    // Get body text
-    let body = '';
-    if (full.data.payload.body?.data) {
-      body = Buffer.from(full.data.payload.body.data, 'base64').toString('utf-8');
-    } else if (full.data.payload.parts) {
-      const textPart = full.data.payload.parts.find(p => p.mimeType === 'text/plain');
-      if (textPart?.body?.data) {
-        body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
-      } else {
-        // Try HTML part and strip tags
-        const htmlPart = full.data.payload.parts.find(p => p.mimeType === 'text/html');
-        if (htmlPart?.body?.data) {
-          body = Buffer.from(htmlPart.body.data, 'base64').toString('utf-8')
-            .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
-        }
-      }
-    }
-
-    const result = parseTastyTradeEmail(subject, body, date, msg.id);
-    if (result) parsed.push(result);
-  }
-
-  return parsed;
-}
-
-function parseTastyTradeEmail(subject, body, date, messageId) {
-  const emailDate = new Date(date).toISOString();
-
-  // Type 1: Order fill confirmation
-  if (body.includes('Your order #') && body.includes('Fill Details')) {
-    return parseOrderFill(body, emailDate, messageId);
-  }
-
-  // Type 2: Assignment/Exercise
-  if (body.includes('exercised and/or been assigned') || body.includes('Assigned') || body.includes('Exercised')) {
-    return parseAssignment(body, emailDate, messageId);
-  }
-
-  // Type 3: Daily confirmation (future — return null for now)
-  return null;
-}
-
-function parseOrderFill(body, emailDate, messageId) {
-  const result = {
-    type: 'order_fill',
-    messageId,
-    emailDate,
-    orderId: '',
-    symbol: '',
-    orderType: '',
-    creditDebit: '',
-    amount: 0,
-    legs: [],
-    fillDate: ''
-  };
-
-  // Extract order number
-  const orderMatch = body.match(/order #(\d+)/i);
-  if (orderMatch) result.orderId = orderMatch[1];
-
-  // Extract symbol
-  const symbolMatch = body.match(/Symbol\s+(\w+)/);
-  if (symbolMatch) result.symbol = symbolMatch[1];
-
-  // Extract order type (Limit @ X.XX Credit/Debit)
-  const orderTypeMatch = body.match(/Order Type\s+(.*?)(?:\n|Fill)/s);
-  if (orderTypeMatch) {
-    result.orderType = orderTypeMatch[1].trim();
-    const amountMatch = result.orderType.match(/([\d.]+)\s+(Credit|Debit)/i);
-    if (amountMatch) {
-      result.amount = parseFloat(amountMatch[1]);
-      result.creditDebit = amountMatch[2].toLowerCase();
-    }
-  }
-
-  // Parse fill legs: "Sold/Bought QTY SYMBOL DATE Call/Put STRIKE @ PRICE"
-  const legPattern = /(Sold|Bought)\s+(\d+)\s+(\w+)\s+(\d{2}\/\d{2}\/\d{2})\s+(Call|Put)\s+([\d.]+)\s+@\s+([\d.]+)/gi;
-  let match;
-  const legMap = {};
-  while ((match = legPattern.exec(body)) !== null) {
-    const key = `${match[1]}_${match[3]}_${match[4]}_${match[5]}_${match[6]}`;
-    if (!legMap[key]) {
-      legMap[key] = {
-        action: match[1], // Sold or Bought
-        qty: parseInt(match[2]),
-        symbol: match[3],
-        expiry: match[4],
-        type: match[5], // Call or Put
-        strike: parseFloat(match[6]),
-        price: parseFloat(match[7])
-      };
-    }
-    // Duplicate fills (same leg listed twice) — keep first occurrence
-  }
-  result.legs = Object.values(legMap);
-
-  // Extract fill date from first leg
-  const fillDateMatch = body.match(/Filled at:\s+(.+?)(?:\n|$)/);
-  if (fillDateMatch) {
-    try { result.fillDate = new Date(fillDateMatch[1].trim()).toISOString(); } catch (e) {}
-  }
-
-  // Detect strategy from legs
-  result.strategy = detectStrategy(result.legs);
-
-  return result;
-}
-
-function parseAssignment(body, emailDate, messageId) {
-  const result = {
-    type: 'assignment',
-    messageId,
-    emailDate,
-    legs: [],
-    symbol: '',
-    strategy: 'Assignment/Exercise'
-  };
-
-  // Parse: "Assigned/Exercised QTY SYMBOL DATE STRIKE Calls/Puts"
-  const legPattern = /(Assigned|Exercised)\s+(\d+)\s+(\w+)\s+([\d-]+)\s+([\d.]+)\s+(Calls?|Puts?)/gi;
-  let match;
-  while ((match = legPattern.exec(body)) !== null) {
-    result.legs.push({
-      action: match[1],
-      qty: parseInt(match[2]),
-      symbol: match[3],
-      expiry: match[4],
-      strike: parseFloat(match[5]),
-      type: match[6].replace(/s$/, '') // "Calls" -> "Call"
-    });
-    if (!result.symbol) result.symbol = match[3];
-  }
-
-  return result;
-}
-
-function detectStrategy(legs) {
-  if (legs.length === 0) return 'Unknown';
-  
-  const sold = legs.filter(l => l.action === 'Sold');
-  const bought = legs.filter(l => l.action === 'Bought');
-  const allCalls = legs.every(l => l.type === 'Call');
-  const allPuts = legs.every(l => l.type === 'Put');
-  const hasCalls = legs.some(l => l.type === 'Call');
-  const hasPuts = legs.some(l => l.type === 'Put');
-  
-  // 2-leg structures
-  if (legs.length === 2) {
-    if (sold.length === 1 && bought.length === 1) {
-      if (allCalls) {
-        return sold[0].strike > bought[0].strike ? 'Bear Call Spread' : 'Bull Call Spread';
-      }
-      if (allPuts) {
-        return sold[0].strike < bought[0].strike ? 'Bull Put Spread' : 'Bear Put Spread';
-      }
-    }
-  }
-  
-  // 3-leg structures (butterfly family)
-  if (legs.length === 3 && (allCalls || allPuts)) {
-    const sortedStrikes = legs.map(l => l.strike).sort((a, b) => a - b);
-    const soldQty = sold.reduce((s, l) => s + l.qty, 0);
-    const boughtQty = bought.reduce((s, l) => s + l.qty, 0);
-    
-    if (soldQty === 2 && boughtQty === 2) {
-      // Check wing widths
-      const lowerWidth = sortedStrikes[1] - sortedStrikes[0];
-      const upperWidth = sortedStrikes[2] - sortedStrikes[1];
-      if (Math.abs(lowerWidth - upperWidth) < 0.5) return 'Standard Butterfly';
-      return 'Broken Wing Butterfly';
-    }
-  }
-  
-  // 4-leg structures
-  if (legs.length === 4 && hasCalls && hasPuts) {
-    const callLegs = legs.filter(l => l.type === 'Call');
-    const putLegs = legs.filter(l => l.type === 'Put');
-    if (callLegs.length === 2 && putLegs.length === 2) {
-      // Iron condor or iron butterfly
-      const callStrikes = callLegs.map(l => l.strike).sort((a, b) => a - b);
-      const putStrikes = putLegs.map(l => l.strike).sort((a, b) => a - b);
-      if (callStrikes[0] === putStrikes[1]) return 'Iron Butterfly';
-      return 'Iron Condor - Normal';
-    }
-  }
-  
-  // Fallback
-  if (legs.length === 4 && (allCalls || allPuts)) return 'Long Condor - Reversed';
-  return `${legs.length}-leg ${allCalls ? 'Call' : allPuts ? 'Put' : 'Mixed'} structure`;
+// Short-lived signed link instead of Drive's "anyone with the link" sharing.
+export async function getDocumentUrl(fileId, userToken) {
+  const r = await q('select storage_path from options.documents where id = $1', [fileId]);
+  if (!r.rows[0]) throw new Error('Document not found');
+  const sb = userClient(userToken);
+  const { data, error } = await sb.storage.from(DOC_BUCKET).createSignedUrl(r.rows[0].storage_path, 3600);
+  if (error) throw new Error('Could not create link: ' + error.message);
+  return { webViewLink: data.signedUrl, webContentLink: data.signedUrl };
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Image, File, Trash2, ExternalLink, X, Mail, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, FileText, Image, File, Trash2, ExternalLink, X, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 
@@ -15,11 +15,6 @@ export default function Documents({ authenticated }) {
   const [uploadForm, setUploadForm] = useState({ type: 'Confirmation', tradeDate: '', underlying: '', notes: '' });
   const [deleting, setDeleting] = useState(null);
   const [section, setSection] = useState('docs');
-  // Gmail state
-  const [scanning, setScanning] = useState(false);
-  const [emails, setEmails] = useState([]);
-  const [scanDays, setScanDays] = useState('7');
-  const [expandedEmail, setExpandedEmail] = useState(null);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -53,22 +48,9 @@ export default function Documents({ authenticated }) {
     try { const urls = await api.getDocumentUrl(fileId); if (urls.webViewLink) window.open(urls.webViewLink, '_blank'); } catch (err) { console.error(err); }
   }
 
-  async function handleScan() {
-    setScanning(true);
-    try {
-      const days = parseInt(scanDays) || 7;
-      const after = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
-      const result = await api.scanEmails(100, after);
-      setEmails(result.emails || []);
-    } catch (err) {
-      console.error('Scan failed:', err);
-      setEmails([]);
-    }
-    setScanning(false);
-  }
 
   if (!authenticated) {
-    return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Documents</h2><p className="text-text-muted">Connect Google to manage documents.</p></div>);
+    return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Documents</h2><p className="text-text-muted">Sign in to manage documents.</p></div>);
   }
 
   const filtered = filter === 'All' ? docs : docs.filter(d => d.meta?.type === filter);
@@ -96,16 +78,6 @@ export default function Documents({ authenticated }) {
           <p className="text-text-muted text-sm mt-0.5">{docs.length} document{docs.length !== 1 ? 's' : ''} stored</p>
         </div>
         <div className="flex gap-2">
-          <div className="flex border border-[#30363d] rounded-lg overflow-hidden">
-            <button onClick={() => setSection('docs')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${section === 'docs' ? 'bg-accent text-white' : 'text-[#a8b2be] hover:bg-[#161b22]'}`}>
-              <FileText size={12} /> Documents
-            </button>
-            <button onClick={() => setSection('gmail')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${section === 'gmail' ? 'bg-accent text-white' : 'text-[#a8b2be] hover:bg-[#161b22]'}`}>
-              <Mail size={12} /> Gmail scan
-            </button>
-          </div>
           {section === 'docs' && (
             <button onClick={() => setShowUpload(!showUpload)}
               className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors">
@@ -212,103 +184,6 @@ export default function Documents({ authenticated }) {
         </>
       )}
 
-      {/* ── GMAIL SCAN SECTION ── */}
-      {section === 'gmail' && (
-        <div>
-          <div className="card mb-4">
-            <h3 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
-              <Mail size={14} /> Scan TastyTrade Emails
-            </h3>
-            <p className="text-xs text-[#a8b2be] mb-3">
-              Scans your Gmail for TastyTrade order fills, assignments, and exercise notifications. Parses legs, strikes, and strategy automatically.
-            </p>
-            <div className="flex items-end gap-3">
-              <div>
-                <label className="text-[12.5px] text-[#c9d1d9] block mb-1">Scan last</label>
-                <select value={scanDays} onChange={e => setScanDays(e.target.value)}
-                  className="px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
-                  <option value="1">1 day</option>
-                  <option value="7">7 days</option>
-                  <option value="14">14 days</option>
-                  <option value="30">30 days</option>
-                  <option value="90">90 days</option>
-                </select>
-              </div>
-              <button onClick={handleScan} disabled={scanning}
-                className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
-                <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
-                {scanning ? 'Scanning...' : 'Scan inbox'}
-              </button>
-              {emails.length > 0 && <span className="text-xs text-[#a8b2be]">{emails.length} emails found</span>}
-            </div>
-          </div>
-
-          {/* Email results */}
-          {emails.length > 0 && (
-            <div className="space-y-2">
-              {emails.map((email, i) => {
-                const expanded = expandedEmail === i;
-                const typeBadge = email.type === 'order_fill' ? 'badge-green' : email.type === 'assignment' ? 'badge-amber' : 'badge-blue';
-                const typeLabel = email.type === 'order_fill' ? 'Order Fill' : email.type === 'assignment' ? 'Assignment' : email.type;
-                return (
-                  <div key={i} className="card cursor-pointer" onClick={() => setExpandedEmail(expanded ? null : i)}>
-                    <div className="flex items-center gap-3">
-                      <Mail size={16} className="text-[#a8b2be] flex-shrink-0" />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-white">{email.symbol}</span>
-                          <span className={`badge text-[11px] ${typeBadge}`}>{typeLabel}</span>
-                          {email.strategy && <span className="text-xs text-[#a8b2be]">{email.strategy}</span>}
-                          {email.orderId && <span className="text-[12px] text-[#8b949e]">#{email.orderId}</span>}
-                        </div>
-                        <div className="text-[12px] text-[#8b949e] mt-0.5">
-                          {fmtDate(email.emailDate || email.fillDate)}
-                          {email.creditDebit && ` — ${fmt$(email.amount)} ${email.creditDebit}`}
-                          {email.legs && ` — ${email.legs.length} leg${email.legs.length !== 1 ? 's' : ''}`}
-                        </div>
-                      </div>
-                      {expanded ? <ChevronUp size={14} className="text-[#8b949e]" /> : <ChevronDown size={14} className="text-[#8b949e]" />}
-                    </div>
-
-                    {expanded && (
-                      <div className="mt-3 pt-3 border-t border-[#21262d] fade-in">
-                        {email.orderType && (
-                          <div className="text-xs text-[#c9d1d9] mb-2">Order: {email.orderType}</div>
-                        )}
-                        <div className="space-y-1">
-                          {email.legs?.map((leg, j) => (
-                            <div key={j} className="flex items-center gap-3 py-1.5 px-3 rounded border border-[#21262d] text-sm">
-                              <span className={`text-[12px] font-semibold px-2 py-0.5 rounded ${leg.action === 'Sold' || leg.action === 'Assigned' ? 'bg-[#238636] text-white' : 'bg-[#0d1a2e] text-[#58a6ff]'}`}>
-                                {leg.action}
-                              </span>
-                              <span className="text-white font-medium">{leg.qty}x</span>
-                              <span className="text-[#c9d1d9]">{leg.symbol}</span>
-                              <span className="text-[#a8b2be]">{leg.expiry}</span>
-                              <span className="text-white">{leg.type} {leg.strike}</span>
-                              {leg.price !== undefined && <span className="mono text-[#c9d1d9] ml-auto">@ ${leg.price.toFixed(2)}</span>}
-                            </div>
-                          ))}
-                        </div>
-                        {email.strategy && (
-                          <div className="mt-2 text-xs text-[#a8b2be]">
-                            Detected strategy: <span className="text-white font-medium">{email.strategy}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {emails.length === 0 && !scanning && (
-            <div className="card py-12 text-center text-[#8b949e]">
-              Click "Scan inbox" to search for TastyTrade emails. Requires Gmail access permission.
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

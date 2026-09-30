@@ -5,9 +5,8 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  initAuth, getAuthUrl, handleAuthCallback, setTokens,
-  setOnTokensRefreshed, getCurrentTokens,
-  ensureSheetStructure, getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate, retagDecisionAccountsByDate,
+  ensureDatabase, verifyUser, publicAuthConfig,
+  getConfig, updateConfig, getAccounts, saveAccounts, backfillAccountColumn, retagAccountsByDate, retagDecisionAccountsByDate,
   appendTrades, getTrades, clearTrades,
   writeTradeTracker, getTradeTracker, getStrategyHistory, appendTradeTrackerRow,
   updateTradeTrackerRow, deleteTradeTrackerRow,
@@ -18,9 +17,8 @@ import {
   updateTrackerStrategy, updateTradesStrategy,
   closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
-  uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
-  scanTastyTradeEmails
-} from './sheets.js';
+  uploadDocument, listDocuments, deleteDocument, getDocumentUrl
+} from './db.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,150 +36,50 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../client/dist')));
 
 // ================================================================
-//  AUTH ROUTES
+//  AUTH — Supabase Auth (email + password), single-user allowlist
+//  (Sep 2026: replaces Google OAuth. Every /api route now requires a valid
+//  Supabase session whose email is in options.allowed_users.)
 // ================================================================
-const auth = initAuth({
-  clientId: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  redirectUri: process.env.GOOGLE_REDIRECT_URI
+
+// Public: the client needs the project URL + publishable key to sign in.
+// Both are designed to be public; access is enforced server-side and by RLS.
+app.get('/auth/config', (req, res) => {
+  res.json(publicAuthConfig());
 });
 
-// Persistent token store — saves to Config sheet so tokens survive restarts
-let storedTokens = null;
-
-// Whenever the google-auth library refreshes the access token, persist the
-// full token set (incl. refresh_token) to the Config sheet automatically.
-setOnTokensRefreshed(async (tokens) => {
-  storedTokens = tokens;
+async function requireAuth(req, res, next) {
   try {
-    await saveTokensToConfig(tokens);
-    console.log('[AUTH] Refreshed tokens persisted to Config sheet');
+    const h = req.headers.authorization || '';
+    const token = h.startsWith('Bearer ') ? h.slice(7) : '';
+    const email = await verifyUser(token);
+    if (!email) return res.status(401).json({ error: 'Not authenticated' });
+    req.userToken = token;
+    req.userEmail = email;
+    next();
   } catch (e) {
-    console.log('[AUTH] Could not persist refreshed tokens:', e.message);
-  }
-});
-
-// Try to load tokens from environment variable (set in Railway)
-if (process.env.GOOGLE_TOKENS) {
-  try {
-    storedTokens = JSON.parse(process.env.GOOGLE_TOKENS);
-    setTokens(storedTokens);
-    console.log('[AUTH] Loaded tokens from environment, refresh_token:', !!storedTokens.refresh_token);
-    // Verify connection and ensure sheet structure
-    ensureSheetStructure()
-      .then(() => console.log('[AUTH] Sheet connection verified'))
-      .catch(e => console.error('[AUTH] Sheet connection failed:', e.message));
-  } catch (e) {
-    console.log('[AUTH] Failed to parse GOOGLE_TOKENS env:', e.message);
+    res.status(500).json({ error: 'Auth check failed: ' + e.message });
   }
 }
 
-app.get('/auth/google', (req, res) => {
-  res.json({ url: getAuthUrl() });
+app.get('/auth/status', requireAuth, (req, res) => {
+  res.json({ authenticated: true, email: req.userEmail });
 });
 
-app.get('/auth/google/callback', async (req, res) => {
+// Startup: make sure the database is reachable and seeded, then rebuild the
+// TradeLog projection once (it is rebuilt on every log and close, but a deploy
+// that changed the projection would otherwise leave it stale).
+(async () => {
   try {
-    const tokens = await handleAuthCallback(req.query.code);
-    storedTokens = tokens;
-    console.log('[AUTH] Tokens received, refresh_token present:', !!tokens.refresh_token);
-    if (tokens.refresh_token) {
-      console.log('[AUTH] ===== COPY THE LINE BELOW INTO Railway env var GOOGLE_TOKENS (one-time) =====');
-      console.log(JSON.stringify(tokens));
-      console.log('[AUTH] ===== After setting GOOGLE_TOKENS you will not need to re-auth again. =====');
-    } else {
-      console.log('[AUTH] WARNING: no refresh_token in this grant. Revoke app access at myaccount.google.com/permissions, then re-auth so Google issues a fresh refresh_token.');
-    }
-    await ensureSheetStructure();
-    // Save tokens to Config sheet for persistence
+    await ensureDatabase();
+    console.log('[DB] Connected, options schema ready.');
     try {
-      await saveTokensToConfig(tokens);
-    } catch (e) {
-      console.log('[AUTH] Could not save tokens to config:', e.message);
-    }
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-    res.redirect(`${clientUrl}?auth=success`);
-  } catch (err) {
-    console.error('Auth error:', err);
-    res.redirect(`${process.env.CLIENT_URL || 'http://localhost:5173'}?auth=error`);
-  }
-});
-
-app.get('/auth/status', (req, res) => {
-  const cur = getCurrentTokens() || storedTokens;
-  res.json({
-    authenticated: !!storedTokens,
-    hasRefreshToken: !!(cur && cur.refresh_token),
-    sheetId: process.env.SPREADSHEET_ID || ''
-  });
-});
-
-// Auto-load tokens on startup. The refresh_token (in GOOGLE_TOKENS) is the
-// durable credential — the google-auth library uses it to mint fresh access
-// tokens automatically, so a single valid GOOGLE_TOKENS env var (containing a
-// refresh_token) is all that's needed and survives every restart.
-// The Config sheet copy is a secondary backup, only readable once we already
-// have working auth, so it can't be the primary bootstrap.
-async function loadTokensFromConfig() {
-  try {
-    if (storedTokens && storedTokens.refresh_token) {
-      console.log('[AUTH] Startup: using refresh_token from GOOGLE_TOKENS env (access tokens auto-refresh).');
-      // Verify we can actually reach the sheet; if the access token is stale the
-      // library refreshes it transparently on this first call.
-      try {
-        await ensureSheetStructure();
-        console.log('[AUTH] Startup: sheet reachable, auth healthy.');
-        // TradeLog is a materialised view of Decisions + Closes. It is rebuilt on
-        // every log and every close, but a tab that has just been created — or a
-        // deploy that changed the projection — leaves it empty or stale with no
-        // event to trigger. Rebuilding once at boot is what makes it self-healing.
-        // Best-effort: a failed projection must never stop the server coming up.
-        try {
-          const n = await rebuildTradeLog();
-          console.log('[TRADELOG] Startup: rebuilt', n, 'rows.');
-        } catch (e) { console.log('[TRADELOG] Startup rebuild failed:', e.message); }
-        // Opportunistically refresh the sheet backup copy.
-        try { await saveTokensToConfig(getCurrentTokens() || storedTokens); } catch (e) {}
-      } catch (e) {
-        console.log('[AUTH] Startup: sheet call failed —', e.message,
-          '\n[AUTH] If this is invalid_grant, the refresh_token was revoked; re-auth via /auth/google once and update GOOGLE_TOKENS.');
-      }
-      return;
-    }
-    if (storedTokens && !storedTokens.refresh_token) {
-      console.log('[AUTH] WARNING: GOOGLE_TOKENS has an access token but NO refresh_token. '
-        + 'It will stop working within ~1 hour. Re-auth via /auth/google (prompt=consent) and copy the FULL token blob (with refresh_token) into GOOGLE_TOKENS.');
-      return;
-    }
-    console.log('[AUTH] No GOOGLE_TOKENS env var set. Sign in via /auth/google, then copy the logged token blob into the Railway GOOGLE_TOKENS env var.');
+      const n = await rebuildTradeLog();
+      console.log('[TRADELOG] Startup: rebuilt', n, 'rows.');
+    } catch (e) { console.log('[TRADELOG] Startup rebuild failed:', e.message); }
   } catch (e) {
-    console.log('[AUTH] Token load failed:', e.message);
+    console.error('[DB] Startup check failed — is DATABASE_URL set correctly?', e.message);
   }
-}
-
-async function saveTokensToConfig(tokens) {
-  // DO NOT write tokens to the Config sheet.
-  // Storing a large JSON blob in Config corrupted the key/value layout and broke
-  // getAccounts(), and a refresh_token in a spreadsheet is a security liability.
-  // The refresh_token belongs ONLY in the Railway GOOGLE_TOKENS env var.
-  // This function is intentionally a no-op for the sheet; it only logs the blob
-  // so it can be copied into the env var once.
-  if (!tokens) return;
-  if (tokens.refresh_token) {
-    console.log('[AUTH] ===== COPY THE LINE BELOW INTO Railway env var GOOGLE_TOKENS (one-time) =====');
-    console.log(JSON.stringify(tokens));
-    console.log('[AUTH] ===== After setting GOOGLE_TOKENS you will not need to re-auth again. =====');
-  }
-}
-
-loadTokensFromConfig();
-
-// Middleware to check auth
-function requireAuth(req, res, next) {
-  if (!storedTokens) return res.status(401).json({ error: 'Not authenticated' });
-  setTokens(storedTokens);
-  next();
-}
+})();
 
 // ================================================================
 //  CONFIG
@@ -1120,7 +1018,7 @@ app.post('/api/documents', requireAuth, upload.single('file'), async (req, res) 
       notes: req.body.notes || '',
       uploadedAt: new Date().toISOString()
     };
-    const result = await uploadDocument(req.file.buffer, req.file.originalname, req.file.mimetype, meta);
+    const result = await uploadDocument(req.file.buffer, req.file.originalname, req.file.mimetype, meta, req.userToken);
     res.json({ ok: true, file: result });
   } catch (err) {
     console.error('Document upload error:', err);
@@ -1139,7 +1037,7 @@ app.get('/api/documents', requireAuth, async (req, res) => {
 
 app.delete('/api/documents/:fileId', requireAuth, async (req, res) => {
   try {
-    await deleteDocument(req.params.fileId);
+    await deleteDocument(req.params.fileId, req.userToken);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1148,24 +1046,9 @@ app.delete('/api/documents/:fileId', requireAuth, async (req, res) => {
 
 app.get('/api/documents/:fileId/url', requireAuth, async (req, res) => {
   try {
-    const urls = await getDocumentUrl(req.params.fileId);
+    const urls = await getDocumentUrl(req.params.fileId, req.userToken);
     res.json(urls);
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ================================================================
-//  GMAIL — TASTYTRADE EMAIL SCAN
-// ================================================================
-app.get('/api/gmail/scan', requireAuth, async (req, res) => {
-  try {
-    const maxResults = parseInt(req.query.max) || 50;
-    const afterDate = req.query.after || null;
-    const emails = await scanTastyTradeEmails(maxResults, afterDate);
-    res.json({ emails, count: emails.length });
-  } catch (err) {
-    console.error('Gmail scan error:', err);
     res.status(500).json({ error: err.message });
   }
 });

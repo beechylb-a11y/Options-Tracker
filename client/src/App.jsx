@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, TrendingUp, Shield, Library, FolderOpen, Settings, LogIn, FileBarChart } from 'lucide-react';
-import { api } from './utils/api';
+import { LayoutDashboard, ArrowLeftRight, Brain, BookOpen, TrendingUp, Shield, Library, FolderOpen, Settings, LogOut, FileBarChart } from 'lucide-react';
+import { api, setAccessToken, setOnUnauthorized, clearApiCache } from './utils/api';
+import { getSupabase } from './utils/supabase';
+import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
@@ -65,7 +67,8 @@ export default function App() {
   const [selectedAccount, setSelectedAccountState] = useState(savedAccount);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const [sheetId, setSheetId] = useState('');
+  const [userEmail, setUserEmail] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
 
   const setTab = id => {
     setTabState(id);
@@ -76,10 +79,37 @@ export default function App() {
     try { localStorage.setItem('ot_account', id); } catch (e) {}
   };
 
+  // Supabase session -> API token. The server re-checks every call against the
+  // allowlist, so a valid login that is not on it lands back here with a notice.
   useEffect(() => {
-    api.authStatus()
-      .then(d => { setAuthenticated(d.authenticated); setSheetId(d.sheetId || ''); setLoading(false); })
-      .catch(() => setLoading(false));
+    let sub = null;
+    let cancelled = false;
+    const apply = async (session) => {
+      if (cancelled) return;
+      setAccessToken(session?.access_token || null);
+      clearApiCache();
+      if (!session) { setAuthenticated(false); setUserEmail(''); setLoading(false); return; }
+      try {
+        const st = await api.authStatus();
+        setUserEmail(st.email || session.user?.email || '');
+        setAuthNotice('');
+        setAuthenticated(true);
+      } catch (e) {
+        setAuthenticated(false);
+        setAuthNotice(`${session.user?.email || 'This account'} is not allowed to use this app.`);
+        const sb = await getSupabase(); await sb.auth.signOut();
+      }
+      setLoading(false);
+    };
+    getSupabase().then(sb => {
+      sb.auth.getSession().then(({ data }) => apply(data.session));
+      sub = sb.auth.onAuthStateChange((event, session) => {
+        if (event === 'TOKEN_REFRESHED') { setAccessToken(session?.access_token || null); return; }
+        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') apply(session);
+      }).data.subscription;
+    }).catch(e => { setAuthNotice(e.message); setLoading(false); });
+    setOnUnauthorized(() => { setAuthenticated(false); });
+    return () => { cancelled = true; sub?.unsubscribe(); };
   }, []);
 
   useEffect(() => {
@@ -109,14 +139,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const handleLogin = async () => {
-    try {
-      const { url } = await api.authUrl();
-      window.location.href = url;
-    } catch (err) {
-      console.error('Login error:', err);
-    }
+  const handleLogout = async () => {
+    const sb = await getSupabase();
+    await sb.auth.signOut();
   };
+
 
   if (loading) {
     return (
@@ -128,6 +155,8 @@ export default function App() {
       </div>
     );
   }
+
+  if (!authenticated) return <Login notice={authNotice} />;
 
   return (
     <div className="min-h-screen flex">
@@ -166,20 +195,13 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-bg-border">
-          {authenticated ? (
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green" />
-              <span className="text-xs text-text-muted">Google connected</span>
-            </div>
-          ) : (
-            <button
-              onClick={handleLogin}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              <LogIn size={14} />
-              Connect Google
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green" />
+            <span className="text-xs text-text-muted truncate flex-1" title={userEmail}>{userEmail || 'Signed in'}</span>
+            <button onClick={handleLogout} title="Sign out" className="text-text-faint hover:text-text transition-colors">
+              <LogOut size={14} />
             </button>
-          )}
+          </div>
         </div>
       </aside>
 
@@ -191,7 +213,7 @@ export default function App() {
           accounts={accounts}
           onAccountChange={setSelectedAccount}
           onGlobalRefresh={() => setRefreshTick(t => t + 1)}
-          onLogin={handleLogin}
+          onLogin={handleLogout}
         />
         {/* refreshTick remounts the visible page so it refetches after a global
             refresh — except the Decision Engine, where a remount could disturb
@@ -207,7 +229,7 @@ export default function App() {
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}
-          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogin} accounts={accounts} onAccountsChange={setAccounts} sheetId={sheetId} />}
+          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogout} accounts={accounts} onAccountsChange={setAccounts} userEmail={userEmail} />}
         </div>
       </main>
     </div>

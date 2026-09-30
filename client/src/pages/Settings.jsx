@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { LogIn, Save, ExternalLink, Shield, Plus, Trash2, Edit3, X } from 'lucide-react';
+import { LogOut, Save, ExternalLink, Shield, Plus, Trash2, Edit3, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
 
-export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, sheetId }) {
+export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
   const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -115,27 +115,17 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6">
         <div className="flex items-center gap-3 mb-4">
           <Shield size={18} className="text-accent" />
-          <h3 className="font-display font-semibold">Google Connection</h3>
+          <h3 className="font-display font-semibold">Account & Data</h3>
         </div>
-        {authenticated ? (
-          <div className="flex items-center gap-3">
-            <div className="w-2.5 h-2.5 rounded-full bg-green" />
-            <span className="text-sm text-text">Connected to Google Sheets</span>
-            <a href={`https://docs.google.com/spreadsheets/d/${sheetId || ''}/edit`}
-              target="_blank" rel="noopener noreferrer"
-              className="ml-auto flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors">
-              <ExternalLink size={12} /> Open Sheet
-            </a>
-          </div>
-        ) : (
-          <div>
-            <p className="text-sm text-text-muted mb-3">Connect your Google account to sync with Google Sheets.</p>
-            <button onClick={onLogin}
-              className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors">
-              <LogIn size={14} /> Connect Google Account
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-green" />
+          <span className="text-sm text-text">Signed in as {userEmail || '—'}</span>
+          <button onClick={onLogin}
+            className="ml-auto flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors">
+            <LogOut size={12} /> Sign out
+          </button>
+        </div>
+        <p className="text-xs text-text-muted mt-3">Data is stored in Supabase (schema <span className="mono">options</span>). The old Google Sheet is a frozen archive and is no longer updated.</p>
       </div>
 
       {/* Accounts */}

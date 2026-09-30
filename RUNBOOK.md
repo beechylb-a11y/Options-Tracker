@@ -5,60 +5,21 @@ repo so it travels with the code and survives any one chat.
 
 ---
 
-## 1. Google re-auth (fixes a red Sheets dot)
+## 1. Sign-in and database (fixes a red DB dot)
 
-Open this URL directly in the browser. Sign in, accept, done — both status dots should
-go green within a few seconds.
+Data lives in Supabase — project **TBC App** (`dqyjdxlixzzxxxsqjxfq`), schema `options`.
+The Google Sheet is a frozen archive since the Sep 2026 cutover; nothing writes to it.
 
-```
-https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fspreadsheets%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.file%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&prompt=consent&response_type=code&client_id=553411988068-conv8041v4d3n2j69trk240u338q3kj7.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Foptions-tracker-production.up.railway.app%2Fauth%2Fgoogle%2Fcallback
-```
-
-**Do not** just open `/auth/google` — that route returns the URL as JSON rather than
-redirecting to it. If the link above ever goes stale (client id or redirect changes),
-regenerate it:
-
-```bash
-curl -s https://options-tracker-production.up.railway.app/auth/google | python3 -m json.tool
-```
-
-`access_type=offline` + `prompt=consent` are both required — without them Google
-returns an access token with no refresh token and the app breaks again within the hour.
-
-### Making it stick across restarts
-
-The callback only sets the token **in memory**. Railway's `GOOGLE_TOKENS` env var still
-holds the old blob, so a restart reverts to it. To make a re-auth permanent, take the
-line the callback logs:
-
-```
-[AUTH] ===== COPY THE LINE BELOW INTO Railway env var GOOGLE_TOKENS (one-time) =====
-```
-
-and paste it into Railway → Variables → `GOOGLE_TOKENS`.
-
-If Google issues a grant with **no** refresh token, revoke the app at
-<https://myaccount.google.com/permissions> first, then re-auth. Re-consenting without
-revoking returns only an access token and loops.
-
-### Diagnosis notes
-
-`/auth/status` reports what the server thinks it has:
-
-```bash
-curl -s https://options-tracker-production.up.railway.app/auth/status
-# {"authenticated":true,"hasRefreshToken":true,"sheetId":"..."}
-```
-
-**A working `/api/decisions` does NOT prove auth is healthy.** Seen in the wild
-(Aug 2026): `/auth/status` said authenticated with a refresh token, `/api/decisions`
-returned the full 77KB payload, and `/api/config`, `/api/accounts`, `/api/trades` and
-`/api/stats` all returned empty. It looked like a Config-tab problem and was not — the
-re-auth above fixed it. So if some sheet-backed routes work and others don't, re-auth
-first and investigate second.
-
-The Railway logs are the fastest real answer — every one of those handlers ends in
-`res.status(500).json({ error: err.message })`, so the cause is one line in the log.
+- **Can't sign in / "not allowed to use this app"** — login is Supabase Auth
+  (email + password, the same account as TBC App). Only emails in
+  `options.allowed_users` get past the API. Add one in the Supabase SQL editor:
+  `insert into options.allowed_users values ('you@example.com');`
+- **Red DB dot / 500s everywhere** — Railway logs show `[DB] Startup check failed`.
+  Check `DATABASE_URL` (session pooler string, user `options_app.dqyjdxlixzzxxxsqjxfq`).
+  Rotate the password with `alter role options_app password '...'` and update Railway.
+- **Railway env vars**: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
+  `CLIENT_URL`. All the old `GOOGLE_*` and `SPREADSHEET_ID` vars can be deleted.
+- `options_app` can only see the `options` schema — never the TBC tables. Keep it that way.
 
 ---
 
@@ -129,10 +90,11 @@ Railway redeploys client and server only.
 
 ---
 
-## 3. Config sheet
+## 3. Config table
 
-Sheet ID `1eTRcAb1lbGsehcMj8TiUu2mNMWO09RKubRBOa44MwEE`, tab `Config`, layout is
-`Setting | Value` in A1:B, keys from row 2 down.
+`options.config` (`key`, `value`, `sort_order`). Values can be simple formulas over
+other keys, evaluated on read — e.g. `maxDailyLoss = =currentBankroll*0.2`, carried
+over from the sheet's `=B2*0.2`.
 
 ### Account IDs are frozen — never re-create an account
 
@@ -155,21 +117,16 @@ Row shape:
 [{"id":"bank-mq1x6lg7","name":"TastyTrade","bankroll":3000,"startingBankroll":3000,"maxDailyLoss":300,"maxOpenRisk":450}, ...]
 ```
 
-Before retyping anything, try **File → Version history** — restoring the last good
-version brings back the real bankroll figures too.
+Fix it with `update options.config set value = '[...]' where key = 'accounts';`
+Supabase daily backups (Database → Backups) are the equivalent of version history,
+but a restore rolls back the whole TBC App project, so prefer a targeted update.
 
-### Tab names are exact and case-sensitive
+### Row numbers are load-bearing
 
-The server reads `Config!A:B`, `Trades!A:P`, `TradeTracker!...`, `Decisions!A:BA`. A
-rename, a trailing space or a lowercase letter gives a 400 and an empty response on that
-route only.
-
-### `googleTokens` row
-
-There is a leftover `googleTokens` key in Config. `saveTokensToConfig` is now a
-deliberate no-op for the sheet — a token blob in Config once corrupted the key/value
-layout and broke `getAccounts()`, and a refresh token does not belong in a spreadsheet.
-Safe to delete the row; the refresh token lives only in Railway's `GOOGLE_TOKENS`.
+Every data table has `row_no` = the old sheet row (header was row 1, data starts at 2).
+`closes.ticket_ref` points at `decisions.row_no`, and the UI's `rowIndex` is the same
+number. Never renumber `decisions`. Typed views for analysis: `options.decisions_v`,
+`options.trade_log_v`.
 
 ---
 

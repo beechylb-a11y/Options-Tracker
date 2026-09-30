@@ -113,7 +113,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
           </select>
         ) : !authenticated ? (
           <button onClick={onLogin} className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg transition-colors">
-            Connect Google
+            Sign in
           </button>
         ) : null}
 
@@ -152,7 +152,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
           {lastSynced ? `Synced ${clockFmt(lastSynced)}` : 'Not synced'}
         </button>
 
-        <StatusDot state={sheetsState} label="Sheets" title={sheetsState === 'ok' ? 'Google Sheets reachable' : sheetsState === 'off' ? 'Not connected' : 'Sheets fetch failed'} />
+        <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
         <StatusDot state={bridgeState} label="Bridge" title={bridgeTitle} />
       </div>
     </div>
