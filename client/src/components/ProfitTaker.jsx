@@ -85,6 +85,16 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         {' '}= <span style={{ color: '#3fb950', fontWeight: 700 }}>{pctStr(pnlPct(pos, price) ?? 0)}</span> on entry
         {' '}· <span style={{ color: '#3fb950' }}>{money(gross)}</span> on {q}
         {' '}<span style={{ color: net >= 0 ? '#3fb950' : '#f85149' }}>({money(net)} after comm)</span>
+        {/* Say where the commission comes from: a butterfly is 4 option contracts per
+            unit, charged on the way in AND out, so a 16-lot is 128 contracts. It is
+            easy to read $83 off a $256 target as a bug when it is the real cost. */}
+        {roundTrip(q) > 0 && (
+          <span style={{ color: '#8b949e' }}><br />
+            Comm −${roundTrip(q).toFixed(2)} = {q} × {perUnit} legs × 2 sides × ${Number(comm).toFixed(2)}
+            {gross > 0 && <> · <span style={{ color: roundTrip(q) / gross > 0.2 ? '#d29922' : '#8b949e' }}>{(roundTrip(q) / gross * 100).toFixed(0)}% of the profit</span></>}
+            {!pos.isCredit && <> · breakeven after comm: {(entry + roundTrip(1) / 100).toFixed(2)}</>}
+          </span>
+        )}
         {over && <span style={{ color: '#f85149' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
         <br />{twsLine(price)}
         {!is0 && !pos.isCredit && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
