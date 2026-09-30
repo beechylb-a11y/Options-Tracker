@@ -859,10 +859,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const confidence = r && r.tradeConfidence != null ? r.tradeConfidence : null;
   const confTier = r ? r.confidenceTier : '--';
   const isBlocked = !!(r && r.blockers && r.blockers.length);
+  // Tabs rank on the COMPOSITE (Sep 2026) — the same number and the same colour
+  // band as the banner — so the strip reads exactly like the tickets behind it.
+  // Confidence still travels for the tooltip.
   useEffect(() => {
     if (!sumRef.current) return;
-    sumRef.current({ confidence, tier: confTier, ready: confidence != null, blocked: isBlocked });
-  }, [confidence, confTier, isBlocked]);
+    sumRef.current({ confidence, tier: confTier, ready: confidence != null, blocked: isBlocked,
+      composite: compositeScore, grade: bannerGrade, bg: dcBg, border: dcBorder, color: dcColor });
+  }, [confidence, confTier, isBlocked, compositeScore, bannerGrade, dcBg, dcBorder, dcColor]);
 
   // ── When the value arrives ──────────────────────────────────────────────
   // A pin structure is a terminal-value trade: it converges on its payoff only as
@@ -1405,7 +1409,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const logTs = new Date().toISOString();
     const ncdNow = fv(inp, 'netCreditDebit');
     const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: ncdNow,
-      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '' });
+      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: is0 ? 'entry' : 'max' });
     const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
       ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
     const fullNotes = engineSummary + planBlock
@@ -2301,7 +2305,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {/* Profit target scale */}
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
             <ProfitTaker ncd={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} win={parseFloat(is0?i0.win:i45.win) || 0}
-              contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan} />
+              contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
+              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} />
           )}
 
           </InputSection>

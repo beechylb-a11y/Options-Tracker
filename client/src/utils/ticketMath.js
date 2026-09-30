@@ -22,17 +22,15 @@ export const MULT = 100;
 const num = v => { const n = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
 export const round2 = x => Math.round(x * 100) / 100;
 
-// Snap to a tradeable tick: 0.05 for index combos (SPX/XSP/RUT/NDX), 0.01 for ETF
-// options. A guide, not a rule — check the tick TWS enforces on the specific series.
-export function snap(price, tick = 0.05) {
+// Snap to a cent. Combos (the only way these tickets trade) price in $0.01 on
+// SPX/XSP as well as ETFs — a 0.64 fly fill proves it — so snapping index combos
+// to 0.05 turned a +50% target on 0.64 into 0.95 instead of 0.96 (Sep 2026).
+export function snap(price, tick = 0.01) {
   if (!isFinite(price)) return price;
   return round2(Math.round(price / tick) * tick);
 }
 
-export function defaultTick(underlying) {
-  const u = String(underlying || '').toUpperCase();
-  return (u === 'SPX' || u === 'SPXW' || u === 'XSP' || u === 'RUT' || u === 'NDX') ? 0.05 : 0.01;
-}
+export function defaultTick() { return 0.01; }
 
 // Normalise whatever the caller holds — a Journal decision row (sheet headers), an
 // OpenPositions row (camelCase), or the engine's live inputs — into one shape.
@@ -65,7 +63,32 @@ export function normalisePosition(src = {}) {
     isCredit: ncd != null ? ncd > 0 : null,
     maxProfitPerContract: maxProfitPos != null && qty ? maxProfitPos / qty : null,
     maxRiskPerContract: maxRiskPos != null && qty ? maxRiskPos / qty : null,
+    // What a "% target" is a percentage OF (Sep 2026):
+    //   'entry' — return on the premium: bought at 0.64, +50% = sell at 0.96. The
+    //             0DTE default, and exactly what a TWS % profit-taker preset does.
+    //   'max'   — % of max profit, the 45DTE convention (manage winners at 50%).
+    // For credit trades the two are the same number (max profit = the credit).
+    basis: src.basis || (/45/.test(String(g('engine', 'Engine'))) ? 'max' : 'entry'),
   };
+}
+
+// Base every % target is taken of, per share.
+export function targetBase(pos) {
+  return pos.basis === 'entry' ? Math.abs(pos.ncd || 0) : maxProfitPerShare(pos);
+}
+
+// Realised or prospective P&L as a % of the ENTRY premium, whatever the target
+// basis: bought 0.64, sold 0.96 = +50%; sold 3.40 cr, bought back 1.70 = +50%.
+export function pnlPct(pos, price) {
+  const e = Math.abs(pos.ncd || 0);
+  if (!e || !isFinite(price)) return null;
+  return ((pos.isCredit ? e - price : price - e) / e) * 100;
+}
+
+// Largest % target the structure can reach (debit fly: max profit / debit).
+export function maxTargetPct(pos) {
+  const base = targetBase(pos), mp = maxProfitPerShare(pos);
+  return base > 0 ? (mp / base) * 100 : null;
 }
 
 // Max profit per SHARE — the base every % target is taken of. Falls back to the
@@ -78,7 +101,7 @@ export function maxProfitPerShare(pos) {
 
 // % of max profit → closing limit (positive magnitude). Negative % = a loss exit.
 export function targetToPrice(pos, pct) {
-  const e = Math.abs(pos.ncd || 0), mp = maxProfitPerShare(pos);
+  const e = Math.abs(pos.ncd || 0), mp = targetBase(pos);
   const profit = mp * (pct / 100);
   return pos.isCredit ? e - profit : e + profit;
 }
@@ -93,7 +116,7 @@ export function stopToPrice(pos, lossPct) {
 
 // Closing limit → % of max profit (inverse of the above).
 export function priceToTarget(pos, price) {
-  const e = Math.abs(pos.ncd || 0), mp = maxProfitPerShare(pos);
+  const e = Math.abs(pos.ncd || 0), mp = targetBase(pos);
   if (!mp) return null;
   const profit = pos.isCredit ? e - price : price - e;
   return (profit / mp) * 100;
@@ -175,7 +198,7 @@ export function loadPlan(ts) {
 export function planText(pos, rows, stopPct) {
   const lines = rows.map((r, i) => {
     const p = targetToPrice(pos, r.pct);
-    return `  T${i + 1}: ${r.qty}x @ ${p.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (${r.pct}% max profit, +$${pnlAt(pos, p, r.qty).toFixed(0)})`;
+    return `  T${i + 1}: ${r.qty}x @ ${p.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (+${r.pct}% ${pos.basis === 'entry' ? 'on entry' : 'of max profit'}, +$${pnlAt(pos, p, r.qty).toFixed(0)})`;
   });
   if (stopPct) {
     const sp = stopToPrice(pos, stopPct);

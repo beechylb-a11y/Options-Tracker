@@ -90,12 +90,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     setSummaries(prev => {
       const old = prev[id];
       if (old && old.confidence === sum.confidence && old.ready === sum.ready
-        && old.blocked === sum.blocked && old.tier === sum.tier) return prev;
+        && old.blocked === sum.blocked && old.tier === sum.tier
+        && old.composite === sum.composite && old.grade === sum.grade) return prev;
       return { ...prev, [id]: sum };
     });
   }
 
-  // Tab order, best first.
+  // Tab order, best first, by composite score.
   //
   // Ranking only kicks in once EVERY ticket has a Trade Confidence — which is the
   // engine's own test for having the sizing inputs, so it is the same thing as "they
@@ -109,6 +110,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     return tabs.slice().sort((a, b) => {
       const sa = summaries[a.id], sb = summaries[b.id];
       if (!!sa.blocked !== !!sb.blocked) return sa.blocked ? 1 : -1;
+      // Composite, not Trade Confidence (Sep 2026): the composite is the headline
+      // number on every ticket and already folds in setup, Kelly, EV and POP, so
+      // ranking on anything else made the strip disagree with the banners.
+      if (sb.composite !== sa.composite) return sb.composite - sa.composite;
       if (sb.confidence !== sa.confidence) return sb.confidence - sa.confidence;
       return a.createdAt - b.createdAt;          // stable for ties
     });
@@ -734,12 +739,14 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                               style={{ background: '#da3633', color: '#fff' }}>
                               <DollarSign size={12} /> Sell / scale out
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'roll'); }}
+{/45/.test(dec.Engine || '') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'roll'); }}
                               title="Roll: close the old legs and open new ones as one combo"
                               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
                               style={{ border: '1px solid #9e6a03', color: '#d29922' }}>
                               Roll
                             </button>
+                            )}
                           </>)}
                           <button title={hasEntryPrice(dec) ? 'Quick close: type the close price and P&L by hand' : 'This ticket has no Net Debit/Credit, so close it by typing the P&L'}
                             onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' });
@@ -951,22 +958,29 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           const on = t.id === (activeTab && activeTab.id);
           const sum = summaries[t.id];
           const conf = sum && sum.ready ? sum.confidence : null;
-          const confClr = conf == null || sum.blocked ? '#8b949e'
-            : conf >= 70 ? '#3fb950' : conf >= 50 ? '#d29922' : conf >= 30 ? '#f0883e' : '#f85149';
+          const comp = sum && sum.composite != null ? sum.composite : null;
+          // The whole tab takes the banner's colour band for its composite
+          // (strong / decent / marginal / weak). Grey until the ticket is priced.
+          const tint = sum && sum.ready && sum.bg ? sum : null;
           return (
             <div key={t.id} data-testid="tab" data-tab-id={t.id} onClick={() => setActiveId(t.id)}
               title={(t.seed ? 'Seeded from multi-scan' : 'Manual ticket')
+                + (comp != null && tint ? ` \u00b7 Composite ${comp}/100` : '')
                 + (conf != null ? ` \u00b7 Trade Confidence ${conf}/100 ${sum.tier}` : '')
                 + (sum && sum.blocked ? ' \u00b7 blocked' : '')
                 + (rankable ? ` \u00b7 ranked #${i + 1}` : '')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+              style={tint ? {
+                background: tint.bg, borderColor: tint.border, color: '#e6edf3',
+                boxShadow: on ? `0 0 0 2px ${tint.color}` : 'none', opacity: on ? 1 : 0.85
+              } : undefined}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${tint ? '' : (on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover')}`}>
               {rankable && (
                 <span className="mono text-[11px] text-text-faint" style={{ minWidth: 12 }}>{i + 1}</span>
               )}
               <span className="font-medium">{t.label}</span>
-              {conf != null && (
-                <span className="mono text-[11px]" style={{ color: confClr, fontWeight: 700 }}>
-                  {sum.blocked ? '\u2298 ' : ''}{conf}
+              {tint && (
+                <span className="mono text-[11px]" style={{ color: tint.color, fontWeight: 700 }}>
+                  {sum.blocked ? '\u2298 ' : ''}{comp}
                 </span>
               )}
               <span className={`text-[11px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
@@ -980,7 +994,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           );
         })}
         {tabs.length > 1 && !rankable && (
-          <span className="text-[11px] text-text-faint" title="Trade Confidence needs the sizing inputs on every ticket before the tabs can be ordered">
+          <span className="text-[11px] text-text-faint" title="The composite needs the sizing inputs on every ticket before the tabs can be ordered">
             ranking once all priced
           </span>
         )}

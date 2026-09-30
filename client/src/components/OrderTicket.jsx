@@ -4,7 +4,7 @@ import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, feesFor, ibkrLines,
-  ladder, LADDER_PRESETS, rollSummary, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
+  ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
 } from '../utils/ticketMath';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 
@@ -42,7 +42,14 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const side = pos.isCredit ? 'db' : 'cr';                      // side the CLOSE prices on
   const isManual = MANUAL_ACCOUNT_PREFIXES.some(p => pos.account.toLowerCase().startsWith(p));
   const is45 = /45/.test(pos.engine);
-  const [tab, setTab] = useState(initialTab || 'close');
+  // 0DTE has nothing to roll into — the Roll tab exists only for 45DTE.
+  const [tab, setTab] = useState(is45 && initialTab === 'roll' ? 'roll' : 'close');
+  // Ladder presets per engine. 0DTE targets are % on entry (a fly can run +200%),
+  // 45DTE targets are % of max profit (manage winners at 50%).
+  const PRESETS = is45
+    ? { half: { label: 'Half @ 50, runner @ 75', pcts: [50, 75] }, all50: { label: 'All @ 50', pcts: [50] } }
+    : { all50: { label: 'All @ +50%', pcts: [50] }, thirds: { label: 'Thirds +25 / +50 / +100', pcts: [25, 50, 100] }, all100: { label: 'All @ +100%', pcts: [100] } };
+  const pctHead = pos.basis === 'entry' || pos.isCredit ? '% on entry' : '% of max';
   const [commission, setCommission] = useState(readCommission());
   const [closeDate, setCloseDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
@@ -56,7 +63,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const mkRow = (qty, pct) => ({ qty, pct, price: snap(targetToPrice(pos, pct), tick), status: 'Working', fill: '' });
   const [rows, setRows] = useState(() => {
     const saved = loadPlan(pos.timestamp);
-    const src = saved?.rows?.length ? saved.rows : ladder(pos.qtyOpen || 1, (is45 ? LADDER_PRESETS['45DTE'] : LADDER_PRESETS['0DTE']).pcts);
+    const src = saved?.rows?.length ? saved.rows : ladder(pos.qtyOpen || 1, is45 ? [50, 75] : [50]);
     // Trim the plan to what is still open. Contracts closed since the plan was
     // saved came off the FRONT of the ladder (the nearest targets fill first), so
     // skip that many from the front and keep the runners.
@@ -73,7 +80,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const setRow = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? { ...r, ...patch } : r));
   const onPct = (i, v) => { const pct = parseFloat(v); setRow(i, { pct: v, price: isFinite(pct) ? snap(targetToPrice(pos, pct), tick) : '' }); };
   const onPrice = (i, v) => { const p = parseFloat(v); const t = isFinite(p) ? priceToTarget(pos, p) : null; setRow(i, { price: v, pct: t != null ? round2(t) : '' }); };
-  const applyPreset = key => setRows(ladder(pos.qtyOpen || 1, LADDER_PRESETS[key].pcts).map(r => mkRow(r.qty, r.pct)));
+  const applyPreset = key => setRows(ladder(pos.qtyOpen || 1, PRESETS[key].pcts).map(r => mkRow(r.qty, r.pct)));
 
   const allocated = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
   const overAllocated = allocated > pos.qtyOpen;
@@ -82,6 +89,10 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - feesFor(q, pos.legs, commission) : 0; };
   const planNet = rows.reduce((a, r) => a + rowNet(r), 0);
   const filledNet = filled.reduce((a, r) => a + rowNet(r), 0);
+  // Quantity-weighted average fill of the tranches being recorded, as % on entry.
+  const filledQty = filled.reduce((a, r) => a + (Number(r.qty) || 0), 0);
+  const filledAvgPx = filledQty ? filled.reduce((a, r) => a + (Number(r.qty) || 0) * rowFill(r), 0) / filledQty : NaN;
+  const filledAvgPct = isFinite(filledAvgPx) ? pnlPct(pos, filledAvgPx) : null;
   const stopPrice = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
   // Vol snapshot + TWS fills, both best-effort, both started on open.
@@ -244,7 +255,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
 
         <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #21262d', marginBottom: 12 }}>
           <Tab id="close">Close · scale out</Tab>
-          <Tab id="roll">Roll{is45 ? ' · 45DTE' : ''}</Tab>
+          {is45 && <Tab id="roll">Roll · 45DTE</Tab>}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#a8b2be' }}>
             Comm / leg / ct
             <input type="number" step="0.01" value={commission} style={{ ...inp, width: 64 }}
@@ -255,7 +266,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
         {tab === 'close' && (<>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: '#8b949e' }}>Ladder:</span>
-            {Object.entries(LADDER_PRESETS).map(([k, p]) => (
+            {Object.entries(PRESETS).map(([k, p]) => (
               <button key={k} onClick={() => applyPreset(k)} style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', cursor: 'pointer' }}>{p.label}</button>
             ))}
             <button onClick={() => setRows(r => [...r, mkRow(Math.max(1, pos.qtyOpen - allocated), 50)])}
@@ -269,9 +280,9 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
             <thead>
               <tr style={{ color: '#8b949e', fontSize: 11.5, textAlign: 'left' }}>
                 <th style={{ padding: 4 }}>#</th><th style={{ padding: 4, width: 60 }}>Qty</th>
-                <th style={{ padding: 4, width: 80 }}>% max</th><th style={{ padding: 4, width: 92 }}>LMT {side}</th>
+                <th style={{ padding: 4, width: 80 }}>{pctHead}</th><th style={{ padding: 4, width: 92 }}>LMT {side}</th>
                 <th style={{ padding: 4 }}>Status</th><th style={{ padding: 4, width: 92 }}>Fill @</th>
-                <th style={{ padding: 4, textAlign: 'right' }}>Net P&L</th><th></th>
+                <th style={{ padding: 4, textAlign: 'right' }}>P&L</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -279,6 +290,11 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
                 const net = rowNet(r);
                 const p = parseFloat(r.price);
                 const ib = isFinite(p) && !noEntry ? ibkrLines(pos, p) : null;
+                // The price achieved (or targeted), as % profit/loss on what was
+                // paid/received — the number you actually judge an exit by.
+                const px = rowFill(r);
+                const rowPct = isFinite(px) && !noEntry ? pnlPct(pos, px) : null;
+                const isFilled = r.status === 'Filled';
                 return (
                   <React.Fragment key={i}>
                     <tr style={{ borderTop: '1px solid #21262d' }}>
@@ -297,7 +313,10 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
                         <input type="number" step={tick} disabled={r.status !== 'Filled'} value={r.status === 'Filled' ? r.fill : ''}
                           placeholder="—" onChange={e => setRow(i, { fill: e.target.value })} style={{ ...inp, opacity: r.status === 'Filled' ? 1 : 0.4 }} />
                       </td>
-                      <td className="mono" style={{ padding: 4, textAlign: 'right', fontWeight: 700, color: pnlColor(net) }}>{fmt$(net)}</td>
+                      <td className="mono" style={{ padding: 4, textAlign: 'right', lineHeight: 1.25 }}>
+                        {rowPct != null && <div style={{ fontWeight: 700, fontSize: 14, color: pnlColor(rowPct) }}>{rowPct >= 0 ? '+' : '−'}{Math.abs(rowPct).toFixed(0)}%</div>}
+                        <div style={{ fontSize: 12, color: pnlColor(net) }}>{fmt$(net)}</div>
+                      </td>
                       <td style={{ padding: 4 }}>
                         <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} title="Remove tranche"
                           style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}>×</button>
@@ -305,7 +324,9 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
                     </tr>
                     {ib && (
                       <tr><td></td><td colSpan={7} className="mono" style={{ padding: '0 4px 6px', fontSize: 11.5, color: '#8b949e' }}>
-                        <span title={`${OFFSET_TIP}\n\nThis row: offset ${ib.offset >= 0 ? '+' : ''}${ib.offset.toFixed(2)} = ${ib.offsetPctOfEntry != null ? ib.offsetPctOfEntry.toFixed(0) : '—'}% of entry.`} style={{ cursor: 'help' }}>IBKR: {ib.buyConv}</span>{pos.isCredit ? ` · or ${ib.sellConv}` : ''}
+                        {isFilled
+                          ? <>Achieved {px.toFixed(2)} {side} = <b style={{ color: pnlColor(rowPct) }}>{rowPct >= 0 ? '+' : '−'}{Math.abs(rowPct).toFixed(0)}%</b> on entry {Math.abs(pos.ncd).toFixed(2)}</>
+                          : <span title={OFFSET_TIP} style={{ cursor: 'help' }}>TWS: {pos.isCredit ? 'BUY' : 'SELL'} LMT {p.toFixed(2)} · offset {(pos.isCredit ? Math.abs(pos.ncd) - p : p - Math.abs(pos.ncd)).toFixed(2)}</span>}
                       </td></tr>
                     )}
                   </React.Fragment>
@@ -320,7 +341,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
               <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? 'e.g. 100' : 'e.g. 50'} title={pos.isCredit ? '100 = buy back at 2x the credit' : '50 = sell at half what you paid'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
-              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - feesFor(pos.qtyOpen, pos.legs, commission))} on {pos.qtyOpen}</> : 'No stop set'}
+              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - feesFor(pos.qtyOpen, pos.legs, commission))} on {pos.qtyOpen}</> : 'No stop set'}
             </div>
             <div>
               <label style={lbl}>Close date</label>
@@ -331,7 +352,8 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
           <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: '#0d1117', border: `1px solid ${overAllocated ? '#da3633' : '#21262d'}`, display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13 }}>
             <span>Allocated <b className="mono" style={{ color: overAllocated ? '#f85149' : '#e6edf3' }}>{allocated} / {pos.qtyOpen}</b></span>
             <span>If all fill <b className="mono" style={{ color: pnlColor(planNet) }}>{fmt$(planNet)}</b></span>
-            <span>Recording now <b className="mono" style={{ color: pnlColor(filledNet) }}>{filled.length} tranche{filled.length !== 1 ? 's' : ''} · {fmt$(filledNet)}</b></span>
+            <span>Recording now <b className="mono" style={{ color: pnlColor(filledNet) }}>{filled.length} tranche{filled.length !== 1 ? 's' : ''} · {fmt$(filledNet)}</b>
+              {filledAvgPct != null && <b className="mono" style={{ color: pnlColor(filledAvgPct) }}> ({filledAvgPct >= 0 ? '+' : '−'}{Math.abs(filledAvgPct).toFixed(0)}% avg)</b>}</span>
             {overAllocated && <span style={{ color: '#f85149' }}>More contracts than are open.</span>}
           </div>
 

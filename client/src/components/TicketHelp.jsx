@@ -5,11 +5,10 @@ import React, { useState } from 'react';
 // concrete — every term is explained with the numbers it produces on the ticket.
 
 export const OFFSET_TIP =
-  'TWS offset = profit-taker limit − your entry limit, in IBKR\'s signed combo price ' +
-  '(debit +, credit −). When you attach a profit taker in TWS, it pre-fills the child ' +
-  'order at parent price + a default offset from your order preset. If the child price ' +
-  'TWS shows differs from this ticket, your preset offset is the thing to fix. A preset ' +
-  'set as a % is taken of the PARENT PRICE, not of max profit, so it needs the % shown here.';
+  'Offset = the profit per share you are asking for: target price minus entry price ' +
+  '(entry minus target for a credit). It is the number to type into a TWS profit taker ' +
+  'set by amount. A TWS profit taker set by PERCENTAGE takes that % of the entry price — ' +
+  'so on a 0DTE ticket (targets are % on entry) the two are the same number.';
 
 const H = ({ children }) => <div style={{ fontSize: 12.5, fontWeight: 700, color: '#e6edf3', marginTop: 10, marginBottom: 3 }}>{children}</div>;
 const P = ({ children }) => <div style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.55, marginBottom: 4 }}>{children}</div>;
@@ -18,43 +17,36 @@ const M = ({ children }) => <span className="mono" style={{ color: '#c9d1d9' }}>
 function BuyHelp() {
   return (<>
     <H>What this is</H>
-    <P>The check to do before you transmit in TWS: where your profit taker(s) should sit, what each one makes after commission, and whether TWS will put them there.</P>
-    <H>% max</H>
-    <P>Target as a percentage of the trade's <b>max profit</b> (the engine's Win). 50% on a fly with $350 max profit means close when you're up $175. For credit spreads max profit ≈ the credit, so 50% ≈ buy back at half the credit.</P>
-    <H>LMT</H>
-    <P>The closing limit price for that target. Type either the % or the price; the other follows. Prices snap to 0.05 for SPX/XSP, 0.01 for ETFs.</P>
-    <H>The IBKR line</H>
-    <P>How the order looks in TWS. A combo you <b>buy</b> has a signed price — a debit is positive (<M>BUY @ 1.50</M>), a credit is negative (<M>BUY @ −3.40</M>). The profit taker is always the opposite side (<M>SELL LMT</M>) at <M>entry + profit</M>. Credit trades also show the other way of entering it (<M>SELL combo @ 3.40 cr → BUY LMT @ 1.70 db</M>).</P>
-    <H>TWS offset</H>
-    <P>The gap between the profit-taker price and the entry price. It's the number to check against what TWS pre-fills when you attach a profit taker. Example, SPY fly bought at 0.28 debit, target 0.61: offset +0.33.</P>
-    <P>If your TWS preset sets the offset as a <b>percentage</b>, TWS takes it of the <b>entry price</b>, not of max profit. +0.33 on a 0.28 entry is <b>118%</b> — so a "20%" preset would put the profit taker at 0.34, nowhere near the 20%-of-max target. The amber warning appears whenever those two numbers differ by more than 10 points. Credit spreads rarely trigger it; debit flies nearly always do. Check your preset once to confirm it's %-of-parent.</P>
-    <H>Ladder</H>
-    <P>For more than one contract: a separate target per tranche (e.g. 1 @ 25%, 1 @ 50%, 1 @ 75%). TWS attaches only one profit taker per order, so enter the others as separate closing limits after the fill.</P>
-    <H>Stop loss</H>
-    <P>Loss as a % of the <b>entry price</b>. Credit: 100 = buy back at 2× the credit. Debit: 50 = sell for half what you paid.</P>
+    <P>The profit taker to attach in TWS before you transmit: the price, what it makes, and what to type.</P>
+    <H>Contracts</H>
+    <P>The engine's Kelly size. Change contracts on the engine and the ticket follows.</P>
+    <H>Target — 0DTE</H>
+    <P>A % <b>return on entry</b>. Bought at 0.64 debit: +50% = sell at <M>0.96</M>, +100% = <M>1.28</M>. For a credit, +50% = buy back at half the credit. The header shows the most the structure can make as a % (a fly might top out at +500%); targets beyond that can't fill.</P>
+    <H>Target — 45DTE</H>
+    <P>A % of <b>max profit</b>, the usual "manage winners at 50%". For credit trades that's the same as % on entry. For a debit structure it isn't, and the ticket spells out the on-entry equivalent.</P>
+    <H>TWS line</H>
+    <P>The closing order (<M>SELL LMT 0.96</M>), the <b>offset</b> — profit per share, entry to target (+0.32) — and the % to use if your TWS profit-taker preset is set as a percentage. TWS takes that % of the entry price, so for 0DTE it is simply your target %.</P>
+    <H>Scale out in tranches</H>
+    <P>Optional, for more than one contract: a separate target per tranche. TWS attaches one profit taker per order, so enter the others as separate closing limits after the fill.</P>
+    <H>Stop</H>
+    <P>Loss as a % of entry. Debit: 50 = sell at half what you paid. Credit: 100 = buy back at 2× the credit.</P>
     <H>Commission</H>
-    <P>Per leg, per contract, one way. Net figures take off a round trip (open + close). A butterfly counts its doubled body leg twice.</P>
-    <H>What happens on Log trade</H>
-    <P>The plan is written into the trade notes, and the Sell ticket for this position opens with the same tranches already filled in (on this browser).</P>
+    <P>Per leg, per contract, one way. "After comm" takes off a round trip; a butterfly's doubled body counts twice.</P>
   </>);
 }
 
 function SellHelp() {
   return (<>
     <H>What this is</H>
-    <P>Records exits from a position you already hold — one row per tranche — so a scale-out keeps every fill instead of one blended number.</P>
+    <P>Records exits from a position you hold, one row per tranche, so scaling out keeps every fill.</P>
     <H>Tranche rows</H>
-    <P><b>Qty</b> contracts to close at <b>% max</b> (of max profit) or <b>LMT</b> (the closing price — credit for debit trades, debit for credit trades; the header says which). The IBKR line under each row is the order as TWS writes it.</P>
+    <P><b>Qty</b> to close at a <b>target %</b> (0DTE: % on entry; 45DTE: % of max profit) or a <b>LMT</b> price — type either. The <b>P&amp;L</b> column shows the result as <b>% on entry</b> and dollars after commission.</P>
     <H>Working → Filled</H>
-    <P>Rows start as <b>Working</b> (your plan). When one fills in TWS, click it to <b>Filled</b> and enter the actual fill price. Only Filled rows are recorded; Working rows are kept as the plan for next time you open this ticket.</P>
+    <P>Rows start as <b>Working</b>. When one fills in TWS, click it to <b>Filled</b> and enter the fill price; the row then shows the price achieved as % profit/loss on entry. Only Filled rows are recorded; Working rows stay as the plan.</P>
     <H>Record</H>
-    <P>Each filled tranche is written as its own row in the Closes tab with its P&amp;L net of commission. The position stays <b>Partial</b> until the last contract is out; Banked shows what's already been taken.</P>
-    <H>Save plan</H>
-    <P>Keeps the Working rows without recording anything — use it after setting orders in TWS.</P>
-    <H>Stop</H>
-    <P>Loss as % of entry price (credit 100 = buy back at 2× credit; debit 50 = sell at half the debit). Shown for reference; not recorded unless you fill it as a tranche.</P>
-    <H>Roll (45DTE)</H>
-    <P>One combo in TWS, two records here. Enter the contracts, what closing the old legs costs, and what the new legs open at, then change only the strikes that move. The old ticket banks its P&amp;L on the rolled contracts; the new legs are logged as a new ticket linked back to it. <b>Net roll</b> is the combo price TWS shows; <b>cumulative basis</b> is your running credit (or debit) across every roll.</P>
+    <P>Each filled tranche becomes its own row in the Closes tab. The position stays <b>Partial</b> until the last contract is out; <b>Banked</b> shows what's already taken.</P>
+    <H>Roll (45DTE only)</H>
+    <P>One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, the new legs open as a new linked ticket. <b>Net roll</b> is the combo price; <b>cumulative basis</b> is your running credit (or debit) across rolls.</P>
   </>);
 }
 

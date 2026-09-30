@@ -1,87 +1,95 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines, ladder,
-  LADDER_PRESETS, snap, defaultTick, round2, stopToPrice
+  normalisePosition, targetToPrice, priceToTarget, pnlAt, ladder, snap, defaultTick,
+  round2, stopToPrice, maxTargetPct, pnlPct
 } from '../utils/ticketMath';
-import TicketHelp, { OFFSET_TIP } from './TicketHelp';
+import TicketHelp from './TicketHelp';
 
-// BUY ticket — the IBKR "Attach ▸ Profit Taker" check, done before you click
-// Transmit. Replaces the old ProfitScale tile row.
+// BUY ticket — the profit taker to attach in TWS before you transmit.
 //
-// Single   one profit taker for the whole position (what TWS attaches by default).
-// Ladder   one profit taker per tranche, for scaling out of a multi-contract buy.
-//          TWS attaches ONE child per parent, so a ladder is entered in TWS as
-//          separate closing limits after the fill; this lists each one.
+// Sep 2026 rework, after using it on a 0DTE fly:
+//   * Contracts are the engine's Kelly size, stated as such.
+//   * ONE target by default. Scaling out in tranches is an option, not the layout.
+//   * 0DTE targets are % RETURN ON ENTRY: bought at 0.64, +50% = sell at 0.96. That
+//     is how 0DTE P&L is thought about, and it is exactly what a TWS percentage
+//     profit-taker preset computes, so the two can never disagree.
+//   * 45DTE targets stay % of MAX PROFIT (manage winners at 50%). For credit trades
+//     that is the same number as % on entry; only debit structures differ, and the
+//     ticket says so in plain words instead of an "offset = 130% of entry" line.
 //
-// Every row shows the price in both combo conventions and the OFFSET, i.e. the
-// number to compare with what TWS pre-fills in the attached order. If your TWS
-// preset uses a percentage offset, it is a % of the PARENT price — so the ticket
-// also shows the offset as % of entry, which for a debit fly is nowhere near the
-// % of max profit you think you are asking for.
-//
-// props: ncd (per-share, + credit / − debit), win (max profit $ per contract),
-//        contracts, underlying, legs (engine legs [{label, strike}]), onPlan(plan)
+// props: ncd (per-share, + credit / − debit), win (max profit $/contract),
+//        contracts (Kelly), underlying, legs, engine ('0DTE'|'45DTE'), onPlan(plan)
 const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d', background: '#0d1117',
   color: '#e6edf3', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%' };
 
-// Contracts per leg, counting "x2" bodies — a BWB is 4 contracts per unit, not 3.
+// Contracts per unit, counting "x2" bodies — a butterfly is 4 contracts, not 3.
 function contractsPerUnit(legs) {
   if (!Array.isArray(legs) || !legs.length) return 1;
   return legs.reduce((a, l) => a + (/x2\b/i.test(l.label || '') ? 2 : 1), 0);
 }
+const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
+const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
-export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan }) {
+export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE' }) {
+  const is0 = !/45/.test(engine);
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
-    qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying
-  }), [ncd, win, qty, underlying]);
+    qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying,
+    basis: is0 ? 'entry' : 'max'
+  }), [ncd, win, qty, underlying, is0]);
   const tick = defaultTick(underlying);
   const perUnit = contractsPerUnit(legs);
   const [comm, setComm] = useState(() => { try { const v = parseFloat(localStorage.getItem('commissionPerLeg')); return isFinite(v) ? v : 0.65; } catch (e) { return 0.65; } });
   const roundTrip = q => round2(q * perUnit * (Number(comm) || 0) * 2);
 
-  const [mode, setMode] = useState(qty > 1 ? 'ladder' : 'single');
-  const [single, setSingle] = useState({ pct: 50, price: '' });
-  const [rows, setRows] = useState(() => ladder(qty, LADDER_PRESETS['0DTE'].pcts));
-  const [stopPct, setStopPct] = useState('');
+  const entry = Math.abs(pos.ncd || 0);
+  const capPct = maxTargetPct(pos);            // e.g. 517% for a 0.64 fly with 3.31 max
+  const chips = is0 ? (pos.isCredit ? [25, 50, 75] : [25, 50, 75, 100, 150, 200]) : [25, 50, 75];
 
-  // Contracts change on the engine → re-split the ladder, keep the targets.
-  useEffect(() => {
-    setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 75]));
-    if (qty > 1 && mode === 'single') setMode('ladder');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty]);
+  const [target, setTarget] = useState({ pct: 50, price: '' });
+  const [split, setSplit] = useState(false);
+  const [rows, setRows] = useState(() => ladder(qty, [25, 50, 100]));
+  const [stopPct, setStopPct] = useState('');
+  useEffect(() => { setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 100])); }, [qty]);
 
   const priceOf = pct => snap(targetToPrice(pos, Number(pct) || 0), tick);
-  const effRows = mode === 'single' ? [{ qty, pct: single.pct }] : rows;
+  const tPrice = target.price !== '' && isFinite(parseFloat(target.price)) ? parseFloat(target.price) : priceOf(target.pct);
+  const effRows = split ? rows : [{ qty, pct: Number(target.pct) || 0 }];
   const stop = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
-  // Hand the plan up so Log trade can write it into the notes and save it for the
-  // SELL ticket to open with.
   useEffect(() => {
     onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(effRows), stopPct]);
 
-  const side = pos.isCredit ? 'debit' : 'credit';
+  const closeSide = pos.isCredit ? 'db' : 'cr';
+  const basisWord = is0 || pos.isCredit ? 'on entry' : 'of max profit';
   const allocated = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
 
-  const Line = ({ label, q, pct, price }) => {
-    const ib = ibkrLines(pos, price);
-    const gross = pnlAt(pos, price, q);
-    const net = gross - roundTrip(q);
-    const pctOfEntry = ib.offsetPctOfEntry;
+  // What to type in TWS for a given closing price — in words, one line.
+  const twsLine = price => {
+    const onEntry = pnlPct(pos, price);
+    const off = pos.isCredit ? entry - price : price - entry;   // profit per share = the TWS offset
+    const pre = `TWS: ${pos.isCredit ? 'BUY' : 'SELL'} LMT ${price.toFixed(2)}`
+      + ` · profit-taker offset ${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(2)}`;
+    if (onEntry == null) return pre;
+    return pre + ` · as a TWS % preset: ${onEntry.toFixed(0)}%`;
+  };
+
+  const Result = ({ q, pct, price }) => {
+    const gross = pnlAt(pos, price, q), net = gross - roundTrip(q);
+    const over = capPct != null && Number(pct) > capPct + 0.5;
     return (
-      <div className="mono" style={{ fontSize: 12, color: '#a8b2be', lineHeight: 1.6, padding: '4px 0 6px' }}>
-        <span style={{ color: '#c9d1d9' }}>{label}</span>{' '}
-        <span style={{ color: '#3fb950', fontWeight: 700 }}>+${gross.toFixed(0)}</span>
-        <span> gross · </span>
-        <span style={{ color: net >= 0 ? '#3fb950' : '#f85149' }}>{net >= 0 ? '+' : '−'}${Math.abs(net).toFixed(0)} net</span>
-        <span> of {q} ({pct}% max)</span><br />
-        {ib.buyConv}{pos.isCredit && <>&nbsp;&nbsp;·&nbsp;&nbsp;{ib.sellConv}</>}<br />
-        <span title={OFFSET_TIP} style={{ borderBottom: '1px dotted #8b949e', cursor: 'help' }}>TWS offset</span> <b style={{ color: '#e6edf3' }}>{ib.offset >= 0 ? '+' : ''}{ib.offset.toFixed(2)}</b>
-        {pctOfEntry != null && <> = <b style={{ color: Math.abs(pctOfEntry - pct) > 10 ? '#d29922' : '#e6edf3' }}>{pctOfEntry.toFixed(0)}%</b> of entry price</>}
-        {pctOfEntry != null && Math.abs(pctOfEntry - pct) > 10 && <span style={{ color: '#d29922' }}> — a % preset would need {pctOfEntry.toFixed(0)}%, not {pct}%</span>}
+      <div className="mono" style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.65, padding: '4px 0 6px' }}>
+        <span style={{ color: '#e6edf3', fontWeight: 700 }}>{closeSide === 'cr' ? 'Sell' : 'Buy back'} @ {price.toFixed(2)}</span>
+        {' '}= <span style={{ color: '#3fb950', fontWeight: 700 }}>{pctStr(pnlPct(pos, price) ?? 0)}</span> on entry
+        {' '}· <span style={{ color: '#3fb950' }}>{money(gross)}</span> on {q}
+        {' '}<span style={{ color: net >= 0 ? '#3fb950' : '#f85149' }}>({money(net)} after comm)</span>
+        {over && <span style={{ color: '#f85149' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
+        <br />{twsLine(price)}
+        {!is0 && !pos.isCredit && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
+          <span style={{ color: '#d29922' }}><br />45DTE targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
+        )}
       </div>
     );
   };
@@ -94,78 +102,75 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         <span style={{ background: '#0d2818', color: '#3fb950', borderRadius: 4, padding: '1px 7px', fontSize: 12, fontWeight: 700 }}>BUY</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>Profit taker</span>
-        <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>
-          entry {Math.abs(pos.ncd || 0).toFixed(2)} {pos.isCredit ? 'cr' : 'db'} · max {win > 0 ? `$${win.toFixed(0)}` : `$${(Math.abs(pos.ncd || 0) * 100).toFixed(0)}*`}/ct · closes for a {side}
+        <span className="mono" style={{ fontSize: 12.5, color: '#c9d1d9' }}>
+          {qty} ct <span style={{ color: '#8b949e' }}>(Kelly)</span> @ {entry.toFixed(2)} {pos.isCredit ? 'cr' : 'db'}
         </span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-          <button style={btn(mode === 'single')} onClick={() => setMode('single')}>Single</button>
-          <button style={btn(mode === 'ladder')} onClick={() => setMode('ladder')}>Ladder ({qty})</button>
+        <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>
+          · max {win > 0 ? `$${win.toFixed(0)}/ct` : '—'}{capPct != null && win > 0 ? ` = ${pctStr(capPct)} ${basisWord}` : ''}
         </span>
       </div>
 
-      {mode === 'single' ? (<>
+      {!split ? (<>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          {[25, 30, 40, 50, 75, 100].map(p => (
-            <button key={p} onClick={() => setSingle({ pct: p, price: '' })} style={btn(Number(single.pct) === p)}>{p}%</button>
+          <span style={{ fontSize: 12, color: '#8b949e', marginRight: 2 }}>Target {basisWord}</span>
+          {chips.map(p => (
+            <button key={p} onClick={() => setTarget({ pct: p, price: '' })} style={btn(Number(target.pct) === p && target.price === '')}>+{p}%</button>
           ))}
-          <span style={{ fontSize: 12, color: '#8b949e', marginLeft: 8 }}>or</span>
-          <input type="number" step="5" value={single.pct} style={{ ...cell, width: 70 }}
-            onChange={e => setSingle({ pct: e.target.value, price: '' })} title="% of max profit" />
+          <input type="number" step="5" value={target.pct} style={{ ...cell, width: 64, marginLeft: 6 }} title={`% ${basisWord}`}
+            onChange={e => setTarget({ pct: e.target.value, price: '' })} />
           <span style={{ fontSize: 12, color: '#8b949e' }}>% ⇄ LMT</span>
-          <input type="number" step={tick} style={{ ...cell, width: 84 }}
-            value={single.price !== '' ? single.price : priceOf(single.pct)}
-            onChange={e => { const p = parseFloat(e.target.value); const t = isFinite(p) ? priceToTarget(pos, p) : null; setSingle({ price: e.target.value, pct: t != null ? round2(t) : '' }); }} />
+          <input type="number" step={tick} style={{ ...cell, width: 80 }} value={target.price !== '' ? target.price : priceOf(target.pct)}
+            onChange={e => { const p = parseFloat(e.target.value); const t = isFinite(p) ? priceToTarget(pos, p) : null; setTarget({ price: e.target.value, pct: t != null ? round2(t) : '' }); }} />
         </div>
-        <Line label="PT" q={qty} pct={Number(single.pct) || 0} price={single.price !== '' && isFinite(parseFloat(single.price)) ? parseFloat(single.price) : priceOf(single.pct)} />
+        <Result q={qty} pct={Number(target.pct) || 0} price={tPrice} />
       </>) : (<>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
-          {Object.entries(LADDER_PRESETS).filter(([k]) => k !== 'single50').map(([k, p]) => (
-            <button key={k} style={btn(false)} onClick={() => setRows(ladder(qty, p.pcts))}>{p.label}</button>
-          ))}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+          <span style={{ fontSize: 12, color: '#8b949e' }}>Tranches, target {basisWord}</span>
           <button style={{ ...btn(false), borderColor: '#2f81f7', color: '#58a6ff' }} onClick={() => setRows(r => [...r, { qty: 1, pct: 50 }])}>+ Tranche</button>
           <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: allocated === qty ? '#8b949e' : '#f85149' }}>{allocated} / {qty} allocated</span>
         </div>
         {rows.map((r, i) => {
-          const typed = r.price != null && r.price !== '' && isFinite(parseFloat(r.price));
-          const price = typed ? parseFloat(r.price) : priceOf(r.pct);
+          const price = priceOf(r.pct);
           return (
             <div key={i} style={{ borderTop: i ? '1px solid #21262d' : 'none', paddingTop: 4 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: '#8b949e', width: 22 }}>T{i + 1}</span>
                 <input type="number" min="1" value={r.qty} style={{ ...cell, width: 56 }} title="contracts"
                   onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>ct @</span>
-                <input type="number" step="5" value={r.pct} style={{ ...cell, width: 64 }} title="% of max profit"
-                  onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, pct: e.target.value, price: '' } : x))} />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>% →</span>
-                <input type="number" step={tick} value={r.price != null && r.price !== '' ? r.price : price} style={{ ...cell, width: 80 }} title="limit price"
-                  onChange={e => { const v = e.target.value, p = parseFloat(v); const t = isFinite(p) ? priceToTarget(pos, p) : null; setRows(rs => rs.map((x, j) => j === i ? { ...x, price: v, pct: t != null ? round2(t) : x.pct } : x)); }} />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>ct at +</span>
+                <input type="number" step="5" value={r.pct} style={{ ...cell, width: 64 }} title={`% ${basisWord}`}
+                  onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, pct: e.target.value } : x))} />
+                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
                 <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}>×</button>
               </div>
-              <Line label={`T${i + 1}`} q={Number(r.qty) || 0} pct={Number(r.pct) || 0} price={price} />
+              <Result q={Number(r.qty) || 0} pct={Number(r.pct) || 0} price={price} />
             </div>
           );
         })}
       </>)}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid #21262d', paddingTop: 6 }}>
-        <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop loss</span>
-        <input type="number" step="25" placeholder="e.g. 50" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 88 }} />
+        {qty > 1 && (
+          <button onClick={() => setSplit(s => !s)} style={{ ...btn(split), marginRight: 6 }}>
+            {split ? '✓ Scaling out' : 'Scale out in tranches'}
+          </button>
+        )}
+        <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop</span>
+        <input type="number" step="25" placeholder="% loss" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 80 }} />
         {stop != null && (
           <span className="mono" style={{ fontSize: 12, color: '#f85149' }}>
-            LMT {stop.toFixed(2)} {pos.isCredit ? 'db' : 'cr'} · {ibkrLines(pos, stop).buyConv} · −${Math.abs(pnlAt(pos, stop, qty)).toFixed(0)}
+            @ {stop.toFixed(2)} = {pctStr(pnlPct(pos, stop) ?? 0)} · {money(pnlAt(pos, stop, qty))}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }}>Comm / leg / ct</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }}>Comm/leg/ct</span>
         <input type="number" step="0.01" value={comm} style={{ ...cell, width: 60 }}
           onChange={e => { setComm(e.target.value); try { localStorage.setItem('commissionPerLeg', e.target.value); } catch (x) { /* */ } }} />
-        <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>{perUnit} leg-ct/unit · RT ${roundTrip(qty).toFixed(2)}</span>
       </div>
-      {!(win > 0) && (
-        <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>* No Win amount entered — % targets use the entry as max profit. Enter Win for a debit fly or the targets are too tight.</div>
+      {!(win > 0) && !pos.isCredit && (
+        <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>No Win amount entered, so the max-profit cap isn't known.</div>
       )}
       <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>
-        The plan is written into the trade notes on Log trade and pre-loads the Sell ticket for this position.
+        Log trade writes this into the notes and pre-loads the Sell ticket.
       </div>
       <TicketHelp kind="buy" />
     </div>
