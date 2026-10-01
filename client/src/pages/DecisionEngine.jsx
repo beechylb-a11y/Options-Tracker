@@ -102,14 +102,15 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // engine's own test for having the sizing inputs, so it is the same thing as "they
   // all have price data". Until then the strip keeps insertion order: tabs rearranging
   // themselves while you are still typing into the first one would be worse than
-  // useless. A blocked ticket sorts last whatever it scores, because its number is
-  // describing a trade you cannot take.
+  // useless. Blocked tickets rank by their composite like any other (marked ⊘).
   const rankable = tabs.length > 1 && tabs.every(t => summaries[t.id] && summaries[t.id].ready);
   const orderedTabs = React.useMemo(() => {
     if (!rankable) return tabs;
     return tabs.slice().sort((a, b) => {
       const sa = summaries[a.id], sb = summaries[b.id];
-      if (!!sa.blocked !== !!sb.blocked) return sa.blocked ? 1 : -1;
+      // Pure composite order (Oct 2026). Blocked tickets used to be pushed to the
+      // end whatever they scored, so a 46 sat ahead of a 55 and the strip looked
+      // unranked. The ⊘ on the tab still flags a blocker; the order is the score.
       // Composite, not Trade Confidence (Sep 2026): the composite is the headline
       // number on every ticket and already folds in setup, Kelly, EV and POP, so
       // ranking on anything else made the strip disagree with the banners.

@@ -12,6 +12,43 @@ import { mergeClosedTrades, todayPnlOf, filterTracker } from '../utils/stats';
 const clockFmt = ts =>
   ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--';
 
+// Bridge controls (Oct 2026): the dot opens a small menu to reconnect to TWS or
+// restart the bridge process, so a TWS restart no longer means a trip to Terminal.
+// Both only work while the bridge process and its ngrok tunnel are up — if the
+// bridge itself is unreachable there is nothing on the other end to ask.
+function BridgeControl({ state, title, onAction, busy, note }) {
+  const [open, setOpen] = useState(false);
+  const color = state === 'ok' ? 'bg-green' : state === 'warn' ? 'bg-amber' : state === 'off' ? 'bg-bg-border' : 'bg-red';
+  const btn = 'w-full text-left px-3 py-1.5 text-[12.5px] rounded hover:bg-bg-hover disabled:opacity-50';
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)} title={title} className="flex items-center gap-1.5">
+        <div className={`w-2 h-2 rounded-full ${color} ${busy ? 'animate-pulse' : ''}`} />
+        <span className="text-[12.5px] text-text-muted">Bridge ▾</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-72 p-2 rounded-lg border border-bg-border bg-bg-card shadow-lg z-30"
+          onMouseLeave={() => setOpen(false)}>
+          <div className="px-3 py-1 text-[12px] text-text-muted leading-snug">{busy || note || title}</div>
+          <button className={btn} disabled={!!busy || state === 'off'} onClick={() => onAction('reconnect')}>
+            ↻ Reconnect to TWS
+            <div className="text-[11px] text-text-faint">Use after TWS restarts or re-logs in</div>
+          </button>
+          <button className={btn} disabled={!!busy || state === 'off'} onClick={() => onAction('restart')}>
+            ⟳ Restart bridge
+            <div className="text-[11px] text-text-faint">Reloads the bridge code (after a pull) — back in ~10 s</div>
+          </button>
+          {state === 'err' && (
+            <div className="px-3 pt-1 text-[11.5px] text-red leading-snug">
+              Bridge unreachable: the Mac, the bridge or ngrok is down. It restarts itself if it crashed; if the Mac was asleep, wake it.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusDot({ state, label, title }) {
   const color =
     state === 'ok' ? 'bg-green' :
@@ -33,6 +70,9 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [refreshing, setRefreshing] = useState(false);
   const [sheetsState, setSheetsState] = useState(authenticated ? 'ok' : 'off');
   const [bridgeState, setBridgeState] = useState('off');
+  const [bridgeBusy, setBridgeBusy] = useState('');
+  const [bridgeNote, setBridgeNote] = useState('');
+  const [pingTick, setPingTick] = useState(0);
   const [bridgeTitle, setBridgeTitle] = useState('Bridge URL not configured');
 
   const loadData = useCallback(() => {
@@ -72,7 +112,8 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         const d = await r.json();
         if (stop) return;
         if (d.ok && d.connected) { setBridgeState('ok'); setBridgeTitle('Bridge up, TWS connected'); }
-        else if (d.ok) { setBridgeState('warn'); setBridgeTitle('Bridge up, TWS not connected'); }
+        else if (d.ok) { setBridgeState('warn'); setBridgeTitle('Bridge up, TWS not connected'
+          + (d.reconnecting ? ' — retrying automatically' : '') + (d.lastError ? ': ' + d.lastError : '')); }
         else { setBridgeState('err'); setBridgeTitle('Bridge unhealthy'); }
       } catch (e) {
         if (!stop) { setBridgeState('err'); setBridgeTitle('Bridge unreachable: ' + e.message); }
@@ -81,7 +122,36 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
     ping();
     const id = setInterval(ping, 60 * 1000);
     return () => { stop = true; clearInterval(id); };
-  }, []);
+  }, [pingTick]);
+
+  async function bridgeAction(kind) {
+    const url = (localStorage.getItem('bridgeUrl') || '').replace(/\/+$/, '');
+    if (!url) return;
+    const H = { 'ngrok-skip-browser-warning': '1', 'Content-Type': 'application/json' };
+    setBridgeNote('');
+    try {
+      if (kind === 'reconnect') {
+        setBridgeBusy('Reconnecting to TWS…');
+        const d = await fetch(url + '/api/reconnect', { method: 'POST', headers: H }).then(r => r.json());
+        setBridgeNote(d.connected ? 'Reconnected to TWS.' : 'TWS did not answer: ' + (d.error || 'unknown') + ' — it will keep retrying.');
+      } else {
+        setBridgeBusy('Restarting bridge…');
+        await fetch(url + '/api/restart', { method: 'POST', headers: H }).catch(() => {});
+        // launchd brings it back; wait for a health answer from the NEW process.
+        let back = null;
+        for (let i = 0; i < 15 && !back; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          try { back = await fetch(url + '/api/health', { headers: H }).then(r => r.json()); } catch (e) { back = null; }
+        }
+        setBridgeNote(back ? (back.connected ? 'Bridge restarted, TWS connected.' : 'Bridge restarted; connecting to TWS…')
+          : 'Bridge did not come back within 30 s — check the Mac.');
+      }
+    } catch (e) {
+      setBridgeNote('Failed: ' + e.message);
+    }
+    setBridgeBusy('');
+    setPingTick(t => t + 1);
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -153,7 +223,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         </button>
 
         <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
-        <StatusDot state={bridgeState} label="Bridge" title={bridgeTitle} />
+        <BridgeControl state={bridgeState} title={bridgeTitle} onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote} />
       </div>
     </div>
   );

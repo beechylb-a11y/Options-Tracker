@@ -49,6 +49,37 @@ const CLIENT_ID = parseInt(process.env.CLIENT_ID || '99');
 let ib = null;
 let connected = false;
 let nextReqId = 1000;
+const STARTED_AT = new Date().toISOString();
+let lastConnectError = '';
+let reconnectTimer = null;
+
+// Drop a dead IBApi instance completely. A new connection on the same client id
+// while the old socket lingers gets IBKR error 326 ("client id already in use"),
+// which is what made a TWS restart need a manual bridge restart. (Oct 2026)
+function resetIB() {
+  if (ib) {
+    try { ib.removeAllListeners(); } catch (e) {}
+    try { ib.disconnect(); } catch (e) {}
+  }
+  ib = null;
+  connected = false;
+}
+
+// Auto-reconnect after TWS goes away (IBKR's daily restart, a re-login, a crash).
+// Retries every 20 s, then every 60 s after 10 minutes, until TWS answers again.
+function scheduleReconnect(delayMs = 20000, startedAt = Date.now()) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (connected) return;
+    try { await connectTWS(); console.log('[BRIDGE] Auto-reconnect succeeded'); }
+    catch (e) {
+      lastConnectError = e.message;
+      const next = Date.now() - startedAt > 10 * 60 * 1000 ? 60000 : 20000;
+      scheduleReconnect(next, startedAt);
+    }
+  }, delayMs);
+}
 
 function getReqId() { return nextReqId++; }
 
@@ -85,6 +116,7 @@ function connectTWS() {
       }
 
       let settled = false;
+      resetIB();   // never stack a second IBApi on a stale one
       ib = new IBApi({ host: TWS_HOST, port: openPort, clientId: CLIENT_ID });
       const appName = openPort === GATEWAY_LIVE ? 'IB Gateway' : openPort === TWS_LIVE ? 'TWS' : 'IBKR';
 
@@ -92,6 +124,7 @@ function connectTWS() {
         if (settled) return;
         settled = true;
         connected = true;
+        lastConnectError = '';
         console.log(`[BRIDGE] Connected to ${appName} on ${TWS_HOST}:${openPort}`);
         // FROZEN (2): with the OPRA live options subscription active, this delivers
         // REAL-TIME data during market hours and the LAST snapshot when the market is
@@ -104,6 +137,7 @@ function connectTWS() {
       ib.on(EventName.disconnected, () => {
         console.log('[BRIDGE] Disconnected from IBKR');
         connected = false;
+        scheduleReconnect();
       });
 
       ib.on(EventName.error, (err, code, reqId) => {
@@ -945,7 +979,27 @@ app.get('/api/es-overnight', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, connected, timestamp: new Date().toISOString() });
+  res.json({ ok: true, connected, timestamp: new Date().toISOString(),
+    startedAt: STARTED_AT, lastError: connected ? '' : lastConnectError,
+    reconnecting: !!reconnectTimer, canRestart: true });
+});
+
+// ── Control from the app (Oct 2026) ──
+// Reconnect: throw away the IBKR connection and make a fresh one — the fix for
+// "Bridge up, TWS not connected" after TWS restarts or re-logs in.
+app.post('/api/reconnect', async (req, res) => {
+  resetIB();
+  try { await connectTWS(); res.json({ ok: true, connected }); }
+  catch (e) { lastConnectError = e.message; scheduleReconnect(); res.json({ ok: false, connected: false, error: e.message }); }
+});
+
+// Restart: exit the process. The LaunchAgent has KeepAlive=true, so launchd
+// starts it again within ~10 s — running whatever code is now on disk, which is
+// what a `launchctl unload/load` after a git pull was for. Answers first, then exits.
+app.post('/api/restart', (req, res) => {
+  res.json({ ok: true, restarting: true });
+  console.log('[BRIDGE] Restart requested from the app');
+  setTimeout(() => { resetIB(); process.exit(0); }, 400);
 });
 
 // ── Fetch model Greeks for one or more option legs ──
@@ -1401,5 +1455,5 @@ app.post('/api/disconnect', (req, res) => {
 app.listen(PORT, () => {
   console.log(`[BRIDGE] IB Bridge running on http://localhost:${PORT}`);
   console.log(`[BRIDGE] Target: ${TWS_HOST} ports ${candidatePorts().join('/')} (TWS/IB Gateway auto-detect)...`);
-  connectTWS().catch(e => console.error('[BRIDGE] Initial connect failed:', e.message));
+  connectTWS().catch(e => { lastConnectError = e.message; console.error('[BRIDGE] Initial connect failed:', e.message); scheduleReconnect(); });
 });
