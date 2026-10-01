@@ -1810,8 +1810,19 @@ export function calc0DTE(inputs) {
       const bareMax = (payoff.maxProfit / 100) - netCreditDebit;
       const bareMin = (payoff.maxLoss / 100) - netCreditDebit;
       const cost = -netCreditDebit;                    // debit paid (+) or credit taken (−)
-      const tol = 0.20 * pcWidth;
-      priceCheck = { cost, fair, bareMin, bareMax, width: pcWidth, sigma: pcSigma,
+      // Tolerance used to be 20% of the STRIKE SPAN, which is the wrong ruler. On the
+      // SPY 767/770/775 of 30 Sep the span is 8 points, so the band was 1.60 — against
+      // a 1.11 debit and a 1.89 max profit. Any price from -0.49 to 2.71 passed, and a
+      // debit of roughly twice fair value sailed through. The gap only means something
+      // relative to what is being paid and what can be won, so band it on those: a
+      // third of max profit, with a floor so a tiny structure is not flagged on noise.
+      // (Oct 2026.)
+      const maxProfitBare = Math.abs(bareMax);
+      const tol = Math.max(0.10, 0.35 * maxProfitBare);
+      // The number a human can act on: how many times fair value is being paid.
+      const ratio = (fair > 0.01 && cost > 0) ? cost / fair : null;
+      priceCheck = { cost, fair, bareMin, bareMax, maxProfitBare, ratio,
+        width: pcWidth, sigma: pcSigma, tol,
         arb: cost < bareMin - 0.01 || cost > bareMax + 0.01,
         mismatch: Math.abs(cost - fair) > tol, gap: cost - fair };
     }
@@ -2277,6 +2288,20 @@ export function calc0DTE(inputs) {
   if (overnightStale) {
     warnings.push('ES overnight is for a different session — the coming session\'s overnight has not happened yet, '
       + 'so overnight trend and range are scored as unknown rather than as current');
+  }
+  // Overpaying is not an arbitrage and not necessarily a mismatch of strikes and
+  // price — it is simply a bad fill, and it is the one thing a ticket never said out
+  // loud. 1.5x fair is a warning; the blocker above still handles the impossible.
+  // Threshold set from the spread, not by feel. A three-leg fly is 4 contract-legs;
+  // at 1-3c a leg the round trip is 0.08-0.24, so on a fair value near 0.75 crossing
+  // the spread explains paying up to roughly 1.2x. Beyond 1.3x it does not: that is a
+  // bad fill or a wrong vol input, and either way the trade starts underwater by more
+  // than execution can account for. The 30 Sep SPY ticket sat at 1.48x.
+  if (priceCheck && priceCheck.ratio != null && priceCheck.ratio >= 1.30 && !priceCheck.arb) {
+    warnings.push(`Paying ${priceCheck.ratio.toFixed(1)}x fair value `
+      + `(${priceCheck.cost.toFixed(2)} vs ${priceCheck.fair.toFixed(2)} modelled at spot) — `
+      + `the structure has to appreciate ${(priceCheck.cost - priceCheck.fair).toFixed(2)} `
+      + `before the trade is even`);
   }
   if (vixGap < -0.10) warnings.push('VIX1D cheap — favour long gamma (BWB, Long Condor)');
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');

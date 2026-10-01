@@ -1303,6 +1303,21 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<div class="row"><span class="label">Breakeven(s)</span><span class="value white">' + (r.payoff.breakevens.length > 0 ? r.payoff.breakevens.map(function(b){return b.toFixed(1)}).join(', ') : '--') + '</span></div>' +
       '<div class="row"><span class="label">Profit band</span><span class="value white">' + (r.payoff.profitBandWidth > 0 ? r.payoff.profitBandLow.toFixed(0) + '\u2013' + r.payoff.profitBandHigh.toFixed(0) + ' (' + r.payoff.profitBandWidth.toFixed(0) + ' pts)' : '--') + '</span></div>' +
       '</div>' : '') +
+      (r.priceCheck ? '<div class="section"><div class="section-title">Entry Price</div>' +
+        '<div class="row"><span class="label">' + (r.priceCheck.cost >= 0 ? 'Paying' : 'Receiving') +
+          '</span><span class="value white">' + Math.abs(r.priceCheck.cost).toFixed(2) + '</span></div>' +
+        '<div class="row"><span class="label">Modelled fair at spot</span><span class="value white">' +
+          r.priceCheck.fair.toFixed(2) + '</span></div>' +
+        '<div class="row"><span class="label">Possible range for these strikes</span><span class="value white">' +
+          r.priceCheck.bareMin.toFixed(2) + ' to ' + r.priceCheck.bareMax.toFixed(2) + '</span></div>' +
+        (r.priceCheck.ratio != null
+          ? '<div class="row"><span class="label">vs fair</span><span class="value ' +
+            (r.priceCheck.ratio >= 1.30 ? 'red' : r.priceCheck.ratio >= 1.15 ? 'amber' : 'green') + '">' +
+            r.priceCheck.ratio.toFixed(2) + '\u00d7' +
+            (r.priceCheck.ratio > 1.05 ? ' \u2014 must appreciate ' + (r.priceCheck.cost - r.priceCheck.fair).toFixed(2) + ' to break even' : '') +
+            '</span></div>'
+          : '') +
+        '</div>' : '') +
       // When the value arrives. A printed ticket that shows the payoff but not its
       // timing invites exactly the plan that collects a tenth of it.
       (accrual ? '<div class="section"><div class="section-title">When the Value Arrives ('
@@ -2491,6 +2506,48 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* Entry price — what is being paid against what the structure is worth */}
+          {r.priceCheck && (
+            <div className="card">
+              <SectionLabel white info="What you are paying against what the structure is worth right now at the prevailing spot and vol, plus the arbitrage bounds — the range of prices the strikes can possibly settle between. A price outside those bounds is impossible at any volatility; a price far inside them but well above fair value is simply a bad fill. Fair value uses the same sigma as P(max loss), so it cannot disagree with the rest of the ticket.">
+                Entry price
+              </SectionLabel>
+              {(() => {
+                const pc = r.priceCheck;
+                const ratio = pc.ratio;
+                const col = pc.arb ? '#f85149'
+                  : ratio == null ? '#a8b2be'
+                  : ratio >= 1.30 ? '#f85149' : ratio >= 1.15 ? '#d29922'
+                  : ratio <= 0.8 ? '#3fb950' : '#c9d1d9';
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <KV label={pc.cost >= 0 ? 'Paying (debit)' : 'Receiving (credit)'}
+                        value={Math.abs(pc.cost).toFixed(2)} />
+                      <KV label="Modelled fair at spot" value={pc.fair.toFixed(2)} />
+                      <KV label="Possible range for these strikes"
+                        value={`${pc.bareMin.toFixed(2)} to ${pc.bareMax.toFixed(2)}`} />
+                      <KV label="Max profit at this price" value={'$' + (pc.maxProfitBare * 100 - pc.cost * 100).toFixed(0)} />
+                    </div>
+                    <div className="text-sm mt-2" style={{
+                      padding: '6px 8px', borderRadius: 4, background: '#0d1117',
+                      border: '1px solid #21262d', color: col
+                    }}>
+                      {pc.arb
+                        ? 'Impossible at any volatility — this price is outside what the strikes can pay'
+                        : ratio == null
+                          ? 'No fair-value comparison available'
+                          : <>Paying <b>{ratio.toFixed(2)}×</b> fair value
+                              {ratio > 1.05 && <> — it must appreciate <b>{(pc.cost - pc.fair).toFixed(2)}</b> before the trade is even</>}
+                              {ratio <= 0.8 && <> — cheap against the model, check the quote is real</>}
+                            </>}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
