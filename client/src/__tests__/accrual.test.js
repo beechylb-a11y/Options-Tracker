@@ -103,3 +103,36 @@ describe('accrual', () => {
     expect(t.rows[t.rows.length - 1].atBody).toBeCloseTo(3, 6);
   });
 });
+
+/* The "out at today's 15:00" headline had the clock inverted — it priced an exit one
+   hour from NOW instead of at 15:00. On the 30 Sep SPY ticket, printed 11:49, that
+   reported 7% where the true figure was 39%, under a label reading "leaves most of
+   the value on the table". The arithmetic that catches it: */
+describe('the 15:00 exit is one hour before the bell, not one hour from now', () => {
+  const FLY = [
+    { strike: 767, right: 'C', ratio: 1 },
+    { strike: 770, right: 'C', ratio: -2 },
+    { strike: 775, right: 'C', ratio: 1 },
+  ];
+  const at1149 = sessionsToExpiry(16 - 11.817, 0);   // 4.18h to the bell
+
+  it('prices a 15:00 exit the same however early the ticket is built', () => {
+    // 15:00 always leaves exactly one hour, so the exit point is fixed.
+    const early = windowShare({ legs: FLY, spot: 770, em: 5, sessionsLeft: at1149,
+      exitSessionsLeft: sessionsToExpiry(1, 0) });
+    expect(early.pct).toBeGreaterThan(30);
+    expect(early.pct).toBeLessThan(55);
+  });
+
+  it('is nothing like "one hour from now", which is what the bug computed', () => {
+    const correct = windowShare({ legs: FLY, spot: 770, em: 5, sessionsLeft: at1149,
+      exitSessionsLeft: sessionsToExpiry(1, 0) });
+    const buggy = windowShare({ legs: FLY, spot: 770, em: 5, sessionsLeft: at1149,
+      exitSessionsLeft: sessionsToExpiry((16 - 11.817) - 1, 0) });
+    expect(buggy.pct).toBeLessThan(15);
+    expect(correct.pct).toBeGreaterThan(buggy.pct * 3);
+    // And the verdicts disagree, which is how it reached the printed ticket.
+    expect(buggy.verdict).toMatch(/leaves most of the value/);
+    expect(correct.verdict).not.toMatch(/leaves most of the value/);
+  });
+});

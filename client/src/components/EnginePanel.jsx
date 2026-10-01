@@ -893,8 +893,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (!table) return null;
     // What closing at the working close of TODAY would capture — the plan most
     // likely to be run by default, and the one worth pricing before it is run.
-    const outToday = windowShare({ legs, spot, em, sessionsLeft,
-      exitSessionsLeft: sessionsToExpiry(Math.max(0, ses.hoursToBell - 1), expirySessions) });
+    // What closing at the 15:00 working close would capture — the plan most likely
+    // to be run by default, and the one worth pricing before it is run.
+    //
+    // `hoursToBell - 1` was wrong and badly so: it is hours remaining ONE HOUR FROM
+    // NOW, not hours remaining AT 15:00. On the 30 Sep SPY ticket, printed 11:49, it
+    // priced an exit at 12:49 and reported 7% where holding to 15:00 was worth 39% —
+    // then labelled it "leaves most of the value on the table". At 15:00 there is
+    // exactly one hour left to the bell, whatever time it is now. (Oct 2026.)
+    const outToday = ses.hoursToBell > 1.1 ? windowShare({ legs, spot, em, sessionsLeft,
+      exitSessionsLeft: sessionsToExpiry(1, expirySessions) }) : null;
     return { ...table, sessionsLeft, outToday, legs };
   }, [is0, r.payoff, r.emSession, i0.price, i0.em, expirySessions]);
 
