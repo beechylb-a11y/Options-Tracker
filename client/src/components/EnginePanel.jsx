@@ -2243,6 +2243,75 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <Inp label="Combo ask" value={is0?i0.comboAsk:i45.comboAsk}
               onChange={v=>is0?set0('comboAsk',v):set45('comboAsk',v)}/>
           </div>
+          {/* What you are about to pay, against the quote and against the model.
+              Four numbers in one line because the comparison IS the decision: the
+              SPY 767/770/775 of 30 Sep was bid at 1.11 with fair near 0.75, and
+              nothing on the screen put those side by side. (Oct 2026.) */}
+          {(() => {
+            const bid = parseFloat(is0 ? i0.comboBid : i45.comboBid);
+            const ask = parseFloat(is0 ? i0.comboAsk : i45.comboAsk);
+            if (!isFinite(bid) || !isFinite(ask) || ask < bid) return null;
+            const mid = (bid + ask) / 2, spread = ask - bid;
+            const fair = r.priceCheck ? r.priceCheck.fair : null;
+            const ncd = parseFloat(is0 ? i0.netCreditDebit : i45.netCreditDebit);
+            const yours = isFinite(ncd) ? -ncd : null;      // debit paid, as a positive
+            // How far the typed price sits from the mid, measured in spreads. Half a
+            // spread is paying the ask; more than that is paying through the market.
+            const spreads = (yours != null && spread > 0) ? (yours - mid) / spread : null;
+            const setPrice = v => {
+              const t = (-v).toFixed(2);
+              if (is0) set0('netCreditDebit', t); else set45('netCreditDebit', t);
+            };
+            const col = spreads == null ? '#c9d1d9'
+              : spreads > 0.75 ? '#f85149' : spreads > 0.5 ? '#d29922' : '#3fb950';
+            return (
+              <div style={{marginTop:8,padding:'7px 9px',borderRadius:6,background:'#0d1117',
+                border:'1px solid #21262d',fontSize:12.5,lineHeight:1.6}}>
+                <div style={{display:'flex',gap:14,flexWrap:'wrap',alignItems:'center'}}>
+                  <span><span style={{color:'#8b949e'}}>bid </span><b className="mono">{bid.toFixed(2)}</b>
+                    <span style={{color:'#8b949e'}}> / ask </span><b className="mono">{ask.toFixed(2)}</b></span>
+                  <span><span style={{color:'#8b949e'}}>mid </span><b className="mono">{mid.toFixed(2)}</b></span>
+                  <span><span style={{color:'#8b949e'}}>spread </span><b className="mono">{spread.toFixed(2)}</b></span>
+                  {fair != null && <span><span style={{color:'#8b949e'}}>fair </span>
+                    <b className="mono">{fair.toFixed(2)}</b></span>}
+                  {yours != null && <span style={{color:col}}><span style={{color:'#8b949e'}}>you </span>
+                    <b className="mono">{yours.toFixed(2)}</b>
+                    {spreads != null && <span> ({spreads >= 0 ? '+' : ''}{spreads.toFixed(1)} spreads from mid)</span>}
+                  </span>}
+                </div>
+                <div style={{marginTop:4,color:'#9aa4b0'}}>
+                  {/* Plain guidance rather than a rule: a multi-leg combo fills at mid
+                      more often than people expect, and the half-spread saved is the
+                      same money as a better entry. */}
+                  A limit at <b className="mono" style={{color:'#c9d1d9'}}>{mid.toFixed(2)}</b> is usually
+                  workable on a {(r.payoff?.legs?.length || 3)}-leg combo with patience; paying the ask
+                  costs <b className="mono" style={{color:'#c9d1d9'}}>{(spread / 2).toFixed(2)}</b> per
+                  contract each way.
+                  {fair != null && mid > 0 && Math.abs(mid - fair) > 0.10 && (
+                    <> The market&rsquo;s mid is {mid > fair ? 'above' : 'below'} the model by{' '}
+                      <b className="mono" style={{color:'#c9d1d9'}}>{Math.abs(mid - fair).toFixed(2)}</b> —
+                      {mid > fair ? ' implied vol is richer than the EM you typed' : ' check the quote is live'}.</>
+                  )}
+                </div>
+                <div style={{marginTop:5,display:'flex',gap:6,flexWrap:'wrap'}}>
+                  <button onClick={() => setPrice(mid)}
+                    className="text-[12px] px-2 py-0.5 rounded border border-bg-border text-text-muted hover:text-white hover:border-accent transition-colors">
+                    Use mid {mid.toFixed(2)}
+                  </button>
+                  <button onClick={() => setPrice(+(mid + spread / 4).toFixed(2))}
+                    title="A quarter of the way to the ask — the usual price of getting filled promptly"
+                    className="text-[12px] px-2 py-0.5 rounded border border-bg-border text-text-muted hover:text-white hover:border-accent transition-colors">
+                    Mid + ¼ spread {(mid + spread / 4).toFixed(2)}
+                  </button>
+                  <button onClick={() => setPrice(ask)}
+                    className="text-[12px] px-2 py-0.5 rounded border border-bg-border text-text-faint hover:text-white hover:border-red transition-colors">
+                    Pay the ask {ask.toFixed(2)}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
           {(() => {
             const f = r.frictions;
             if (!f) return (
