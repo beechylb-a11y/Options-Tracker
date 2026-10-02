@@ -16,7 +16,7 @@ const clockFmt = ts =>
 // restart the bridge process, so a TWS restart no longer means a trip to Terminal.
 // Both only work while the bridge process and its ngrok tunnel are up — if the
 // bridge itself is unreachable there is nothing on the other end to ask.
-function BridgeControl({ state, title, onAction, busy, note }) {
+function BridgeControl({ state, title, onAction, busy, note, mode }) {
   const [open, setOpen] = useState(false);
   const color = state === 'ok' ? 'bg-green' : state === 'warn' ? 'bg-amber' : state === 'off' ? 'bg-bg-border' : 'bg-red';
   const btn = 'w-full text-left px-3 py-1.5 text-[12.5px] rounded hover:bg-bg-hover disabled:opacity-50';
@@ -24,7 +24,11 @@ function BridgeControl({ state, title, onAction, busy, note }) {
     <div className="relative">
       <button onClick={() => setOpen(o => !o)} title={title} className="flex items-center gap-1.5">
         <div className={`w-2 h-2 rounded-full ${color} ${busy ? 'animate-pulse' : ''}`} />
-        <span className="text-[12.5px] text-text-muted">Bridge ▾</span>
+        <span className="text-[12.5px] text-text-muted">Bridge</span>
+        {state === 'ok' && mode === 'paper' && (
+          <span className="text-[11px] px-1.5 rounded" style={{ background: '#1f1a0d', color: '#d29922', border: '1px solid #9e6a03' }}>PAPER</span>
+        )}
+        <span className="text-[12.5px] text-text-muted">▾</span>
       </button>
       {open && (
         <div className="absolute right-0 mt-2 w-72 p-2 rounded-lg border border-bg-border bg-bg-card shadow-lg z-30"
@@ -71,6 +75,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [sheetsState, setSheetsState] = useState(authenticated ? 'ok' : 'off');
   const [bridgeState, setBridgeState] = useState('off');
   const [bridgeBusy, setBridgeBusy] = useState('');
+  const [bridgeMode, setBridgeMode] = useState('');
   const [bridgeNote, setBridgeNote] = useState('');
   const [pingTick, setPingTick] = useState(0);
   const [bridgeTitle, setBridgeTitle] = useState('Bridge URL not configured');
@@ -111,8 +116,14 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         const r = await fetch(url + '/api/health', { headers: { 'ngrok-skip-browser-warning': '1' } });
         const d = await r.json();
         if (stop) return;
-        if (d.ok && d.connected) { setBridgeState('ok'); setBridgeTitle('Bridge up, TWS connected'); }
-        else if (d.ok) { setBridgeState('warn'); setBridgeTitle('Bridge up, TWS not connected'
+        if (d.ok && d.connected) {
+          setBridgeState('ok');
+          setBridgeMode(d.mode || '');
+          setBridgeTitle(`Bridge up, connected to ${d.app || 'TWS'}${d.mode ? ' · ' + d.mode : ''}`
+            + (d.accounts && d.accounts.length ? ` (${d.accounts.join(', ')})` : '')
+            + (d.mode === 'paper' ? ' — positions and fills are the PAPER account\'s' : ''));
+        }
+        else if (d.ok) { setBridgeMode(''); setBridgeState('warn'); setBridgeTitle('Bridge up, TWS not connected'
           + (d.reconnecting ? ' — retrying automatically' : '') + (d.lastError ? ': ' + d.lastError : '')); }
         else { setBridgeState('err'); setBridgeTitle('Bridge unhealthy'); }
       } catch (e) {
@@ -223,7 +234,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         </button>
 
         <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
-        <BridgeControl state={bridgeState} title={bridgeTitle} onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote} />
+        <BridgeControl state={bridgeState} title={bridgeTitle} onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote} mode={bridgeMode} />
       </div>
     </div>
   );

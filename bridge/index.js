@@ -34,16 +34,25 @@ const TWS_HOST = process.env.TWS_HOST || '127.0.0.1';
 // socket port differs (TWS live 7496 / paper 7497; IB Gateway live 4001 / paper 4002).
 //   • TWS_PORT set → use exactly that one port (explicit; no fallback, so a deliberate
 //     paper port is never crossed over to live).
-//   • otherwise    → try the live port for IB_TARGET (tws|gateway, default tws), then
-//     fall back to the OTHER app's live port, so the bridge connects to whichever of TWS /
-//     IB Gateway is actually running with no config change (set IB_TARGET=gateway to make
-//     4001 the primary).
-const TWS_LIVE = 7496, GATEWAY_LIVE = 4001;
+//   • otherwise    → try the LIVE ports first (IB_TARGET's app, then the other), then
+//     the PAPER ports, so the bridge connects to whichever login is actually running —
+//     live always preferred when both are up (Oct 2026: paper added; before, a paper
+//     login on 7497 was never found). /api/health says which one it is on.
+const TWS_LIVE = 7496, GATEWAY_LIVE = 4001, TWS_PAPER = 7497, GATEWAY_PAPER = 4002;
 function candidatePorts() {
   if (process.env.TWS_PORT) return [parseInt(process.env.TWS_PORT)];
   const target = (process.env.IB_TARGET || 'tws').toLowerCase();
-  return target === 'gateway' ? [GATEWAY_LIVE, TWS_LIVE] : [TWS_LIVE, GATEWAY_LIVE];
+  return target === 'gateway'
+    ? [GATEWAY_LIVE, TWS_LIVE, GATEWAY_PAPER, TWS_PAPER]
+    : [TWS_LIVE, GATEWAY_LIVE, TWS_PAPER, GATEWAY_PAPER];
 }
+const PORT_INFO = {
+  [TWS_LIVE]: { app: 'TWS', mode: 'live' }, [TWS_PAPER]: { app: 'TWS', mode: 'paper' },
+  [GATEWAY_LIVE]: { app: 'IB Gateway', mode: 'live' }, [GATEWAY_PAPER]: { app: 'IB Gateway', mode: 'paper' },
+};
+// What the bridge is connected to right now. The account id is the real tell:
+// IBKR paper accounts start with "DU", live ones with "U".
+let session = { port: null, app: '', mode: '', accounts: [] };
 const CLIENT_ID = parseInt(process.env.CLIENT_ID || '99');
 
 let ib = null;
@@ -118,7 +127,15 @@ function connectTWS() {
       let settled = false;
       resetIB();   // never stack a second IBApi on a stale one
       ib = new IBApi({ host: TWS_HOST, port: openPort, clientId: CLIENT_ID });
-      const appName = openPort === GATEWAY_LIVE ? 'IB Gateway' : openPort === TWS_LIVE ? 'TWS' : 'IBKR';
+      const info = PORT_INFO[openPort] || { app: 'IBKR', mode: '' };
+      const appName = info.app + (info.mode ? ' (' + info.mode + ')' : '');
+      session = { port: openPort, app: info.app, mode: info.mode, accounts: [] };
+      ib.on(EventName.managedAccounts, list => {
+        const accts = String(list || '').split(',').map(x => x.trim()).filter(Boolean);
+        const mode = accts.length ? (accts.every(a => /^DU/i.test(a)) ? 'paper' : 'live') : session.mode;
+        session = { ...session, accounts: accts, mode };
+        console.log('[BRIDGE] Accounts: ' + accts.join(',') + ' (' + mode + ')');
+      });
 
       ib.on(EventName.connected, () => {
         if (settled) return;
@@ -981,7 +998,9 @@ app.get('/api/es-overnight', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, connected, timestamp: new Date().toISOString(),
     startedAt: STARTED_AT, lastError: connected ? '' : lastConnectError,
-    reconnecting: !!reconnectTimer, canRestart: true });
+    reconnecting: !!reconnectTimer, canRestart: true,
+    app: connected ? session.app : '', mode: connected ? session.mode : '',
+    port: connected ? session.port : null, accounts: connected ? session.accounts : [] });
 });
 
 // ── Control from the app (Oct 2026) ──
