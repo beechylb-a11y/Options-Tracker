@@ -387,6 +387,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // separately because they are the ones that are time-critical rather than
   // structural. Blockers never collapse — they stop the trade. (Sep 2026.)
   const [showAdvisories, setShowAdvisories] = useState(false);
+  // Evidence drawer (Oct 2026): which tab is open, or null for closed. Closed by
+  // default — the verdict, the choices and the Needs-you queue carry the decision.
+  const [drawerTab, setDrawerTab] = useState(null);
+  const tabShow = id => ({ display: drawerTab === id ? undefined : 'none' });
   // The proposed trade used to scroll away long before the market data you are
   // checking it against, so the two numbers you wanted to compare were never on
   // screen together. A condensed bar takes over once the full block clears the
@@ -905,6 +909,103 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       exitSessionsLeft: sessionsToExpiry(1, expirySessions) }) : null;
     return { ...table, sessionsLeft, outToday, legs };
   }, [is0, r.payoff, r.emSession, i0.price, i0.em, expirySessions]);
+
+  // ── Verdict band, Needs-you queue, drawer tabs and log gate (Oct 2026) ──
+  // One plain-language verdict replaces the four competing 0-100 readouts at the
+  // top of the ticket. Order matters: anything that stops the trade outranks the
+  // composite, so the headline can never say "take it" over a blocker.
+  const blockers = r.blockers || [];
+  const verdict = hasBlocker ? { word: 'Can’t build this ticket yet', tone: 'warn',
+      sub: 'The engine needs one more input before it can place strikes.' }
+    : blockers.length ? { word: blockers.length > 1 ? `Blocked · ${blockers.length} issues` : 'Blocked', tone: 'bad' }
+    : missingInputs ? { word: 'Waiting on sizing', tone: 'warn' }
+    : bannerGrade === 'strong' ? { word: 'Take the trade', tone: 'grade' }
+    : bannerGrade === 'decent' ? { word: 'Take the trade', tone: 'grade' }
+    : bannerGrade === 'marginal' ? { word: 'Take it smaller, or pass', tone: 'grade' }
+    : { word: 'Pass on this one', tone: 'grade' };
+  const vTone = verdict.tone === 'bad'
+    ? { color: '#f85149', bg: 'linear-gradient(180deg,#2a1012 0%,#1b0d0f 100%)', border: '#da3633' }
+    : verdict.tone === 'warn'
+      ? { color: '#d29922', bg: 'linear-gradient(180deg,#1f1a0d 0%,#16130b 100%)', border: '#9e6a03' }
+      : { color: dcColor, bg: `linear-gradient(180deg,${dcBg} 0%,#0d1117 140%)`, border: dcBorder };
+
+  // Needs you: only things a person has to act on, each carrying its own control.
+  const session = tradingSession();
+  const sessionOpen = session.phase === 'open' || session.phase === 'closing hour';
+  const feedMissing = (feed && Array.isArray(feed.missing)) ? feed.missing.filter(k => !isHeld(k)) : [];
+  const heldConflicts = heldKeys.map(x => x.slice(bag.length + 1)).filter(k => {
+    const fed = feedValOf(k);
+    if (fed === undefined || fed === null || fed === '') return false;
+    const a = parseFloat(fed), b = parseFloat(secBag[k]);
+    return isFinite(a) && isFinite(b) ? Math.abs(a - b) > 1e-9 : String(fed) !== String(secBag[k]);
+  });
+  const greeksAgeMin = greeksFresh && greeksFresh.asOf
+    ? Math.max(0, Math.round((tick - new Date(greeksFresh.asOf).getTime()) / 60000)) : null;
+  const splitMsg = s => {
+    const k = String(s).indexOf(' — ');
+    return k > 0 ? [s.slice(0, k), s.slice(k + 3)] : [s, ''];
+  };
+  const autoFillAct = { label: 'Pull from TWS', onClick: handleAutoFill, busy: autoFilling, busyLabel: 'Pulling…', primary: true };
+  const openInputsAct = { label: 'Open inputs', onClick: () => setDrawerTab('inputs') };
+  const needs = [];
+  if (hasBlocker) needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker, actions: [autoFillAct, openInputsAct] });
+  blockers.forEach((b, i) => {
+    const [title, detail] = splitMsg(b);
+    needs.push({ key: 'blk' + i, tone: 'bad', title, detail,
+      net: /net (credit|debit)/i.test(b), actions: [openInputsAct] });
+  });
+  if (missingInputs && !hasBlocker) needs.push({ key: 'size', tone: 'warn', sizing: true,
+    title: 'Enter sizing from your broker preview',
+    detail: 'Edge score, EV and Kelly size wait on win, risk and POP.' });
+  if (dataFresh && !dataFresh.isLive && sessionOpen) needs.push({ key: 'close', tone: 'warn',
+    title: 'Market data is from the last close',
+    detail: 'The session is open — pull live prices before deciding.', actions: [autoFillAct] });
+  if (feedMissing.length) needs.push({ key: 'feed', tone: 'warn',
+    title: `${feedMissing.length} value${feedMissing.length > 1 ? 's' : ''} didn’t come back from the last pull`,
+    detail: feedMissing.join(', ') + ' — still showing the previous number.', actions: [autoFillAct, openInputsAct] });
+  if (heldConflicts.length) needs.push({ key: 'held', tone: 'info',
+    title: `You typed ${heldConflicts.length === 1 ? 'a value' : heldConflicts.length + ' values'} the feed disagrees with`,
+    detail: heldConflicts.map(k => `${k} ${secBag[k]} (feed ${feedValOf(k)})`).join(' · '),
+    actions: [{ label: 'Use feed values', onClick: releaseHolds }, openInputsAct] });
+  if (!hasBlocker && r.legs.length > 0 && r.pMaxLoss == null) needs.push({ key: 'greeks', tone: 'warn',
+    title: 'No greeks for these strikes yet',
+    detail: 'Chance of max loss and the greeks gauges need them.',
+    actions: [{ label: 'Fetch greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
+  else if (is0 && sessionOpen && greeksAgeMin != null && greeksAgeMin >= 10) needs.push({ key: 'greeksAge', tone: 'warn',
+    title: `Greeks are ${greeksAgeMin} minutes old`,
+    detail: 'Chance of max loss is still using the earlier wing deltas.',
+    actions: [{ label: 'Refresh greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
+
+  // Log gate. A blocker no longer leaves a green button under a red banner: it
+  // turns the button into the reason, with a deliberate "Log anyway" for the cases
+  // where the trader knows better (paper, legging in, a data glitch).
+  const logGate = bannerGrade === 'weak' && !blockers.length
+      ? { ok: false, tone: 'muted', label: 'Weak setup — not logged', why: 'Composite below 35' }
+    : missingInputs ? { ok: false, tone: 'muted', label: 'Log trade · enter sizing first', why: 'Win, risk and POP are blank' }
+    : blockers.length ? { ok: false, tone: 'bad', anyway: true,
+        label: `Blocked · ${blockers.length} issue${blockers.length > 1 ? 's' : ''}`, why: blockers.join('\n') }
+    : { ok: true };
+
+  // Evidence drawer tabs: a status dot each, so you know which one is worth opening.
+  const pmlNow = r.pMaxLoss;
+  const fvs = r.fairValueScore;
+  const inputsDot = (secMissing.market || secMissing.sizing || secMissing.vol) ? '#f85149'
+    : (heldKeys.length || feedMissing.length) ? '#d29922'
+    : (dataFresh && dataFresh.isLive) ? '#3fb950' : '#8b949e';
+  const drawerTabs = [
+    { id: 'inputs', label: 'Inputs', dot: inputsDot,
+      meta: heldKeys.length ? `${heldKeys.length} typed` : dataFresh ? (dataFresh.isLive ? 'live' : 'last close') : '' },
+    { id: 'setup', label: 'Setup quality', dot: sClr, meta: String(r.setupScore ?? '') },
+    { id: 'structures', label: 'Structures', dot: '#58a6ff', meta: String((r.ratings || []).length || '') },
+    { id: 'sizing', label: 'Sizing & price', dot: missingInputs ? '#484f58' : r.ev > 0 ? '#3fb950' : '#f85149',
+      meta: missingInputs ? 'needs sizing' : `EV $${Math.round(r.ev || 0)}` },
+    { id: 'greeks', label: 'Greeks & tail', dot: pmlNow == null ? '#484f58' : pmlNow <= 0.15 ? '#3fb950' : pmlNow <= 0.30 ? '#d29922' : '#f85149',
+      meta: pmlNow == null ? 'none yet' : `${(pmlNow * 100).toFixed(0)}% max loss` },
+    { id: 'timing', label: 'Payoff & timing', dot: '#58a6ff', meta: '' },
+    { id: 'regime', label: 'Regime & signals', dot: '#58a6ff', meta: r.regime || '' },
+    ...(is0 && fvs !== undefined ? [{ id: 'value', label: 'Fair value', meta: String(fvs),
+      dot: fvs >= 70 ? '#3fb950' : fvs >= 50 ? '#d29922' : '#f85149' }] : [])
+  ];
 
   const tc = r.tradeConfidence;
   const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
@@ -1560,39 +1661,50 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </span>
         </div>
       </div>
-      {/* Decision Block */}
-      <div ref={decisionRef} style={{background:dcBg,border:`1px solid ${dcBorder}`,borderRadius:12,padding:'16px 20px'}}>
-        <div style={{display:'flex',gap:20,alignItems:'flex-start'}}>
-          {/* Left: strategy info */}
-          <div style={{flex:'1 1 auto',minWidth:0}}>
-            {/* Zone 1 — identity row: status pill · title · badges */}
-            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-              <span style={{fontSize:13,fontWeight:700,padding:'2px 10px',borderRadius:999,
-                color:(missingInputs && !hasBlocker)?'#d29922':dcColor,
-                border:`1px solid ${(missingInputs && !hasBlocker)?'#9e6a03':dcBorder}`,
-                background:'rgba(255,255,255,0.04)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{effectiveDecision}</span>
-              <span style={{fontSize:16,fontWeight:600,color:'#fff'}}>
-                {r.hardBlocker || `${is0?i0.underlying:i45.underlying} · ${effectiveStrat}${missingInputs ? '' : ` · ${r.contracts}x`}`}
-              </span>
-              {isOverride && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
-              {(() => {
-                const net = parseFloat(ticketNet);
-                const hasNet = !isNaN(net) && net !== 0;
-                const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
-                const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
-                const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#a8b2be';
-                // Per-share net, to 2dp. toFixed(0) rounded a real 0.46 debit to "-$0",
-                // which reads as a free trade on the one badge whose job is the price.
-                const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(2)}` : '';
-                return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
-                  style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
-              })()}
-              {r.tradeConfidence != null && (
-                <span title={r.confidenceDriver} style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:confBg,border:`1px solid ${confClr}`,color:confClr,letterSpacing:'0.04em'}}>
-                  CONF {r.tradeConfidence} · {r.confidenceTier.toUpperCase()}
+      {/* ── 1 · VERDICT BAND (Oct 2026 redesign) ──
+          One verdict, one score, one sentence of why. Everything that used to sit
+          here as tiles now lives on the trade-choice cards or in the evidence
+          drawer below, so the band only ever answers "do I trade this?". */}
+      <div ref={decisionRef} data-testid="verdict-band"
+        style={{background:vTone.bg,border:`1px solid ${vTone.border}`,borderRadius:14,padding:'20px 24px'}}>
+        <div style={{display:'flex',gap:24,alignItems:'flex-start',flexWrap:'wrap'}}>
+          <div style={{flex:'1 1 420px',minWidth:0,display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{display:'flex',alignItems:'center',gap:18}}>
+              <EdgeRing score={compositeScore} color={vTone.color} label={missingInputs ? 'SETUP' : 'EDGE'}
+                dim={!!r.hardBlocker}
+                title={missingInputs
+                  ? 'Setup quality only — the edge score needs win, risk and POP.'
+                  : 'Composite edge score: setup quality blended with Kelly, vol, Sharpe, POP margin and EV per unit of risk. The same number ranks the trade tabs.'} />
+              <div style={{display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
+                <span style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:vTone.color}}>Engine verdict</span>
+                <span data-testid="verdict" style={{fontSize:30,fontWeight:700,lineHeight:1.08,color:'#fff',letterSpacing:'-0.01em'}}>{verdict.word}</span>
+                <span style={{fontSize:15,color:'#e6edf3',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  {r.hardBlocker ? <span style={{color:'#a8b2be'}}>{verdict.sub}</span> : <>
+                    <span>{secBag.underlying} · {effectiveStrat}{missingInputs ? '' : <> · <span className="mono">{r.contracts}</span>x</>}</span>
+                    {(() => {
+                      const net = parseFloat(ticketNet);
+                      const hasNet = !isNaN(net) && net !== 0;
+                      const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
+                      const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
+                      const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#a8b2be';
+                      const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(2)}` : '';
+                      return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
+                        style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
+                    })()}
+                    {isOverride && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+                  </>}
                 </span>
-              )}
+              </div>
             </div>
+
+            {!r.hardBlocker && (
+              <div style={{fontSize:14.5,lineHeight:1.5,color:'#c9d1d9',maxWidth:'72ch'}}>
+                <span style={{color:'#fff',fontWeight:600}}>{`${is0 ? (r.dirLabel || '—') : (i45.outlook || '—')} · ${r.trendPattern || '—'}`}</span>
+                {skewClause ? ` — ${skewClause}.` : '.'}
+                {r.behaviour ? <> Profits if: {r.behaviour}</> : null}
+              </div>
+            )}
+
         {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
         {r.legs.length > 0 && (
           <div style={{marginTop:8}}>
@@ -1681,63 +1793,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             )}
           </div>
         )}
-        {/* Zone 2 — stat tiles: Score · P(max loss) · EV · Kelly. The detailed
-            P(max loss) breakdown box stays in the input column; this is the headline.
-            EV/Kelly gate on missingInputs (r.missingSize); P(max loss) on r.pMaxLoss==null. */}
-        {!r.hardBlocker && (() => {
-          const tile = (label, value, dim, tip) => (
-            <div title={tip} style={{background:'rgba(255,255,255,0.04)',borderRadius:8,padding:'8px 10px',opacity:dim?0.55:1}}>
-              <div style={{fontSize:12.5,color:'#a8b2be',letterSpacing:'0.04em'}}>{label}</div>
-              {value}
-            </div>
-          );
-          const needs = txt => <div style={{fontSize:13,color:'#a8b2be',marginTop:3}}>{txt}</div>;
-          const val = (node) => <div style={{fontSize:19,fontWeight:700,fontFamily:'JetBrains Mono,monospace',marginTop:1}}>{node}</div>;
-          return (
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginTop:10}}>
-              {/* Labelled COMPOSITE, not SCORE. The Setup Quality card on the right shows
-                  r.setupScore, a different number on the same 0-100 scale, and two tiles
-                  both reading "/100" on one screen invited them to be read as the same
-                  measure (48 here against 68 there). */}
-              {tile('COMPOSITE', val(<span style={{color:dcColor}}>{compositeScore}/100</span>), false,
-                'Composite banner score — blends setup quality with fair value, vol and regime. NOT the same number as the Setup Quality card, which is the 100-point scorecard on its own.')}
-              {tile('P(MAX LOSS)', r.pMaxLoss==null ? needs('needs greeks')
-                : val(<span style={{color: r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(r.pMaxLoss*100).toFixed(1)}%</span>),
-                r.pMaxLoss==null)}
-              {tile('EV', missingInputs ? needs('needs sizing')
-                : val(<><span style={{color: r.ev>0?'#3fb950':r.ev<0?'#f85149':'#a8b2be'}}>{r.ev?`$${r.ev.toFixed(0)}`:'--'}</span>
-                  {r.evBasis && <span style={{fontSize:12,fontWeight:400,color:'#a8b2be'}}> {r.evBasis.mode==='measured'?'meas':'est'}</span>}</>),
-                missingInputs)}
-              {tile('KELLY', missingInputs ? needs('needs sizing')
-                : val(<span style={{color: r.kellyOverRisk?'#f85149':'#3fb950'}}>{r.contracts}x · ${r.kellyDollar?.toFixed(0)||0}</span>),
-                missingInputs)}
-            </div>
-          );
-        })()}
-        {/* Zone 3 — thesis line: direction/trend · skew clause · profit-if */}
-        {!r.hardBlocker && (
-          <div style={{marginTop:8}}>
-            <span style={{fontSize:14,fontWeight:700,color:'#fff'}}>{`${is0?r.dirLabel:'—'} — ${r.trendPattern||'—'}`}</span>
-            <span style={{fontSize:13,color:'#a8b2be'}}>
-              {skewClause ? ` — ${skewClause}.` : ''}
-              {r.behaviour ? ` Profit if: ${r.behaviour}` : ''}
-            </span>
-          </div>
-        )}
-        {!r.hardBlocker && r.tradeConfidence != null && (
-          <div style={{marginTop:6,fontSize:13,color:'#a8b2be'}}>
-            <span style={{color:confClr,fontWeight:600}}>Confidence {r.tradeConfidence}/100 · {r.confidenceTier}</span>
-            {' — '}{r.confidenceDriver}
-            {r.confConflicts && r.confConflicts.length > 0 && (
-              <span style={{display:'inline-flex',flexWrap:'wrap',gap:6,marginLeft:8,verticalAlign:'middle'}}>
-                {r.confConflicts.map((c,i) => (
-                  <span key={i} title={c.label} style={{fontSize:12,fontWeight:600,padding:'1px 7px',borderRadius:4,
+
+            {!r.hardBlocker && (
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+                {r.tradeConfidence != null && (
+                  <span title={r.confidenceDriver}
+                    style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:6,background:'rgba(255,255,255,0.05)',fontSize:13,color:'#e6edf3'}}>
+                    <span style={{width:7,height:7,borderRadius:'50%',background:confClr}} />
+                    Confidence: {String(r.confidenceTier || '').toLowerCase()} <span className="mono" style={{color:'#8b949e'}}>{r.tradeConfidence}</span>
+                  </span>
+                )}
+                {(r.confConflicts || []).map((c,i) => (
+                  <span key={i} title={c.label} style={{fontSize:12.5,fontWeight:600,padding:'4px 9px',borderRadius:6,
                     background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
                 ))}
-              </span>
+                {r.pMaxLoss != null && <MiniStat label="Max-loss chance" value={`${(r.pMaxLoss*100).toFixed(1)}%`}
+                  color={r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'} />}
+                {!missingInputs && <MiniStat label="EV" value={r.ev ? `$${r.ev.toFixed(0)}` : '--'}
+                  color={r.ev>0?'#3fb950':r.ev<0?'#f85149':'#a8b2be'} />}
+              </div>
             )}
-          </div>
-        )}
+
         {/* Zone 3b — blockers, warnings and notices (Aug 2026)
             These existed in the engine from the start but were rendered NOWHERE on the
             ticket: they reached only the Print summary and the logged trade notes, so
@@ -1746,7 +1822,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               blockers — the trade is not takeable as configured
               warnings — takeable, but they downgrade the decision
               notices  — facts about the DATA, never about the trade; they never gate */}
-        {(r.blockers?.length > 0 || r.warnings?.length > 0 || r.notices?.length > 0) && (() => {
+        {(r.warnings?.length > 0 || r.notices?.length > 0) && (() => {
           const warns = r.warnings || [], notes = r.notices || [];
           const isEventW = w => /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
           const nEvent = warns.filter(isEventW).length;
@@ -1756,13 +1832,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           if (nEvent) parts.push(`\ud83d\udcc5 ${nEvent} event${nEvent > 1 ? 's' : ''}`);
           if (notes.length) parts.push(`${notes.length} notice${notes.length > 1 ? 's' : ''}`);
           return (
-          <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
-            {r.blockers?.map((b,i) => (
-              <div key={'b'+i} style={{fontSize:13,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
-                background:'#2d0f11',border:'1px solid #6e2427',color:'#f85149'}}>
-                <b>Blocker</b> · {b}
-              </div>
-            ))}
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
             {showAdvisories && r.warnings?.map((w,i) => {
               // Event warnings earn a distinct colour: they are the only ones that are
               // about the calendar rather than the structure, and they are actionable
@@ -1799,67 +1869,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
           );
         })()}
-        {/* Zone 4 — warning chips: hold-to-expiry verdict, expandable "why" */}
-        {is0 && r.holdToExpiry && (() => {
-          const h = r.holdToExpiry;
-          const bg = h.verdict==='hold'?'#0d2818':h.verdict==='watch'?'#1f1a0d':'#2d0f11';
-          const fg = h.verdict==='hold'?'#3fb950':h.verdict==='watch'?'#d29922':'#f85149';
-          return (
-            <div style={{marginTop:8}}>
-              <div style={{display:'inline-flex',alignItems:'center',gap:8,borderRadius:6,padding:'4px 10px',fontSize:13,background:bg,color:fg}}>
-                <span>Expiry · {h.label} · cushion {h.cushionEM.toFixed(2)} EM (need {h.needed.toFixed(2)}) · {h.isCashSettled?'cash-settled':'settles into shares'}</span>
-                <span onClick={()=>setExpandedWarning(expandedWarning==='expiry'?null:'expiry')}
-                  style={{textDecoration:'underline',cursor:'pointer',opacity:0.85}}>why</span>
-              </div>
-              {expandedWarning==='expiry' && (
-                <div style={{fontSize:12.5,color:'#a8b2be',marginTop:4}}>{h.note}</div>
-              )}
-            </div>
-          );
-        })()}
-        {!r.hardBlocker && bannerGrade !== 'weak' && !missingInputs && (
-          isLogged ? (
-            // Confirmed-write state. Deliberately not a disabled Log button: legging in
-            // is a real workflow, so "Log again" stays available — just demoted, so a
-            // second write has to be chosen rather than fallen into. Edit the ticket and
-            // the signature stops matching, this whole branch disappears, and the normal
-            // green button returns.
-            <div style={{marginTop:10,display:'inline-flex',alignItems:'center',gap:10}}>
-              <span title={`Written to the Decisions sheet at ${new Date(loggedAt).toLocaleString()}`}
-                style={{padding:'6px 16px',borderRadius:8,fontSize:13,fontWeight:600,
-                  background:'#0d2818',border:'1px solid #238636',color:'#3fb950'}}>
-                ✓ Logged · {new Date(loggedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
-              </span>
-              <span onClick={handleLog} title="Log a second ticket for these same strikes — for legging in, not for correcting a mistake"
-                style={{fontSize:13,color:'#a8b2be',textDecoration:'underline',cursor:'pointer'}}>Log again</span>
-            </div>
-          ) : (
-            <button onClick={handleLog} disabled={logging}
-              style={{marginTop:10,padding:'6px 16px',borderRadius:8,border:'none',
-                background: logging ? '#1a4d24' : '#238636', color:'#fff', fontSize:13, fontWeight:600,
-                cursor: logging ? 'default' : 'pointer', opacity: logging ? 0.7 : 1}}>
-              {logging ? 'Logging…' : 'Log trade'}
-            </button>
-          )
-        )}
-        {isOverride && (
-          <button onClick={() => setOverrideStrat(null)} style={{marginTop:10,marginLeft:8,padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>Clear override</button>
-        )}
-        {logNoteOpen && (
-          <div style={{marginTop:10,display:'flex',gap:6,alignItems:'center',maxWidth:560}}>
-            <input autoFocus type="text" value={logNote}
-              onChange={e=>setLogNote(e.target.value)}
-              onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); confirmLog(); } else if (e.key==='Escape') { setLogNoteOpen(false); } }}
-              placeholder="Add a note for this trade (optional) — your rationale, plan, or anything to remember"
-              style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none'}} />
-            <button onClick={confirmLog} style={{padding:'6px 14px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log</button>
-            <button onClick={()=>setLogNoteOpen(false)} title="Abort logging (nothing is written)"
-              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>Cancel</button>
           </div>
-        )}
-          </div>
-          {/* Right rail: mini payoff · BE/max caption · print */}
-          <div style={{flex:'0 0 180px',display:'flex',flexDirection:'column',gap:6}}>
+
+          {/* Right: payoff picture */}
+          <div style={{flex:'0 1 260px',minWidth:200,display:'flex',flexDirection:'column',gap:6}}>
             {r.payoff && r.payoff.points.length > 0 && (
               <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
             )}
@@ -1873,14 +1886,172 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:12.5,color:'#a8b2be',textAlign:'center'}}>{parts.join(' · ')}</div>
               ) : null;
             })()}
-            <button onClick={handlePrint} style={{padding:'6px 16px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:13,cursor:'pointer'}}>Print summary</button>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      {/* ── 2 · NEEDS YOU ── only what a person has to do, each with its own control.
+          Nothing renders here when the Bridge has everything covered. */}
+      {needs.length > 0 && (
+        <section data-testid="needs-you" style={{display:'flex',flexDirection:'column',gap:8}}>
+          <div style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:'#d29922'}}>
+            Needs you · {needs.length}
+          </div>
+          {needs.map((n, idx) => (
+            <div key={n.key} style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:10,
+              background:'#0d1117',border:`1px solid ${n.tone==='bad'?'#6e2427':n.tone==='warn'?'#9e6a03':'#30363d'}`}}>
+              <span className="mono" style={{width:24,height:24,borderRadius:'50%',flex:'none',display:'flex',alignItems:'center',justifyContent:'center',
+                fontSize:12.5,fontWeight:700,color:'#0d1117',background:n.tone==='bad'?'#f85149':n.tone==='warn'?'#d29922':'#8b949e'}}>{idx+1}</span>
+              <div style={{flex:'1 1 280px',minWidth:0,display:'flex',flexDirection:'column',gap:3}}>
+                <span style={{fontSize:14.5,fontWeight:600,color:'#fff'}}>{n.title}</span>
+                {n.detail && <span style={{fontSize:13,lineHeight:1.45,color:'#a8b2be'}}>{n.detail}</span>}
+              </div>
+              {n.net && (
+                <NeedNum label={cashType==='debit' ? 'Net debit' : 'Net credit'} value={ticketNet}
+                  onChange={v=>is0?set0('netCreditDebit',v):set45('netCreditDebit',v)} />
+              )}
+              {n.sizing && (
+                <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-start'}}>
+                  <NeedNum label="Win $" value={secBag.win} onChange={v=>is0?set0('win',v):set45('win',v)}
+                    suggest={r.payoff?.maxProfit > 0 ? Math.round(r.payoff.maxProfit) : null} />
+                  <NeedNum label="Risk $" value={secBag.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}
+                    suggest={r.payoff && Number.isFinite(r.payoff.maxLoss) && r.payoff.maxLoss !== 0 ? Math.round(Math.abs(r.payoff.maxLoss)) : null} />
+                  <NeedNum label="POP %" value={secBag.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)} />
+                </div>
+              )}
+              {(n.actions || []).map(a => (
+                <button key={a.label} onClick={a.onClick} disabled={a.busy}
+                  style={{padding:'8px 12px',borderRadius:8,fontSize:13,fontWeight:600,cursor:a.busy?'default':'pointer',minHeight:36,
+                    border:`1px solid ${a.primary?'#2f81f7':'#30363d'}`,background:a.primary?'#0d1a2b':'transparent',
+                    color:a.primary?'#58a6ff':'#e6edf3',opacity:a.busy?0.6:1}}>{a.busy ? (a.busyLabel || 'Working…') : a.label}</button>
+              ))}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* ── 3 · EXECUTION ── size, price, expiry plan and the one button that writes. */}
+      {!r.hardBlocker && (
+        <section data-testid="execution" style={{display:'flex',flexWrap:'wrap',alignItems:'stretch',gap:16,padding:'14px 16px',
+          borderRadius:12,background:'#161b22',border:'1px solid #21262d'}}>
+          <div style={{flex:'1 1 130px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
+            <span style={EX_LBL}>Size</span>
+            {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : <>
+              <span className="mono" style={{fontSize:22,fontWeight:700,color: r.kellyOverRisk ? '#f85149' : '#e6edf3'}}>{r.contracts} ct</span>
+              <span style={{fontSize:12.5,color:'#a8b2be'}}>Kelly ${Math.round(r.kellyDollar || 0)}{r.kellyOverRisk ? ' · over risk cap' : ''}</span>
+            </>}
+          </div>
+          <div style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
+            <span style={EX_LBL}>{cashType==='debit' ? 'Net debit' : 'Net credit'}{netIsTarget && <span title="Pre-filled from the engine's target — replace it with your fill; this number is logged."
+              style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:10.5,fontWeight:700,letterSpacing:'0.04em',background:'#3a2d00',color:'#e3b341'}}>TARGET</span>}</span>
+            <input type="number" step="any" aria-label="Net credit or debit" value={ticketNet}
+              onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
+              placeholder="—" className="mono"
+              style={{width:'100%',maxWidth:140,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',
+                color: parseFloat(ticketNet) > 0 ? '#3fb950' : parseFloat(ticketNet) < 0 ? '#f85149' : '#e6edf3',fontSize:16,fontWeight:700,outline:'none'}} />
+            {r.priceCheck && r.priceCheck.ratio != null && !r.priceCheck.arb && (
+              <span style={{fontSize:12.5,color: r.priceCheck.ratio >= 1.15 ? '#d29922' : '#a8b2be'}}>
+                fair {r.priceCheck.fair.toFixed(2)} · {r.priceCheck.ratio.toFixed(2)}× fair
+              </span>
+            )}
+          </div>
+          {is0 && r.holdToExpiry && (() => {
+            const h = r.holdToExpiry;
+            const fg = h.verdict==='hold'?'#3fb950':h.verdict==='watch'?'#d29922':'#f85149';
+            const bg = h.verdict==='hold'?'#0d2818':h.verdict==='watch'?'#1f1a0d':'#2d0f11';
+            return (
+              <div style={{flex:'1.4 1 220px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
+                <span style={EX_LBL}>At expiry</span>
+                <span title={h.note} style={{alignSelf:'flex-start',padding:'4px 10px',borderRadius:6,background:bg,color:fg,fontSize:13,fontWeight:600}}>{h.label}</span>
+                <span style={{fontSize:12.5,color:'#a8b2be'}}>Cushion {h.cushionEM.toFixed(2)} EM (wants {h.needed.toFixed(2)}) · {h.isCashSettled?'cash-settled':'settles into shares'}</span>
+              </div>
+            );
+          })()}
+          <div style={{flex:'1 1 200px',display:'flex',flexDirection:'column',justifyContent:'center',gap:6}}>
+            {isLogged ? (
+              // Confirmed-write state. "Log again" stays available but demoted, so a
+              // second write has to be chosen rather than fallen into (legging in).
+              <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                <span data-testid="logged-badge" title={`Written to the Decisions log at ${new Date(loggedAt).toLocaleString()}`}
+                  style={{padding:'10px 16px',borderRadius:10,fontSize:14,fontWeight:600,
+                    background:'#0d2818',border:'1px solid #238636',color:'#3fb950'}}>
+                  ✓ Logged · {new Date(loggedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+                </span>
+                <button onClick={handleLog} title="Log a second ticket for these same strikes — for legging in, not for correcting a mistake"
+                  style={EX_LINK}>Log again</button>
+              </div>
+            ) : logGate.ok ? (
+              <button data-testid="log-trade" onClick={handleLog} disabled={logging}
+                style={{padding:'12px 18px',borderRadius:10,border:'none',minHeight:46,
+                  background: logging ? '#1a4d24' : '#238636', color:'#fff', fontSize:15, fontWeight:700,
+                  cursor: logging ? 'default' : 'pointer', opacity: logging ? 0.7 : 1}}>
+                {logging ? 'Logging…' : 'Log trade'}
+              </button>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                <button data-testid="log-trade" disabled title={logGate.why}
+                  style={{padding:'12px 18px',borderRadius:10,minHeight:46,fontSize:14,fontWeight:600,cursor:'not-allowed',
+                    border:`1px solid ${logGate.tone === 'bad' ? '#6e2427' : '#30363d'}`,
+                    background: logGate.tone === 'bad' ? '#2d0f11' : '#1c2128',
+                    color: logGate.tone === 'bad' ? '#f85149' : '#8b949e'}}>
+                  {logGate.label}
+                </button>
+                {logGate.anyway && (
+                  <button data-testid="log-anyway" onClick={handleLog}
+                    title="Write this ticket despite the blocker — it is logged with the blocker in its notes"
+                    style={{...EX_LINK,alignSelf:'flex-start'}}>Log anyway</button>
+                )}
+              </div>
+            )}
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {isOverride && (
+                <button onClick={() => setOverrideStrat(null)} style={EX_GHOST}>Clear override</button>
+              )}
+              <button onClick={handlePrint} style={EX_GHOST}>Print summary</button>
+            </div>
+          </div>
+        {logNoteOpen && (
+          <div style={{flexBasis:'100%',display:'flex',gap:6,alignItems:'center',maxWidth:640}}>
+            <input autoFocus type="text" value={logNote}
+              onChange={e=>setLogNote(e.target.value)}
+              onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); confirmLog(); } else if (e.key==='Escape') { setLogNoteOpen(false); } }}
+              placeholder="Add a note for this trade (optional) — your rationale, plan, or anything to remember"
+              style={{flex:1,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none'}} />
+            <button onClick={confirmLog} style={{padding:'6px 14px',borderRadius:8,border:'none',background:'#238636',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>Log</button>
+            <button onClick={()=>setLogNoteOpen(false)} title="Abort logging (nothing is written)"
+              style={{padding:'6px 12px',borderRadius:8,border:'1px solid #30363d',background:'transparent',color:'#a8b2be',fontSize:13,cursor:'pointer'}}>Cancel</button>
+          </div>
+        )}
+        </section>
+      )}
+
+      {/* ── 4 · EVIDENCE DRAWER ── closed by default. Every panel stays mounted
+          (display:none) so half-typed inputs and open details survive a tab switch. */}
+      <section data-testid="evidence" style={{borderRadius:12,background:'#161b22',border:'1px solid #21262d'}}>
+        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',padding:'8px 10px'}}>
+          <span style={{...EX_LBL,padding:'0 8px 0 6px'}}>Evidence</span>
+          {drawerTabs.map(t => {
+            const on = drawerTab === t.id;
+            return (
+              <button key={t.id} data-testid={'drawer-tab-' + t.id} onClick={() => setDrawerTab(on ? null : t.id)}
+                aria-pressed={on}
+                style={{display:'inline-flex',alignItems:'center',gap:7,padding:'6px 11px',borderRadius:7,fontSize:13,cursor:'pointer',minHeight:34,
+                  border:`1px solid ${on ? '#58a6ff' : 'transparent'}`,background:on ? '#1c2128' : 'transparent',color:on ? '#fff' : '#a8b2be'}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:t.dot}} />
+                {t.label}
+                {t.meta ? <span className="mono" style={{fontSize:12,color:'#8b949e'}}>{t.meta}</span> : null}
+              </button>
+            );
+          })}
+          <span style={{marginLeft:'auto',fontSize:12.5,color:'#8b949e',paddingRight:6}}>
+            {drawerTab ? 'Click the tab again to close' : (needs.length ? '' : 'Nothing here needs you')}
+          </span>
+        </div>
+      </section>
+
+      <div data-testid="evidence-body" style={{display: drawerTab ? 'block' : 'none'}}>
         {/* ── INPUTS PANEL ── */}
-        <div className="card" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
+        <div className="card" style={{...tabShow('inputs'),maxWidth:1040}}>
 
           {/* Source legend — the SAME colours the per-field states already use:
               green = the feed / LIVE badge, amber = Inp's manual (held) state,
@@ -2473,10 +2644,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         </div>
 
         {/* ── RESULTS PANEL ── */}
-        <div className="space-y-4" style={{maxHeight:'calc(100vh - 360px)',overflowY:'auto'}}>
+        <div style={{display: drawerTab && drawerTab !== 'inputs' ? 'grid' : 'none',gridTemplateColumns:'repeat(auto-fit, minmax(420px, 1fr))',gap:16,alignItems:'start'}}>
+          <div className="empty:hidden" style={tabShow('setup')}>
           {/* Setup quality — weighted bar + points-lost list (full rows collapsible) */}
           <SetupQualityCard r={r} sBg={sBg} sClr={sClr} />
 
+          </div>
+          <div className="empty:hidden" style={tabShow('structures')}>
           {/* Strategy ratings */}
           <div className="card">
             <div className="flex items-center justify-between mb-1">
@@ -2521,6 +2695,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           </div>
 
+          </div>
+          <div className="empty:hidden" style={tabShow('structures')}>
           {/* Structure comparison — current pick vs the next-best rated structures,
               each a FULL engine re-run on the same inputs (the calc is pure). */}
           {stratCompare && stratCompare.length > 1 && (
@@ -2578,6 +2754,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('sizing')}>
           {/* Entry price — what is being paid against what the structure is worth */}
           {r.priceCheck && (
             <div className="card">
@@ -2620,6 +2798,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('timing')}>
           {/* When the value arrives — the time dimension of the payoff below */}
           {accrual && (
             <div className="card">
@@ -2682,6 +2862,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('timing')}>
           {/* Payoff diagram — full width */}
           {r.payoff && r.payoff.points.length > 0 && (
             <div className="card">
@@ -2696,6 +2878,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('sizing')}>
           {/* Sharpe-adjusted Kelly sizing */}
           <div className="card">
             <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk per strategy). Vol Factor: VIX <12 = 1.0, 12-18 = 0.75, 18-25 = 0.50, >25 = 0.25. Sharpe Factor: based on EV/risk ratio. Strategy Modifier: butterflies 1.0, IC/credit spreads 0.85, BWB 0.80, reversed condor 0.70. Adj Kelly $ = max recommended risk. Risk per contract turns red if it exceeds Kelly $. POP turns red if below breakeven POP.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
@@ -2761,6 +2945,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           </div>
 
+          </div>
+          <div className="empty:hidden" style={tabShow('greeks')}>
           {/* Directional Edge prompt — always visible so the feature is discoverable */}
           {!r.greeks && (
             <div className="card" style={{borderStyle:'dashed',borderColor:'#30363d'}}>
@@ -2777,6 +2963,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('greeks')}>
           {/* Greeks Analysis — Theta Edge, Gamma Risk, Max Move */}
           {is0 && r.greeks && (
             <div className="card">
@@ -2854,6 +3042,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('greeks')}>
           {/* 45DTE Directional Edge */}
           {!is0 && r.greeks && r.greeks.edgeRatio !== undefined && (
             <div className="card">
@@ -2893,6 +3083,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('regime')}>
           {/* Regime */}
           <div className="card">
             <SectionLabel white info="Current market regime based on realised move as % of expected move (RM ratio) and ATR compression. Determines which strategies are favoured. Butterfly zone = >60% consumed + compressing. Each regime has different strategy ratings.">Regime</SectionLabel>
@@ -2900,6 +3092,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <div className="text-xs text-[#c9d1d9] mt-1.5 leading-relaxed">{is0 ? `${r.regimeConds||''} — ${r.regimeCommentary||''}` : r.regimeCommentary||''}</div>
           </div>
 
+          </div>
+          <div className="empty:hidden" style={tabShow('value')}>
           {/* Fair Value Score */}
           {is0 && r.fairValueScore !== undefined && (
             <div className="card">
@@ -2933,6 +3127,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
+          </div>
+          <div className="empty:hidden" style={tabShow('regime')}>
           {/* Signals */}
           <div className="card">
             <SectionLabel white info="All derived market signals: direction and trend pattern, move consumed breakdown (directional vs range), overnight ES analysis, VWAP trend (rolling 30-min windows, sized in units of the 30-min expected move) confirmed or contradicted by VWAP acceptance, VIX gap grade, compression ratio, gamma distance. These feed into the setup quality scoring.">Signals</SectionLabel>
@@ -2965,9 +3161,69 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               </>}
             </div>
           </div>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Verdict band helpers (Oct 2026) ──
+const EX_LBL = { fontSize: 12, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#8b949e' };
+const EX_LINK = { padding: 0, border: 'none', background: 'transparent', color: '#a8b2be', fontSize: 13,
+  textDecoration: 'underline', cursor: 'pointer' };
+const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent',
+  color: '#c9d1d9', fontSize: 13, cursor: 'pointer' };
+
+// The one headline score: composite as a ring, coloured by the verdict.
+function EdgeRing({ score, color, label, dim, title }) {
+  const R = 34, C = 2 * Math.PI * R;
+  const s = Math.max(0, Math.min(100, Math.round(score || 0)));
+  return (
+    <div title={title} data-testid="edge-ring" style={{ position: 'relative', width: 80, height: 80, flex: 'none', opacity: dim ? 0.45 : 1 }}>
+      <svg viewBox="0 0 80 80" width="80" height="80" aria-hidden="true">
+        <circle cx="40" cy="40" r={R} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
+        {!dim && <circle cx="40" cy="40" r={R} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"
+          strokeDasharray={`${(C * s / 100).toFixed(1)} ${C.toFixed(1)}`} transform="rotate(-90 40 40)" />}
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <span className="mono" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: dim ? '#8b949e' : color }}>{dim ? '--' : s}</span>
+        <span style={{ fontSize: 9.5, color: '#a8b2be', letterSpacing: '0.08em', marginTop: 2 }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '4px 10px', borderRadius: 6,
+      background: 'rgba(255,255,255,0.05)', fontSize: 13, color: '#a8b2be' }}>
+      {label}<span className="mono" style={{ color, fontWeight: 700 }}>{value}</span>
+    </span>
+  );
+}
+
+// Compact labelled number for the Needs-you queue, with an optional one-click
+// suggestion (e.g. the payoff's own max profit / max loss).
+function NeedNum({ label, value, onChange, suggest }) {
+  const cur = parseFloat(value);
+  const showSuggest = suggest != null && isFinite(suggest) && !(isFinite(cur) && Math.abs(cur - suggest) < 0.5);
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: '#8b949e' }}>
+      {label}
+      <input type="number" step="any" value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder="—"
+        className="mono"
+        style={{ width: 96, padding: '8px 10px', borderRadius: 8, border: '1px solid #9e6a03', background: '#0d1117',
+          color: '#e6edf3', fontSize: 14, outline: 'none' }} />
+      {showSuggest && (
+        <button type="button" onClick={() => onChange(String(suggest))}
+          title="Computed from the payoff at expiry"
+          style={{ padding: '1px 6px', borderRadius: 4, border: '1px solid #1f6feb55', background: '#0d1a2e',
+            color: '#58a6ff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-start' }}>
+          ← {suggest} from payoff
+        </button>
+      )}
+    </label>
   );
 }
 
