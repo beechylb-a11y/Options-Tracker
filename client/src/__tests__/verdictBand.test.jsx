@@ -47,6 +47,8 @@ describe('verdict band', () => {
     const btn = screen.getByTestId('log-trade');
     expect(btn.disabled).toBe(false);
     expect(screen.queryByTestId('log-anyway')).toBeNull();
+    // the price map draws the structure against price
+    expect(screen.getByTestId('price-map').getAttribute('aria-label')).toMatch(/7410.*strikes 7305, 7345, 7450, 7495/);
   });
 
   it('switching to an alternative card clears the old legs’ sizing', () => {

@@ -1053,6 +1053,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setOverrideStrat(next);
   }
 
+  // ── Price map inputs (Oct 2026) ──
+  const netNum = parseFloat(ticketNet);
+  const mapPay = (hasBlocker || /calendar|diagonal/i.test(effectiveStrat || '')) ? null
+    : (r.payoff && Array.isArray(r.payoff.points) && r.payoff.points.length > 1) ? r.payoff
+    : legsPayoff(r.legs, isFinite(netNum) && netNum !== 0 ? netNum : null);
+  const mapEM = is0 ? (r.emRemaining || 0) : (r.em45 || 0);
+  const cushion = shortCushion(r.legs, fv(secBag, 'price'), mapEM);
+
   const tc = r.tradeConfidence;
   const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
   const confBg  = tc==null?'#161b22':tc>=70?'#0d1f0d':tc>=50?'#0d1a0d':tc>=30?'#1f1a0d':'#1f0d0d';
@@ -1745,7 +1753,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
             {!r.hardBlocker && (
               <div style={{fontSize:14.5,lineHeight:1.5,color:'#c9d1d9',maxWidth:'72ch'}}>
-                <span style={{color:'#fff',fontWeight:600}}>{`${is0 ? (r.dirLabel || '—') : (i45.outlook || '—')} · ${r.trendPattern || '—'}`}</span>
+                <span style={{color:'#fff',fontWeight:600}}>{is0
+                  ? `${r.dirLabel || '—'} · ${r.trendPattern || '—'}`
+                  : `${String(i45.outlook || 'neutral').replace(/^./, ch => ch.toUpperCase())} outlook`}</span>
                 {skewClause ? ` — ${skewClause}.` : '.'}
                 {r.behaviour ? <> Profits if: {r.behaviour}</> : null}
               </div>
@@ -1913,22 +1923,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         })()}
           </div>
 
-          {/* Right: payoff picture */}
-          <div style={{flex:'0 1 260px',minWidth:200,display:'flex',flexDirection:'column',gap:6}}>
-            {r.payoff && r.payoff.points.length > 0 && (
-              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} mini />
-            )}
-            {r.payoff && (() => {
-              const bes = (r.payoff.breakevens || []).filter(Number.isFinite);
-              const mp = r.payoff.maxProfit;
-              const parts = [];
-              if (bes.length) parts.push(`BE ${bes.map(b => Math.round(b)).join(' / ')}`);
-              if (Number.isFinite(mp)) parts.push(`max +$${mp >= 1000 ? (mp/1000).toFixed(1).replace(/\.0$/,'') + 'k' : Math.round(mp)}`);
-              return parts.length > 0 ? (
-                <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:12.5,color:'#a8b2be',textAlign:'center'}}>{parts.join(' · ')}</div>
-              ) : null;
-            })()}
-          </div>
+          {/* Right: price map — where price can go, against this structure */}
+          {mapPay && (
+            <div style={{flex:'1.25 1 460px',minWidth:300,display:'flex',flexDirection:'column',gap:4}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8,flexWrap:'wrap'}}>
+                <span style={EX_LBL}>Where price can go</span>
+                {cushion && (
+                  <span title="Distance from price to the nearest short strike, in remaining expected moves" style={{fontSize:12.5,color:'#a8b2be'}}>
+                    Cushion{cushion.below != null && <> below <span className="mono" style={{color: cushion.below < 1 ? '#d29922' : '#e6edf3'}}>{cushion.below.toFixed(2)} EM</span></>}
+                    {cushion.below != null && cushion.above != null ? ' \u00b7' : ''}
+                    {cushion.above != null && <> above <span className="mono" style={{color: cushion.above < 1 ? '#d29922' : '#e6edf3'}}>{cushion.above.toFixed(2)} EM</span></>}
+                  </span>
+                )}
+              </div>
+              <PriceMap pay={mapPay} legs={r.legs} price={fv(secBag, 'price')} em={mapEM}
+                emLabel={is0 ? 'Expected move left' : '1 SD to expiry'}
+                high={is0 ? fv(i0, 'high') : 0} low={is0 ? fv(i0, 'low') : 0}
+                vwap={is0 ? scaleVWAP(i0.vwap5) : 0} underlying={secBag.underlying} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -3456,6 +3469,151 @@ function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
       </div>
     </div>
   );
+}
+
+// ── Price map (Oct 2026) ──
+// One strip on a price axis answering "where can price go, and what happens to me
+// there": payoff zones, strikes, breakevens, the remaining expected move, today's
+// range and VWAP, and price itself. Every mark is placed with one scale.
+function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }) {
+  if (!pay || !Array.isArray(pay.points) || pay.points.length < 2 || !(price > 0)) return null;
+  const use = (Array.isArray(legs) && legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : (legs || []);
+  const strikes = use.filter(l => isFinite(l.strike)).map(l => ({
+    strike: l.strike, short: /short|sell/i.test(l.label || ''), label: l.label || '' }));
+  if (!strikes.length) return null;
+  const ks = strikes.map(s => s.strike);
+  const hasEM = em > 0;
+  let lo = Math.min(...ks, price, hasEM ? price - em : price, low > 0 ? low : price);
+  let hi = Math.max(...ks, price, hasEM ? price + em : price, high > 0 ? high : price);
+  const padPts = (hi - lo) * 0.14 || 10;
+  lo -= padPts; hi += padPts;
+  const L = 30, R = 690, W = 720;
+  const X = p => L + (p - lo) / (hi - lo) * (R - L);
+  const inDom = p => p >= lo && p <= hi;
+
+  // payoff at any price: linear interpolation between the computed points
+  const pts = pay.points;
+  const pnlAt = px => {
+    if (px <= pts[0].price) return pts[0].pnl;
+    if (px >= pts[pts.length - 1].price) return pts[pts.length - 1].pnl;
+    let i = 1; while (i < pts.length && pts[i].price < px) i++;
+    const a = pts[i - 1], b = pts[i];
+    return a.pnl + (b.pnl - a.pnl) * ((px - a.price) / ((b.price - a.price) || 1));
+  };
+  const maxP = pay.maxProfit, maxL = pay.maxLoss;
+  const COLS = 180, colW = (R - L) / COLS;
+  const cells = [];
+  for (let i = 0; i < COLS; i++) {
+    const px = lo + (hi - lo) * (i + 0.5) / COLS;
+    const v = pnlAt(px);
+    let fill, op;
+    if (pay.shapeOnly) { fill = '#6e7681'; op = 0.25 + 0.5 * ((v - maxL) / ((maxP - maxL) || 1)); }
+    else if (v >= 0) { fill = '#2ea043'; op = 0.30 + 0.62 * (maxP > 0 ? v / maxP : 0); }
+    else { fill = '#da3633'; op = 0.22 + 0.55 * (maxL < 0 ? v / maxL : 0); }
+    cells.push(<rect key={i} x={(L + i * colW).toFixed(2)} y="26" width={(colW + 0.4).toFixed(2)} height="26" fill={fill} fillOpacity={Math.max(0, Math.min(1, op)).toFixed(2)} />);
+  }
+  const money = v => (v >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(v)).toLocaleString('en-US');
+  const bes = pay.shapeOnly ? [] : (pay.breakevens || []).filter(b => isFinite(b) && inDom(b));
+  // profit label sits in the widest green run
+  let profitMid = null;
+  if (!pay.shapeOnly && maxP > 0) {
+    let best = null, run = null;
+    for (let i = 0; i < COLS; i++) {
+      const pos = pnlAt(lo + (hi - lo) * (i + 0.5) / COLS) > 0;
+      if (pos) { run = run ? { s: run.s, e: i } : { s: i, e: i }; if (!best || run.e - run.s > best.e - best.s) best = { ...run }; }
+      else run = null;
+    }
+    if (best) profitMid = L + ((best.s + best.e + 1) / 2) * colW;
+  }
+  const leftLoss = !pay.shapeOnly && pnlAt(lo) < 0 ? pnlAt(lo) : null;
+  const rightLoss = !pay.shapeOnly && pnlAt(hi) < 0 ? pnlAt(hi) : null;
+
+  // strike labels: stagger neighbours that would collide
+  const sorted = strikes.slice().sort((a, b) => a.strike - b.strike);
+  let lastX = -1e9, row = 0;
+  const labels = sorted.map(s => {
+    const x = X(s.strike);
+    row = (x - lastX < 52) ? 1 - row : 0;
+    lastX = x;
+    return { ...s, x, y: row ? 22 : 12 };
+  });
+
+  // axis ticks on a round step
+  const span = hi - lo;
+  const step = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000].find(s => span / s <= 7) || 1000;
+  const ticks = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) ticks.push(t);
+
+  const pxX = X(price);
+  const pillW = Math.max(46, String(Math.round(price)).length * 8 + 14);
+  const T = { fontFamily: 'JetBrains Mono,monospace' };
+  const S = { fontFamily: 'DM Sans,system-ui,sans-serif' };
+  return (
+    <svg data-testid="price-map" viewBox={`0 0 ${W} 170`} width="100%" role="img"
+      aria-label={`${underlying || 'Price'} ${Math.round(price)}; strikes ${ks.join(', ')}${bes.length ? '; breakevens ' + bes.map(Math.round).join(' and ') : ''}${hasEM ? `; expected move ±${em.toFixed(0)}` : ''}`}>
+      {cells}
+      {profitMid != null && <text x={profitMid} y="43.5" fill="#e6ffed" fontSize="12" fontWeight="600" textAnchor="middle"
+        stroke="#0b3d1a" strokeWidth="3" paintOrder="stroke" style={S}>Max profit {money(maxP)}</text>}
+      {leftLoss != null && <text x={L + 6} y="43.5" fill="#ffc1bc" fontSize="11" style={T}>{money(leftLoss)}</text>}
+      {rightLoss != null && <text x={R - 6} y="43.5" fill="#ffc1bc" fontSize="11" textAnchor="end" style={T}>{money(rightLoss)}</text>}
+      {pay.shapeOnly && <text x={(L + R) / 2} y="43.5" fill="#c9d1d9" fontSize="11.5" textAnchor="middle" style={S}>Enter the net to price the zones</text>}
+
+      {labels.map((s, i) => (
+        <g key={i}>
+          <line x1={s.x} y1="24" x2={s.x} y2="118" stroke={s.short ? '#e6edf3' : '#8b949e'} strokeWidth={s.short ? 1.5 : 1} strokeDasharray={s.short ? undefined : '3 3'} />
+          <text x={s.x} y={s.y} fill={s.short ? '#e6edf3' : '#8b949e'} fontSize="11" fontWeight={s.short ? 700 : 400} textAnchor="middle" style={T}>
+            {Math.round(s.strike * 100) / 100}{s.short ? ' S' : ' L'}
+          </text>
+        </g>
+      ))}
+
+      {bes.map((b, i) => (
+        <text key={i} x={X(b)} y="66" fill="#a8b2be" fontSize="10.5" textAnchor={i === 0 && bes.length > 1 ? 'end' : bes.length > 1 ? 'start' : 'middle'} style={T}>
+          {bes.length > 1 ? (i === 0 ? `BE ${Math.round(b)} ` : ` BE ${Math.round(b)}`) : `BE ${Math.round(b)}`}
+        </text>
+      ))}
+
+      {hasEM && (
+        <g>
+          <rect x={X(price - em)} y="74" width={X(price + em) - X(price - em)} height="18" rx="9" fill="#58a6ff" fillOpacity="0.16" stroke="#58a6ff" strokeOpacity="0.5" />
+          <text x={X(price - em) + 10} y="87" fill="#9ecbff" fontSize="11" style={S}>{emLabel} ±{em.toFixed(0)}</text>
+        </g>
+      )}
+
+      {high > 0 && low > 0 && high >= low && (
+        <g>
+          <rect x={X(low)} y="100" width={Math.max(2, X(high) - X(low))} height="8" rx="4" fill="#6e7681" />
+          {vwap > 0 && inDom(vwap) && <line x1={X(vwap)} y1="96" x2={X(vwap)} y2="112" stroke="#d29922" strokeWidth="2" />}
+          <text x={Math.min(R - 4, X(high) + 8)} y="108" fill="#8b949e" fontSize="10.5" textAnchor={X(high) + 120 > R ? 'end' : 'start'} style={S}>
+            {X(high) + 120 > R ? '' : `today's range${vwap > 0 ? ' · VWAP' : ''}`}
+          </text>
+        </g>
+      )}
+
+      <line x1={pxX} y1="24" x2={pxX} y2="122" stroke="#ffffff" strokeWidth="2" />
+      <rect x={pxX - pillW / 2} y="120" width={pillW} height="18" rx="9" fill="#ffffff" />
+      <text x={pxX} y="133" fill="#0d1117" fontSize="11.5" fontWeight="700" textAnchor="middle" style={T}>{Math.round(price)}</text>
+
+      <line x1={L} y1="148" x2={R} y2="148" stroke="#30363d" />
+      {ticks.map(t => (
+        <text key={t} x={X(t)} y="164" fill="#8b949e" fontSize="10.5" textAnchor="middle" style={T}>{t}</text>
+      ))}
+    </svg>
+  );
+}
+
+// Distance from price to the nearest short strike on each side, in units of the
+// remaining expected move. Null on a side with no short strike.
+function shortCushion(legs, price, em) {
+  if (!(em > 0) || !(price > 0) || !Array.isArray(legs)) return null;
+  const use = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
+  const shorts = use.filter(l => /short|sell/i.test(l.label || '') && isFinite(l.strike)).map(l => l.strike);
+  if (!shorts.length) return null;
+  const below = shorts.filter(k => k <= price), above = shorts.filter(k => k > price);
+  return {
+    below: below.length ? (price - Math.max(...below)) / em : null,
+    above: above.length ? (Math.min(...above) - price) / em : null,
+  };
 }
 
 // Setup quality card: one weighted segment bar (segment width = criterion
