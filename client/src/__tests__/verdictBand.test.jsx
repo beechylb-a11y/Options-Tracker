@@ -51,6 +51,16 @@ describe('verdict band', () => {
     expect(screen.getByTestId('price-map').getAttribute('aria-label')).toMatch(/7410.*strikes 7305, 7345, 7450, 7495/);
   });
 
+  it('Log trade still opens the note and writes through onLogTrade', async () => {
+    const onLog = vi.fn(() => Promise.resolve(true));
+    render(<EnginePanel mode="0dte" onLogTrade={onLog} accountConfig={{ id: 'acct', bankroll: 25000 }}
+      strategyHistory={{}} toast={() => {}}
+      initialState={{ i0: { ...base, netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' } }} />);
+    fireEvent.click(screen.getByTestId('log-trade'));
+    fireEvent.click(screen.getByRole('button', { name: 'Log' }));
+    expect(onLog).toHaveBeenCalledTimes(1);
+  });
+
   it('switching to an alternative card clears the old legs’ sizing', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
     const cards = screen.getAllByTestId('choice-card');
