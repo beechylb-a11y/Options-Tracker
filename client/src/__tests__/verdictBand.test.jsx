@@ -49,6 +49,16 @@ describe('verdict band', () => {
     expect(screen.queryByTestId('log-anyway')).toBeNull();
   });
 
+  it('switching to an alternative card clears the old legs’ sizing', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
+    const cards = screen.getAllByTestId('choice-card');
+    expect(cards.length).toBe(3);
+    expect(cards[0].dataset.current).toBe('1');
+    fireEvent.click(screen.getAllByTestId('choice-switch')[0]);
+    expect(screen.getByTestId('verdict').textContent).not.toBe('Take it smaller, or pass');
+    expect(screen.getByTestId('needs-you').textContent).toMatch(/Enter sizing/);
+  });
+
   it('keeps the evidence drawer closed until a tab is chosen', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
     const body = screen.getByTestId('evidence-body');

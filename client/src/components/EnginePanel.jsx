@@ -1007,6 +1007,52 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       dot: fvs >= 70 ? '#3fb950' : fvs >= 50 ? '#d29922' : '#f85149' }] : [])
   ];
 
+  // ── Trade choices (Oct 2026) ──
+  // Built from stratCompare (current + next two, each a full engine run). The
+  // current card uses this ticket's own payoff and fill. Alternatives are drawn at
+  // the model's fair value for THEIR strikes (priceCheck.fair), because their run
+  // still carries this ticket's net credit, which belongs to other legs.
+  const choiceList = (!hasBlocker && Array.isArray(stratCompare)) ? stratCompare.map(c => {
+    const res = c.res || {};
+    const isCur = !!c.current;
+    const netNow = parseFloat(ticketNet);
+    let pay = null, priced = 'shape', netShow = null;
+    if (isCur) {
+      if (res.payoff && Array.isArray(res.payoff.points) && res.payoff.points.length > 1) { pay = res.payoff; priced = 'ticket'; }
+      else { pay = legsPayoff(res.legs, isFinite(netNow) && netNow !== 0 ? netNow : null); priced = pay && !pay.shapeOnly ? 'ticket' : 'shape'; }
+      netShow = isFinite(netNow) && netNow !== 0 ? netNow : null;
+    } else {
+      const fair = res.priceCheck && isFinite(res.priceCheck.fair) ? -res.priceCheck.fair : null;
+      pay = legsPayoff(res.legs, fair);
+      priced = fair != null && pay && !pay.shapeOnly ? 'fair' : 'shape';
+      netShow = fair;
+    }
+    if (pay && /calendar|diagonal/i.test(c.name)) { pay = null; priced = 'shape'; }
+    const rr = pay && !pay.shapeOnly && pay.maxProfit > 0 && pay.maxLoss < 0 ? pay.maxProfit / Math.abs(pay.maxLoss) : null;
+    return {
+      name: c.name, rating: c.rating, isCur, override: isCur && isOverride,
+      cash: resolveCashType(c.name, isCur ? ticketNet : (netShow != null ? String(netShow) : null)),
+      outlook: outlookOf(c.name),
+      edge: isCur ? compositeScore : null,
+      edgeColor: dcColor, edgeLabel: missingInputs ? 'SETUP' : 'EDGE',
+      pml: res.pMaxLoss != null ? res.pMaxLoss : null,
+      ev: isCur && !missingInputs ? res.ev : null,
+      contracts: isCur && !missingInputs ? res.contracts : null,
+      rr, pay, priced, netShow,
+      profitIf: profitIfText(pay, secBag.underlying) || res.behaviour || '',
+    };
+  }) : [];
+  const choiceRRMax = Math.max(0, ...choiceList.map(c => c.rr || 0));
+  // Switching structure in place clears the four sizing fields: max profit, max
+  // loss, POP and the fill all describe the legs being left behind. Net credit
+  // re-fills from the new structure's target and Needs-you asks for the rest.
+  function switchStructure(name) {
+    const next = name === r.bestStrat ? null : name;
+    const strip = o => ({ ...o, win: '', risk: '', pop: '', netCreditDebit: '' });
+    if (is0) setI0(strip); else setI45(strip);
+    setOverrideStrat(next);
+  }
+
   const tc = r.tradeConfidence;
   const confClr = tc==null?'#a8b2be':tc>=70?'#3fb950':tc>=50?'#7bc74d':tc>=30?'#d29922':tc>=15?'#e3833c':'#f85149';
   const confBg  = tc==null?'#161b22':tc>=70?'#0d1f0d':tc>=50?'#0d1a0d':tc>=30?'#1f1a0d':'#1f0d0d';
@@ -1807,10 +1853,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <span key={i} title={c.label} style={{fontSize:12.5,fontWeight:600,padding:'4px 9px',borderRadius:6,
                     background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
                 ))}
-                {r.pMaxLoss != null && <MiniStat label="Max-loss chance" value={`${(r.pMaxLoss*100).toFixed(1)}%`}
-                  color={r.pMaxLoss<=0.15?'#3fb950':r.pMaxLoss<=0.30?'#d29922':'#f85149'} />}
-                {!missingInputs && <MiniStat label="EV" value={r.ev ? `$${r.ev.toFixed(0)}` : '--'}
-                  color={r.ev>0?'#3fb950':r.ev<0?'#f85149':'#a8b2be'} />}
               </div>
             )}
 
@@ -1927,6 +1969,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               ))}
             </div>
           ))}
+        </section>
+      )}
+
+      {/* ── 2b · YOUR CHOICES ── the engine pick and the next two structures, each a
+          full engine run on the same market inputs. Alternatives are priced at the
+          model's fair value (not this ticket's fill), so their payoff and range
+          describe THEIR strikes; EV and size appear once a structure is selected
+          and sized, because they depend on your broker's POP and fill. */}
+      {choiceList.length > 0 && (
+        <section data-testid="choices" style={{display:'flex',flexDirection:'column',gap:10}}>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+            <span style={{fontSize:17,fontWeight:600,color:'#fff'}}>Your choices
+              <span style={{fontSize:13,fontWeight:400,color:'#a8b2be'}}>{r.regime ? ` · ${r.regime}` : ''}{is0 && r.dirLabel ? ` · ${r.dirLabel.toLowerCase()} read` : ''}</span>
+            </span>
+            <button onClick={() => setDrawerTab('structures')} style={EX_LINK}>All {(r.ratings || []).length} structures</button>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:12}}>
+            {choiceList.map(c => (
+              <ChoiceCard key={c.name} c={c} price={fv(secBag, 'price')} underlying={secBag.underlying} rrMax={choiceRRMax}
+                onSwitch={() => switchStructure(c.name)}
+                onNewTab={onOpenInTab ? () => openStructureInTab(c.name) : null} />
+            ))}
+          </div>
         </section>
       )}
 
@@ -3194,15 +3259,6 @@ function EdgeRing({ score, color, label, dim, title }) {
   );
 }
 
-function MiniStat({ label, value, color }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '4px 10px', borderRadius: 6,
-      background: 'rgba(255,255,255,0.05)', fontSize: 13, color: '#a8b2be' }}>
-      {label}<span className="mono" style={{ color, fontWeight: 700 }}>{value}</span>
-    </span>
-  );
-}
-
 // Compact labelled number for the Needs-you queue, with an optional one-click
 // suggestion (e.g. the payoff's own max profit / max loss).
 function NeedNum({ label, value, onChange, suggest }) {
@@ -3224,6 +3280,181 @@ function NeedNum({ label, value, onChange, suggest }) {
         </button>
       )}
     </label>
+  );
+}
+
+// ── Trade choice cards (Oct 2026) ──
+// Expiry payoff from engine legs, mirroring calc0dte's generic payoff: intrinsic
+// per leg × side × qty, plus the per-share net (credit > 0). With no net the
+// SHAPE is still right but the zero line is not, so it is flagged shapeOnly.
+function legsPayoff(legs, ncd) {
+  if (!Array.isArray(legs) || legs.length < 2) return null;
+  const use = (legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : legs;
+  const parsed = use.filter(l => isFinite(l.strike)).map(l => {
+    const lb = String(l.label || '').toLowerCase();
+    return { strike: l.strike, call: lb.includes('call'), sign: (lb.includes('short') || lb.includes('sell')) ? -1 : 1,
+      qty: lb.includes('x2') ? 2 : 1 };
+  });
+  if (parsed.length < 2) return null;
+  const ks = parsed.map(p => p.strike);
+  const lo = Math.min(...ks), hi = Math.max(...ks), span = (hi - lo) || 10;
+  const a = lo - span, b = hi + span, n = 160, net = ncd == null ? 0 : ncd;
+  const points = [];
+  for (let i = 0; i <= n; i++) {
+    const px = a + (b - a) * i / n;
+    let v = 0;
+    parsed.forEach(p => { v += p.sign * p.qty * (p.call ? Math.max(0, px - p.strike) : Math.max(0, p.strike - px)); });
+    points.push({ price: px, pnl: (v + net) * 100 });
+  }
+  const pnls = points.map(p => p.pnl);
+  const breakevens = [];
+  if (ncd != null) for (let i = 1; i < points.length; i++) {
+    const p0 = points[i - 1], p1 = points[i];
+    if ((p0.pnl < 0 && p1.pnl >= 0) || (p0.pnl >= 0 && p1.pnl < 0)) {
+      const t = p0.pnl / (p0.pnl - p1.pnl);
+      breakevens.push(+(p0.price + t * (p1.price - p0.price)).toFixed(1));
+    }
+  }
+  return { points, breakevens, maxProfit: Math.max(...pnls), maxLoss: Math.min(...pnls), shapeOnly: ncd == null };
+}
+
+// Where a structure makes money, in words, from its breakevens.
+function profitIfText(pay, underlying) {
+  if (!pay || pay.shapeOnly || !Array.isArray(pay.points)) return '';
+  const bes = (pay.breakevens || []).filter(Number.isFinite).slice().sort((x, y) => x - y);
+  const at = px => {
+    let best = pay.points[0];
+    pay.points.forEach(p => { if (Math.abs(p.price - px) < Math.abs(best.price - px)) best = p; });
+    return best.pnl;
+  };
+  const u = underlying || 'Price';
+  const f = v => Math.round(v);
+  if (bes.length === 2) return at((bes[0] + bes[1]) / 2) > 0
+    ? `${u} stays ${f(bes[0])}–${f(bes[1])}` : `${u} breaks out of ${f(bes[0])}–${f(bes[1])}`;
+  if (bes.length === 1) return at(bes[0] + 1) > 0 ? `${u} holds above ${f(bes[0])}` : `${u} holds below ${f(bes[0])}`;
+  return '';
+}
+
+function outlookOf(name) {
+  const n = String(name || '');
+  if (/calendar|diagonal/i.test(n)) return 'Time spread';
+  if (/bull/i.test(n)) return 'Bullish';
+  if (/bear/i.test(n)) return 'Bearish';
+  if (/reversed|straddle|strangle/i.test(n)) return 'Breakout';
+  if (/broken wing|asymmetric/i.test(n)) return 'Leaning';
+  return 'Neutral';
+}
+
+// Payoff shape for a card: scaled to its own range, zero line when priced,
+// a dashed marker where price is now.
+function PayoffGlyph({ pay, price, color }) {
+  if (!pay || !Array.isArray(pay.points) || pay.points.length < 2) {
+    return <div style={{ height: 56, display: 'flex', alignItems: 'center', fontSize: 12.5, color: '#8b949e' }}>No single-expiry payoff to draw</div>;
+  }
+  const pts = pay.points, W = 160, H = 48, pad = 3;
+  const xs = pts.map(p => p.price), ys = pts.map(p => p.pnl);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const lo = Math.min(...ys, pay.shapeOnly ? Infinity : 0), hi = Math.max(...ys, pay.shapeOnly ? -Infinity : 0);
+  const X = v => ((v - x0) / ((x1 - x0) || 1)) * W;
+  const Y = v => pad + (H - 2 * pad) * (1 - (v - lo) / ((hi - lo) || 1));
+  const line = pts.map(p => `${X(p.price).toFixed(1)},${Y(p.pnl).toFixed(1)}`).join(' ');
+  const showPx = isFinite(price) && price >= x0 && price <= x1;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="56" preserveAspectRatio="none" aria-hidden="true">
+      {!pay.shapeOnly && <line x1="0" y1={Y(0)} x2={W} y2={Y(0)} stroke="#30363d" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />}
+      <polyline points={line} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      {showPx && <line x1={X(price)} y1="1" x2={X(price)} y2={H - 1} stroke="#ffffff" strokeOpacity="0.55" strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />}
+    </svg>
+  );
+}
+
+function CardBar({ label, value, pct, color, title }) {
+  return (
+    <div title={title} style={{ display: 'grid', gridTemplateColumns: '112px 1fr 88px', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+      <span style={{ color: '#a8b2be' }}>{label}</span>
+      <span style={{ height: 6, borderRadius: 3, background: '#21262d', position: 'relative', overflow: 'hidden' }}>
+        {pct != null && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.max(3, Math.min(100, pct))}%`, background: color, borderRadius: 3 }} />}
+      </span>
+      <span className="mono" style={{ textAlign: 'right', color, fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+}
+
+function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
+  const on = c.isCur;
+  const accent = on ? (c.override ? '#d29922' : '#3fb950') : '#8b949e';
+  const ratingClr = { EXCELLENT: '#3fb950', GOOD: '#58a6ff', MARGINAL: '#d29922', POOR: '#f85149' }[c.rating] || '#8b949e';
+  const cashClr = c.cash === 'credit' ? '#3fb950' : c.cash === 'debit' ? '#e3a008' : '#9aa4b0';
+  const cashBg = c.cash === 'credit' ? '#0d2818' : c.cash === 'debit' ? '#2d1a0d' : '#1c2128';
+  const pmlClr = c.pml == null ? '#8b949e' : c.pml <= 0.15 ? '#3fb950' : c.pml <= 0.30 ? '#d29922' : '#f85149';
+  const tag = on ? (c.override ? 'YOUR PICK' : 'ENGINE PICK') : 'ALTERNATIVE';
+  const netTxt = c.netShow == null ? null : `${c.netShow >= 0 ? 'cr' : 'dr'} ${Math.abs(c.netShow).toFixed(2)}`;
+  return (
+    <div data-testid="choice-card" data-current={on ? '1' : '0'}
+      style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, borderRadius: 12,
+        background: on ? (c.override ? '#1a160c' : '#101d14') : '#161b22', border: `1px solid ${on ? accent : '#21262d'}` }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: on ? accent : '#8b949e' }}>{tag}</span>
+          <span style={{ fontSize: 16.5, fontWeight: 600, color: '#fff' }}>{c.name}</span>
+          <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: cashBg, color: cashClr, letterSpacing: '0.03em' }}>
+              {c.cash === 'credit' ? 'CREDIT' : c.cash === 'debit' ? 'DEBIT' : 'CR / DR'}
+            </span>
+            <span style={{ fontSize: 11.5, padding: '2px 7px', borderRadius: 4, background: 'rgba(255,255,255,0.06)', color: '#a8b2be' }}>{c.outlook}</span>
+          </span>
+        </div>
+        {on ? (
+          <div style={{ textAlign: 'right', flex: 'none' }} title={c.edgeLabel === 'SETUP' ? 'Setup quality only until win, risk and POP are entered' : 'Composite edge score for this ticket'}>
+            <div className="mono" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: c.edgeColor }}>{c.edge}</div>
+            <div style={{ fontSize: 10, color: '#8b949e', letterSpacing: '0.07em', marginTop: 3 }}>{c.edgeLabel}</div>
+          </div>
+        ) : (
+          <span style={{ flex: 'none', fontSize: 11.5, fontWeight: 700, padding: '3px 8px', borderRadius: 5, color: ratingClr,
+            border: `1px solid ${ratingClr}55`, letterSpacing: '0.04em' }}>{c.rating}</span>
+        )}
+      </div>
+
+      <PayoffGlyph pay={c.pay} price={price} color={on ? accent : '#8b949e'} />
+
+      {c.profitIf && (
+        <div style={{ fontSize: 13.5, color: '#c9d1d9', lineHeight: 1.4 }}>
+          Profits if <b style={{ color: '#fff', fontWeight: 600 }}>{c.profitIf.replace(/^Price /, '').replace(/\.$/, '')}</b>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <CardBar label="Max-loss chance" value={c.pml == null ? 'no greeks' : `${(c.pml * 100).toFixed(1)}%`}
+          pct={c.pml == null ? null : (c.pml / 0.4) * 100} color={pmlClr}
+          title="Probability price finishes beyond a wing — model and delta cross-check blended" />
+        <CardBar label="Reward : risk" value={c.rr == null ? '--' : `${c.rr.toFixed(2)}:1`}
+          pct={c.rr == null || !rrMax ? null : (c.rr / rrMax) * 100} color="#58a6ff"
+          title={c.priced === 'fair' ? 'Max profit over max loss at the model’s fair price for these strikes' : 'Max profit over max loss at this ticket’s net'} />
+        {on && (
+          <CardBar label="Expected value" value={c.ev == null ? 'needs sizing' : `$${Math.round(c.ev)}`}
+            pct={null} color={c.ev == null ? '#d29922' : c.ev > 0 ? '#3fb950' : '#f85149'} />
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingTop: 10, borderTop: '1px solid #21262d', marginTop: 'auto' }}>
+        <span className="mono" style={{ fontSize: 12.5, color: '#a8b2be' }}>
+          {on ? <>{netTxt || 'no fill yet'}{c.contracts != null ? ` · ${c.contracts} ct` : ''}</>
+            : netTxt ? `fair ≈ ${netTxt}` : 'price after switching'}
+        </span>
+        {on ? (
+          <span style={{ padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: accent,
+            border: `1px solid ${accent}66`, background: 'rgba(255,255,255,0.03)' }}>Selected</span>
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {onNewTab && <button onClick={onNewTab} title="Open in its own tab — keeps this ticket as it is" style={EX_LINK}>New tab</button>}
+            <button data-testid="choice-switch" onClick={onSwitch}
+              title="Make this the ticket. Win, risk, POP and the fill are cleared — they belonged to the old legs."
+              style={{ padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', minHeight: 34,
+                border: '1px solid #30363d', background: 'transparent', color: '#e6edf3' }}>Switch to this</button>
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
