@@ -183,7 +183,7 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry, outcome
 // about how overrides are stored. The '≡' affordance at the right edge opens the
 // ladder (parent-owned data via the ladder* props); the chip body still opens the
 // inline input.
-function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compact, outcomes,
+function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compact, fill, outcomes,
   ladderOpen, ladder, onOpenLadder, onCloseLadder, onRetryLadder }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
@@ -215,7 +215,8 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   }, [ladderOpen]);
 
   const box = {
-    padding: compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize:13, fontWeight:700, whiteSpace:'nowrap',
+    padding: fill ? '9px 12px' : compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize: fill ? 16 : 13, fontWeight:700, whiteSpace:'nowrap',
+    ...(fill ? { textAlign:'center', boxSizing:'border-box', width:'100%' } : {}),
     background:isShort?'#8b2025':'#0d2818', color:isShort?'#f85149':'#3fb950',
     fontFamily:'JetBrains Mono,monospace',
     border: edited || editing ? '1px solid #d29922' : '1px solid transparent'
@@ -252,7 +253,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
     </div>
   );
   return (
-    <div ref={wrapRef} style={{position:'relative', display:'inline-block'}}>
+    <div ref={wrapRef} style={fill ? {position:'relative', flex:'1 1 0', minWidth:0} : {position:'relative', display:'inline-block'}}>
       {chip}
       {ladderOpen && ladder && !editing && (
         <LadderPopover ladder={ladder} current={leg.strike} engineStrike={engineStrike} outcomes={outcomes} isShort={isShort}
@@ -1877,6 +1878,85 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   // Build a condensed plain-text summary of the engine's analysis for the notes
   // field — captures what the setup looked like at trade time.
+  // Confidence chips and the warnings/notices stack. Rendered under the price map when
+  // there is one (so the strikes get the left column to themselves), else in the left
+  // column. (Oct 2026.)
+  function renderSideStack() {
+    return (<div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {!r.hardBlocker && (
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+                {r.tradeConfidence != null && (
+                  <span title={r.confidenceDriver}
+                    style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:6,background:'rgba(255,255,255,0.05)',fontSize:13,color:'#e6edf3'}}>
+                    <span style={{width:7,height:7,borderRadius:'50%',background:confClr}} />
+                    Confidence: {String(r.confidenceTier || '').toLowerCase()} <span className="mono" style={{color:'#8b949e'}}>{r.tradeConfidence}</span>
+                  </span>
+                )}
+                {(r.confConflicts || []).map((c,i) => (
+                  <span key={i} title={c.label} style={{fontSize:12.5,fontWeight:600,padding:'4px 9px',borderRadius:6,
+                    background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
+                ))}
+              </div>
+            )}
+
+        {/* Zone 3b — blockers, warnings and notices (Aug 2026)
+            These existed in the engine from the start but were rendered NOWHERE on the
+            ticket: they reached only the Print summary and the logged trade notes, so
+            every warning the engine raised was invisible at the moment of the decision.
+            Three tiers, because they mean different things:
+              blockers — the trade is not takeable as configured
+              warnings — takeable, but they downgrade the decision
+              notices  — facts about the DATA, never about the trade; they never gate */}
+        {(r.warnings?.length > 0 || r.notices?.length > 0) && (() => {
+          const warns = r.warnings || [], notes = r.notices || [];
+          const isEventW = w => /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
+          const nEvent = warns.filter(isEventW).length;
+          const nWarn = warns.length - nEvent;
+          const parts = [];
+          if (nWarn) parts.push(`\u26a0 ${nWarn} warning${nWarn > 1 ? 's' : ''}`);
+          if (nEvent) parts.push(`\ud83d\udcc5 ${nEvent} event${nEvent > 1 ? 's' : ''}`);
+          if (notes.length) parts.push(`${notes.length} notice${notes.length > 1 ? 's' : ''}`);
+          return (
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {showAdvisories && r.warnings?.map((w,i) => {
+              // Event warnings earn a distinct colour: they are the only ones that are
+              // about the calendar rather than the structure, and they are actionable
+              // in a different way — you wait, or you size down, you do not re-strike.
+              const isEvent = /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
+              return (
+                <div key={'w'+i} style={{fontSize:13,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
+                  background: isEvent ? '#1a1726' : '#1f1a0d',
+                  border:`1px solid ${isEvent ? '#4b3f7a' : '#9e6a03'}`,
+                  color: isEvent ? '#b9a7ff' : '#d29922'}}>
+                  {isEvent ? '📅' : '⚠'} {w}
+                </div>
+              );
+            })}
+            {showAdvisories && r.notices?.map((n,i) => (
+              <div key={'n'+i} title="A fact about the calendar data, not about this trade — it does not affect the decision."
+                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,
+                  background:'#0d1117',border:'1px solid #21262d',color:'#a8b2be'}}>
+                {n}
+              </div>
+            ))}
+            {parts.length > 0 && (
+              <div onClick={() => setShowAdvisories(v => !v)} role="button" tabIndex={0}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setShowAdvisories(v => !v); }}
+                title={showAdvisories ? 'Collapse' : parts.join(' \u00b7 ')}
+                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,cursor:'pointer',
+                  userSelect:'none',background:'#161b22',border:'1px solid #30363d',color:'#a8b2be',
+                  display:'flex',alignItems:'center',gap:8}}>
+                <span style={{color:'#a8b2be'}}>{showAdvisories ? '\u25be' : '\u25b8'}</span>
+                <span>{parts.join(' \u00b7 ')}</span>
+                <span style={{marginLeft:'auto',color:'#8b949e'}}>{showAdvisories ? 'hide' : 'show'}</span>
+              </div>
+            )}
+          </div>
+          );
+        })()}
+    </div>);
+  }
+
   function buildTradeSummary() {
     const inp = is0 ? i0 : i45;
     const ncd = parseFloat(inp.netCreditDebit) || 0;
@@ -2176,19 +2256,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               // Dual EM suggestions for spreads
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(VIX):</span>
+                  <span style={{fontSize:12,color:'#a8b2be',width:50,flex:'none'}}>EM(VIX):</span>
                   {r.legs.slice(0,2).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')} compact
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')} compact fill
                       ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
                       onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                   ))}
+                  {(r.wingTxt || r.strikeLine) && <span aria-hidden="true" style={{fontSize:12.5,visibility:'hidden'}}>ⓘ</span>}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'nowrap'}}>
-                  <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(1D):</span>
+                  <span style={{fontSize:12,color:'#a8b2be',width:50,flex:'none'}}>EM(1D):</span>
                   {r.legs.slice(2,4).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i+2} engineStrike={r.engineLegs?.[i+2]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')} compact
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')} compact fill
                       ladderOpen={ladder?.idx === i+2} ladder={ladder} outcomes={ladder?.idx === i+2 ? ladderOutcomes : null}
                       onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                   ))}
@@ -2200,7 +2281,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
               <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
                 {r.legs.map((l,i) => ({ l, i })).sort((a, b) => a.l.strike - b.l.strike).map(({ l, i }) => (
-                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact
+                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact fill
                     step={strikeStep} onCommit={commitStrike}
                     ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
                     onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
@@ -2232,77 +2313,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
         )}
 
-            {!r.hardBlocker && (
-              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
-                {r.tradeConfidence != null && (
-                  <span title={r.confidenceDriver}
-                    style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:6,background:'rgba(255,255,255,0.05)',fontSize:13,color:'#e6edf3'}}>
-                    <span style={{width:7,height:7,borderRadius:'50%',background:confClr}} />
-                    Confidence: {String(r.confidenceTier || '').toLowerCase()} <span className="mono" style={{color:'#8b949e'}}>{r.tradeConfidence}</span>
-                  </span>
-                )}
-                {(r.confConflicts || []).map((c,i) => (
-                  <span key={i} title={c.label} style={{fontSize:12.5,fontWeight:600,padding:'4px 9px',borderRadius:6,
-                    background:c.severity==='high'?'#3d1418':'#2a2410',color:c.severity==='high'?'#f85149':'#d29922'}}>⚠ {c.tag}</span>
-                ))}
-              </div>
-            )}
-
-        {/* Zone 3b — blockers, warnings and notices (Aug 2026)
-            These existed in the engine from the start but were rendered NOWHERE on the
-            ticket: they reached only the Print summary and the logged trade notes, so
-            every warning the engine raised was invisible at the moment of the decision.
-            Three tiers, because they mean different things:
-              blockers — the trade is not takeable as configured
-              warnings — takeable, but they downgrade the decision
-              notices  — facts about the DATA, never about the trade; they never gate */}
-        {(r.warnings?.length > 0 || r.notices?.length > 0) && (() => {
-          const warns = r.warnings || [], notes = r.notices || [];
-          const isEventW = w => /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
-          const nEvent = warns.filter(isEventW).length;
-          const nWarn = warns.length - nEvent;
-          const parts = [];
-          if (nWarn) parts.push(`\u26a0 ${nWarn} warning${nWarn > 1 ? 's' : ''}`);
-          if (nEvent) parts.push(`\ud83d\udcc5 ${nEvent} event${nEvent > 1 ? 's' : ''}`);
-          if (notes.length) parts.push(`${notes.length} notice${notes.length > 1 ? 's' : ''}`);
-          return (
-          <div style={{display:'flex',flexDirection:'column',gap:6}}>
-            {showAdvisories && r.warnings?.map((w,i) => {
-              // Event warnings earn a distinct colour: they are the only ones that are
-              // about the calendar rather than the structure, and they are actionable
-              // in a different way — you wait, or you size down, you do not re-strike.
-              const isEvent = /FOMC|CPI|payroll|Employment|PPI|PCE|ISM|minutes|released|lands (INSIDE|after)|before expiry|final week/i.test(w);
-              return (
-                <div key={'w'+i} style={{fontSize:13,lineHeight:1.45,padding:'6px 10px',borderRadius:6,
-                  background: isEvent ? '#1a1726' : '#1f1a0d',
-                  border:`1px solid ${isEvent ? '#4b3f7a' : '#9e6a03'}`,
-                  color: isEvent ? '#b9a7ff' : '#d29922'}}>
-                  {isEvent ? '📅' : '⚠'} {w}
-                </div>
-              );
-            })}
-            {showAdvisories && r.notices?.map((n,i) => (
-              <div key={'n'+i} title="A fact about the calendar data, not about this trade — it does not affect the decision."
-                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,
-                  background:'#0d1117',border:'1px solid #21262d',color:'#a8b2be'}}>
-                {n}
-              </div>
-            ))}
-            {parts.length > 0 && (
-              <div onClick={() => setShowAdvisories(v => !v)} role="button" tabIndex={0}
-                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setShowAdvisories(v => !v); }}
-                title={showAdvisories ? 'Collapse' : parts.join(' \u00b7 ')}
-                style={{fontSize:12.5,lineHeight:1.45,padding:'5px 10px',borderRadius:6,cursor:'pointer',
-                  userSelect:'none',background:'#161b22',border:'1px solid #30363d',color:'#a8b2be',
-                  display:'flex',alignItems:'center',gap:8}}>
-                <span style={{color:'#a8b2be'}}>{showAdvisories ? '\u25be' : '\u25b8'}</span>
-                <span>{parts.join(' \u00b7 ')}</span>
-                <span style={{marginLeft:'auto',color:'#8b949e'}}>{showAdvisories ? 'hide' : 'show'}</span>
-              </div>
-            )}
-          </div>
-          );
-        })()}
+            {!mapPay && renderSideStack()}
           </div>
 
           {/* Right: price map — where price can go, against this structure */}
@@ -2322,6 +2333,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 emLabel={is0 ? 'Expected move left' : '1 SD to expiry'}
                 high={is0 ? fv(i0, 'high') : 0} low={is0 ? fv(i0, 'low') : 0}
                 vwap={is0 ? scaleVWAP(i0.vwap5) : 0} underlying={secBag.underlying} />
+              <div style={{marginTop:10}}>{renderSideStack()}</div>
             </div>
           )}
         </div>
