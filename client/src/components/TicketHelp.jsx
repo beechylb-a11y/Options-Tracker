@@ -31,7 +31,7 @@ function BuyHelp() {
     <H>Stop</H>
     <P>Loss as a % of entry. Debit: 50 = sell at half what you paid. Credit: 100 = buy back at 2× the credit.</P>
     <H>Commission</H>
-    <P>Per leg, per contract, one way. "After comm" takes off a round trip; a butterfly's doubled body counts twice.</P>
+    <P>Per contract, each way, from the account in Settings (calibrate it there from a day's TWS fills). A butterfly is four contracts: its doubled body counts twice. "After comm" takes off the round trip.</P>
   </>);
 }
 

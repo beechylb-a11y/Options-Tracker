@@ -4,6 +4,7 @@ import {
   round2, stopToPrice, maxTargetPct, pnlPct
 } from '../utils/ticketMath';
 import TicketHelp from './TicketHelp';
+import { unitsFromLegs, DEFAULT_COMMISSION } from '../utils/commission';
 
 // BUY ticket — the profit taker to attach in TWS before you transmit.
 //
@@ -22,15 +23,10 @@ import TicketHelp from './TicketHelp';
 const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d', background: '#0d1117',
   color: '#e6edf3', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%' };
 
-// Contracts per unit, counting "x2" bodies — a butterfly is 4 contracts, not 3.
-function contractsPerUnit(legs) {
-  if (!Array.isArray(legs) || !legs.length) return 1;
-  return legs.reduce((a, l) => a + (/x2\b/i.test(l.label || '') ? 2 : 1), 0);
-}
 const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
-export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE' }) {
+export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate }) {
   const is0 = !/45/.test(engine);
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
@@ -38,8 +34,11 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
     basis: is0 ? 'entry' : 'max'
   }), [ncd, win, qty, underlying, is0]);
   const tick = defaultTick(underlying);
-  const perUnit = contractsPerUnit(legs);
-  const [comm, setComm] = useState(() => { try { const v = parseFloat(localStorage.getItem('commissionPerLeg')); return isFinite(v) ? v : 0.65; } catch (e) { return 0.65; } });
+  // Contracts per unit, "x2" bodies counted twice (a fly is 4). The rate is the
+  // account's (Settings); the box below overrides it for this ticket only.
+  const perUnit = unitsFromLegs(legs) || 1;
+  const [comm, setComm] = useState(() => commRate ?? DEFAULT_COMMISSION);
+  useEffect(() => { if (commRate != null) setComm(commRate); }, [commRate]);
   const roundTrip = q => round2(q * perUnit * (Number(comm) || 0) * 2);
 
   const entry = Math.abs(pos.ncd || 0);
@@ -90,7 +89,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
             easy to read $83 off a $256 target as a bug when it is the real cost. */}
         {roundTrip(q) > 0 && (
           <span style={{ color: '#8b949e' }}><br />
-            Comm −${roundTrip(q).toFixed(2)} = {q} × {perUnit} legs × 2 sides × ${Number(comm).toFixed(2)}
+            Comm −${roundTrip(q).toFixed(2)} = {q} × {perUnit} contracts × 2 sides × ${Number(comm).toFixed(2)}
             {gross > 0 && <> · <span style={{ color: roundTrip(q) / gross > 0.2 ? '#d29922' : '#8b949e' }}>{(roundTrip(q) / gross * 100).toFixed(0)}% of the profit</span></>}
             {!pos.isCredit && <> · breakeven after comm: {(entry + roundTrip(1) / 100).toFixed(2)}</>}
           </span>
@@ -172,9 +171,9 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
             @ {stop.toFixed(2)} = {pctStr(pnlPct(pos, stop) ?? 0)} · {money(pnlAt(pos, stop, qty))}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }}>Comm/leg/ct</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }} title="Per contract, each way. Set per account in Settings.">Comm / contract</span>
         <input type="number" step="0.01" value={comm} style={{ ...cell, width: 60 }}
-          onChange={e => { setComm(e.target.value); try { localStorage.setItem('commissionPerLeg', e.target.value); } catch (x) { /* */ } }} />
+          onChange={e => setComm(e.target.value)} />
       </div>
       {!(win > 0) && !pos.isCredit && (
         <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>No Win amount entered, so the max-profit cap isn't known.</div>

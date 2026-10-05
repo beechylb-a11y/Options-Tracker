@@ -8,6 +8,7 @@ import { calc45DTE } from '../engine/calc45dte';
 import { tradingSession } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
+import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
 
 // ── Trade tabs (Aug 2026) ──
 // One mounted EnginePanel per tab, inactive ones hidden with display:none so
@@ -234,7 +235,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
   // Close ticket state (quick close -- kept for tickets with no Net Debit/Credit)
   const [closingIdx, setClosingIdx] = useState(null);
-  const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', actualPnl: '' });
+  // Close form mirrors the TWS Trades summary: Net Total (before commission), Comm,
+  // and the net the app records. Commission pre-fills from the account rate. (Oct 2026.)
+  const [closeForm, setCloseForm] = useState({ closeDate: '', closePrice: '', grossPnl: '', fees: '' });
+  const estCloseFees = dec => roundTripCommission(
+    unitsFromTicket(dec['Wing Strikes'], dec.Strategy),
+    parseInt(dec.Contracts) || 1,
+    commissionRate((accounts || []).find(a => a.id === (dec.Account || account))));
   // Vol snapshot at close: started when the close form opens (so the bridge has
   // the seconds the user spends typing to answer), read at confirm. Best-effort
   // only — an empty object means blanks in the sheet, never a blocked close.
@@ -350,7 +357,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       console.log('[CLOSE TICKET RESULT]', result);
       showToast('Trade ticket closed', 'success');
       setClosingIdx(null);
-      setCloseForm({ closeDate: '', closePrice: '', actualPnl: '' });
+      setCloseForm({ closeDate: '', closePrice: '', grossPnl: '', fees: '' });
       // Small delay to let Google Sheets propagate the write
       await new Promise(r => setTimeout(r, 500));
       await loadDecisions();
@@ -627,7 +634,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                         <span className="text-xs text-[#8b949e] ml-2">{m.fillCount} fills</span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? '#3fb950' : '#f85149'}}>{fmt$(m.totalPnl)}</span>
+                        <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? '#3fb950' : '#f85149'}}
+                          title={m.grossPnl != null ? `${fmt$(m.grossPnl)} before commission · ${fmt$(m.totalComm)} commission` : ''}>{fmt$(m.totalPnl)}</span>
+                        {m.totalComm > 0 && <span className="mono text-[11.5px] text-text-faint">after {fmt$(m.totalComm)} comm</span>}
                         <button onClick={async () => {
                           try {
                             if (m.ticket.type === 'decision') {
@@ -648,7 +657,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                               }, 14000);
                               await api.closeTicket(m.ticket.rowIndex, {
                                 closeDate: new Date().toISOString().split('T')[0],
-                                actualPnl: m.totalPnl.toString(),
+                                grossPnl: m.grossPnl != null ? m.grossPnl : m.totalPnl,
+                                fees: m.totalComm,
+                                notes: m.pnlBasis === 'ib-realised' ? 'P&L from IBKR realised (after commission); entry commission not itemised' : '',
                                 closePrice: '',
                                 account: account || ''
                               });
@@ -750,7 +761,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             )}
                           </>)}
                           <button title={hasEntryPrice(dec) ? 'Quick close: type the close price and P&L by hand' : 'This ticket has no Net Debit/Credit, so close it by typing the P&L'}
-                            onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', actualPnl: '' });
+                            onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', grossPnl: '', fees: String(estCloseFees(dec)) });
                             closeSnapRef.current = isClosing ? {} : startCloseVolSnapshot(dec.Underlying,
                               { expiry: dec.Engine === '0DTE' ? (dec.Timestamp || '').split('T')[0] : '' }); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors">
@@ -778,12 +789,24 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                                   placeholder="e.g. 0.05" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                               </div>
                               <div>
-                                <label className="text-[12px] text-text-muted block mb-1">Actual P&L ($)</label>
-                                <input type="number" step="0.01" value={closeForm.actualPnl} onChange={e => setCloseForm(f => ({ ...f, actualPnl: e.target.value }))}
-                                  placeholder="e.g. 65 or -435" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                                <label className="text-[12px] text-text-muted block mb-1" title="TWS Trades › Summary › Net Total">P&L before commission ($)</label>
+                                <input type="number" step="0.01" value={closeForm.grossPnl} onChange={e => setCloseForm(f => ({ ...f, grossPnl: e.target.value }))}
+                                  placeholder="TWS Net Total, e.g. -18" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                              </div>
+                              <div>
+                                <label className="text-[12px] text-text-muted block mb-1" title="TWS Trades › Summary › Comm — open and close together. Pre-filled from the account rate.">Commission, round trip ($)</label>
+                                <input type="number" step="0.01" value={closeForm.fees} onChange={e => setCloseForm(f => ({ ...f, fees: e.target.value }))}
+                                  placeholder="TWS Comm" className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                              </div>
+                              <div className="col-span-2 flex items-end">
+                                {closeForm.grossPnl !== '' && isFinite(parseFloat(closeForm.grossPnl)) && (() => {
+                                  const net = parseFloat(closeForm.grossPnl) - (parseFloat(closeForm.fees) || 0);
+                                  return <span className="text-xs text-text-muted pb-2">Recorded P&L after commission:{' '}
+                                    <b className="mono text-sm" style={{ color: pnlColor(net) }}>{fmt$(net)}</b></span>;
+                                })()}
                               </div>
                             </div>
-                            <button onClick={() => handleCloseTicket(dec)} disabled={saving}
+                            <button onClick={() => handleCloseTicket(dec)} disabled={saving || closeForm.grossPnl === ''}
                               className="mt-2 flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors disabled:opacity-50">
                               <Check size={12} /> {saving ? 'Saving...' : 'Confirm close'}
                             </button>

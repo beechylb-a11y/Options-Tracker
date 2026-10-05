@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../utils/api';
+import { unitsFromTicket, roundTripCommission } from '../utils/commission';
+import { useCommissionRate } from '../utils/useCommissionRate';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import {
-  normalisePosition, targetToPrice, priceToTarget, pnlAt, feesFor, ibkrLines,
+  normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines,
   ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
 } from '../utils/ticketMath';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
@@ -31,10 +33,6 @@ const inp = {
 const lbl = { fontSize: 11.5, color: '#a8b2be', display: 'block', marginBottom: 3 };
 const MANUAL_ACCOUNT_PREFIXES = ['papertrade'];
 
-function readCommission() {
-  try { const v = parseFloat(localStorage.getItem('commissionPerLeg')); return isFinite(v) ? v : 0.65; }
-  catch (e) { return 0.65; }
-}
 
 export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const pos = useMemo(() => normalisePosition(position), [position]);
@@ -50,7 +48,15 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
     ? { half: { label: 'Half @ 50, runner @ 75', pcts: [50, 75] }, all50: { label: 'All @ 50', pcts: [50] } }
     : { all50: { label: 'All @ +50%', pcts: [50] }, thirds: { label: 'Thirds +25 / +50 / +100', pcts: [25, 50, 100] }, all100: { label: 'All @ +100%', pcts: [100] } };
   const pctHead = pos.basis === 'entry' || pos.isCredit ? '% on entry' : '% of max';
-  const [commission, setCommission] = useState(readCommission());
+  // Commission per contract per side, from the account (Settings); the box in the
+  // header overrides it for this ticket. Every figure below is ROUND TRIP for the
+  // contracts closed — their share of the entry commission plus the close — because
+  // that is what the trade cost and what the log now records. (Oct 2026.)
+  const acctRate = useCommissionRate(pos.account);
+  const [commission, setCommission] = useState(acctRate);
+  useEffect(() => { setCommission(acctRate); }, [acctRate]);
+  const units = unitsFromTicket(pos.legs, pos.strategyRaw || pos.strategy) || 1;
+  const rtFees = q => roundTripCommission(units, q, commission);
   const [closeDate, setCloseDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -86,7 +92,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const overAllocated = allocated > pos.qtyOpen;
   const filled = rows.filter(r => r.status === 'Filled' && Number(r.qty) > 0);
   const rowFill = r => parseFloat(r.status === 'Filled' && r.fill !== '' ? r.fill : r.price);
-  const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - feesFor(q, pos.legs, commission) : 0; };
+  const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - rtFees(q) : 0; };
   const planNet = rows.reduce((a, r) => a + rowNet(r), 0);
   const filledNet = filled.reduce((a, r) => a + rowNet(r), 0);
   // Quantity-weighted average fill of the tranches being recorded, as % on entry.
@@ -124,11 +130,11 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
       // what is still open, so two in flight would both see the same open qty.
       for (let i = 0; i < filled.length; i++) {
         const r = filled[i], q = Number(r.qty), p = rowFill(r);
-        const fees = feesFor(q, pos.legs, commission);
+        const fees = rtFees(q);
         const n = rows.indexOf(r) + 1;
         await api.closeTicket(pos.ticketRef, {
           closeDate, closePrice: p, qtyClosed: q, fees,
-          actualPnl: round2(pnlAt(pos, p, q) - fees),
+          grossPnl: pnlAt(pos, p, q),
           notes: [`T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${parseFloat(r.price).toFixed(2)} ${side}`, notes].filter(Boolean).join(' — '),
           account: pos.account,
           ...(i === 0 ? {
@@ -156,7 +162,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const closeAt = parseFloat(roll.closeAt), openAtAbs = parseFloat(roll.openAt);
   const openNcd = isFinite(openAtAbs) ? (roll.openSide === 'cr' ? openAtAbs : -openAtAbs) : null;
   const rs = isFinite(closeAt) && openNcd != null ? rollSummary(pos, rq, closeAt, openNcd) : null;
-  const rollFees = feesFor(rq, pos.legs, commission) * 2;         // two sides of the combo
+  const rollFees = rtFees(rq);   // the old ticket's round trip: its entry and this close
   const newLegs = roll.strikes.join(' / ');
   const changedLegs = roll.strikes.filter((s, i) => Number(s) !== oldStrikes[i]).length;
 
@@ -164,12 +170,12 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
     if (!rs || rq <= 0) return;
     setBusy(true); setMsg(null);
     const snapV = snapRef.current || {};
-    const halfFees = feesFor(rq, pos.legs, commission);
+    const halfFees = rtFees(rq);
     try {
       const oldRef = pos.ticketRef;
       await api.closeTicket(oldRef, {
         closeDate, closePrice: closeAt, qtyClosed: rq, fees: halfFees,
-        actualPnl: round2(rs.realised - halfFees),
+        grossPnl: round2(rs.realised),
         notes: [`ROLLED → ${newLegs}${roll.expiry ? ' exp ' + roll.expiry : ''} @ ${openAtAbs.toFixed(2)} ${roll.openSide} (net roll ${rs.net >= 0 ? rs.net.toFixed(2) + ' cr' : Math.abs(rs.net).toFixed(2) + ' db'})`, notes].filter(Boolean).join(' — '),
         account: pos.account,
         sessionHigh: snapV.sessionHigh ?? null, sessionLow: snapV.sessionLow ?? null,
@@ -257,9 +263,9 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
           <Tab id="close">Close · scale out</Tab>
           {is45 && <Tab id="roll">Roll · 45DTE</Tab>}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#a8b2be' }}>
-            Comm / leg / ct
+            <span title="Per contract, each way. Set per account in Settings.">Comm / contract</span>
             <input type="number" step="0.01" value={commission} style={{ ...inp, width: 64 }}
-              onChange={e => { setCommission(e.target.value); try { localStorage.setItem('commissionPerLeg', e.target.value); } catch (x) { /* */ } }} />
+              onChange={e => setCommission(e.target.value)} />
           </div>
         </div>
 
@@ -341,7 +347,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
               <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? 'e.g. 100' : 'e.g. 50'} title={pos.isCredit ? '100 = buy back at 2x the credit' : '50 = sell at half what you paid'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
-              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - feesFor(pos.qtyOpen, pos.legs, commission))} on {pos.qtyOpen}</> : 'No stop set'}
+              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - rtFees(pos.qtyOpen))} on {pos.qtyOpen}</> : 'No stop set'}
             </div>
             <div>
               <label style={lbl}>Close date</label>
@@ -408,7 +414,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
 
           {rs && (
             <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #21262d', fontSize: 13, lineHeight: 1.7 }}>
-              <div>Realised on old ({rq}): <b className="mono" style={{ color: pnlColor(rs.realised) }}>{fmt$(rs.realised - rollFees / 2)}</b> <span style={{ color: '#8b949e' }}>after {fmt$(rollFees / 2, 2)} comm</span></div>
+              <div>Realised on old ({rq}): <b className="mono" style={{ color: pnlColor(rs.realised) }}>{fmt$(rs.realised - rollFees)}</b> <span style={{ color: '#8b949e' }}>after {fmt$(rollFees, 2)} comm (entry + close)</span></div>
               <div>Net roll: <b className="mono" style={{ color: rs.net >= 0 ? '#3fb950' : '#f85149' }}>{Math.abs(rs.net).toFixed(2)} {rs.net >= 0 ? 'credit' : 'debit'}</b> per share · {fmt$(rs.net * 100 * rq)} on {rq}</div>
               <div className="mono" style={{ color: '#a8b2be' }}>IBKR roll combo: {rs.net >= 0 ? `SELL @ ${rs.net.toFixed(2)}  (or BUY @ −${rs.net.toFixed(2)})` : `BUY @ ${Math.abs(rs.net).toFixed(2)}`}</div>
               <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: '#8b949e' }}>(entry {Math.abs(pos.ncd || 0).toFixed(2)} {pos.isCredit ? 'cr' : 'db'} ± this roll)</span></div>
@@ -442,7 +448,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
           </>) : (
             <button onClick={recordRoll} disabled={busy || !rs || rq <= 0 || noEntry}
               style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: '#9e6a03', color: '#fff', opacity: busy || !rs || rq <= 0 || noEntry ? 0.45 : 1 }}>
-              {busy ? 'Rolling…' : rs ? `Roll ${rq} · bank ${fmt$(rs.realised - rollFees / 2)} · new ticket ${Math.abs(openNcd).toFixed(2)} ${roll.openSide}` : 'Enter close and open prices'}
+              {busy ? 'Rolling…' : rs ? `Roll ${rq} · bank ${fmt$(rs.realised - rollFees)} · new ticket ${Math.abs(openNcd).toFixed(2)} ${roll.openSide}` : 'Enter close and open prices'}
             </button>
           )}
           <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>Cancel</button>

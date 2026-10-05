@@ -17,8 +17,10 @@ import {
   updateTrackerStrategy, updateTradesStrategy,
   closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
-  uploadDocument, listDocuments, deleteDocument, getDocumentUrl
+  uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
+  getClosesList
 } from './db.js';
+import { pnlFromFills, commissionRate } from '../client/src/utils/commission.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -855,7 +857,7 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
   try {
     const rowIndex = parseInt(req.params.rowIndex);
     if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
-    const { closeDate, closePrice, actualPnl, closeIV, closeVix, sessionHigh, sessionLow,
+    const { closeDate, closePrice, actualPnl, grossPnl, netPnl, closeIV, closeVix, sessionHigh, sessionLow,
       closeUnderlyingPrice, closeVix1d, qtyClosed, fees, notes } = req.body;
 
     // 0. Check if already closed (prevent duplicate writes)
@@ -869,10 +871,14 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
       return res.json({ ok: true, note: 'Already closed' });
     }
 
-    // 1. Update the Decisions sheet
-    const closeResult = await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl,
+    // 1. Update the Decisions sheet. The account's commission rate prices any
+    // commission the caller didn't send (Oct 2026).
+    const acctId = req.body.account || (existingRow && existingRow[26]) || '';
+    let commRate;
+    try { commRate = commissionRate((await getAccounts()).find(a => a.id === acctId)); } catch (e) { commRate = undefined; }
+    const closeResult = await closeTradeTicket(rowIndex, { closeDate, closePrice, actualPnl, grossPnl, netPnl,
       closeIV, closeVix, sessionHigh, sessionLow, closeUnderlyingPrice, closeVix1d,
-      qtyClosed, fees, notes });
+      qtyClosed, fees, notes, commissionRate: commRate });
 
     // 2. Get the decision row to extract details for TradeTracker + Journal
     const decRows = await getDecisions();
@@ -881,7 +887,9 @@ app.put('/api/decisions/:rowIndex/close', requireAuth, async (req, res) => {
     const dec = {};
     if (row) headers.forEach((h, i) => { dec[h] = row[i] || ''; });
 
-    const pnl = parseFloat(actualPnl) || 0;
+    // The tracker row carries this tranche NET of commission, like the CSV-imported
+    // rows already are, so every P&L figure in the app is on one basis.
+    const pnl = closeResult.tranche ? closeResult.tranche.net : (parseFloat(actualPnl) || 0);
     const isWin = pnl >= 0;
     const cDate = closeDate || new Date().toISOString().split('T')[0];
     const underlying = dec.Underlying || '';
@@ -1060,6 +1068,13 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
+// Every close tranche with its net P&L and commission — the tax report's source
+// for commissions on engine tickets. (Oct 2026.)
+app.get('/api/closes', requireAuth, async (req, res) => {
+  try { res.json(await getClosesList()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ================================================================
 //  AUTO-RECONCILE — Match TWS fills to open tickets
 // ================================================================
@@ -1138,6 +1153,11 @@ app.post('/api/reconcile', requireAuth, async (req, res) => {
 
       if (matchedLegs.length > 0) {
         matchedTicketIds.add(ticket._rowIndex + ticket._type);
+        // Gross from prices when the fills open and close every contract; else
+        // IBKR's realised P&L, which is already after commission. The old sum took
+        // commission off realised P&L a second time. (Oct 2026.)
+        const split = pnlFromFills(matchedLegs)
+          || { gross: totalPnl, commission: totalComm, net: totalPnl, basis: 'ib-realised' };
         matches.push({
           ticket: {
             type: ticket._type,
@@ -1149,8 +1169,10 @@ app.post('/api/reconcile', requireAuth, async (req, res) => {
             entryDate: ticket['Entry Date'] || ticket.Timestamp?.split('T')[0] || ''
           },
           fills: matchedLegs,
-          totalPnl: Math.round((totalPnl - totalComm) * 100) / 100,
-          totalComm: Math.round(totalComm * 100) / 100,
+          totalPnl: split.net,
+          grossPnl: split.gross,
+          totalComm: split.commission,
+          pnlBasis: split.basis,
           fillCount: matchedLegs.length,
           matchQty
         });

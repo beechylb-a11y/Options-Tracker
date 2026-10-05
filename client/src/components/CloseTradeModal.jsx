@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
+import { unitsFromTicket, roundTripCommission, pnlFromFills } from '../utils/commission';
+import { useCommissionRate } from '../utils/useCommissionRate';
 
 import { inferLegs, fetchReplay, buildPack, downloadPack, yyyymmdd } from '../utils/replay';
 
@@ -47,8 +49,14 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
     closePnl: '',
     closePrice: '',
     partialQty: '',
-    notes: ''
+    notes: '',
+    fees: ''
   });
+  // Engine tickets record P&L AFTER commission (Oct 2026): this form takes the TWS
+  // "Net Total" (before commission) and the "Comm" figure, and shows the net that
+  // will be recorded. Tracker rows (CSV imports) are already net and keep one box.
+  const isTicket = type !== 'tracker';
+  const [feesEdited, setFeesEdited] = useState(false);
 
   const underlying = trade.Underlying || trade.underlying || '';
   const strategy = trade['Strategy (OIC)'] || trade.Strategy || '';
@@ -68,6 +76,14 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
   // straight into the sale log once closes became tranched. (Sep 2026.)
   const effectiveQty = f =>
     (partial && Number(f.partialQty) > 0) ? Math.min(Number(f.partialQty), qty) : qty;
+  const acctRate = useCommissionRate(trade.Account || trade.account || '');
+  const ticketUnits = unitsFromTicket(trade['Wing Strikes'], trade.Strategy);
+  const estFees = f => ticketUnits > 0 ? roundTripCommission(ticketUnits, effectiveQty(f), acctRate) : 0;
+  useEffect(() => {
+    if (!isTicket || feesEdited) return;
+    setForm(f => ({ ...f, fees: estFees(f) ? String(estFees(f)) : '' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acctRate, partial, form.partialQty, feesEdited]);
   const derivePnl = (f, cp) => {
     if (!isManualAccount || cp === '' || cp == null || isNaN(parseFloat(cp))) return null;
     const perContractEntry = qty ? entryCredit / qty : entryCredit;
@@ -100,17 +116,15 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
 
       setTwsFills(matchingFills);
 
-      // Auto-calculate total P&L from matching fills
-      if (matchingFills.length > 0) {
-        const totalPnl = matchingFills.reduce((s, f) => {
-          const pnl = f.realizedPnl && f.realizedPnl < 1e300 ? f.realizedPnl : 0;
-          return s + pnl;
-        }, 0);
-        const totalComm = matchingFills.reduce((s, f) => s + (f.commission || 0), 0);
-        const netPnl = Math.round((totalPnl - totalComm) * 100) / 100;
-
-        if (netPnl !== 0) {
-          setForm(f => ({ ...f, closePnl: netPnl.toString() }));
+      // Split the fills the way TWS's Trades summary does: Net Total, Comm, net.
+      // (The old sum took commission off IBKR's realised P&L, which is already net.)
+      const split = pnlFromFills(matchingFills);
+      if (split) {
+        if (isTicket) {
+          setFeesEdited(true);
+          setForm(f => ({ ...f, closePnl: String(split.gross), fees: String(split.commission) }));
+        } else if (split.net !== 0) {
+          setForm(f => ({ ...f, closePnl: String(split.net) }));
         }
       }
     } catch (e) {
@@ -152,7 +166,8 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
         await api.closeTicket(trade._rowIndex, {
           closeDate: form.closeDate,
           closePrice: form.closePrice,
-          actualPnl: form.closePnl,
+          grossPnl: form.closePnl,
+          fees: form.fees === '' ? null : form.fees,
           // The partial toggle already existed but only reached the TRACKER path --
           // a ticket closed in tranches wrote the whole position out on the first
           // exit. Each tranche now lands as its own row in Closes and the ticket
@@ -178,7 +193,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
     setClosing(false);
   }
 
-  const pnl = parseFloat(form.closePnl) || 0;
+  const pnl = (parseFloat(form.closePnl) || 0) - (isTicket ? (parseFloat(form.fees) || 0) : 0);
 
   return (
     <div style={{position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)'}}
@@ -265,7 +280,8 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
               style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,outline:'none'}} />
           </div>
           <div>
-            <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Realised P&L ($)</label>
+            <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}
+              title={isTicket ? 'TWS Trades › Summary › Net Total' : 'Already after commission, like the imported rows'}>{isTicket ? 'P&L before commission ($)' : 'Realised P&L ($)'}</label>
             <input type="number" step="any" value={form.closePnl} onChange={e => setForm(f => ({...f, closePnl: e.target.value}))}
               placeholder="e.g. 150 or -200"
               style={{width:'100%',padding:'6px 10px',borderRadius:6,fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none',
@@ -291,6 +307,15 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
               placeholder="Net credit/debit to close"
               style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}} />
           </div>
+          {isTicket && (
+            <div>
+              <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}
+                title="TWS Trades › Summary › Comm — open and close together. Pre-filled from the account rate.">Commission, round trip ($)</label>
+              <input type="number" step="any" value={form.fees} onChange={e => { setFeesEdited(true); setForm(f => ({ ...f, fees: e.target.value })); }}
+                placeholder="TWS Comm"
+                style={{width:'100%',padding:'6px 10px',borderRadius:6,border:'1px solid #30363d',background:'#0d1117',color:'#e6edf3',fontSize:13,fontFamily:'JetBrains Mono,monospace',outline:'none'}} />
+            </div>
+          )}
           {partial && (
             <div>
               <label style={{fontSize:12,color:'#a8b2be',display:'block',marginBottom:4}}>Contracts to close</label>
@@ -317,7 +342,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
         {/* P&L preview */}
         {form.closePnl && (
           <div style={{marginTop:12,padding:8,borderRadius:6,background:pnl >= 0 ? '#0d2818' : '#2d0f0f',border:`1px solid ${pnl >= 0 ? '#238636' : '#da3633'}`}}>
-            <span style={{fontSize:13,color:'#a8b2be'}}>Result: </span>
+            <span style={{fontSize:13,color:'#a8b2be'}}>{isTicket ? 'Recorded after commission: ' : 'Result: '}</span>
             <span style={{fontSize:16,fontWeight:700,fontFamily:'JetBrains Mono,monospace',color:pnlColor(pnl)}}>{fmt$(pnl)}</span>
             <span style={{fontSize:13,color:'#a8b2be',marginLeft:8}}>{pnl >= 0 ? 'Win' : 'Loss'}</span>
             {partial && form.partialQty && <span style={{fontSize:13,color:'#d29922',marginLeft:8}}>({form.partialQty} of {qty} contracts)</span>}

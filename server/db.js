@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { unitsFromTicket, resolveClosePnl } from '../client/src/utils/commission.js';
 
 // ================================================================
 //  DATABASE SERVICE (Supabase Postgres)
@@ -951,6 +952,15 @@ export async function getCloses() {
 }
 
 // Every tranche recorded against one ticket, oldest first.
+// Every close as an object, for the tax report: date, account, net P&L, commission.
+export async function getClosesList() {
+  const rows = await getCloses();
+  const h = rows[0] || [];
+  return rows.slice(1).map(r => {
+    const o = {}; h.forEach((k, i) => { o[k] = r[i] ?? ''; }); return o;
+  });
+}
+
 export async function getClosesForTicket(ticketRef) {
   const rows = await getCloses();
   const want = String(ticketRef);
@@ -1013,6 +1023,18 @@ export async function closeTradeTicket(rowIndex, closeData) {
   const qtyClosed = (isFinite(reqQty) && reqQty > 0) ? Math.min(reqQty, openQty) : openQty;
   const qtyRemaining = Math.max(0, openQty - qtyClosed);
 
+  // ── commission (Oct 2026) ── Every tranche is stored NET of its round-trip
+  // commission (its share of the entry plus the close), with the commission in
+  // Closes.fees_usd, so the log, the tracker and the tax report all read one
+  // number and gross is always net + fees. Callers send grossPnl or netPnl; fees
+  // they don't know are estimated from the ticket's contracts and the account rate.
+  const pnl = resolveClosePnl({
+    grossPnl: closeData.grossPnl, netPnl: closeData.netPnl, actualPnl: closeData.actualPnl,
+    fees: closeData.fees, units: unitsFromTicket(decRow[11], decRow[3]),
+    qty: qtyClosed, rate: closeData.commissionRate
+  });
+  const feeNote = pnl.feesSource === 'estimate' ? `commission est. $${pnl.fees.toFixed(2)}` : '';
+
   await appendClose({
     ticketRef: rowIndex,
     ticketTimestamp: decRow[0] || '',
@@ -1024,10 +1046,10 @@ export async function closeTradeTicket(rowIndex, closeData) {
     qtyClosed,
     qtyRemaining,
     closePrice: closeData.closePrice ?? '',
-    pnl: closeData.actualPnl ?? 0,
-    fees: closeData.fees ?? '',
+    pnl: pnl.net,
+    fees: pnl.fees,
     account: closeData.account || decRow[26] || '',
-    notes: closeData.notes || ''
+    notes: [closeData.notes || '', feeNote].filter(Boolean).join(' — ')
   });
 
   // The Decisions row carries the BLENDED result across every tranche so far, so
@@ -1035,7 +1057,7 @@ export async function closeTradeTicket(rowIndex, closeData) {
   // contract is out -- which is also what stops the endpoint's duplicate guard
   // from rejecting the second tranche.
   const all = [...prior.map(r => ({ qtyClosed: r[8], closePrice: r[10], pnl: r[11] })),
-               { qtyClosed, closePrice: closeData.closePrice, pnl: closeData.actualPnl }];
+               { qtyClosed, closePrice: closeData.closePrice, pnl: pnl.net }];
   const blended = blendCloses(all);
 
   // Columns: V=Status(22), W=Close Date(23), X=Close Price(24), Y=Actual P&L(25)
@@ -1072,7 +1094,8 @@ export async function closeTradeTicket(rowIndex, closeData) {
   // What the caller needs to tell the user: how much went, how much is left, and
   // the blended position-level result so far.
   return { qtyClosed, qtyRemaining, totalQty, fullyClosed: qtyRemaining === 0,
-           blendedClosePrice: blended.closePrice, totalPnl: blended.pnl };
+           blendedClosePrice: blended.closePrice, totalPnl: blended.pnl,
+           tranche: { gross: pnl.gross, fees: pnl.fees, net: pnl.net, feesSource: pnl.feesSource } };
 }
 
 // Backfill vol-snapshot fields on an ALREADY-CLOSED decision row. Used by the

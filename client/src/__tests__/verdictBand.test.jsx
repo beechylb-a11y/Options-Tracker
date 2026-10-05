@@ -71,6 +71,39 @@ describe('verdict band', () => {
     expect(screen.getByTestId('needs-you').textContent).toMatch(/Enter sizing/);
   });
 
+  it('says pass when EV after commission is negative, and Kelly is shown as no edge', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '80' });
+    expect(screen.getByTestId('verdict').textContent).toBe('Pass at this price');
+    expect(screen.getByTestId('execution').textContent).toMatch(/no edge at this price/);
+    expect(screen.getByTestId('commission-cell').textContent).toMatch(/4 contracts × \$0\.65 × 2 sides/);
+  });
+
+  it('puts the trade on one line, low strike to high, in order-ticket form', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
+    const line = screen.getByTestId('strike-line');
+    expect(line.style.flexWrap).toBe('nowrap');
+    expect(line.textContent.replace(/[≡ⓘ\s]/g, '')).toBe('+7305P\u22127345P\u22127450C+7495C');
+  });
+
+  it('ladder rows show what moving the leg does to the trade, without the bridge', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
+    const opener = screen.getByTestId('strike-line').querySelectorAll('span[title^="Strike ladder"]')[1];
+    fireEvent.click(opener);
+    const rows = screen.getAllByTestId('ladder-row');
+    expect(rows.length).toBe(7);
+    expect(rows.filter(r => /\d+\.\d%/.test(r.textContent)).length).toBe(7);
+    expect(screen.getByTestId('ladder').textContent).toMatch(/Bridge URL not set/);
+  });
+
+  it('lists what the Bridge does not supply on the evidence line, red when required', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '', risk: '', pop: '' });
+    const chips = screen.getByTestId('input-chips');
+    ['win', 'risk', 'pop'].forEach(k => expect(screen.getByTestId('input-chip-' + k).dataset.state).toBe('missing'));
+    expect(chips.textContent).toMatch(/3 to enter/);
+    fireEvent.click(screen.getByTestId('input-chip-win'));
+    expect(screen.getByTestId('evidence-body').style.display).toBe('block');
+  });
+
   it('keeps the evidence drawer closed until a tab is chosen', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
     const body = screen.getByTestId('evidence-body');

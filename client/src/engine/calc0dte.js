@@ -4,6 +4,7 @@
 // ================================================================
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
 import { eventRisk0DTE, nowET } from './events.js';
+import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -1945,14 +1946,22 @@ export function calc0DTE(inputs) {
     lossTerm = lossProb * avgLossUsed;                     // original flat model
   }
 
-  const ev = (avgWinUsed > 0 && winP > 0)
+  // Commission, round trip, per contract (Oct 2026). Only the ESTIMATED model pays
+  // it here: measured history comes from logged P&L, which is already net of
+  // commission, so charging it again would double count.
+  const commUnits = unitsFromLegs(legs);
+  const commRate = inputs.commissionPerContract != null ? Number(inputs.commissionPerContract) : DEFAULT_COMMISSION;
+  const commRT = roundTripCommission(commUnits, 1, commRate);
+  const commInEV = hasMeasured ? 0 : commRT;
+  const evGross = (avgWinUsed > 0 && winP > 0)
     ? (winP * avgWinUsed) - lossTerm
     : 0;
+  const ev = (avgWinUsed > 0 && winP > 0) ? evGross - commInEV : 0;
 
   // Win amount ($ max profit) needed to reach EV = 0, holding winP, loss and
-  // capture fraction fixed. EV=0 when winP × (winBE × winCap) = lossTerm.
+  // capture fraction fixed. EV=0 when winP × (winBE × winCap) = lossTerm + commission.
   const winBreakeven = (winP > 0 && winCap > 0)
-    ? lossTerm / (winP * winCap)
+    ? (lossTerm + commInEV) / (winP * winCap)
     : null;
 
   // Surface how EV was derived (for the UI to show "estimated" vs "measured").
@@ -1964,6 +1973,7 @@ export function calc0DTE(inputs) {
     winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades,
     threshold: EV_HISTORY_THRESHOLD,
+    evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate,
     winCap, lossCap,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed,
     maxWin: win, maxLoss: risk
@@ -2064,10 +2074,11 @@ export function calc0DTE(inputs) {
   // Leg count comes from the PAYOFF's legs, not the suggestion's. A 4-leg dual-EM
   // suggestion is two alternative 2-leg spreads, so `legs.length` there would bill
   // commission on a structure you are not going to trade.
+  // Contracts, not legs: a 1x2x1 fly is billed for four. (Oct 2026.)
   const frictions = computeFrictions({
     comboBid, comboAsk, win,
-    legCount: (payoff && payoff.legs && payoff.legs.length) || legs.length,
-    contracts
+    legCount: commUnits || legs.length,
+    contracts, opts: { commissionPerContract: commRate }
   });
 
   // ── Greeks analysis ──

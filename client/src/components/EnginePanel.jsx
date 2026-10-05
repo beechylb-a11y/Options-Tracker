@@ -7,6 +7,7 @@ import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
 import { tradingSession } from '../engine/session';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
+import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 const TERM_BIASES = ['contango', 'flat', 'backwardation'];
@@ -88,63 +89,85 @@ const LADDER_TTL_MS = 60000;
 // Pure presentation — the parent owns fetch/loading/error and the strike list.
 // The 7 rows render even while loading or after a bridge failure, so a strike
 // can still be picked with no greeks at all; only the Δ/θ/γ cells wait for data.
-function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
+function LadderPopover({ ladder, current, engineStrike, onPick, onRetry, outcomes, isShort }) {
   const fmt = (v, dp, signed) => (v == null || !isFinite(v)) ? '--'
     : (signed && v > 0 ? '+' : '') + v.toFixed(dp);
-  // Max |θ| row — tagged only once real greeks arrived.
-  let maxThetaStrike = null;
-  if (ladder.rows) {
-    let best = -1;
+  // Rows worth pointing at: the most decay, the lowest chance of max loss and the
+  // best reward:risk — each tagged once, and only from real numbers.
+  const bestOf = (get, better) => {
+    let best = null, bestV = null;
     ladder.strikes.forEach(s => {
-      const g = ladder.rows[s];
-      if (g && g.theta != null && isFinite(g.theta) && Math.abs(g.theta) > best) {
-        best = Math.abs(g.theta); maxThetaStrike = s;
-      }
+      const v = get(s);
+      if (v == null || !isFinite(v)) return;
+      if (bestV == null || better(v, bestV)) { bestV = v; best = s; }
     });
-  }
-  const cols = { display:'grid', gridTemplateColumns:'56px 48px 50px 52px 50px', alignItems:'center' };
+    return best;
+  };
+  const maxThetaStrike = ladder.rows ? bestOf(s => ladder.rows[s] && ladder.rows[s].theta != null ? Math.abs(ladder.rows[s].theta) : null, (a, b) => a > b) : null;
+  const safest = outcomes ? bestOf(s => outcomes[s] ? outcomes[s].pml : null, (a, b) => a < b) : null;
+  const bestRR = outcomes ? bestOf(s => outcomes[s] ? outcomes[s].rr : null, (a, b) => a > b) : null;
+  const pmlClr = v => v == null ? '#8b949e' : v <= 0.15 ? '#3fb950' : v <= 0.30 ? '#d29922' : '#f85149';
+  const cols = { display:'grid', gridTemplateColumns:'54px 46px 50px 60px 54px minmax(64px,auto)', alignItems:'center', columnGap:2 };
   const num = { textAlign:'right', paddingRight:6 };
+  const noGreeks = !ladder.loading && !ladder.rows;
   return (
-    <div onClick={e => e.stopPropagation()}
+    <div onClick={e => e.stopPropagation()} data-testid="ladder"
       style={{position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:120,
         background:'#161b22', border:'1px solid #30363d', borderRadius:8,
-        padding:'8px 6px', minWidth:262, boxShadow:'0 8px 24px rgba(0,0,0,0.55)',
+        padding:'8px 6px', minWidth:356, boxShadow:'0 8px 24px rgba(0,0,0,0.55)',
         cursor:'default', fontFamily:'JetBrains Mono,monospace', fontWeight:400}}>
+      <div style={{fontSize:12,color:'#c9d1d9',padding:'0 6px 6px',fontFamily:'DM Sans,system-ui,sans-serif',lineHeight:1.4}}>
+        Move this {isShort ? 'short' : 'long'} leg — each row re-runs the engine with the leg at that strike.
+      </div>
       {ladder.loading && (
-        <div style={{fontSize:12,color:'#a8b2be',padding:'0 6px 5px'}}>fetching ladder…</div>
+        <div style={{fontSize:12,color:'#a8b2be',padding:'0 6px 5px'}}>fetching greeks…</div>
       )}
       {!ladder.loading && ladder.error && (
-        <div style={{fontSize:12,color:'#a8b2be',padding:'0 6px 5px'}}>bridge unavailable ·{' '}
-          <span onClick={onRetry} style={{color:'#2f81f7',textDecoration:'underline',cursor:'pointer'}}>retry</span>
+        <div style={{fontSize:12,color:'#d29922',padding:'0 6px 5px',fontFamily:'DM Sans,system-ui,sans-serif'}}>
+          Greeks: {ladder.error} ·{' '}
+          <span onClick={onRetry} style={{color:'#58a6ff',textDecoration:'underline',cursor:'pointer'}}>retry</span>
+          <span style={{color:'#8b949e'}}> — the outcome columns still work</span>
         </div>
       )}
-      <div style={{...cols, fontSize:11, color:'#a8b2be', letterSpacing:'0.04em', padding:'0 4px 3px'}}>
-        <span>STRIKE</span><span style={num}>Δ</span><span style={num}>θ/day</span><span style={num}>γ</span><span />
+      <div style={{...cols, fontSize:10.5, color:'#a8b2be', letterSpacing:'0.04em', padding:'0 4px 3px'}}>
+        <span>STRIKE</span>
+        <span style={num} title="Delta — roughly the chance this strike finishes in the money">Δ</span>
+        <span style={num} title="Theta per day for one contract of this strike">θ/day</span>
+        <span style={num} title="Chance the whole trade loses its maximum with the leg here">MAX LOSS</span>
+        <span style={num} title="Max profit over max loss, priced at the model's fair value for these strikes">R:R</span>
+        <span />
       </div>
       {ladder.strikes.map(s => {
         const g = ladder.rows ? ladder.rows[s] : null;
+        const o = outcomes ? outcomes[s] : null;
         const isCur = s === current;
         const isEng = engineStrike != null && s === engineStrike;
-        const isMaxT = maxThetaStrike != null && s === maxThetaStrike;
+        const tags = [];
+        if (isEng) tags.push(['engine', '#58a6ff']);
+        if (s === safest && !isCur) tags.push(['safest', '#3fb950']);
+        if (s === bestRR && !isCur) tags.push(['best R:R', '#79c0ff']);
+        if (s === maxThetaStrike) tags.push(['max θ', '#3fb950']);
         return (
-          <div key={s} onClick={() => onPick(s)}
-            title={`Set this leg to ${s}`}
-            style={{...cols, fontSize:12.5, color:'#c9d1d9', padding:'2px 4px', borderRadius:4,
+          <div key={s} onClick={() => onPick(s)} data-testid="ladder-row"
+            title={`Set this leg to ${s}` + (g && g.gamma != null ? ` · γ ${fmt(g.gamma, 3)}` : '') + (o && o.fair != null ? ` · fair ${o.fair >= 0 ? 'cr' : 'dr'} ${Math.abs(o.fair).toFixed(2)}` : '')}
+            style={{...cols, fontSize:12.5, color:'#c9d1d9', padding:'3px 4px', borderRadius:4,
               cursor:'pointer', background:isCur ? 'rgba(47,129,247,0.16)' : 'transparent'}}>
             <span style={{fontWeight:isCur?700:400, color:isCur?'#fff':'#c9d1d9'}}>{s}</span>
             <span style={num}>{g ? fmt(g.delta, 2, true) : '--'}</span>
             <span style={num}>{g ? fmt(g.theta, 2, false) : '--'}</span>
-            <span style={num}>{g ? fmt(g.gamma, 3, false) : '--'}</span>
-            <span style={{fontSize:11}}>
-              {isEng && <span style={{color:'#2f81f7'}}>engine</span>}
-              {isEng && isMaxT && ' '}
-              {isMaxT && <span style={{color:'#3fb950'}}>max θ</span>}
+            <span style={{...num, color: pmlClr(o ? o.pml : null)}}>{o && o.pml != null ? (o.pml * 100).toFixed(1) + '%' : '--'}</span>
+            <span style={{...num, color:'#79c0ff'}}>{o && o.rr != null ? o.rr.toFixed(2) : '--'}</span>
+            <span style={{fontSize:10.5, display:'flex', gap:4, flexWrap:'wrap', fontFamily:'DM Sans,system-ui,sans-serif'}}>
+              {tags.map(([t, c]) => <span key={t} style={{color:c}}>{t}</span>)}
             </span>
           </div>
         );
       })}
-      <div style={{marginTop:6, fontSize:12, color:'#a8b2be', padding:'0 4px', fontFamily:'inherit'}}>
-        click a row to set · payoff, P(max loss), EV recompute
+      <div style={{marginTop:6, fontSize:11.5, color:'#a8b2be', padding:'0 4px', lineHeight:1.45, fontFamily:'DM Sans,system-ui,sans-serif', maxWidth:340}}>
+        {isShort
+          ? 'Short legs: closer to price collects more but lifts max-loss chance. Pick the row whose max-loss and R:R you can live with.'
+          : 'Wings: further out cheapens protection and widens max loss. Closer in costs more but cuts the tail.'}
+        {noGreeks ? '' : ' Δ ≈ chance the strike finishes in the money.'} Click a row to set it.
       </div>
     </div>
   );
@@ -159,7 +182,7 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry }) {
 // about how overrides are stored. The '≡' affordance at the right edge opens the
 // ladder (parent-owned data via the ladder* props); the chip body still opens the
 // inline input.
-function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
+function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compact, outcomes,
   ladderOpen, ladder, onOpenLadder, onCloseLadder, onRetryLadder }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
@@ -168,6 +191,10 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
   const isShort = leg.label.toLowerCase().includes('short');
   const edited = engineStrike != null && leg.strike !== engineStrike;
   const label = stripLabel ? stripLabel(leg.label) : leg.label;
+  // Compact, order-ticket form: +751P · −2×754P. The full label is the tooltip.
+  const lbl = leg.label.toLowerCase();
+  const qtyX = /x2\b/.test(lbl) ? 2 : 1;
+  const ticketTxt = `${isShort ? '\u2212' : '+'}${qtyX > 1 ? qtyX + '\u00d7' : ''}${leg.strike}${lbl.includes('call') ? 'C' : 'P'}`;
 
   // Ladder dismissal: Escape or click outside. Listeners exist only while THIS
   // chip's ladder is open (the parent opens one at a time, so at most one pair
@@ -187,7 +214,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
   }, [ladderOpen]);
 
   const box = {
-    padding:'3px 10px', borderRadius:8, fontSize:13, fontWeight:700,
+    padding: compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize:13, fontWeight:700, whiteSpace:'nowrap',
     background:isShort?'#8b2025':'#0d2818', color:isShort?'#f85149':'#3fb950',
     fontFamily:'JetBrains Mono,monospace',
     border: edited || editing ? '1px solid #d29922' : '1px solid transparent'
@@ -209,17 +236,17 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
         onBlur={()=>{ if (escRef.current) { escRef.current = false; return; } setEditing(false); onCommit(idx, text); }}
         style={{width:(String(leg.strike).length + 2) + 'ch', background:'transparent', border:'none',
           outline:'none', color:'inherit', font:'inherit', padding:0}} />
-      <span style={{fontSize:12,fontWeight:400,opacity:0.8}}> {label}</span>
+      {!compact && <span style={{fontSize:12,fontWeight:400,opacity:0.8}}> {label}</span>}
     </div>
   ) : (
     <div onClick={()=>{ if (ladderOpen && onCloseLadder) onCloseLadder(); setText(String(leg.strike)); setEditing(true); }}
-      title={edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike'}
+      title={(compact ? label + ' — ' : '') + (edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike')}
       style={{...box, cursor:'pointer'}}>
-      {leg.strike}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>} <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span>
+      {compact ? ticketTxt : leg.strike}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>}{!compact && <> <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span></>}
       {onOpenLadder && (
         <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
-          title="Strike ladder — nearby strikes with live greeks"
-          style={{fontSize:12,marginLeft:5,opacity:0.55,cursor:'pointer'}}>≡</span>
+          title="Strike ladder — what moving this leg does to the trade"
+          style={{fontSize:12,marginLeft:5,opacity:0.6,cursor:'pointer'}}>≡</span>
       )}
     </div>
   );
@@ -227,7 +254,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel,
     <div ref={wrapRef} style={{position:'relative', display:'inline-block'}}>
       {chip}
       {ladderOpen && ladder && !editing && (
-        <LadderPopover ladder={ladder} current={leg.strike} engineStrike={engineStrike}
+        <LadderPopover ladder={ladder} current={leg.strike} engineStrike={engineStrike} outcomes={outcomes} isShort={isShort}
           onPick={s => { onCommit(idx, String(s)); onCloseLadder && onCloseLadder(); }}
           onRetry={onRetryLadder} />
       )}
@@ -244,6 +271,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const defBankroll = acfg.bankroll || 3000;
   const defMaxLoss = acfg.maxDailyLoss || 300;
   const defMaxOpen = acfg.maxOpenRisk || 450;
+  // Commission per contract per side, from the account (Settings). Oct 2026.
+  const commRateAcct = commissionRate(acfg);
   const init = initialState || null;
   const [overrideStrat, setOverrideStrat] = useState(init?.overrideStrat ?? null);
   // Whole sessions AFTER today's before the structure expires. 0 = a true 0DTE;
@@ -362,7 +391,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const notFed = k => !!feed && Array.isArray(feed.missing) && feed.missing.indexOf(k) >= 0;
   const heldKeys = Object.keys(held).filter(x => x.indexOf(bag + ':') === 0);
   // Render props for one market input.
-  const mk = k => ({ manual: isHeld(k), feedVal: feedValOf(k), stale: notFed(k) && !isHeld(k) });
+  const mk = k => ({ field: k, manual: isHeld(k), feedVal: feedValOf(k), stale: notFed(k) && !isHeld(k) });
 
   // ── Collapsible input sections ──
   // Collapse state per mode, persisted. Default: everything expanded (an absent
@@ -390,6 +419,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Evidence drawer (Oct 2026): which tab is open, or null for closed. Closed by
   // default — the verdict, the choices and the Needs-you queue carry the decision.
   const [drawerTab, setDrawerTab] = useState(null);
+  const panelRef = useRef(null);
   const tabShow = id => ({ display: drawerTab === id ? undefined : 'none' });
   // The proposed trade used to scroll away long before the market data you are
   // checking it against, so the two numbers you wanted to compare were never on
@@ -506,6 +536,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           straddleCall: i0.straddleCall !== '' ? parseFloat(i0.straddleCall) : null,
           straddlePut: i0.straddlePut !== '' ? parseFloat(i0.straddlePut) : null,
           straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
+          commissionPerContract: commRateAcct,
           ...(over || {})
   });
 
@@ -529,6 +560,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
             upperAbsDelta: i45.upperWingDelta !== '' ? Math.abs(parseFloat(i45.upperWingDelta)) : null
           } : null,
+          commissionPerContract: commRateAcct,
           ...(over || {})
   });
 
@@ -556,7 +588,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, commRateAcct]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -688,7 +720,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
     if (!bridgeUrl) {
-      setLadder({ idx, right, center, strikes, loading: false, error: 'no bridge', rows: null });
+      setLadder({ idx, right, center, strikes, loading: false, error: 'Bridge URL not set (Settings)', rows: null });
       return;
     }
     setLadder({ idx, right, center, strikes, loading: true, error: null, rows: null });
@@ -715,13 +747,48 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // Superseded by a newer fetch (its abort landed here) — the newer one owns the state.
       if (ctrl.signal.aborted && ladderAbortRef.current !== ctrl) return;
       setLadder(prev => (prev && prev.idx === idx && prev.center === center)
-        ? { ...prev, loading: false, error: 'unavailable' } : prev);
+        ? { ...prev, loading: false, error: (e && e.name === 'AbortError') ? 'bridge timed out' : (e && e.message) || 'bridge unavailable' } : prev);
     } finally {
       clearTimeout(t);
       if (ladderAbortRef.current === ctrl) ladderAbortRef.current = null;
     }
   }
   function retryLadder() { if (ladder) toggleLadder(ladder.idx, true); }
+
+  // What each ladder strike does to THIS trade (Oct 2026). The engine is a pure
+  // function, so every row is a full re-run with that one leg moved: chance of max
+  // loss, and reward:risk priced at the model's fair value for the new strikes (the
+  // ticket's own net belongs to the old ones). Needs no bridge. A moved OUTER wing
+  // takes its |delta| from the ladder when the bridge supplied one, otherwise that
+  // side falls back to the model, so a stale wing delta never prices a new strike.
+  const ladderOutcomes = useMemo(() => {
+    if (!ladder || !Array.isArray(ladder.strikes) || r.hardBlocker) return null;
+    const idx = ladder.idx;
+    const keep = (overrideStrikes[bag] && overrideStrikes[bag].strat === (r.legStrat || '')) ? { ...overrideStrikes[bag].map } : {};
+    const out = {};
+    ladder.strikes.forEach(s => {
+      try {
+        const map = { ...keep, [idx]: s };
+        const strikesAfter = r.legs.map((l, j) => (j === idx ? s : l.strike));
+        const lo = Math.min(...strikesAfter), hi = Math.max(...strikesAfter);
+        const g = ladder.rows ? ladder.rows[s] : null;
+        const cur = is0 ? i0 : i45;
+        let wd = (cur.lowerWingDelta !== '' || cur.upperWingDelta !== '') ? {
+          lowerAbsDelta: cur.lowerWingDelta !== '' ? Math.abs(parseFloat(cur.lowerWingDelta)) : null,
+          upperAbsDelta: cur.upperWingDelta !== '' ? Math.abs(parseFloat(cur.upperWingDelta)) : null } : null;
+        if (wd && s === lo) wd = { ...wd, lowerAbsDelta: g && g.delta != null ? Math.abs(g.delta) : null };
+        if (wd && s === hi) wd = { ...wd, upperAbsDelta: g && g.delta != null ? Math.abs(g.delta) : null };
+        const over = { overrideStrikes: map, overrideStrikesStrat: r.legStrat || '', wingDeltas: wd };
+        const res = is0 ? calc0DTE(mk0(over)) : calc45DTE(mk45(over));
+        const fair = res.priceCheck && isFinite(res.priceCheck.fair) ? -res.priceCheck.fair : null;
+        const pay = fair != null ? legsPayoff(res.legs, fair) : null;
+        const rr = pay && pay.maxProfit > 0 && pay.maxLoss < 0 ? pay.maxProfit / Math.abs(pay.maxLoss) : null;
+        out[s] = { pml: res.pMaxLoss != null ? res.pMaxLoss : null, rr, fair };
+      } catch (e) { out[s] = null; }
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ladder, is0, i0, i45, overrideStrat, overrideStrikes, r.legStrat, commRateAcct]);
 
   // ── Net credit/debit pre-fills from the engine's TARGET for the structure in
   // front of you. A fresh ticket -- and every structure opened in its own tab --
@@ -919,11 +986,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       sub: 'The engine needs one more input before it can place strikes.' }
     : blockers.length ? { word: blockers.length > 1 ? `Blocked · ${blockers.length} issues` : 'Blocked', tone: 'bad' }
     : missingInputs ? { word: 'Waiting on sizing', tone: 'warn' }
+    // A setup can score well and still lose money at the price on the ticket. EV
+    // after commission is the last word on whether to enter at this fill.
+    : !(r.ev > 0) ? { word: 'Pass at this price', tone: 'pass' }
     : bannerGrade === 'strong' ? { word: 'Take the trade', tone: 'grade' }
     : bannerGrade === 'decent' ? { word: 'Take the trade', tone: 'grade' }
     : bannerGrade === 'marginal' ? { word: 'Take it smaller, or pass', tone: 'grade' }
     : { word: 'Pass on this one', tone: 'grade' };
-  const vTone = verdict.tone === 'bad'
+  const vTone = verdict.tone === 'pass'
+    ? { color: '#e3833c', bg: 'linear-gradient(180deg,#24160c 0%,#170f0a 100%)', border: '#9a4f1c' }
+    : verdict.tone === 'bad'
     ? { color: '#f85149', bg: 'linear-gradient(180deg,#2a1012 0%,#1b0d0f 100%)', border: '#da3633' }
     : verdict.tone === 'warn'
       ? { color: '#d29922', bg: 'linear-gradient(180deg,#1f1a0d 0%,#16130b 100%)', border: '#9e6a03' }
@@ -976,6 +1048,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     detail: 'Chance of max loss is still using the earlier wing deltas.',
     actions: [{ label: 'Refresh greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
 
+  // Commission for the execution row: the trade as sized, round trip.
+  const commUnitsNow = unitsFromLegs(r.legs);
+  const commQtyNow = missingInputs ? 1 : Math.max(1, r.contracts || 1);
+  const commTotalNow = roundTripCommission(commUnitsNow, commQtyNow, commRateAcct);
+
   // Log gate. A blocker no longer leaves a green button under a red banner: it
   // turns the button into the reason, with a deliberate "Log anyway" for the cases
   // where the trader knows better (paper, legging in, a data glitch).
@@ -986,15 +1063,54 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         label: `Blocked · ${blockers.length} issue${blockers.length > 1 ? 's' : ''}`, why: blockers.join('\n') }
     : { ok: true };
 
+  // ── Your inputs (Oct 2026) ── Everything the Bridge does NOT supply, on the
+  // evidence line where it can be seen without opening anything: the sizing you
+  // type from the broker preview, values you typed over the feed, fields the last
+  // pull didn't return, and greeks. Red = required and blank. Click jumps to it.
+  const FIELD_LABEL = { netCreditDebit: cashType === 'debit' ? 'Net debit' : 'Net credit', win: 'Win $', risk: 'Risk $',
+    pop: 'POP %', iv: 'IV %', ivr: 'IV rank', price: 'Price', high: 'Day high', low: 'Day low', vwap5: 'VWAP',
+    vwap5_30: 'VWAP −30m', vwapRoll30: 'VWAP last 30m', vwapRoll30Prior: 'VWAP prior 30m', vwapAccept: 'VWAP accept',
+    em: 'EM', atr: 'ATR 1d', atr5: 'ATR 5m', atr2h: 'ATR 2h', vix: 'VIX', vix1d: 'VIX1D', esOvernightHigh: 'ES o/n high',
+    esOvernightLow: 'ES o/n low', esClose: 'ES close', priorDayClose: 'Prior close', cashOpen: 'Cash open', esEM: 'ES EM', skew: 'Skew' };
+  const fieldSection = k => ['win', 'risk', 'pop', 'netCreditDebit', 'comboBid', 'comboAsk'].includes(k) ? 'sizing'
+    : /^es|priorDayClose|cashOpen/.test(k) ? 'es'
+    : ['theta', 'delta', 'gamma', 'gamStrike', 'lowerWingDelta', 'upperWingDelta', 'vega'].includes(k) ? 'greeks'
+    : (!is0 && ['iv', 'ivr', 'hv', 'ivFront', 'ivBack', 'skew', 'termBias'].includes(k)) ? 'vol' : 'market';
+  function openField(k) {
+    setDrawerTab('inputs');
+    expandSection(fieldSection(k));
+    setTimeout(() => {
+      const el = panelRef.current && panelRef.current.querySelector(`[data-field="${k}"]`);
+      if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.focus({ preventScroll: true }); }
+    }, 60);
+  }
+  const blankOf = k => { const v = secBag[k]; return v === '' || v == null || !(parseFloat(v) !== 0 && isFinite(parseFloat(v))); };
+  const inputChips = [];
+  if (!is0 && blankOf('iv')) inputChips.push({ k: 'iv', state: 'missing', text: 'IV % — enter' });
+  ['netCreditDebit', 'win', 'risk', 'pop'].forEach(k => {
+    const lab = FIELD_LABEL[k];
+    if (blankOf(k)) inputChips.push({ k, state: 'missing', text: `${lab} — enter` });
+    else if (k === 'netCreditDebit' && netIsTarget) inputChips.push({ k, state: 'target', text: `${lab} ${Math.abs(parseFloat(secBag[k])).toFixed(2)} · target, use your fill` });
+    else inputChips.push({ k, state: 'typed', text: `${lab} ${k === 'netCreditDebit' ? Math.abs(parseFloat(secBag[k])).toFixed(2) : secBag[k]}` });
+  });
+  heldKeys.map(x => x.slice(bag.length + 1)).forEach(k => {
+    const fed = feedValOf(k);
+    inputChips.push({ k, state: 'override', text: `${FIELD_LABEL[k] || k} ${secBag[k]} ✎${fed !== undefined && String(fed) !== String(secBag[k]) ? ` · feed ${fed}` : ''}` });
+  });
+  feedMissing.forEach(k => inputChips.push({ k, state: 'nofeed', text: `${FIELD_LABEL[k] || k} · not from Bridge` }));
+  if (!r.hardBlocker && r.legs.length > 0 && r.pMaxLoss == null) inputChips.push({ k: 'lowerWingDelta', state: 'missing', text: 'Greeks — fetch' });
+  else if (greeksAgeMin != null && greeksAgeMin >= 10 && sessionOpen) inputChips.push({ k: 'lowerWingDelta', state: 'nofeed', text: `Greeks ${greeksAgeMin}m old` });
+  const nMissing = inputChips.filter(c => c.state === 'missing').length;
+
   // Evidence drawer tabs: a status dot each, so you know which one is worth opening.
   const pmlNow = r.pMaxLoss;
   const fvs = r.fairValueScore;
-  const inputsDot = (secMissing.market || secMissing.sizing || secMissing.vol) ? '#f85149'
+  const inputsDot = (secMissing.market || secMissing.sizing || secMissing.vol || nMissing) ? '#f85149'
     : (heldKeys.length || feedMissing.length) ? '#d29922'
     : (dataFresh && dataFresh.isLive) ? '#3fb950' : '#8b949e';
   const drawerTabs = [
     { id: 'inputs', label: 'Inputs', dot: inputsDot,
-      meta: heldKeys.length ? `${heldKeys.length} typed` : dataFresh ? (dataFresh.isLive ? 'live' : 'last close') : '' },
+      meta: nMissing ? `${nMissing} to enter` : heldKeys.length ? `${heldKeys.length} typed` : dataFresh ? (dataFresh.isLive ? 'live' : 'last close') : '' },
     { id: 'setup', label: 'Setup quality', dot: sClr, meta: String(r.setupScore ?? '') },
     { id: 'structures', label: 'Structures', dot: '#58a6ff', meta: String((r.ratings || []).length || '') },
     { id: 'sizing', label: 'Sizing & price', dot: missingInputs ? '#484f58' : r.ev > 0 ? '#3fb950' : '#f85149',
@@ -1039,6 +1155,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       ev: isCur && !missingInputs ? res.ev : null,
       contracts: isCur && !missingInputs ? res.contracts : null,
       rr, pay, priced, netShow,
+      strikes: strikeMarks(res.legs),
       profitIf: profitIfText(pay, secBag.underlying) || res.behaviour || '',
     };
   }) : [];
@@ -1685,7 +1802,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const esPreOpenLabel = esBars && esMeta.pre ? `ES ${esMeta.pre}` : `ES ${_fmtDM(_esPreDate)} 08:45`;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={panelRef}>
       {/* Condensed ticket — only while the full block is scrolled past. display:none
           when idle so it takes no space and creates no gap in the space-y stack. */}
       <div style={{position:'sticky',top:48,zIndex:10,display:ticketStuck?'block':'none',
@@ -1809,32 +1926,36 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(VIX):</span>
                   {r.legs.slice(0,2).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')}
-                      ladderOpen={ladder?.idx === i} ladder={ladder}
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')} compact
+                      ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
                       onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                   ))}
                 </div>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'nowrap'}}>
                   <span style={{fontSize:12,color:'#a8b2be',width:50}}>EM(1D):</span>
                   {r.legs.slice(2,4).map((l,i) => (
                     <StrikeChip key={i} leg={l} idx={i+2} engineStrike={r.engineLegs?.[i+2]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')}
-                      ladderOpen={ladder?.idx === i+2} ladder={ladder}
+                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')} compact
+                      ladderOpen={ladder?.idx === i+2} ladder={ladder} outcomes={ladder?.idx === i+2 ? ladderOutcomes : null}
                       onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                   ))}
-                  {(r.wingTxt || r.strikeLine) && <span style={{fontSize:12.5,color:'#a8b2be'}}>{r.wingTxt || r.strikeLine}</span>}
+                  {(r.wingTxt || r.strikeLine) && <span title={r.wingTxt || r.strikeLine} style={{fontSize:12.5,color:'#8b949e',cursor:'help'}}>ⓘ</span>}
                 </div>
               </div>
             ) : (
-              // Standard leg display — wing distance appended inline, muted
-              <div style={{display:'flex',flexWrap:'wrap',gap:'6px 8px',alignItems:'center'}}>
-                {r.legs.map((l,i) => (
-                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
+              // The trade on one line, low strike to high, order-ticket style
+              // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
+              <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
+                {r.legs.map((l,i) => ({ l, i })).sort((a, b) => a.l.strike - b.l.strike).map(({ l, i }) => (
+                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact
                     step={strikeStep} onCommit={commitStrike}
-                    ladderOpen={ladder?.idx === i} ladder={ladder}
+                    ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
                     onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
                 ))}
-                {(r.wingTxt || r.strikeLine) && <span style={{fontSize:12.5,color:'#a8b2be'}}>{r.wingTxt || r.strikeLine}</span>}
+                {(r.wingTxt || r.strikeLine) && (
+                  <span title={r.wingTxt || r.strikeLine} aria-label={'Strike placement: ' + (r.wingTxt || r.strikeLine)}
+                    style={{flex:'none',fontSize:12.5,color:'#8b949e',cursor:'help',padding:'0 4px'}}>ⓘ</span>
+                )}
               </div>
             )}
             {editedCount > 0 && (
@@ -2014,7 +2135,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           borderRadius:12,background:'#161b22',border:'1px solid #21262d'}}>
           <div style={{flex:'1 1 130px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
             <span style={EX_LBL}>Size</span>
-            {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : <>
+            {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : !(r.kellyDollar > 0) ? <>
+              <span className="mono" style={{fontSize:22,fontWeight:700,color:'#8b949e'}}>0 ct</span>
+              <span style={{fontSize:12.5,color:'#e3833c'}}>Kelly says no edge at this price — {r.contracts} ct is a floor, not a size</span>
+            </> : <>
               <span className="mono" style={{fontSize:22,fontWeight:700,color: r.kellyOverRisk ? '#f85149' : '#e6edf3'}}>{r.contracts} ct</span>
               <span style={{fontSize:12.5,color:'#a8b2be'}}>Kelly ${Math.round(r.kellyDollar || 0)}{r.kellyOverRisk ? ' · over risk cap' : ''}</span>
             </>}
@@ -2033,6 +2157,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               </span>
             )}
           </div>
+          {commUnitsNow > 0 && (
+            <div data-testid="commission-cell" style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}
+              title="Per contract, each way, from this account's Settings. Calibrate it there from a day's TWS fills.">
+              <span style={EX_LBL}>Commission</span>
+              <span className="mono" style={{fontSize:18,fontWeight:700,color:'#e6edf3'}}>${commTotalNow.toFixed(2)}</span>
+              <span style={{fontSize:12.5,color:'#a8b2be'}}>{commUnitsNow * commQtyNow} contracts × ${commRateAcct.toFixed(2)} × 2 sides{r.evBasis && r.evBasis.commission > 0 ? ' · in EV' : ''}</span>
+            </div>
+          )}
           {is0 && r.holdToExpiry && (() => {
             const h = r.holdToExpiry;
             const fg = h.verdict==='hold'?'#3fb950':h.verdict==='watch'?'#d29922':'#f85149';
@@ -2114,7 +2246,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <button key={t.id} data-testid={'drawer-tab-' + t.id} onClick={() => setDrawerTab(on ? null : t.id)}
                 aria-pressed={on}
                 style={{display:'inline-flex',alignItems:'center',gap:7,padding:'6px 11px',borderRadius:7,fontSize:13,cursor:'pointer',minHeight:34,
-                  border:`1px solid ${on ? '#58a6ff' : 'transparent'}`,background:on ? '#1c2128' : 'transparent',color:on ? '#fff' : '#a8b2be'}}>
+                  border:`1px solid ${on ? '#58a6ff' : (t.dot === '#f85149' && t.id === 'inputs') ? '#6e2427' : 'transparent'}`,
+                  background:on ? '#1c2128' : (t.dot === '#f85149' && t.id === 'inputs') ? '#2d0f11' : 'transparent',color:on ? '#fff' : '#a8b2be'}}>
                 <span style={{width:7,height:7,borderRadius:'50%',background:t.dot}} />
                 {t.label}
                 {t.meta ? <span className="mono" style={{fontSize:12,color:'#8b949e'}}>{t.meta}</span> : null}
@@ -2122,9 +2255,28 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             );
           })}
           <span style={{marginLeft:'auto',fontSize:12.5,color:'#8b949e',paddingRight:6}}>
-            {drawerTab ? 'Click the tab again to close' : (needs.length ? '' : 'Nothing here needs you')}
+            {drawerTab ? 'Click the tab again to close' : ''}
           </span>
         </div>
+        {inputChips.length > 0 && (
+          <div data-testid="input-chips" style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',padding:'8px 12px 10px',borderTop:'1px solid #21262d'}}>
+            <span style={{...EX_LBL,marginRight:4}} title="Everything the Bridge does not fill. Click one to jump to it.">
+              Not from Bridge{nMissing ? <span style={{color:'#f85149'}}> · {nMissing} to enter</span> : ''}
+            </span>
+            {inputChips.map((c, j) => {
+              const st = INPUT_CHIP[c.state];
+              return (
+                <button key={c.k + j} data-testid={'input-chip-' + c.k} data-state={c.state} onClick={() => openField(c.k)}
+                  title={st.tip}
+                  style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 9px',borderRadius:6,fontSize:12.5,cursor:'pointer',
+                    border:`1px ${c.state === 'nofeed' ? 'dashed' : 'solid'} ${st.border}`,background:st.bg,color:st.fg,minHeight:28}}>
+                  <span style={{width:6,height:6,borderRadius:'50%',background:st.fg}} />
+                  <span className={c.state === 'missing' ? '' : 'mono'}>{c.text}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <div data-testid="evidence-body" style={{display: drawerTab ? 'block' : 'none'}}>
@@ -2300,7 +2452,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               onToggle={() => toggleSection('vol')}
               onExpand={() => expandSection('vol')}>
               <div className="grid grid-cols-2 gap-2.5">
-                <Inp label="IV Rank (%) — manual" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
+                <Inp label="IV Rank (%) — manual" field="ivr" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
                 <Inp label="IV (%)" {...mk('iv')} value={i45.iv} onChange={v=>set45('iv',v)}/>
                 <Inp label="HV (%) — manual" value={i45.hv} onChange={v=>set45('hv',v)}/>
                 <Inp label="IV Front — manual" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
@@ -2396,7 +2548,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               )}</label>
               <input type="number" step="any"
                 value={is0?i0.netCreditDebit:i45.netCreditDebit}
-                onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
+                data-field="netCreditDebit" onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
                 placeholder="—"
                 style={{
                   width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
@@ -2417,7 +2569,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <label className="text-xs text-text-muted block mb-1">POP (%)</label>
               <input type="number" step="any"
                 value={is0?i0.pop:i45.pop}
-                onChange={e=>is0?set0('pop',e.target.value):set45('pop',e.target.value)}
+                data-field="pop" onChange={e=>is0?set0('pop',e.target.value):set45('pop',e.target.value)}
                 placeholder="—"
                 style={{
                   width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
@@ -2445,7 +2597,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {r.bePop > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
             </div>
             <div>
-              <Inp label="Win amount ($)" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+              <Inp label="Win amount ($)" field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
               <PrefillChip payoffVal={r.payoff?.maxProfit} fieldVal={is0?i0.win:i45.win}
                 onFill={v=>is0?set0('win',v):set45('win',v)}/>
             </div>
@@ -2453,7 +2605,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <label className="text-xs text-text-muted block mb-1">Risk / contract ($)</label>
               <input type="number" step="any"
                 value={is0?i0.risk:i45.risk}
-                onChange={e=>is0?set0('risk',e.target.value):set45('risk',e.target.value)}
+                data-field="risk" onChange={e=>is0?set0('risk',e.target.value):set45('risk',e.target.value)}
                 placeholder="—"
                 style={{
                   width:'100%', padding:'8px 12px', borderRadius:8, fontSize:14, fontFamily:'JetBrains Mono,monospace',
@@ -2584,7 +2736,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 </div>
                 <div style={{fontSize:12.5,color:'#a8b2be',marginTop:3}}>
                   spread {f.spreadWidth.toFixed(2)} wide → ${Math.round(f.spreadCost)} round trip · commission
-                  ${f.commission.toFixed(2)} on {f.legCount} legs · <strong style={{color:'#c9d1d9'}}>${Math.round(f.total)}</strong> to
+                  ${f.commission.toFixed(2)} on {f.legCount} contracts · <strong style={{color:'#c9d1d9'}}>${Math.round(f.total)}</strong> to
                   get in and out of ${Math.round(fv(is0?i0:i45,'win'))} max profit
                   {r.contracts > 1 && <> · ${Math.round(f.totalAll)} at {r.contracts} contracts</>}
                 </div>
@@ -2647,7 +2799,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
             <ProfitTaker ncd={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} win={parseFloat(is0?i0.win:i45.win) || 0}
               contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
-              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} />
+              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} />
           )}
 
           </InputSection>
@@ -2995,7 +3147,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
-                    : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`}
+                    : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
+                      + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
+                  {r.evBasis.commissionRoundTrip > 0 && (
+                    <div style={{marginTop:4,color:'#c9d1d9'}}>
+                      Commission {r.evBasis.commissionUnits} contracts × ${r.evBasis.commissionRate.toFixed(2)} × 2 sides = <b style={{color:'#fff'}}>${r.evBasis.commissionRoundTrip.toFixed(2)}</b> per unit
+                      {r.evBasis.mode === 'measured' ? ' (already inside the measured history, so not charged again)' : ''}
+                    </div>
+                  )}
                   {r.evBasis.pMaxLoss != null && (
                     <div style={{marginTop:4,color:'#c9d1d9'}}>
                       P(max loss) used in sizing: <b style={{color:'#fff'}}>{(r.evBasis.pMaxLoss*100).toFixed(1)}%</b>
@@ -3253,6 +3412,15 @@ const EX_LINK = { padding: 0, border: 'none', background: 'transparent', color: 
 const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent',
   color: '#c9d1d9', fontSize: 13, cursor: 'pointer' };
 
+// Evidence-line chip states: what each input's source is.
+const INPUT_CHIP = {
+  missing: { fg: '#f85149', bg: '#2d0f11', border: '#6e2427', tip: 'Required and blank — the engine waits on this' },
+  target: { fg: '#e3b341', bg: '#2a2410', border: '#5a4a12', tip: 'Pre-filled from the engine\u2019s target. Replace it with your broker fill — this number is logged.' },
+  typed: { fg: '#c9d1d9', bg: '#161b22', border: '#30363d', tip: 'You entered this from the broker preview' },
+  override: { fg: '#d29922', bg: '#1f1a0d', border: '#5a3a1a', tip: 'You typed over the feed; auto-fill leaves it alone' },
+  nofeed: { fg: '#d29922', bg: 'transparent', border: '#5a3a1a', tip: 'The last Bridge pull did not return this — it is an older value' },
+};
+
 // The one headline score: composite as a ring, coloured by the verdict.
 function EdgeRing({ score, color, label, dim, title }) {
   const R = 34, C = 2 * Math.PI * R;
@@ -3360,7 +3528,26 @@ function outlookOf(name) {
 
 // Payoff shape for a card: scaled to its own range, zero line when priced,
 // a dashed marker where price is now.
-function PayoffGlyph({ pay, price, color }) {
+// Strikes of a structure for labelling: low to high, short/long, ×2 bodies.
+function strikeMarks(legs) {
+  if (!Array.isArray(legs) || !legs.length) return [];
+  const use = (legs.length === 4 && String(legs[0]?.label || '').includes('VIX')) ? legs.slice(0, 2) : legs;
+  // Legs sharing a strike (an iron fly's two shorts) become one mark.
+  const by = new Map();
+  use.filter(l => isFinite(l.strike)).forEach(l => {
+    const lb = String(l.label || '').toLowerCase();
+    const m = by.get(l.strike) || { strike: l.strike, short: false, n: 0 };
+    m.short = m.short || lb.includes('short') || lb.includes('sell');
+    m.n += /x2\b/.test(lb) ? 2 : 1;
+    by.set(l.strike, m);
+  });
+  return [...by.values()].map(m => ({ strike: m.strike, short: m.short, x2: m.n > 1 })).sort((a, b) => a.strike - b.strike);
+}
+
+// Payoff shape for a card: scaled to its own range, zero line when priced, a
+// dashed marker where price is now, and the strikes labelled underneath so the
+// card says WHERE the structure sits, not just its shape. (Oct 2026.)
+function PayoffGlyph({ pay, price, color, strikes }) {
   if (!pay || !Array.isArray(pay.points) || pay.points.length < 2) {
     return <div style={{ height: 56, display: 'flex', alignItems: 'center', fontSize: 12.5, color: '#8b949e' }}>No single-expiry payoff to draw</div>;
   }
@@ -3372,12 +3559,40 @@ function PayoffGlyph({ pay, price, color }) {
   const Y = v => pad + (H - 2 * pad) * (1 - (v - lo) / ((hi - lo) || 1));
   const line = pts.map(p => `${X(p.price).toFixed(1)},${Y(p.pnl).toFixed(1)}`).join(' ');
   const showPx = isFinite(price) && price >= x0 && price <= x1;
+  // label rows: a second row only when two strikes would collide
+  const marks = [];
+  let lastPct = -100, row = 0;
+  (strikes || []).forEach(m => {
+    if (!(m.strike >= x0 && m.strike <= x1)) return;
+    const pct = (m.strike - x0) / ((x1 - x0) || 1) * 100;
+    row = pct - lastPct < 11 ? 1 - row : 0;
+    lastPct = pct;
+    marks.push({ ...m, pct, row });
+  });
+  const twoRows = marks.some(m => m.row);
+  const fmtK = k => (Math.round(k * 100) / 100).toString();
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="56" preserveAspectRatio="none" aria-hidden="true">
-      {!pay.shapeOnly && <line x1="0" y1={Y(0)} x2={W} y2={Y(0)} stroke="#30363d" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />}
-      <polyline points={line} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      {showPx && <line x1={X(price)} y1="1" x2={X(price)} y2={H - 1} stroke="#ffffff" strokeOpacity="0.55" strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />}
-    </svg>
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="56" preserveAspectRatio="none" aria-hidden="true">
+        {!pay.shapeOnly && <line x1="0" y1={Y(0)} x2={W} y2={Y(0)} stroke="#30363d" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />}
+        {marks.map((m, i) => (
+          <line key={i} x1={X(m.strike)} y1={H - 1} x2={X(m.strike)} y2={H - 7} stroke={m.short ? '#e6edf3' : '#6e7681'} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        ))}
+        <polyline points={line} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        {showPx && <line x1={X(price)} y1="1" x2={X(price)} y2={H - 1} stroke="#ffffff" strokeOpacity="0.55" strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />}
+      </svg>
+      {marks.length > 0 && (
+        <div data-testid="glyph-strikes" style={{ position: 'relative', height: twoRows ? 30 : 16, marginTop: 2 }}>
+          {marks.map((m, i) => (
+            <span key={i} className="mono" style={{ position: 'absolute', top: m.row ? 14 : 0, left: `${m.pct}%`,
+              transform: `translateX(${m.pct < 6 ? '0' : m.pct > 94 ? '-100%' : '-50%'})`, whiteSpace: 'nowrap',
+              fontSize: 11, lineHeight: '14px', fontWeight: m.short ? 700 : 400, color: m.short ? '#e6edf3' : '#8b949e' }}>
+              {m.x2 ? '2×' : ''}{fmtK(m.strike)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3428,7 +3643,7 @@ function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
         )}
       </div>
 
-      <PayoffGlyph pay={c.pay} price={price} color={on ? accent : '#8b949e'} />
+      <PayoffGlyph pay={c.pay} price={price} color={on ? accent : '#8b949e'} strikes={c.strikes} />
 
       {c.profitIf && (
         <div style={{ fontSize: 13.5, color: '#c9d1d9', lineHeight: 1.4 }}>
@@ -3525,6 +3740,23 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
     }
     if (best) profitMid = L + ((best.s + best.e + 1) / 2) * colW;
   }
+  // Keep the max-profit label off the price line: slide it to whichever side of
+  // price still sits inside the green run.
+  let profitRunS = null, profitRunE = null;
+  if (profitMid != null) {
+    const labelW = (`Max profit ${money(maxP)}`.length) * 6.9;
+    const pxNow = X(price);
+    let s0 = profitMid, e0 = profitMid;
+    while (s0 - colW > L && pnlAt(lo + (hi - lo) * ((s0 - colW - L) / (R - L))) > 0) s0 -= colW;
+    while (e0 + colW < R && pnlAt(lo + (hi - lo) * ((e0 + colW - L) / (R - L))) > 0) e0 += colW;
+    profitRunS = s0; profitRunE = e0;
+    if (Math.abs(profitMid - pxNow) < labelW / 2 + 6) {
+      const right = pxNow + labelW / 2 + 8, left = pxNow - labelW / 2 - 8;
+      if (right + labelW / 2 <= e0 + colW) profitMid = right;
+      else if (left - labelW / 2 >= s0 - colW) profitMid = left;
+      else profitMid = (pxNow - s0 > e0 - pxNow) ? Math.max(L + labelW / 2, left) : Math.min(R - labelW / 2, right);
+    }
+  }
   const leftLoss = !pay.shapeOnly && pnlAt(lo) < 0 ? pnlAt(lo) : null;
   const rightLoss = !pay.shapeOnly && pnlAt(hi) < 0 ? pnlAt(hi) : null;
 
@@ -3568,7 +3800,8 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
       ))}
 
       {bes.map((b, i) => (
-        <text key={i} x={X(b)} y="66" fill="#a8b2be" fontSize="10.5" textAnchor={i === 0 && bes.length > 1 ? 'end' : bes.length > 1 ? 'start' : 'middle'} style={T}>
+        <text key={i} x={X(b)} y="66" fill="#a8b2be" fontSize="10.5" stroke="#0d1117" strokeWidth="3" paintOrder="stroke"
+          textAnchor={i === 0 && bes.length > 1 ? 'end' : bes.length > 1 ? 'start' : 'middle'} style={T}>
           {bes.length > 1 ? (i === 0 ? `BE ${Math.round(b)} ` : ` BE ${Math.round(b)}`) : `BE ${Math.round(b)}`}
         </text>
       ))}
@@ -3977,7 +4210,7 @@ function SectionLabel({ children, white, info }) {
 // feed's value shown alongside when the two disagree). `stale` = the last pull
 // did not return this field at all, so what is on screen is older than the badge
 // suggests (dim, dashed). `bad` still wins over both — it means the value is wrong.
-function Inp({label,value,onChange,type,bad,manual,stale,feedVal}) {
+function Inp({label,value,onChange,type,bad,manual,stale,feedVal,field}) {
   const border = bad ? 'border-[#f85149]' : manual ? 'border-[#9e6a03]' : 'border-[#30363d]';
   const lblCls = bad ? 'text-[#f85149]' : manual ? 'text-[#d29922]' : 'text-[#c9d1d9]';
   const differs = manual && feedVal !== undefined && String(feedVal) !== String(value == null ? '' : value);
@@ -3989,7 +4222,7 @@ function Inp({label,value,onChange,type,bad,manual,stale,feedVal}) {
       {differs && <span className="text-[#9aa4b0] font-normal"> feed {feedVal}</span>}
       {!manual && stale && <span className="text-[#9aa4b0] font-normal"> · no feed</span>}
     </label>
-    <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—" title={tip}
+    <input type={type||'number'} step="any" value={value||''} onChange={e=>onChange(e.target.value)} placeholder="—" title={tip} data-field={field}
       style={(!bad && !manual && stale) ? {borderStyle:'dashed'} : undefined}
       className={`w-full px-3 py-2 bg-[#0d1117] border rounded-lg text-sm text-white mono outline-none focus:border-[#2f81f7] ${border}`}/></div>);
 }

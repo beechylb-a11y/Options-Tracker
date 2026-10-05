@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { LogOut, Save, ExternalLink, Shield, Plus, Trash2, Edit3, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
+import { rateFromFills, DEFAULT_COMMISSION } from '../utils/commission';
+import { invalidateCommissionRates } from '../utils/useCommissionRate';
 
 export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
   const [config, setConfig] = useState({});
@@ -11,7 +13,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   // Account management
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
-  const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' });
+  const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) });
 
   // Auto-calc defaults when bankroll changes (only if user hasn't manually edited)
   const [manualLoss, setManualLoss] = useState(false);
@@ -25,6 +27,21 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
     setAccountForm(f => ({ ...f, ...updates }));
   }
   const [savingAccounts, setSavingAccounts] = useState(false);
+  // Commission calibration from a day's TWS fills (Oct 2026): commission paid ÷
+  // option contracts traded, read from the bridge's executions.
+  const [calib, setCalib] = useState(null);
+  async function calibrateFromFills() {
+    setCalib({ busy: true });
+    try {
+      const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+      if (!bridgeUrl) { setCalib({ err: 'Set the Bridge URL below first' }); return; }
+      const d = await (await fetch(bridgeUrl + '/api/executions', { headers: { 'ngrok-skip-browser-warning': '1' } })).json();
+      const r = rateFromFills(d.fills || []);
+      if (!r) { setCalib({ err: 'No option fills with commission today' }); return; }
+      setAccountForm(f => ({ ...f, commissionPerContract: String(r.rate) }));
+      setCalib({ text: `Today: $${r.commission.toFixed(2)} over ${r.contracts} contracts = $${r.rate.toFixed(3)} each` });
+    } catch (e) { setCalib({ err: 'Bridge not reachable: ' + e.message }); }
+  }
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
 
@@ -59,13 +76,15 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         bankroll: parseFloat(accountForm.bankroll) || 3000,
         startingBankroll: parseFloat(accountForm.startingBankroll) || 3000,
         maxDailyLoss: parseFloat(accountForm.maxDailyLoss) || 300,
-        maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || 450
+        maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || 450,
+        commissionPerContract: commNum(accountForm.commissionPerContract, DEFAULT_COMMISSION)
       };
       const updated = [...(accounts || []), newAccount];
       await api.saveAccounts(updated);
+      invalidateCommissionRates();
       onAccountsChange(updated);
       setShowAddAccount(false);
-      setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' }); setManualLoss(false); setManualRisk(false);
+      setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false);
     } catch (e) { console.error(e); }
     setSavingAccounts(false);
   }
@@ -79,9 +98,11 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         bankroll: parseFloat(accountForm.bankroll) || a.bankroll,
         startingBankroll: parseFloat(accountForm.startingBankroll) || a.startingBankroll,
         maxDailyLoss: parseFloat(accountForm.maxDailyLoss) || a.maxDailyLoss,
-        maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || a.maxOpenRisk
+        maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || a.maxOpenRisk,
+        commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION)
       } : a);
       await api.saveAccounts(updated);
+      invalidateCommissionRates();
       onAccountsChange(updated);
       setEditingAccount(null);
     } catch (e) { console.error(e); }
@@ -132,7 +153,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-semibold">Trading Accounts</h3>
-          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200' }); setManualLoss(false); setManualRisk(false); }}
+          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false); }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors">
             <Plus size={12} /> Add account
           </button>
@@ -171,6 +192,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
+                      <CommissionField value={accountForm.commissionPerContract} calib={calib}
+                        onChange={v => setAccountForm(f => ({ ...f, commissionPerContract: v }))} onCalibrate={calibrateFromFills} />
                     </div>
                     <div className="flex gap-2">
                       <button onClick={handleUpdateAccount} disabled={savingAccounts}
@@ -191,9 +214,10 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span>Bankroll: <span className="mono text-text">{fmt$(a.bankroll)}</span></span>
                         <span>Max loss: <span className="mono text-text">{fmt$(a.maxDailyLoss)}</span></span>
                         <span>Max risk: <span className="mono text-text">{fmt$(a.maxOpenRisk)}</span></span>
+                        <span>Commission: <span className="mono text-text">${Number(a.commissionPerContract ?? DEFAULT_COMMISSION).toFixed(2)}</span>/contract</span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk }); setShowAddAccount(false); setManualLoss(true); setManualRisk(true); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk, commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION) }); setCalib(null); setShowAddAccount(false); setManualLoss(true); setManualRisk(true); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);
@@ -264,6 +288,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                 <input type="number" value={accountForm.maxOpenRisk} onChange={e => { setManualRisk(true); setAccountForm(f => ({ ...f, maxOpenRisk: e.target.value })); }}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
+              <CommissionField value={accountForm.commissionPerContract} calib={calib}
+                onChange={v => setAccountForm(f => ({ ...f, commissionPerContract: v }))} onCalibrate={calibrateFromFills} />
             </div>
             <div className="flex gap-2">
               <button onClick={handleAddAccount} disabled={!accountForm.name.trim() || savingAccounts}
@@ -331,6 +357,29 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
           </button>
           {saved && <span className="text-green text-sm">Saved</span>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const commNum = (v, dflt) => { const n = parseFloat(v); return isFinite(n) && n >= 0 ? n : dflt; };
+
+// Commission per contract, each way, with calibration from today's TWS fills.
+function CommissionField({ value, onChange, onCalibrate, calib }) {
+  return (
+    <div className="col-span-3">
+      <label className="text-[12px] text-text-muted block mb-0.5">
+        Commission per contract, each way ($) <span style={{color:'#8b949e'}}>used by the engine's EV, the tickets and the tax report</span>
+      </label>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input type="number" step="0.01" min="0" value={value} onChange={e => onChange(e.target.value)}
+          className="w-24 px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+        <button type="button" onClick={onCalibrate} disabled={calib && calib.busy}
+          className="px-2 py-1 text-[12px] border border-[#2f81f7] rounded text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
+          {calib && calib.busy ? 'Reading fills…' : 'Set from today\u2019s TWS fills'}
+        </button>
+        {calib && calib.text && <span className="text-[12px] text-green">{calib.text}</span>}
+        {calib && calib.err && <span className="text-[12px] text-amber">{calib.err}</span>}
       </div>
     </div>
   );

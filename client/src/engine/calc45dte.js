@@ -4,6 +4,7 @@
 // ================================================================
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE } from './data.js';
 import { eventRisk45DTE, nowET } from './events.js';
+import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 
 function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
@@ -339,10 +340,16 @@ export function calc45DTE(inputs) {
     lossTerm45 = pTail * risk + pPartial * partialLoss;
     lossModel45 = 'distribution';
   }
-  const ev = (avgWinUsed > 0 && winP > 0)
+  // Round-trip commission, estimated model only (measured history is already net).
+  const commUnits = unitsFromLegs(legs);
+  const commRate = inputs.commissionPerContract != null ? Number(inputs.commissionPerContract) : DEFAULT_COMMISSION;
+  const commRT = roundTripCommission(commUnits, 1, commRate);
+  const commInEV = hasMeasured ? 0 : commRT;
+  const evGross = (avgWinUsed > 0 && winP > 0)
     ? (winP * avgWinUsed) - lossTerm45 : 0;
+  const ev = (avgWinUsed > 0 && winP > 0) ? evGross - commInEV : 0;
   const winBreakeven = (winP > 0 && evWinCap > 0)
-    ? lossTerm45 / (winP * evWinCap) : null;
+    ? (lossTerm45 + commInEV) / (winP * evWinCap) : null;
   const evBasis = {
     mode: hasMeasured ? 'measured' : 'estimated',
     lossModel: lossModel45,
@@ -351,7 +358,8 @@ export function calc45DTE(inputs) {
     winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
     winCap: evWinCap, lossCap: evLossCap,
-    winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk
+    winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk,
+    evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate
   };
 
   // ── Kelly (EXPECTED-LOSS, Jul 2026) — same rework as 0DTE ──

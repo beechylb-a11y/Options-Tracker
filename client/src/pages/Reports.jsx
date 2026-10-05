@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
-import { filterTracker } from '../utils/stats';
+import { filterTracker, isAggExcluded } from '../utils/stats';
 
 export default function Reports({ authenticated, account }) {
   const [trades, setTrades] = useState([]);
   const [rawTrades, setRawTrades] = useState([]);
+  const [closes, setCloses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedFY, setSelectedFY] = useState('');
 
@@ -13,10 +14,17 @@ export default function Reports({ authenticated, account }) {
     if (!authenticated) { setLoading(false); return; }
     Promise.all([
       api.getTracker().catch(() => []),
-      api.getTrades().catch(() => [])
-    ]).then(([tracker, raw]) => {
+      api.getTrades().catch(() => []),
+      api.getCloses().catch(() => [])
+    ]).then(([tracker, raw, cl]) => {
       setTrades(tracker || []);
-      setRawTrades(raw || []);
+      // /api/trades returns the sheet as rows: [header, ...rows]. Turn it into
+      // objects so 'Date/Time' and 'Fees' can be read by name.
+      const rows = Array.isArray(raw) && Array.isArray(raw[0])
+        ? raw.slice(1).map(r => { const o = {}; raw[0].forEach((h, i) => { o[h] = r[i]; }); return o; })
+        : (raw || []);
+      setRawTrades(rows);
+      setCloses(Array.isArray(cl) ? cl : []);
       setLoading(false);
     });
   }, [authenticated]);
@@ -71,14 +79,27 @@ export default function Reports({ authenticated, account }) {
 
   const fyTrades = useMemo(() => closedTrades.filter(t => getFY(t._date) === activeFY), [closedTrades, activeFY]);
 
-  // Total fees from raw trades for the FY
+  // ── Commission inside trade P&L (Oct 2026) ──
+  // Every P&L figure here is AFTER commission: engine tickets are recorded net of
+  // their round-trip commission (kept in Closes › Fees), and imported broker rows
+  // are net of the broker's commission and fees. So commission is shown, never
+  // subtracted again. Gross = net + commission.
+  const closesFY = useMemo(() => closes.filter(c => {
+    const d = parseDate(c['Close Date']);
+    if (!d || getFY(d) !== activeFY) return false;
+    const acct = c['Account'] || '';
+    return (!account || account === 'all') ? !isAggExcluded(acct) : acct === account;
+  }), [closes, activeFY, account]);
+  const ticketComm = useMemo(() => closesFY.reduce((a, c) => a + Math.abs(parseFloat(c['Fees ($)']) || 0), 0), [closesFY]);
+  const ticketCommEst = useMemo(() => closesFY.filter(c => /commission est\./.test(c['Notes'] || '')).length, [closesFY]);
   const totalFees = useMemo(() => {
     return rawTrades.reduce((sum, t) => {
-      const d = parseDate(t['Date'] || t['Entry Date']);
+      const d = parseDate(t['Date/Time'] || t['Date'] || t['Entry Date']);
       if (d && getFY(d) === activeFY) return sum + Math.abs(parseFloat(t['Fees'] || 0));
       return sum;
     }, 0);
   }, [rawTrades, activeFY]);
+  const commInTrades = ticketComm + totalFees;
 
   // Monthly breakdown
   const monthlyData = useMemo(() => {
@@ -196,7 +217,13 @@ export default function Reports({ authenticated, account }) {
     reader.readAsText(file);
   }
 
-  const totalFeesAll = feeData.brokerage + feeData.exchange + feeData.regulatory + feeData.platform + feeData.other + totalFees;
+  // Charges OUTSIDE trade P&L (market data, platform, other) are the only fees
+  // deducted below. Brokerage, exchange and regulatory fees are already inside
+  // each trade's P&L; an uploaded statement's totals are shown as a cross-check.
+  const otherCharges = feeData.platform + feeData.other;
+  const totalFeesAll = otherCharges;
+  const grossBeforeComm = fy.totalPnL + commInTrades;
+  const netTaxable = fy.totalPnL - otherCharges;
 
   function handlePrint() {
     const w = window.open('', '_blank', 'width=900,height=700');
@@ -240,9 +267,11 @@ td{padding:5px 8px;border-bottom:1px solid #eee}
 <div class="summary-box">
 <div class="summary-row"><span>Gross Realised Gains</span><span class="r green">${fmt$(fy.grossProfit)}</span></div>
 <div class="summary-row"><span>Gross Realised Losses</span><span class="r red">${fmt$(fy.grossLoss)}</span></div>
-<div class="summary-row"><span>Net Realised P&L</span><span class="r bold ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
-<div class="summary-row"><span>Total Fees &amp; Commissions</span><span class="r">${fmt$(totalFeesAll)}</span></div>
-<div class="summary-row total"><span>Net Trading Result</span><span class="r bold ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
+<div class="summary-row"><span>P&amp;L before commission</span><span class="r">${fmt$(grossBeforeComm)}</span></div>
+<div class="summary-row"><span>Commission &amp; fees on trades</span><span class="r">(${fmt$(commInTrades)})</span></div>
+<div class="summary-row"><span>Net Realised P&L (after commission)</span><span class="r bold ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Account charges outside trades</span><span class="r">(${fmt$(otherCharges)})</span></div>
+<div class="summary-row total"><span>Net Trading Result</span><span class="r bold ${netTaxable>=0?'green':'red'}">${fmt$(netTaxable)}</span></div>
 </div>
 <div class="summary-box">
 <div class="summary-row"><span>Total Trades Closed</span><span class="r">${fy.count}</span></div>
@@ -267,22 +296,23 @@ td{padding:5px 8px;border-bottom:1px solid #eee}
 </tbody></table>
 
 <h2>4. Fees &amp; Commissions</h2>
-<div class="summary-box" style="max-width:450px">
-<div class="summary-row"><span>Brokerage &amp; Commissions</span><span class="r">${fmt$(feeData.brokerage + totalFees)}</span></div>
-<div class="summary-row"><span>Exchange Fees</span><span class="r">${fmt$(feeData.exchange)}</span></div>
-<div class="summary-row"><span>Regulatory Fees</span><span class="r">${fmt$(feeData.regulatory)}</span></div>
+<div class="summary-box" style="max-width:520px">
+<div class="summary-row"><span>Commission on engine tickets (${closesFY.length} closes${ticketCommEst ? ', ' + ticketCommEst + ' estimated' : ''})</span><span class="r">${fmt$(ticketComm)}</span></div>
+<div class="summary-row"><span>Fees on imported broker trades</span><span class="r">${fmt$(totalFees)}</span></div>
+<div class="summary-row total"><span>Inside trade P&amp;L (already deducted)</span><span class="r bold">${fmt$(commInTrades)}</span></div>
 <div class="summary-row"><span>Platform / Data Fees</span><span class="r">${fmt$(feeData.platform)}</span></div>
-${feeData.other > 0 ? '<div class="summary-row"><span>Other Fees</span><span class="r">' + fmt$(feeData.other) + '</span></div>' : ''}
-<div class="summary-row total"><span>Total Fees &amp; Charges</span><span class="r bold">${fmt$(totalFeesAll)}</span></div>
+<div class="summary-row"><span>Other Charges</span><span class="r">${fmt$(feeData.other)}</span></div>
+<div class="summary-row total"><span>Account charges outside trades</span><span class="r bold">${fmt$(otherCharges)}</span></div>
 </div>
+<div class="note">Commission is part of each trade's recorded P&amp;L, so it is shown here and not subtracted a second time. Total deductible costs: ${fmt$(commInTrades + otherCharges)}.</div>
 
 <h2>5. Foreign Currency</h2>
 <table style="max-width:500px">
 <thead><tr><th>Item</th><th class="r">Amount (USD)</th><th class="r">Amount (AUD)</th></tr></thead>
 <tbody>
 <tr><td>Net Realised P&L</td><td class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
-<tr><td>Total Fees</td><td class="r">${fmt$(totalFeesAll)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
-<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Net Taxable Result</td><td class="r ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
+<tr><td>Account charges outside trades</td><td class="r">${fmt$(otherCharges)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
+<tr class="bold" style="border-top:2px solid #1a1a1a"><td>Net Taxable Result</td><td class="r ${netTaxable>=0?'green':'red'}">${fmt$(netTaxable)}</td><td class="r" style="color:#888">Apply ATO rate</td></tr>
 </tbody></table>
 <div class="note">All amounts in USD. Convert using ATO average exchange rate for ${getFYLabel(activeFY)} or transaction-date rates as agreed with your tax advisor.</div>
 
@@ -290,17 +320,17 @@ ${feeData.other > 0 ? '<div class="summary-row"><span>Other Fees</span><span cla
 <div class="summary-box" style="max-width:500px">
 <div class="summary-row"><span>Gross Gains (profitable trades)</span><span class="r green">${fmt$(fy.grossProfit)}</span></div>
 <div class="summary-row"><span>Gross Losses (losing trades)</span><span class="r red">${fmt$(fy.grossLoss)}</span></div>
-<div class="summary-row"><span>Net Realised P&L</span><span class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
-<div class="summary-row"><span>Less: Deductible Fees</span><span class="r">(${fmt$(totalFeesAll)})</span></div>
-<div class="summary-row total"><span>Net Taxable Trading Result</span><span class="r bold ${(fy.totalPnL-totalFeesAll)>=0?'green':'red'}">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
+<div class="summary-row"><span>Net Realised P&L (after ${fmt$(commInTrades)} commission)</span><span class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
+<div class="summary-row"><span>Less: Account charges outside trades</span><span class="r">(${fmt$(otherCharges)})</span></div>
+<div class="summary-row total"><span>Net Taxable Trading Result</span><span class="r bold ${netTaxable>=0?'green':'red'}">${fmt$(netTaxable)}</span></div>
 </div>
 <div class="note">Options trading income is generally assessable as ordinary income under s6-5 ITAA 1997 for Australian residents conducting regular trading activity. Capital gains treatment under Div 104 may apply in limited circumstances. This report does not constitute tax advice. Consult your registered tax agent.</div>
 
 <h2>7. Account Reconciliation</h2>
 <div class="summary-box" style="max-width:450px">
 <div class="summary-row"><span>Net Realised P&L</span><span class="r ${fy.totalPnL>=0?'green':'red'}">${fmt$(fy.totalPnL)}</span></div>
-<div class="summary-row"><span>Total Fees Deducted</span><span class="r">${fmt$(totalFeesAll)}</span></div>
-<div class="summary-row total"><span>Net Cash Result</span><span class="r bold">${fmt$(fy.totalPnL - totalFeesAll)}</span></div>
+<div class="summary-row"><span>Account charges outside trades</span><span class="r">${fmt$(otherCharges)}</span></div>
+<div class="summary-row total"><span>Net Cash Result</span><span class="r bold">${fmt$(netTaxable)}</span></div>
 </div>
 <div class="note">Deposits, withdrawals, and opening/closing balances should be reconciled against broker statements.</div>
 
@@ -382,7 +412,7 @@ Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'nu
             <div className="flex justify-between text-sm"><span className="text-text-muted">Gross premium paid</span><span className="mono text-white">{fmt$(fy.premPaid)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-text-muted">Realised gains</span><span className="mono text-green">{fmt$(fy.grossProfit)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-text-muted">Realised losses</span><span className="mono text-red">{fmt$(fy.grossLoss)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Fees & commissions</span><span className="mono text-white">{fmt$(totalFees)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted" title="Already inside each trade's P&L">Commission in trades</span><span className="mono text-white">{fmt$(commInTrades)}</span></div>
             <div className="flex justify-between text-sm pt-2 border-t border-[#30363d] font-bold"><span className="text-white">Net trading result</span><span className="mono" style={{color:pnlColor(fy.totalPnL)}}>{fmt$(fy.totalPnL)}</span></div>
           </div>
           <div className="space-y-1.5">
@@ -483,9 +513,11 @@ Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'nu
           <div className="space-y-1.5">
             <div className="flex justify-between text-sm"><span className="text-text-muted">Gross gains</span><span className="mono font-bold text-green">{fmt$(fy.grossProfit)}</span></div>
             <div className="flex justify-between text-sm"><span className="text-text-muted">Gross losses</span><span className="mono font-bold text-red">{fmt$(fy.grossLoss)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">P&L before commission</span><span className="mono text-white">{fmt$(grossBeforeComm)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Commission & fees on trades</span><span className="mono text-white">({fmt$(commInTrades)})</span></div>
             <div className="flex justify-between text-sm"><span className="text-text-muted">Net realised P&L</span><span className="mono font-bold" style={{color:pnlColor(fy.totalPnL)}}>{fmt$(fy.totalPnL)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Less: fees & commissions</span><span className="mono text-white">({fmt$(totalFeesAll)})</span></div>
-            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Net taxable result</span><span className="mono font-bold" style={{color:pnlColor(fy.totalPnL - totalFeesAll)}}>{fmt$(fy.totalPnL - totalFeesAll)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Less: account charges outside trades</span><span className="mono text-white">({fmt$(otherCharges)})</span></div>
+            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Net taxable result</span><span className="mono font-bold" style={{color:pnlColor(netTaxable)}}>{fmt$(netTaxable)}</span></div>
           </div>
           <div>
             <p className="text-xs text-text-muted">Options trading income is generally assessable as ordinary income under s6-5 ITAA 1997 for Australian residents conducting regular trading activity. Convert to AUD using ATO average rate or transaction-date rates.</p>
@@ -504,15 +536,19 @@ Generated by Options Tracker | ${new Date().toLocaleDateString('en-AU', {day:'nu
         </div>
         <div className="grid grid-cols-2 gap-8">
           <div className="space-y-1.5">
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Brokerage & commissions</span><span className="mono text-white">{fmt$(feeData.brokerage + totalFees)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Exchange fees</span><span className="mono text-white">{fmt$(feeData.exchange)}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-text-muted">Regulatory fees</span><span className="mono text-white">{fmt$(feeData.regulatory)}</span></div>
+            <div className="text-[12px] uppercase tracking-wider text-text-faint mb-1">Inside trade P&L — already deducted</div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Engine tickets ({closesFY.length} closes{ticketCommEst ? `, ${ticketCommEst} estimated` : ''})</span><span className="mono text-white">{fmt$(ticketComm)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Imported broker trades</span><span className="mono text-white">{fmt$(totalFees)}</span></div>
+            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Commission in trades</span><span className="mono font-bold text-white">{fmt$(commInTrades)}</span></div>
+            <div className="text-[12px] uppercase tracking-wider text-text-faint mt-3 mb-1">Outside trades — deducted in the tax summary</div>
             <div className="flex justify-between text-sm"><span className="text-text-muted">Platform / data fees</span><span className="mono text-white">{fmt$(feeData.platform)}</span></div>
-            {feeData.other > 0 && <div className="flex justify-between text-sm"><span className="text-text-muted">Other fees</span><span className="mono text-white">{fmt$(feeData.other)}</span></div>}
-            <div className="flex justify-between text-sm pt-2 border-t border-[#30363d]"><span className="text-white font-bold">Total fees</span><span className="mono font-bold text-white">{fmt$(totalFeesAll)}</span></div>
+            <div className="flex justify-between text-sm"><span className="text-text-muted">Other charges</span><span className="mono text-white">{fmt$(feeData.other)}</span></div>
+            {(feeData.brokerage + feeData.exchange + feeData.regulatory) > 0 && (
+              <div className="text-[12px] text-text-muted mt-3">Statement cross-check: brokerage {fmt$(feeData.brokerage)} · exchange {fmt$(feeData.exchange)} · regulatory {fmt$(feeData.regulatory)} — compare with {fmt$(commInTrades)} above; these sit inside trade P&L and are not deducted again.</div>
+            )}
           </div>
           <div>
-            <p className="text-xs text-text-muted mb-2">Upload your broker fee CSV or enter amounts manually below.</p>
+            <p className="text-xs text-text-muted mb-2">Commission is recorded with each trade. Enter only charges that are not part of a trade (market data, platform). An uploaded statement is used as a cross-check.</p>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="text-[12px] text-text-faint">Exchange fees</label><input type="number" step="any" value={feeData.exchange||''} onChange={e=>setFeeData(p=>({...p,exchange:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
               <div><label className="text-[12px] text-text-faint">Regulatory fees</label><input type="number" step="any" value={feeData.regulatory||''} onChange={e=>setFeeData(p=>({...p,regulatory:parseFloat(e.target.value)||0}))} className="w-full px-2 py-1 bg-bg border border-[#21262d] rounded text-xs text-white mono outline-none" placeholder="0"/></div>
