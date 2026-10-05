@@ -812,9 +812,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 12000);
     fetch(bridgeUrl + '/api/option-chain?underlying=' + i45.underlying, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
-      .then(r => r.json())
+      // Read the body as text first: an older bridge without this endpoint (or an
+      // ngrok error page) answers with HTML, and JSON.parse on that surfaced as
+      // "Unexpected token '<'". Say what actually happened instead. (Oct 2026.)
+      .then(async r => {
+        const txt = await r.text();
+        let d = null;
+        try { d = JSON.parse(txt); } catch (e) { d = null; }
+        if (!d) {
+          const why = r.status === 404 || /Cannot GET/i.test(txt)
+            ? 'bridge is an older version — pull and restart it'
+            : /ngrok/i.test(txt) ? 'ngrok returned a page instead of the bridge — check the tunnel'
+            : `bridge returned a web page (HTTP ${r.status})`;
+          throw Object.assign(new Error(why), { friendly: true });
+        }
+        return d;
+      })
       .then(d => { if (live) setChainExp({ underlying: i45.underlying, list: Array.isArray(d.expirations) ? d.expirations : null, err: d.error || null }); })
-      .catch(e => { if (live) setChainExp({ underlying: i45.underlying, list: null, err: e.name === 'AbortError' ? 'timed out' : e.message }); })
+      .catch(e => { if (live) setChainExp({ underlying: i45.underlying, list: null,
+        err: e.name === 'AbortError' ? 'bridge timed out' : e.friendly ? e.message : 'bridge not reachable' }); })
       .finally(() => clearTimeout(t));
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3984,7 +4000,8 @@ function ExpiryPicker({ today, list, near, far, onNear, onFar, source, isDiagona
         {isDiagonal ? 'Diagonal: the far leg is usually 5–8 weeks past the near. ' : 'Calendar: the far leg is usually 3–5 weeks past the near. '}
         {source === 'chain' ? 'Listed expiries from TWS.'
           : source === 'loading' ? 'Loading listed expiries from TWS…'
-          : 'Weekly Fridays — TWS expiry list not available' + (source.startsWith('fallback:') ? ` (${source.slice(9)})` : '') + ', holidays not checked.'}
+          : 'Showing weekly Fridays (holidays not checked). TWS expiry list unavailable'
+            + (source.startsWith('fallback:') ? `: ${source.slice(9)}.` : '.')}
       </div>
     </div>
   );
