@@ -195,7 +195,8 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   // Compact, order-ticket form: +751P · −2×754P. The full label is the tooltip.
   const lbl = leg.label.toLowerCase();
   const qtyX = /x2\b/.test(lbl) ? 2 : 1;
-  const ticketTxt = `${isShort ? '\u2212' : '+'}${qtyX > 1 ? qtyX + '\u00d7' : ''}${leg.strike}${lbl.includes('call') ? 'C' : 'P'}`;
+  // Words, not letters: "+772 Call", "−2×775 Put". (Oct 2026.)
+  const ticketTxt = `${isShort ? '\u2212' : '+'}${qtyX > 1 ? qtyX + '\u00d7' : ''}${leg.strike} ${lbl.includes('call') ? 'Call' : 'Put'}`;
 
   // Ladder dismissal: Escape or click outside. Listeners exist only while THIS
   // chip's ladder is open (the parent opens one at a time, so at most one pair
@@ -217,7 +218,8 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   const box = {
     padding: fill ? '9px 12px' : compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize: fill ? 16 : 13, fontWeight:700, whiteSpace:'nowrap',
     ...(fill ? { textAlign:'center', boxSizing:'border-box', width:'100%' } : {}),
-    background:isShort?'#8b2025':'#0d2818', color:isShort?'#f85149':'#3fb950',
+    // TWS convention: sell red, buy blue.
+    background:isShort?'#8b2025':'#0c2d6b', color:isShort?'#ff7b72':'#79c0ff',
     fontFamily:'JetBrains Mono,monospace',
     border: edited || editing ? '1px solid #d29922' : '1px solid transparent'
   };
