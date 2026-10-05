@@ -13,6 +13,7 @@
 // that does not reach expiry each produce their own warning. Silence on this
 // ticket means checked and clear, never "did not know".
 import CALENDAR from './econ-calendar.js';
+import { tradingSession, etClock } from './session.js';
 
 // 09:30 open, 16:00 close. A release at 08:30 is already OUT by the time a 0DTE
 // is traded: the risk is a wide opening range and then an IV crush, which is a
@@ -219,11 +220,21 @@ export function eventOutlook(todayISO, nowMinET, days = 21, cal = CALENDAR) {
   };
 }
 
-/** Minutes past midnight in America/New_York, and today's ET date. */
-export function nowET() {
-  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return { dateISO: `${y}-${m}-${day}`, minutes: d.getHours() * 60 + d.getMinutes() };
+/**
+ * The trading session to check, and minutes past midnight ET within it.
+ *
+ * Uses the same rule as the ticket date (session.js): past the 16:00 ET close, or on
+ * a weekend, a moment belongs to the NEXT weekday's session. The old version took the
+ * ET calendar date, so a ticket opened from Australia after the US close checked the
+ * session that had just finished — tomorrow's CPI went unmentioned and today's,
+ * already printed, was reported instead. (Oct 2026.)
+ *
+ * minutes is null when the session has not started yet (next session): nothing in it
+ * has happened, so every release that day is still ahead and none is "already out".
+ */
+export function nowET(at = new Date()) {
+  const s = tradingSession(at);
+  if (s.isNextSession) return { dateISO: s.dateISO, minutes: null, isNextSession: true };
+  const et = etClock(at);
+  return { dateISO: s.dateISO, minutes: et.getHours() * 60 + et.getMinutes(), isNextSession: false };
 }

@@ -18,6 +18,15 @@ const STILL_IDX = locusIdx('pin', 'range');
 // pullback buffer and the spread test cannot drift apart.
 const VERTICALS = ['Bull put spread', 'Bear call spread', 'Bull call spread', 'Bear put spread'];
 
+// +1 bull put, -1 bear call, 0 anything else. Credit verticals are directional range
+// bets: they want direction on their own side and fear it on the other. (Oct 2026)
+export function creditVerticalSide(strat) {
+  const s = String(strat || '');
+  if (s.includes('Bull put')) return 1;
+  if (s.includes('Bear call')) return -1;
+  return 0;
+}
+
 function degrade(rating, levels) {
   const order = ['EXCELLENT','GOOD','MARGINAL','POOR'];
   const idx = order.indexOf(rating);
@@ -620,6 +629,18 @@ export function calc0DTE(inputs) {
   const _isReversedCondor = s => s === 'Long Condor - Reversed';
   const _isDebitDir = s => s === 'Bull call spread' || s === 'Bear put spread';
   const dirCoherence = (s) => {
+    // Credit vertical (Oct 2026): a bull put / bear call is a DIRECTIONAL range bet —
+    // it needs price not to come back, so a strong read on its own side is what it
+    // wants, not a conflict. It used to fall through to the containment branch below
+    // and took 0.50 on exactly the trend days its ladder rates it EXCELLENT. Aligned:
+    // 1.0 when short-dated vol is rich enough to sell (gap band 2-3), 0.90 otherwise so
+    // the debit vertical still wins a tie in cheap vol. Opposed: the full penalty.
+    const cvSide = creditVerticalSide(s);
+    if (cvSide !== 0) {
+      if (dirScore === 0) return 0.85;
+      if (Math.sign(dirScore) === cvSide) return gapBandIdx >= 2 ? 1.0 : 0.90;
+      return 0.50;
+    }
     const ad = Math.abs(dirScore);
     // Reversed condor is a MAGNITUDE play — its ~2-EM-wide central loss band only pays
     // if price travels >1 EM by expiry. It needs ROOM (expansion / low move-consumed),
@@ -2372,7 +2393,12 @@ export function calc0DTE(inputs) {
   // Does the structure need price CONTAINED (condors, butterflies) or does it
   // want a MOVE (reversed condor, debit directional spreads)?
   const wantsMove = isReversed || isDebitSpread;
-  const wantsContainment = !wantsMove;
+  // A credit vertical is neither: it needs price to stay on ONE side of its short
+  // strike, so direction is judged against that side, not against containment.
+  const cvSide = creditVerticalSide(legStrat);
+  const isCreditVertical = cvSide !== 0;
+  const cvAligned = isCreditVertical && dirScore !== 0 && Math.sign(dirScore) === cvSide;
+  const wantsContainment = !wantsMove && !isCreditVertical;
 
   // ── EdgeGate: positive expectancy, on a single continuous curve ──
   // EV is normalised by CAPITAL AT RISK, not by max profit (Jul 2026). The old
@@ -2447,6 +2473,18 @@ export function calc0DTE(inputs) {
     coherenceGate *= 0.7;
     confConflicts.push({ tag: 'Direction↔Structure',
       label: `${legStrat} needs a move, but direction is neutral`, severity: 'low' });
+  } else if (isCreditVertical && !cvAligned) {
+    // Aligned credit verticals carry no direction penalty (Oct 2026). Against the
+    // read, the signal points straight at the short strike.
+    if (dirScore === 0) {
+      coherenceGate *= 0.85;
+      confConflicts.push({ tag: 'Direction↔Structure',
+        label: `${legStrat} leans one way, but direction is neutral`, severity: 'low' });
+    } else {
+      coherenceGate *= Math.abs(dirScore) >= 2 ? 0.50 : 0.70;
+      confConflicts.push({ tag: 'Direction↔Structure',
+        label: `${dirLabel} signal points at the short strike of the ${legStrat}`, severity: 'high' });
+    }
   }
   // (b) Vol ↔ structure — the engine's own "cheap VIX1D → favour long gamma"
   //     warning fires against SELLING premium into cheap short-term vol.
@@ -2460,6 +2498,11 @@ export function calc0DTE(inputs) {
     coherenceGate *= 0.8;
     confConflicts.push({ tag: 'Regime↔Structure',
       label: 'Continuation/trend day vs a containment structure', severity: 'low' });
+  } else if (isCreditVertical && !cvAligned && dirScore !== 0 && trendPattern === 'continuation') {
+    // A continuation day running against the short strike; aligned is what it wants.
+    coherenceGate *= 0.8;
+    confConflicts.push({ tag: 'Regime↔Structure',
+      label: `Continuation day running toward the ${legStrat}'s short strike`, severity: 'low' });
   }
 
   // ── Composite (gated, multiplicative) ──
