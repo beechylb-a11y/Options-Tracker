@@ -5,6 +5,7 @@
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
+import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -2373,6 +2374,23 @@ export function calc0DTE(inputs) {
   const _ev0 = eventRisk0DTE(_et.dateISO, _et.minutes);
   _ev0.warnings.forEach(w => warnings.push(w));
   const notices = [..._ev0.notices];
+
+  // ── Delta cross-check (R-49, Oct 2026) ──
+  // The EM ruler has no skew; the short legs' live deltas do. A short outside its delta
+  // band, or a typed POP more than 10 points from the delta-implied one, is a warning —
+  // it is a statement about THIS trade. Needs the per-leg greeks from Fetch Greeks
+  // (inputs.legGreeks); silent without them, and switched off in the final hour.
+  const deltaCheck = deltaCrossCheck({ legs, strat: legStrat, horizon: '0dte',
+    legGreeks: inputs.legGreeks || null, pop, hoursLeft: hours, price });
+  deltaCheck.warnings.forEach(w => warnings.push(w));
+  deltaCheck.notices.forEach(n => notices.push(n));
+  // The same structure with its shorts at the target delta — the alternative the panel
+  // offers (Both) or applies (Delta). Estimated here; the panel confirms it against a
+  // live bracket before applying. T only backs the IV fallback.
+  const deltaPlan = deltaCheck.applicable && Array.isArray(inputs.legGreeks) && inputs.legGreeks.length
+    ? deltaStrikePlan({ legs, strat: legStrat, horizon: '0dte', price, legGreeks: inputs.legGreeks,
+        T: (inputs.hoursToBell > 0 ? inputs.hoursToBell : (hours > 0 ? hours + 1 : 6.5)) / 8760, underlying })
+    : null;
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
   // Debit/wing ratio check for butterflies
@@ -2566,6 +2584,7 @@ export function calc0DTE(inputs) {
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
     vertVariants, vertVariant: vertVariantId, priceCheck,
+    deltaCheck, deltaPlan,
     eventsToday: _ev0.events, notices,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,

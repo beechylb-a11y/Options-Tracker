@@ -73,7 +73,8 @@ export const TABS = {
     ['underlying_price_close', 'Underlying Price Close'], ['vix1d_close', 'VIX1D Close'],
     ['engine_strikes', 'Engine Strikes'], ['vwap_anchored', 'VWAP Anchored'], ['vwap_roll30', 'VWAP Roll30'],
     ['vwap_roll30_prior', 'VWAP Roll30 Prior'], ['vwap_acceptance', 'VWAP Acceptance'],
-    ['vwap_trend', 'VWAP Trend'], ['vwap_dist_em', 'VWAP Dist EM']]) },
+    ['vwap_trend', 'VWAP Trend'], ['vwap_dist_em', 'VWAP Dist EM'],
+    ['strike_method', 'Strike Method'], ['short_deltas', 'Short Deltas'], ['implied_pop', 'Implied POP']]) },
   Journal: { table: 'journal', cols: C([
     ['date', 'Date'], ['day_pnl', 'Day P&L'], ['trades_count', 'Trades Count'], ['win_count', 'Win Count'],
     ['loss_count', 'Loss Count'], ['notes', 'Notes'], ['week_number', 'Week Number']]) },
@@ -717,7 +718,11 @@ export async function logDecision(decision) {
     decision.vwapRoll30Prior ?? '',  // AX VWAP of the 30 min before that
     decision.vwapAccept ?? '',       // AY 0..1, share of last 12 bars closing above VWAP
     decision.vwapTrend ?? '',        // AZ e.g. "mild rising +0.62EM30 confirmed"
-    decision.vwapDistEM ?? ''        // BA price-to-VWAP distance as % of session EM
+    decision.vwapDistEM ?? '',       // BA price-to-VWAP distance as % of session EM
+    // -- BB-BD: strike method (R-49, Oct 2026) --
+    decision.strikeMethod ?? '',     // BB 'EM' | 'Delta' | 'Delta (estimated)' | 'Manual'
+    decision.shortDeltas ?? '',      // BC e.g. "6650P 16Δ / 6760C 14Δ" at log time
+    decision.impliedPop ?? ''        // BD % — 1 − Σ short |Δ|, credit structures only
   ];
   await appendRows('Decisions', [row]);
   return row;

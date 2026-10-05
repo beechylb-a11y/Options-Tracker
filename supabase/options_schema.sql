@@ -21,6 +21,7 @@ create table options.trade_tracker (
 comment on table options.trade_tracker is 'Former Google Sheet tab "TradeTracker". row_no = original sheet row (header is row 1); values stored as text exactly as the sheet returned them.';
 create table options.decisions (
   row_no int primary key check (row_no >= 2), timestamp text, engine text, underlying text, strategy text, direction text, contracts text, kelly_usd text, pop_margin text, setup_score text, setup_grade text, regime text, wing_strikes text, market_behaviour text, notes text, price text, vix text, vix1d text, iv text, ivr text, em text, matched_trade text, status text, close_date text, close_price text, actual_pnl text, trade_notes text, account text, delta text, theta text, gamma text, vega text, close_iv text, close_vix text, net_debit_credit text, max_risk text, max_profit text, ev text, confidence text, p_max_loss text, em_basis text, cushion_em text, session_high text, session_low text, ivx_open text, underlying_price_close text, vix1d_close text, engine_strikes text, vwap_anchored text, vwap_roll30 text, vwap_roll30_prior text, vwap_acceptance text, vwap_trend text, vwap_dist_em text,
+  strike_method text, short_deltas text, implied_pop text,  -- added 2026-10-06 (migration options_decisions_strike_method)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
