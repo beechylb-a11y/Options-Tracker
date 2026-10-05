@@ -268,7 +268,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
 // Both); one line shows each short's live delta against its band and the POP those
 // deltas imply; and, when the delta method would place the shorts differently, one
 // line shows where — with the button that applies it or goes back to EM.
-function DeltaStrip({ check, plan, method, onMethod, builtBy, confirmed, pop, legs,
+function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, pop, legs,
   onFetch, fetching, onApply, applying, onBack }) {
   const seg = on => ({ padding:'2px 10px', fontSize:12, fontWeight:600, cursor:'pointer',
     border:'1px solid ' + (on ? '#58a6ff' : '#30363d'), background: on ? '#0d1a2b' : '#0d1117',
@@ -279,6 +279,18 @@ function DeltaStrip({ check, plan, method, onMethod, builtBy, confirmed, pop, le
   const gapBad = check.popGap != null && Math.abs(check.popGap) > 10;
   const planStrikes = plan ? plan.legs.map(l => l.strike).join(' / ') : '';
   const showPlan = plan && plan.changed && method !== 'em' && builtBy !== 'Delta';
+  // Always on screen, so the control can be found; structures with no delta band say
+  // why instead of showing an empty check. (Oct 2026.)
+  if (!check.applicable) {
+    return (
+      <div data-testid="delta-strip" style={{marginTop:8,fontSize:12.5,color:'#8b949e'}}>
+        <span style={{fontSize:11,letterSpacing:'0.06em',textTransform:'uppercase'}}>Strikes by</span>{' '}
+        <span style={{color:'#a8b2be'}}>EM</span> — the delta check doesn't apply to {strat || 'this structure'}: its
+        strikes are placed at the pin or by time, not by probability. Delta strikes cover condors, credit and debit
+        verticals, jade lizards and ratio spreads.
+      </div>
+    );
+  }
   return (
     <div data-testid="delta-strip" style={{marginTop:8,display:'flex',flexDirection:'column',gap:5,fontSize:12.5,color:'#a8b2be'}}>
       <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
@@ -2209,8 +2221,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             {r.strikeOrderWarning && (
               <div style={{marginTop:4,fontSize:12.5,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
             )}
-            {r.deltaCheck && r.deltaCheck.applicable && (
-              <DeltaStrip check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]}
+            {r.deltaCheck && r.legs.length > 0 && (
+              <DeltaStrip strat={r.legStrat} check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]}
                 onMethod={setStrikeMethod} builtBy={strikesBuiltBy}
                 confirmed={!!(deltaMatches && deltaApplied && deltaApplied.confirmed)}
                 pop={fv(secBag, 'pop')} legs={r.legs}
