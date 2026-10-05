@@ -7,6 +7,19 @@ import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
 
+// ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
+// front/back is the same ratio as VIX/VIX3M: calm markets sit near 0.85-0.92, above 1
+// near-dated vol is priced over far-dated, which is stress. The flat band stops a 0.98
+// read earning full contango points or a 1.01 read tripping the backwardation blocker.
+// Thresholds MUST match bridge/volSurface.js (a test pins them together).
+export const TERM_FLAT_LO = 0.95, TERM_FLAT_HI = 1.02;
+export function termBiasFromIV(front, back) {
+  if (!(front > 0) || !(back > 0)) return '';
+  const ratio = front / back;
+  return ratio > TERM_FLAT_HI ? 'backwardation' : ratio >= TERM_FLAT_LO ? 'flat' : 'contango';
+}
+const TERM_BIASES = ['contango', 'flat', 'backwardation'];
+
 function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
 export function calc45DTE(inputs) {
@@ -41,15 +54,25 @@ export function calc45DTE(inputs) {
     :ivr>20?'Calendar, Diagonal, Iron Condor, Credit spreads'
     :'Bull call, Bear put, Calendar, Diagonal';
 
-  // Term structure
-  const termDiff = hasTerm ? ivFront - ivBack : 0;
+  // Term structure. With both ATM IVs present the bias is DERIVED from them and the
+  // dropdown is ignored — it used to be the only input, defaulted to contango, and
+  // never looked at IV Front/Back, so every read banked 15 setup points and the
+  // backwardation blocker only fired if someone remembered to flip it. Without the
+  // IVs the dropdown stands in; blank means unknown, which scores zero.
+  // termDiff is back − front: POSITIVE = contango. (It was front − back with the
+  // contango/backwardation labels attached the wrong way round.)
+  const termBiasEff = hasTerm ? termBiasFromIV(ivFront, ivBack)
+    : (TERM_BIASES.includes(termBias) ? termBias : '');
+  const termRatio = hasTerm ? ivFront / ivBack : null;
+  const termDiff = hasTerm ? ivBack - ivFront : 0;
+  const capTerm = termBiasEff ? termBiasEff.charAt(0).toUpperCase() + termBiasEff.slice(1) : 'Unknown';
   const termLabel = hasTerm
-    ? (termDiff>2?`Steep contango +${termDiff.toFixed(1)}%`:termDiff>0?`Mild contango +${termDiff.toFixed(1)}%`:termDiff<-1?`Backwardation ${termDiff.toFixed(1)}%`:'Flat')
-    : termBias.charAt(0).toUpperCase()+termBias.slice(1);
+    ? `${capTerm} ${termDiff >= 0 ? '+' : ''}${termDiff.toFixed(1)} vol (30d/90d ${termRatio.toFixed(2)})`
+    : termBiasEff ? `${capTerm} (manual)` : 'Unknown — no term data';
 
   // Regime
   let regime;
-  if (termBias === 'backwardation') regime = 'Backwardation';
+  if (termBiasEff === 'backwardation') regime = 'Backwardation';
   else if (ivr > 60 && ivhvRatio > 1.1) regime = 'Very rich';
   else if (ivr > 40 && ivhvRatio > 1.0) regime = 'Premium rich';
   else if (ivr < 20 || ivhvRatio < 1.0) regime = 'Premium cheap';
@@ -269,8 +292,8 @@ export function calc45DTE(inputs) {
   const tEff = hasGreeks ? theta/bpr : 0;
   const tEffPts = !hasGreeks?8:tEff>0.02?15:tEff>0.01?10:tEff>0.005?5:0;
   setupScore += tEffPts; criteria.push({label:`Theta efficiency ${hasGreeks?tEff.toFixed(4):'--'}`, pts:tEffPts, max:15});
-  const termPts = termBias==='contango'?15:termBias==='flat'?8:0;
-  setupScore += termPts; criteria.push({label:`Term structure (${termBias})`, pts:termPts, max:15});
+  const termPts = termBiasEff==='contango'?15:termBiasEff==='flat'?8:0;
+  setupScore += termPts; criteria.push({label:`Term structure (${termBiasEff || 'unknown'})`, pts:termPts, max:15});
 
   // Tail risk — P(max loss) (10). Recalibrated for the 45DTE horizon: the wider
   // distribution means tail probabilities run higher than 0DTE, so brackets are
@@ -445,13 +468,14 @@ export function calc45DTE(inputs) {
   const missingSize = win<=0||risk<=0||popFrac<=0;
   let hardBlocker = '';
   if (!hasVol) hardBlocker = 'Enter IV, IVR and HV';
-  else if (termBias === 'backwardation') hardBlocker = 'Backwardation — avoid naked short premium';
+  else if (termBiasEff === 'backwardation') hardBlocker = 'Backwardation — avoid naked short premium';
 
   if (hasGreeks && tEff > 0 && tEff < 0.005) blockers.push('Theta efficiency too low');
   if (vix > 25) warnings.push('VIX >25 — reduce size');
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');
+  if (!termBiasEff) warnings.push('Term structure unknown — fetch the vol surface or set term bias (scores 0/15 until then)');
   if (greeks && greeks.tvRatio > 4) warnings.push('Vega/theta elevated — vol expansion risk');
   // ── Scheduled macro events between entry and expiry (Aug 2026) ──
   // For a premium seller the COUNT matters more than any single date: each event is
@@ -572,7 +596,7 @@ export function calc45DTE(inputs) {
 
   return {
     em45, ivhvRatio, ivhvLabel, ivrBand, ivrStructures,
-    termDiff, termLabel, skew,
+    termDiff, termLabel, skew, termBias: termBiasEff, termRatio, termDerived: hasTerm,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan,

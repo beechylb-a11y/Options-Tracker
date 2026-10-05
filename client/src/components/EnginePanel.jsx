@@ -11,7 +11,9 @@ import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
-const TERM_BIASES = ['contango', 'flat', 'backwardation'];
+// '' = unknown. Only used when IV Front/Back are absent — with both present the
+// engine derives the bias from them and the dropdown is replaced by a readout.
+const TERM_BIASES = [{ value: '', label: '— unknown' }, 'contango', 'flat', 'backwardation'];
 
 // ── Fields the TWS auto-fill owns (Aug 2026) ──
 // Anything here can arrive from the bridge, so it is also something you can
@@ -25,6 +27,9 @@ const MKT_45 = ['price','vix'];
 // 45DTE fields Fetch Greeks can fill from the bridge's per-leg model IVs.
 // Same override contract as MKT_45: type one by hand and later fetches skip it.
 const GREEKS_45 = ['iv','skew'];
+// 45DTE vol-surface fields the bridge's /api/vol-surface fills (Oct 2026). Same
+// override contract again: type one and later pulls leave it alone.
+const VOL_45 = ['iv','ivr','hv','ivFront','ivBack','skew'];
 
 const clockOf = ts => {
   if (!ts) return '';
@@ -422,6 +427,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // what lets a re-fill say "these three did not come back" instead of quietly
   // leaving stale numbers behind a LIVE badge.
   const [feed, setFeed] = useState(init?.feed ?? null);
+  // Last /api/vol-surface pull: expiries used, IVR basis, 25Δ legs, notes. Display only.
+  const [volMeta, setVolMeta] = useState(init?.volMeta ?? null);
+  const [fetchingVol, setFetchingVol] = useState(false);
   const [justRefreshed, setJustRefreshed] = useState(false);
   const [tick, setTick] = useState(() => Date.now());
 
@@ -484,7 +492,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [i45, setI45] = useState(() => {
     const base = {
     underlying:'SPX', price:'', ivr:'', iv:'', hv:'', vix:'', ivx:'',
-    ivFront:'', ivBack:'', skew:'', termBias:'contango', dte:'45',
+    ivFront:'', ivBack:'', skew:'', termBias:'', dte:'45',
     outlook:'neutral', pop:'', win:'', risk:'', netCreditDebit:'',
     bankroll:defBankroll, startBR:defBankroll, maxLoss:defMaxLoss, maxOpen:defMaxOpen,
     bpr:'', theta:'', vega:'', delta:'', lowerWingDelta:'', upperWingDelta:''
@@ -500,7 +508,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const bag = is0 ? '0' : '45';
   const markHeld = (b, k) => setHeld(h => (h[b + ':' + k] ? h : { ...h, [b + ':' + k]: true }));
   const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
-  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k)) markHeld('45', k); };
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k)) markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -593,8 +601,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -1418,9 +1426,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           theta: d.net.theta ? String(d.net.theta) : prev.theta,
           delta: d.net.delta != null ? String(d.net.delta) : prev.delta,
           vega: d.net.vega != null ? String(d.net.vega) : prev.vega,
-          iv: avgIV && !held['45:iv'] ? avgIV : prev.iv,
+          // The vol surface's ATM IV and 25Δ skew outrank the leg-average IV and the
+          // structure's own wing skew: EM45 wants ATM vol, and a wing average carries
+          // the put skew straight into it. These only fill when the surface did not.
+          iv: avgIV && !held['45:iv'] && !volOwns('iv') ? avgIV : prev.iv,
           ivx: avgIV || prev.ivx,
-          skew: skewIV && !held['45:skew'] ? skewIV : prev.skew,
+          skew: skewIV && !held['45:skew'] && !volOwns('skew') ? skewIV : prev.skew,
           lowerWingDelta: lowerWD || prev.lowerWingDelta,
           upperWingDelta: upperWD || prev.upperWingDelta
         }));
@@ -1587,6 +1598,62 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     await handleAutoFill();
   }
 
+  // Did the last vol-surface pull supply this field? (Fetch Greeks defers to it.)
+  const volOwns = k => !!(volMeta && feed && feed.values && feed.values[k] !== undefined);
+
+  // ── Vol surface (45DTE) ──
+  // One bridge call fills IV, IVR, HV, IV Front/Back and Skew; term bias is then
+  // derived by the engine from Front/Back. Runs on its own after the market auto-fill
+  // (it takes 10-20 s: ~8 option lines plus a cached year of IV history) so price and
+  // VIX never wait on it. opts.spot passes the price just pulled; opts.quiet skips toasts.
+  async function fetchVolSurface(opts) {
+    const quiet = !!(opts && opts.quiet);
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) { if (!quiet) notify('Set IBKR Bridge URL in Settings first'); return; }
+    setFetchingVol(true);
+    try {
+      const expiry = deriveExpiryYYYYMMDD();
+      const spot = parseFloat((opts && opts.spot) || i45.price) || 0;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 45000);
+      const resp = await fetch(bridgeUrl + '/api/vol-surface?underlying=' + i45.underlying + '&expiry=' + expiry
+        + (spot > 0 ? '&spot=' + spot : ''), { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
+      clearTimeout(t);
+      const d = await resp.json();
+      if (d.error) { notify('Vol surface: ' + d.error); return; }
+      // Skew can be zero or negative and still be a reading; everything else must be > 0.
+      const vals = {}, missing = [];
+      VOL_45.forEach(k => {
+        const v = d[k];
+        const ok = v != null && v !== '' && isFinite(v) && (k === 'skew' || v > 0);
+        if (ok) vals[k] = String(v); else missing.push(k);
+      });
+      setFeed(f => {
+        const b = f || { at: new Date().toISOString(), values: {}, missing: [] };
+        return { ...b, values: { ...(b.values || {}), ...vals },
+          missing: [...(b.missing || []).filter(k => !VOL_45.includes(k)), ...missing] };
+      });
+      setI45(prev => {
+        const out = { ...prev };
+        VOL_45.forEach(k => { if (!held['45:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
+        return out;
+      });
+      setVolMeta({ asOf: d.asOf, dataType: d.dataType, expiries: d.expiries, atmStrike: d.atm ? d.atm.strike : null,
+        termBias: d.termBias, termRatio: d.termRatio, ivPctl: d.ivPctl, iv30: d.iv30,
+        iv52wLow: d.iv52wLow, iv52wHigh: d.iv52wHigh, hvSource: d.hvSource,
+        skewDetail: d.skewDetail, notes: d.notes || [], missing });
+      if (!quiet) {
+        if (d.notSubscribed) notify('Vol surface: no option IVs — check the OPRA / options market-data subscription.');
+        else if (missing.length) notify('Vol surface: ' + missing.join(', ') + ' not returned — enter by hand or retry.');
+      }
+    } catch (e) {
+      if (!quiet) notify('Vol surface failed: ' + (e.name === 'AbortError' ? 'timed out' : e.message));
+    } finally {
+      setFetchingVol(false);
+    }
+  }
+
   async function handleAutoFill() {
     setAutoFilling(true);
     try {
@@ -1670,15 +1737,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           return out;
         });
       } else {
-        // 45DTE: fill the market fields the feed provides (price, VIX). IV and
-        // Skew auto-fill from Fetch Greeks (per-leg model IVs). IVR, HV, IV Front
-        // and IV Back have NO bridge source and stay manual — their labels say so.
-        // Freshness tag (dataFresh) is set above for both engines.
+        // 45DTE: fill price and VIX now, then pull the vol surface (IV, IVR, HV,
+        // IV Front/Back, Skew) behind it — not awaited, so the slow option fetch
+        // never holds up the market fields. Freshness tag (dataFresh) is set above.
         setI45(prev => {
           const out = { ...prev };
           MKT_45.forEach(k => { if (!held['45:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
           return out;
         });
+        fetchVolSurface({ quiet: true, spot: vals.price });
       }
     } catch (e) {
       notify('Auto-fill failed: ' + e.message);
@@ -2736,20 +2803,66 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {!is0 && (
             <InputSection
               title="Vol surface"
-              info="Implied-vol surface inputs. IV drives EM45 and the strikes — a blank IV blocks the decision. IVR, HV, IV Front and IV Back have no bridge source and stay manual; IV and Skew can auto-fill from Fetch Greeks (per-leg model IVs)."
+              info={"All of these fill from TWS (Auto-fill, or the Fetch button here). IV = ATM model IV at the trade's expiry; it drives EM45 and the strikes, and a blank IV blocks the decision. IV Rank = where IB's 30-day IV sits in its 52-week range (percentile shown underneath — it is steadier after a spike). HV = IB's 30-day historical vol, for the IV/HV ratio. IV Front / IV Back = ATM IV at the listed expiries nearest 30 and 90 days. Term bias is DERIVED from them: Front/Back below 0.95 = contango (15 pts), 0.95-1.02 = flat (8), above 1.02 = backwardation (0, and a hard blocker on short premium). The dropdown only appears when Front/Back are missing; blank = unknown = 0 pts. Skew = 25-delta put IV minus 25-delta call IV at the trade's expiry, in vol points. Type any value to override it — later fetches leave it alone (amber ✎)."}
               missing={secMissing.vol}
               collapsed={isCollapsed('vol')}
               onToggle={() => toggleSection('vol')}
-              onExpand={() => expandSection('vol')}>
+              onExpand={() => expandSection('vol')}
+              actions={<>
+                {volMeta && volMeta.asOf && (() => {
+                  const age = Math.max(0, Math.round((Date.now() - new Date(volMeta.asOf).getTime()) / 60000));
+                  const rt = volMeta.dataType === 'realtime';
+                  return <span title={'Vol surface pulled ' + new Date(volMeta.asOf).toLocaleTimeString() + ' · ' + (volMeta.dataType || '')}
+                    style={{fontSize:12,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
+                      background: rt ? '#0d2818' : '#161b22', color: rt ? '#3fb950' : '#a8b2be',
+                      border: '1px solid ' + (rt ? '#238636' : '#30363d')}}>
+                    {(volMeta.dataType === 'realtime' ? 'LIVE' : (volMeta.dataType || '').toUpperCase()) + (age < 1 ? ' · now' : ' · ' + age + 'm ago')}
+                  </span>;
+                })()}
+                <button onClick={() => fetchVolSurface()} disabled={fetchingVol}
+                  title="Pull IV, IV Rank, HV, IV Front/Back and Skew from TWS for this underlying and DTE"
+                  style={{padding:'3px 10px',borderRadius:6,border:'1px solid #30363d',background:fetchingVol?'#161b22':'transparent',color:fetchingVol?'#a8b2be':'#2f81f7',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
+                  {fetchingVol ? 'Fetching…' : '🔄 Fetch vol'}
+                </button>
+              </>}>
               <div className="grid grid-cols-2 gap-2.5">
-                <Inp label="IV Rank (%) — manual" field="ivr" value={i45.ivr} onChange={v=>set45('ivr',v)}/>
+                <Inp label="IV Rank (%)" {...mk('ivr')} value={i45.ivr} onChange={v=>set45('ivr',v)}/>
                 <Inp label="IV (%)" {...mk('iv')} value={i45.iv} onChange={v=>set45('iv',v)}/>
-                <Inp label="HV (%) — manual" value={i45.hv} onChange={v=>set45('hv',v)}/>
-                <Inp label="IV Front — manual" value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
-                <Inp label="IV Back — manual" value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
-                <Inp label="Skew (%)" {...mk('skew')} value={i45.skew} onChange={v=>set45('skew',v)}/>
-                <Sel label="Term bias" value={i45.termBias} onChange={v=>set45('termBias',v)} options={TERM_BIASES}/>
+                <Inp label="HV (%)" {...mk('hv')} value={i45.hv} onChange={v=>set45('hv',v)}/>
+                <Inp label="IV Front (~30d)" {...mk('ivFront')} value={i45.ivFront} onChange={v=>set45('ivFront',v)}/>
+                <Inp label="IV Back (~90d)" {...mk('ivBack')} value={i45.ivBack} onChange={v=>set45('ivBack',v)}/>
+                <Inp label="Skew (25Δ, vol pts)" {...mk('skew')} value={i45.skew} onChange={v=>set45('skew',v)}/>
+                {r && r.termDerived ? (() => {
+                  const tb = r.termBias || '';
+                  const col = tb === 'contango' ? '#3fb950' : tb === 'flat' ? '#d29922' : '#f85149';
+                  return (<div>
+                    <label className="text-[12.5px] text-[#c9d1d9] block mb-1" title="Derived from IV Front / IV Back — clear either to set it by hand">Term bias — from Front/Back</label>
+                    <div className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm mono flex justify-between items-center">
+                      <span style={{color:col,fontWeight:700}}>{tb || '—'}</span>
+                      <span className="text-[#9aa4b0]">{r.termRatio != null ? r.termRatio.toFixed(2) : ''}</span>
+                    </div>
+                  </div>);
+                })() : (
+                  <Sel label="Term bias — manual (no Front/Back)" value={i45.termBias} onChange={v=>set45('termBias',v)} options={TERM_BIASES}/>
+                )}
               </div>
+              {volMeta && (() => {
+                const e = volMeta.expiries || {};
+                const sd = volMeta.skewDetail;
+                const fmtE = (x, n) => x ? x.slice(4,6) + '/' + x.slice(6,8) + (n != null ? ' (' + n + 'd)' : '') : '—';
+                const bits = [];
+                if (volMeta.ivPctl != null) bits.push('IV pctl ' + volMeta.ivPctl.toFixed(0) + '%');
+                if (volMeta.iv30 != null) bits.push('IB 30d IV ' + volMeta.iv30.toFixed(1) + (volMeta.iv52wLow != null ? ' (52w ' + volMeta.iv52wLow.toFixed(1) + '–' + volMeta.iv52wHigh.toFixed(1) + ')' : ''));
+                if (volMeta.hvSource === 'close-to-close-30d') bits.push('HV from closes (IB HV unavailable)');
+                const exps = 'Trade ' + fmtE(e.trade, e.tradeDte) + (volMeta.atmStrike ? ' @ ' + volMeta.atmStrike : '')
+                  + ' · Front ' + fmtE(e.front, e.frontDte) + ' · Back ' + fmtE(e.back, e.backDte);
+                const sk = sd ? '25Δ P ' + sd.put.strike + ' ' + sd.put.iv.toFixed(1) + ' / C ' + sd.call.strike + ' ' + sd.call.iv.toFixed(1) : '';
+                return (<div className="mt-2 text-[12px] text-[#9aa4b0] leading-relaxed">
+                  {bits.length > 0 && <div>{bits.join(' · ')}</div>}
+                  <div>{exps}{sk ? ' · ' + sk : ''}</div>
+                  {(volMeta.notes || []).map((n, i) => <div key={i} className="text-[#d29922]">⚠ {n}</div>)}
+                </div>);
+              })()}
             </InputSection>
           )}
 
@@ -4520,7 +4633,8 @@ function Sel({label,value,onChange,options}) {
   return (<div><label className="text-[12.5px] text-[#c9d1d9] block mb-1">{label}</label>
     <select value={value} onChange={e=>onChange(e.target.value)}
       className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
-      {options.map(o=><option key={o} value={o}>{o}</option>)}</select></div>);
+      {options.map(o=>{ const v = typeof o === 'object' ? o.value : o, l = typeof o === 'object' ? o.label : o;
+        return <option key={v} value={v}>{l}</option>; })}</select></div>);
 }
 // Inline pre-fill chip: the payoff engine computed this value and the sizing
 // field is empty or disagrees. Click to copy it in — typed values are NEVER

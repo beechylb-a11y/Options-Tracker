@@ -9,6 +9,8 @@ import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/i
 import net from 'net';
 import { computeOvernight } from './esOvernight.js';
 import { parseLegs, composeCombo, summarise, geometry, legKey } from './replay.js';
+import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
+  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV } from './volSurface.js';
 
 const app = express();
 app.use(cors({
@@ -1193,6 +1195,214 @@ app.get('/api/atm-straddle', async (req, res) => {
     });
   } catch (err) {
     console.log('[BRIDGE] atm-straddle error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+//  VOL SURFACE — GET /api/vol-surface?underlying=SPX&expiry=YYYYMMDD[&spot=]
+//  Fills the 45DTE Vol Surface panel (Oct 2026). Everything comes off TWS:
+//    iv       ATM model IV at the trade's expiry (mean of call + put)
+//    ivFront  ATM model IV at the listed expiry nearest 30 DTE
+//    ivBack   ATM model IV at the listed expiry nearest 90 DTE
+//    termBias derived from ivFront / ivBack (same ratio as VIX/VIX3M)
+//    skew     25Δ put IV − 25Δ call IV at the trade's expiry, vol points
+//    ivr      IV Rank off IB's 1-year daily OPTION_IMPLIED_VOLATILITY series
+//    hv       IB's 30-day HISTORICAL_VOLATILITY (close-to-close fallback)
+//  Each piece is fetched independently; whatever fails is listed in `missing`
+//  and the rest still returns, so one dead leg never blanks the panel.
+// ================================================================
+const vsCache = { chain: {}, hist: {} };
+const HIST_TTL_MS = 30 * 60 * 1000;   // IVR/HV move slowly; 30 min keeps the pull cheap
+
+function getConId(contract) {
+  return new Promise((resolve) => {
+    const reqId = getReqId();
+    let conId = null, done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      ib.removeListener(EventName.contractDetails, onDet);
+      ib.removeListener(EventName.contractDetailsEnd, onEnd);
+      resolve(conId);
+    };
+    const onDet = (id, det) => { if (id === reqId && !conId && det && det.contract) conId = det.contract.conId; };
+    const onEnd = (id) => { if (id === reqId) finish(); };
+    ib.on(EventName.contractDetails, onDet);
+    ib.on(EventName.contractDetailsEnd, onEnd);
+    ib.reqContractDetails(reqId, contract);
+    setTimeout(finish, 6000);
+  });
+}
+
+// Listed expirations + strikes for the trading class the app trades
+// (SPXW for SPX, RUTW for RUT, the symbol itself for ETFs). Cached per NY day.
+async function getOptionChain(underlying) {
+  const key = underlying + ':' + nyToday();
+  if (vsCache.chain[key]) return vsCache.chain[key];
+  const base = contracts[underlying];
+  if (!base) return null;
+  const conId = await getConId(base);
+  if (!conId) return null;
+  const want = underlying === 'SPX' ? 'SPXW' : underlying === 'RUT' ? 'RUTW' : underlying;
+  const rows = await new Promise((resolve) => {
+    const reqId = getReqId();
+    const out = []; let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      ib.removeListener(EventName.securityDefinitionOptionParameter, onRow);
+      ib.removeListener(EventName.securityDefinitionOptionParameterEnd, onEnd);
+      resolve(out);
+    };
+    const onRow = (id, exchange, uConId, tradingClass, multiplier, expirations, strikes) => {
+      if (id === reqId) out.push({ exchange, tradingClass, expirations: [...(expirations || [])], strikes: [...(strikes || [])] });
+    };
+    const onEnd = (id) => { if (id === reqId) finish(); };
+    ib.on(EventName.securityDefinitionOptionParameter, onRow);
+    ib.on(EventName.securityDefinitionOptionParameterEnd, onEnd);
+    ib.reqSecDefOptParams(reqId, base.symbol, '', base.secType, conId);
+    setTimeout(finish, 8000);
+  });
+  const mine = rows.filter(r => r.tradingClass === want);
+  const pick = mine.length ? mine : rows;
+  if (!pick.length) return null;
+  const exps = [...new Set(pick.flatMap(r => r.expirations))].sort();
+  const strikes = [...new Set(pick.flatMap(r => r.strikes))].sort((a, b) => a - b);
+  const chain = { tradingClass: mine.length ? want : (pick[0].tradingClass || undefined), expirations: exps, strikes };
+  vsCache.chain[key] = chain;
+  console.log(`[BRIDGE] chain ${underlying}/${chain.tradingClass}: ${exps.length} expiries, ${strikes.length} strikes`);
+  return chain;
+}
+
+// IB's own daily vol series for the underlying, as % (it sends decimals).
+async function getVolHistory(underlying) {
+  const hit = vsCache.hist[underlying];
+  if (hit && Date.now() - hit.at < HIST_TTL_MS) return hit;
+  const c = contracts[underlying];
+  const pct = bars => bars.map(b => barClose(b)).filter(x => x > 0).map(x => x * 100);
+  let iv = [], hv = [], closes = [];
+  try { iv = pct(await getHistoricalBars(c, '1 Y', '1 day', WhatToShow.OPTION_IMPLIED_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface IV history:', e.message); }
+  try { hv = pct(await getHistoricalBars(c, '3 M', '1 day', WhatToShow.HISTORICAL_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface HV history:', e.message); }
+  if (!hv.length) {
+    try { closes = (await getHistoricalBars(c, '3 M', '1 day', WhatToShow.TRADES)).map(barClose); } catch (e) { /* fallback only */ }
+  }
+  const out = { at: Date.now(), iv, hv, closes };
+  if (iv.length || hv.length || closes.length) vsCache.hist[underlying] = out;
+  return out;
+}
+
+app.get('/api/vol-surface', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    try { ib.reqMarketDataType(2); } catch (e) {}
+    const underlying = (req.query.underlying || 'SPX').toUpperCase();
+    if (!contracts[underlying] || ['VIX', 'VIX1D', 'ES'].includes(underlying)) {
+      return res.status(400).json({ error: `Vol surface not supported for ${underlying}` });
+    }
+    const today = nyToday();
+    const reqExpiry = /^\d{8}$/.test(req.query.expiry || '') ? req.query.expiry : addDays(today, 45);
+    const missing = [], notes = [];
+
+    // History runs alongside the option pulls — it is the slow, cacheable half.
+    const histP = getVolHistory(underlying).catch(() => ({ iv: [], hv: [], closes: [] }));
+
+    // 1) Spot
+    let spot = Number(req.query.spot) || 0;
+    if (!(spot > 0)) {
+      const s = await getSnapshot(contracts[underlying]);
+      spot = s.mid || s.last || s.prevClose || 0;
+    }
+
+    // 2) Expiries off the real chain; Friday-nearest if the chain lookup fails.
+    const chain = await getOptionChain(underlying).catch(() => null);
+    if (!chain) notes.push('Option chain lookup failed — expiries snapped to the nearest Friday');
+    const pickExp = (target, minDte) => chain
+      ? nearestExpiry(chain.expirations, target, today, minDte)
+      : fridayNear(target);
+    const tradeExp = pickExp(reqExpiry, 1);
+    const frontExp = pickExp(addDays(today, 30), 14);
+    let backExp = pickExp(addDays(today, 90), 45);
+    if (backExp && frontExp && backExp <= frontExp) backExp = null;
+    const inc = ['SPX', 'NDX', 'RUT'].includes(underlying) ? 5 : 1;
+
+    const opt = (exp, strike, right) => {
+      const c = buildOptionContract(underlying, exp, strike, right);
+      if (chain && chain.tradingClass) c.tradingClass = chain.tradingClass;
+      return c;
+    };
+    const atmIV = async (exp) => {
+      if (!exp || !(spot > 0)) return null;
+      const k = nearestStrike(chain && chain.strikes, spot, inc);
+      const [c, p] = await Promise.all([getOptionGreeks(opt(exp, k, 'C')), getOptionGreeks(opt(exp, k, 'P'))]);
+      const iv = avgIV(c && c.iv, p && p.iv);
+      return { expiry: exp, dte: daysBetween(today, exp), strike: k, iv: iv != null ? +iv.toFixed(2) : null,
+        callIV: c && c.iv, putIV: p && p.iv, mdType: (c && c.mdType) || (p && p.mdType) || null,
+        notSubscribed: !!((c && c.notSubscribed) && (p && p.notSubscribed)) };
+    };
+
+    // 3) ATM IV at the three expiries, in parallel (6 market-data lines).
+    const [tradeAtm, frontAtm, backAtm] = spot > 0
+      ? await Promise.all([atmIV(tradeExp), atmIV(frontExp), atmIV(backExp)])
+      : [null, null, null];
+    if (!(spot > 0)) notes.push('No spot price — option IVs skipped');
+
+    // 4) 25Δ skew at the trade expiry. Two strikes per side bracket the real 25Δ
+    // (skew pushes it past the flat-vol estimate), then interpolate in delta.
+    let skew = null, skewDetail = null;
+    if (tradeAtm && tradeAtm.iv > 0) {
+      const sig = tradeAtm.iv / 100, T = Math.max(tradeAtm.dte, 1) / 365, step = 0.25 * sig * Math.sqrt(T) * spot;
+      const kP = strikeForDelta(spot, sig, T, 'P'), kC = strikeForDelta(spot, sig, T, 'C');
+      const ks = {
+        P: [nearestStrike(chain && chain.strikes, kP, inc), nearestStrike(chain && chain.strikes, kP - step, inc)],
+        C: [nearestStrike(chain && chain.strikes, kC, inc), nearestStrike(chain && chain.strikes, kC - step, inc)],
+      };
+      const legs = [['P', ks.P[0]], ['P', ks.P[1]], ['C', ks.C[0]], ['C', ks.C[1]]];
+      const got = await Promise.all(legs.map(([r, k]) => getOptionGreeks(opt(tradeExp, k, r))));
+      const pts = r => legs.map((l, i) => l[0] === r && got[i] ? { strike: l[1], iv: got[i].iv, delta: got[i].delta } : null);
+      const p25 = interpAtDelta(pts('P')), c25 = interpAtDelta(pts('C'));
+      if (p25 && c25) {
+        skew = +(p25.iv - c25.iv).toFixed(2);
+        skewDetail = {
+          put: { strike: Math.round(p25.strike), delta: +p25.delta.toFixed(3), iv: +p25.iv.toFixed(2), interpolated: p25.interpolated },
+          call: { strike: Math.round(c25.strike), delta: +c25.delta.toFixed(3), iv: +c25.iv.toFixed(2), interpolated: c25.interpolated },
+        };
+        if (!p25.interpolated || !c25.interpolated) notes.push('25Δ not bracketed on one side — skew read off the nearest fetched delta');
+      }
+    }
+
+    // 5) IVR + HV from history.
+    const hist = await histP;
+    const ivStats = ivRankStats(hist.iv);
+    let hv = hist.hv.length ? +hist.hv[hist.hv.length - 1].toFixed(2) : null, hvSource = hv != null ? 'ib-30d' : null;
+    if (hv == null) { hv = realisedVol(hist.closes, 30); if (hv != null) hvSource = 'close-to-close-30d'; }
+
+    const term = termBiasFromIV(frontAtm && frontAtm.iv, backAtm && backAtm.iv);
+    const out = {
+      underlying, spot: spot > 0 ? +spot.toFixed(2) : null, today,
+      expiries: { requested: reqExpiry, trade: tradeExp, front: frontExp, back: backExp,
+        tradeDte: tradeExp ? daysBetween(today, tradeExp) : null,
+        frontDte: frontExp ? daysBetween(today, frontExp) : null,
+        backDte: backExp ? daysBetween(today, backExp) : null },
+      iv: tradeAtm ? tradeAtm.iv : null, atm: tradeAtm,
+      ivFront: frontAtm ? frontAtm.iv : null, ivBack: backAtm ? backAtm.iv : null,
+      termBias: term.bias || null, termRatio: term.ratio,
+      skew, skewDetail,
+      ivr: ivStats ? ivStats.rank : null, ivPctl: ivStats ? ivStats.pctl : null,
+      iv30: ivStats ? +ivStats.current.toFixed(2) : null,
+      iv52wLow: ivStats ? +ivStats.low.toFixed(2) : null, iv52wHigh: ivStats ? +ivStats.high.toFixed(2) : null,
+      hv, hvSource,
+      asOf: new Date().toISOString(),
+    };
+    ['iv', 'ivFront', 'ivBack', 'skew', 'ivr', 'hv'].forEach(k => { if (out[k] == null) missing.push(k); });
+    if (!term.bias) missing.push('termBias');
+    const md = (tradeAtm && tradeAtm.mdType) || (frontAtm && frontAtm.mdType) || null;
+    out.dataType = md === 1 ? 'realtime' : md === 2 ? 'frozen' : md === 3 ? 'delayed' : md === 4 ? 'delayed-frozen' : 'unknown';
+    out.notSubscribed = !!(tradeAtm && tradeAtm.notSubscribed && out.iv == null);
+    out.missing = missing; out.notes = notes;
+    console.log(`[BRIDGE] vol-surface ${underlying} ${tradeExp}: iv=${out.iv} front=${out.ivFront} back=${out.ivBack} (${out.termBias}) skew=${skew} ivr=${out.ivr} hv=${hv} missing=${missing.join(',') || '-'}`);
+    res.json(out);
+  } catch (err) {
+    console.log('[BRIDGE] vol-surface error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
