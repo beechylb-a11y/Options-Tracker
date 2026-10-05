@@ -9,6 +9,7 @@ import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session
 import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
+import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 // '' = unknown. Only used when IV Front/Back are absent — with both present the
@@ -188,7 +189,7 @@ function LadderPopover({ ladder, current, engineStrike, onPick, onRetry, outcome
 // about how overrides are stored. The '≡' affordance at the right edge opens the
 // ladder (parent-owned data via the ladder* props); the chip body still opens the
 // inline input.
-function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compact, fill, outcomes,
+function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compact, fill, outcomes, expiryTag,
   ladderOpen, ladder, onOpenLadder, onCloseLadder, onRetryLadder }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
@@ -251,7 +252,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
     <div onClick={()=>{ if (ladderOpen && onCloseLadder) onCloseLadder(); setText(String(leg.strike)); setEditing(true); }}
       title={(compact ? label + ' — ' : '') + (edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike')}
       style={{...box, cursor:'pointer'}}>
-      {compact ? ticketTxt : leg.strike}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>}{!compact && <> <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span></>}
+      {compact ? ticketTxt : leg.strike}{expiryTag && <span style={{fontWeight:600,opacity:0.85}}> · {expiryTag}</span>}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>}{!compact && <> <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span></>}
       {onOpenLadder && (
         <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
           title="Strike ladder — what moving this leg does to the trade"
@@ -451,6 +452,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // editing the ticket afterwards drops the badge and brings the button back rather
   // than leaving "Logged" sitting over a trade that is no longer the one on the sheet.
   const [loggedAt, setLoggedAt] = useState(init?.loggedAt ?? null);
+  // Calendar / diagonal expiries chosen on the ticket: { near, far } as YYYYMMDD.
+  const [calExp, setCalExp] = useState(init?.calExp ?? null);
+  // Listed expiries from the bridge's /api/option-chain, per underlying.
+  const [chainExp, setChainExp] = useState(null);
   const [loggedSig, setLoggedSig] = useState(init?.loggedSig ?? null);
   const [logging, setLogging] = useState(false);
   const [logNote, setLogNote] = useState('');
@@ -601,8 +606,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -764,7 +769,54 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const strikeStep = is0
     ? ((i0.underlying === 'SPX' || i0.underlying === 'RUT') ? 5
       : ['SPY', 'QQQ', 'IWM', 'XSP'].includes(i0.underlying) ? 1 : 0.5)
-    : 0.5;
+    : (['SPX', 'NDX', 'RUT'].includes(i45.underlying) ? 5
+      : ['SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(i45.underlying) ? 1 : 0.5);
+
+  // ── Time spreads: two expiries (Oct 2026) ──
+  // A calendar or diagonal is a near (sold) and a far (bought) expiry. The engine
+  // only knows strikes, so the dates live here: listed expiries from the bridge's
+  // option chain when it has them, weekly Fridays otherwise. The near leg's DTE is
+  // the ticket's DTE, so picking it re-scores the trade at that horizon.
+  const isTimeSpread = !is0 && /calendar|diagonal/i.test(effectiveStrat || '');
+  const todayYmd = tradingSession().yyyymmdd;
+  const chainOk = chainExp && chainExp.underlying === i45.underlying && Array.isArray(chainExp.list) && chainExp.list.length;
+  const expList = isTimeSpread ? (chainOk ? chainExp.list : fridaysFrom(todayYmd)) : [];
+  const tsDefault = isTimeSpread ? timeSpreadDefaults(effectiveStrat, i45.dte, expList, todayYmd) : { near: null, far: null };
+  const nearExp = isTimeSpread && calExp && calExp.near && expList.includes(calExp.near) && dteBetween(todayYmd, calExp.near) >= 1
+    ? calExp.near : tsDefault.near;
+  const farExp = !isTimeSpread || !nearExp ? null
+    : (calExp && calExp.far && calExp.far > nearExp && expList.includes(calExp.far)) ? calExp.far
+    : nearestExpiry(expList.filter(e => e > nearExp), todayYmd,
+        addDaysYmd(nearExp, /diagonal/i.test(effectiveStrat || '') ? 42 : 28), 1);
+  const legExpiryOf = l => {
+    if (!isTimeSpread || !l) return null;
+    const role = legRole(l.label);
+    return role === 'near' ? nearExp : role === 'far' ? farExp : null;
+  };
+  function pickNear(e) {
+    const far = farExp && farExp > e ? farExp : null;
+    setCalExp({ near: e, far });
+    const d = dteBetween(todayYmd, e);
+    if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
+  }
+  function pickFar(e) { setCalExp({ near: nearExp, far: e }); }
+  useEffect(() => {
+    if (!isTimeSpread) return;
+    if (chainExp && chainExp.underlying === i45.underlying) return;
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) { setChainExp({ underlying: i45.underlying, list: null, err: 'no bridge' }); return; }
+    let live = true;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    fetch(bridgeUrl + '/api/option-chain?underlying=' + i45.underlying, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+      .then(r => r.json())
+      .then(d => { if (live) setChainExp({ underlying: i45.underlying, list: Array.isArray(d.expirations) ? d.expirations : null, err: d.error || null }); })
+      .catch(e => { if (live) setChainExp({ underlying: i45.underlying, list: null, err: e.name === 'AbortError' ? 'timed out' : e.message }); })
+      .finally(() => clearTimeout(t));
+    return () => { live = false; ctrl.abort(); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTimeSpread, i45.underlying]);
   const editedCount = (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length)
     ? r.legs.reduce((n, l, i) => n + (l.strike !== r.engineLegs[i].strike ? 1 : 0), 0)
     : 0;
@@ -808,6 +860,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // 0DTE = the session's own expiry. Run after the close this used to ask for the
     // expiry that had just expired, and the greeks came back off a dead chain.
     if (is0) return ses.yyyymmdd;
+    if (isTimeSpread && nearExp) return nearExp;
     const base = new Date(ses.dateISO + 'T12:00:00');
     const dte = parseInt(i45.dte, 10);
     if (dte > 0) base.setDate(base.getDate() + dte);
@@ -838,7 +891,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const strikes = [];
     for (let k = 3; k >= -3; k--) strikes.push(+(center + k * strikeStep).toFixed(2));
     const underlying = is0 ? i0.underlying : i45.underlying;
-    const expiry = deriveExpiryYYYYMMDD();
+    const expiry = legExpiryOf(leg) || deriveExpiryYYYYMMDD();
     const key = underlying + '|' + expiry + '|' + right + '|' + center;
     const cached = LADDER_CACHE.get(key);
     if (cached && Date.now() - cached.ts < LADDER_TTL_MS) {
@@ -1337,7 +1390,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const isShort = lbl.includes('short');
         const isBody = lbl.includes('body') || lbl.includes('x2');
         const mag = isBody ? 2 : 1;
-        return { strike: l.strike, right, qty: (isShort ? -mag : mag) };
+        const legExp = legExpiryOf(l);
+        return { strike: l.strike, right, qty: (isShort ? -mag : mag), ...(legExp ? { expiry: legExp } : {}) };
       });
 
       const url = bridgeUrl + '/api/option-greeks?underlying=' + underlying
@@ -1770,7 +1824,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const legsHtml = r.legs.map(function(l) {
       var isShort = l.label.toLowerCase().includes('short');
       var cls = isShort ? 'leg-short' : 'leg-long';
-      return '<span class="leg ' + cls + '">' + l.strike + ' <span style="font-size:10px;font-weight:400;opacity:0.8">' + l.label + '</span></span>';
+      var le = legExpiryOf(l);
+      return '<span class="leg ' + cls + '">' + l.strike + (le ? ' \u00b7 ' + fmtExpiry(le) + ' ' + le.slice(0, 4) + ' (' + dteBetween(todayYmd, le) + 'd)' : '')
+        + ' <span style="font-size:10px;font-weight:400;opacity:0.8">' + l.label + '</span></span>';
     }).join('');
 
     const criteriaHtml = r.criteria.map(function(c) {
@@ -2119,7 +2175,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: is0 ? 'entry' : 'max' });
     const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
       ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
-    const fullNotes = engineSummary + planBlock
+    const expiriesLine = isTimeSpread && nearExp && farExp
+      ? `Expiries: sell ${fmtExpiry(nearExp)} ${nearExp.slice(0, 4)} (${dteBetween(todayYmd, nearExp)}d) / buy ${fmtExpiry(farExp)} ${farExp.slice(0, 4)} (${dteBetween(todayYmd, farExp)}d)\n`
+      : '';
+    const fullNotes = expiriesLine + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
@@ -2187,7 +2246,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // morning the latter is the expiry that has already expired. Close dates
       // elsewhere in the app deliberately keep the UTC date: a close looks BACK at the
       // session that just ended, which is the one the UTC date already names.
-      expiryDate: is0 ? tradingSession().dateISO : ''
+      expiryDate: is0 ? tradingSession().dateISO : (isTimeSpread && nearExp ? isoFromYmd(nearExp) : '')
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -2364,8 +2423,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               // The trade on one line, low strike to high, order-ticket style
               // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
               <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
-                {r.legs.map((l,i) => ({ l, i })).sort((a, b) => a.l.strike - b.l.strike).map(({ l, i }) => (
+                {r.legs.map((l,i) => ({ l, i })).sort((a, b) => (a.l.strike - b.l.strike)
+                  || String(legExpiryOf(a.l) || '').localeCompare(String(legExpiryOf(b.l) || ''))).map(({ l, i }) => (
                   <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact fill
+                    expiryTag={legExpiryOf(l) ? fmtExpiry(legExpiryOf(l)) : null}
                     step={strikeStep} onCommit={commitStrike}
                     ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
                     onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
@@ -2375,6 +2436,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     style={{flex:'none',fontSize:12.5,color:'#8b949e',cursor:'help',padding:'0 4px'}}>ⓘ</span>
                 )}
               </div>
+            )}
+            {isTimeSpread && nearExp && (
+              <ExpiryPicker today={todayYmd} list={expList} near={nearExp} far={farExp}
+                onNear={pickNear} onFar={pickFar} isDiagonal={/diagonal/i.test(effectiveStrat || '')}
+                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'} />
             )}
             {editedCount > 0 && (
               <div style={{marginTop:4,fontSize:12.5,color:'#d29922'}}>
@@ -3814,6 +3880,44 @@ const EX_LINK = { padding: 0, border: 'none', background: 'transparent', color: 
   textDecoration: 'underline', cursor: 'pointer' };
 const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent',
   color: '#c9d1d9', fontSize: 13, cursor: 'pointer' };
+
+// Near (sold) and far (bought) expiries for a calendar or diagonal. Five choices
+// each, around the current pick; the far row only offers dates after the near.
+function ExpiryPicker({ today, list, near, far, onNear, onFar, source, isDiagonal }) {
+  const nears = nearChoices(list, today, near);
+  const fars = farChoices(list, near, far);
+  const row = (label, sub, items, sel, onPick, clr, testid) => (
+    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}} data-testid={testid}>
+      <span style={{width:118,fontSize:12.5,color:'#a8b2be'}}>{label} <span style={{color:'#8b949e'}}>{sub}</span></span>
+      {items.map(e => {
+        const on = e === sel;
+        return (
+          <button key={e} type="button" onClick={() => onPick(e)} aria-pressed={on}
+            style={{padding:'5px 10px',borderRadius:7,fontSize:13,cursor:'pointer',minHeight:32,
+              border:`1px solid ${on ? clr : '#30363d'}`,background:on ? clr + '22' : 'transparent',color:on ? '#fff' : '#c9d1d9'}}>
+            <span style={{fontWeight:on ? 700 : 500}}>{fmtExpiry(e)}</span>
+            <span className="mono" style={{fontSize:11.5,color:'#8b949e',marginLeft:6}}>{dteBetween(today, e)}d</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+  const gap = near && far ? dteBetween(near, far) : null;
+  return (
+    <div data-testid="expiry-picker" style={{marginTop:10,display:'flex',flexDirection:'column',gap:6,padding:'10px 12px',
+      borderRadius:10,background:'rgba(255,255,255,0.03)',border:'1px solid #21262d'}}>
+      {row('Sell', 'near expiry', nears, near, onNear, '#f85149', 'expiry-near')}
+      {row('Buy', 'far expiry', fars, far, onFar, '#58a6ff', 'expiry-far')}
+      <div style={{fontSize:12,color:'#8b949e'}}>
+        {gap != null ? `${gap} days between the legs · ` : ''}
+        {isDiagonal ? 'Diagonal: the far leg is usually 5–8 weeks past the near. ' : 'Calendar: the far leg is usually 3–5 weeks past the near. '}
+        {source === 'chain' ? 'Listed expiries from TWS.'
+          : source === 'loading' ? 'Loading listed expiries from TWS…'
+          : 'Weekly Fridays — TWS expiry list not available' + (source.startsWith('fallback:') ? ` (${source.slice(9)})` : '') + ', holidays not checked.'}
+      </div>
+    </div>
+  );
+}
 
 // Evidence-line chip states: what each input's source is.
 const INPUT_CHIP = {

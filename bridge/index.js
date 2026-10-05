@@ -1048,10 +1048,13 @@ app.get('/api/option-greeks', async (req, res) => {
     const results = [];
     let anyNotSubscribed = false;
     for (const leg of legs) {
-      const contract = buildOptionContract(underlying, expiry, leg.strike, leg.right);
+      // A leg may carry its own expiry (calendars and diagonals); the query's
+      // expiry is the default for every other structure. (Oct 2026.)
+      const legExp = /^\d{8}$/.test(String(leg.expiry || '')) ? String(leg.expiry) : expiry;
+      const contract = buildOptionContract(underlying, legExp, leg.strike, leg.right);
       const g = await getOptionGreeks(contract);
-      if (g && g.notSubscribed) { anyNotSubscribed = true; results.push({ strike: leg.strike, right: leg.right, qty: leg.qty || 1, greeks: null }); }
-      else results.push({ strike: leg.strike, right: leg.right, qty: leg.qty || 1, greeks: g });
+      if (g && g.notSubscribed) { anyNotSubscribed = true; results.push({ strike: leg.strike, right: leg.right, expiry: legExp, qty: leg.qty || 1, greeks: null }); }
+      else results.push({ strike: leg.strike, right: leg.right, expiry: legExp, qty: leg.qty || 1, greeks: g });
     }
 
     // Net position greeks (sum of qty × per-contract greek). For a butterfly the
@@ -1289,6 +1292,29 @@ async function getVolHistory(underlying) {
   if (iv.length || hv.length || closes.length) vsCache.hist[underlying] = out;
   return out;
 }
+
+// Listed expiries (and strikes) for an underlying, so the app can offer the real
+// near/far dates for a calendar or diagonal instead of guessing. Future expiries
+// within ~14 months; cached per NY day by getOptionChain. (Oct 2026.)
+app.get('/api/option-chain', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const underlying = (req.query.underlying || 'SPX').toUpperCase();
+    if (!contracts[underlying]) return res.status(400).json({ error: `No option chain for ${underlying}` });
+    const chain = await getOptionChain(underlying);
+    if (!chain) return res.status(502).json({ error: 'TWS returned no option chain' });
+    const today = nyToday();
+    const limit = addDays(today, 430);
+    res.json({
+      underlying, tradingClass: chain.tradingClass || null, today,
+      expirations: chain.expirations.filter(e => e > today && e <= limit),
+      strikes: chain.strikes
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.get('/api/vol-surface', async (req, res) => {
   try {

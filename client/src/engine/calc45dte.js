@@ -125,10 +125,14 @@ export function calc45DTE(inputs) {
   const legStrat = overrideStrategy || bestStrat;
 
   // Strike engine
+  const strikeStep45 = ['SPX', 'NDX', 'RUT'].includes(String(underlying || '').toUpperCase()) ? 5
+    : ['SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(String(underlying || '').toUpperCase()) ? 1 : 0.5;
   let legs = [], strikeLine = '';
   if (hasPrice && em45 > 0) {
     const p = price;
-    const R = n => Math.round(n * 2) / 2;
+    // Listed strike increments: 5 on SPX/NDX/RUT, 1 on the ETFs. Rounding SPX to
+    // 0.5 produced strikes like 7776.5 that do not exist. (Oct 2026.)
+    const R = n => Math.round(n / strikeStep45) * strikeStep45;
     const leg = (label, strike) => ({label, strike: R(strike)});
     const sdFull = em45, sd80 = em45*0.80, sd50 = em45*0.50, sd25 = em45*0.25;
 
@@ -149,10 +153,17 @@ export function calc45DTE(inputs) {
     } else if (legStrat === 'Jade lizard') {
       legs = [leg('Short put',p-sd50),leg('Long put',p-sd80),leg('Short call',p+sd80),leg('Long call',p+sdFull)];
     } else if (legStrat === 'Calendar spread') {
+      // Calls above, puts below: the strike sits where price is expected to be at
+      // the front expiry. Labels name the expiry role so the panel can date them.
       const cs = isBull?R(p+sd25):isBear?R(p-sd25):R(p);
-      legs = [leg('Long back-month',cs),leg('Short front-month',cs)];
+      const rt = isBear ? 'put' : 'call';
+      legs = [leg(`Long ${rt} (back month)`,cs),leg(`Short ${rt} (front month)`,cs)];
     } else if (legStrat === 'Diagonal spread') {
-      legs = [leg('Long 60-90d call',R(p)),leg('Short 20-30d call',R(p+sd50*(isBull?1:-1)))];
+      // Bullish: calls, short strike above. Otherwise puts, short strike below — a
+      // short CALL below the long one was an in-the-money short. (Oct 2026.)
+      legs = isBull
+        ? [leg('Long call (back month)',R(p)),leg('Short call (front month)',R(p+sd50))]
+        : [leg('Long put (back month)',R(p)),leg('Short put (front month)',R(p-sd50))];
     } else if (legStrat === 'Ratio spread') {
       legs = [leg('Long call',p),leg('Short call x2',p+sd50)];
     } else if (legStrat === 'Standard butterfly') {
@@ -172,7 +183,7 @@ export function calc45DTE(inputs) {
   let strikeOrderWarning = null;
   if (ovStrikes && legs.length > 0
       && (!inputs.overrideStrikesStrat || inputs.overrideStrikesStrat === legStrat)) {
-    const Rov = n => Math.round(n * 2) / 2;   // same 0.5 increment the builder uses
+    const Rov = n => Math.round(n / strikeStep45) * strikeStep45;   // same increment the builder uses
     legs = legs.map((l, i) => {
       const v = ovStrikes[i];
       // An absent/unparseable override falls back to the engine strike — never NaN.

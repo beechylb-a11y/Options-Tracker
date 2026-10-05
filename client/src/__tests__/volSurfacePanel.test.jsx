@@ -31,7 +31,9 @@ describe('vol surface panel', () => {
     expect(screen.getByText('Term bias — manual (no Front/Back)')).toBeTruthy();
     fireEvent.click(screen.getByText('🔄 Fetch vol'));
     await waitFor(() => expect(val('iv')).toBe('15.8'));
-    expect(String(global.fetch.mock.calls[0][0])).toContain('/api/vol-surface?underlying=SPX&expiry=');
+    // The ticket may also ask the bridge for the option chain (calendars); find the
+    // vol-surface call rather than assume it is the first.
+    expect(global.fetch.mock.calls.map(c => String(c[0])).some(u => u.includes('/api/vol-surface?underlying=SPX&expiry='))).toBe(true);
     expect(val('ivr')).toBe('31.5'); expect(val('hv')).toBe('12.3');
     expect(val('ivFront')).toBe('14.9'); expect(val('ivBack')).toBe('16.9'); expect(val('skew')).toBe('6.4');
     expect(screen.getByText('Term bias — from Front/Back')).toBeTruthy();
