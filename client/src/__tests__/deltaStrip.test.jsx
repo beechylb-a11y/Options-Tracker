@@ -96,4 +96,9 @@ describe('delta strip', () => {
     fireEvent.click(screen.getByTestId('method-em'));
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/on ticket: EM/));
   });
+
+  it('stays visible on a butterfly and says the check does not apply', () => {
+    mount({ legGreeks, overrideStrat: 'Asymmetric butterfly' });
+    expect(screen.getByTestId('delta-strip').textContent).toMatch(/doesn't apply to Asymmetric butterfly/);
+  });
 });
