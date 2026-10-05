@@ -17,6 +17,8 @@
 // diverge badly — 50% of a 1.50 debit is +0.75, 50% of a 3.50 max profit is +1.75.
 // IBKR's percentage preset works off the parent price, so the ticket shows both.
 
+import { exitRuleFor } from '../engine/data';
+
 export const MULT = 100;
 
 const num = v => { const n = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
@@ -68,7 +70,9 @@ export function normalisePosition(src = {}) {
     //             0DTE default, and exactly what a TWS % profit-taker preset does.
     //   'max'   — % of max profit, the 45DTE convention (manage winners at 50%).
     // For credit trades the two are the same number (max profit = the credit).
-    basis: src.basis || (/45/.test(String(g('engine', 'Engine'))) ? 'max' : 'entry'),
+    // Per strategy since Oct 2026: a 45DTE calendar is managed on its DEBIT (tastylive
+    // 25% of debit), every other 45DTE structure on max profit. See EXIT_RULES.
+    basis: src.basis || exitRuleFor(String(g('engine', 'Engine')), stratName).basis,
   };
 }
 
@@ -162,6 +166,17 @@ export function ladder(qty, pcts) {
   const use = pcts.slice(0, n);
   const base = Math.floor(qty / n), extra = qty % n;
   return use.map((pct, i) => ({ qty: base + (i < extra ? 1 : 0), pct }));
+}
+
+// Two-tranche default from a strategy's exit rule: its target and the next chip
+// above it (or below, when the target is the top chip). Iron condor 50/75,
+// calendar 15/25, iron fly 25/50. No rule chips → the caller's fallback.
+export function ruleLadderPcts(rule, fallback) {
+  const chips = rule && Array.isArray(rule.chips) ? rule.chips : null;
+  if (!chips || !chips.length) return fallback;
+  const i = chips.indexOf(rule.target);
+  if (i < 0) return [rule.target];
+  return i < chips.length - 1 ? [chips[i], chips[i + 1]] : (i > 0 ? [chips[i - 1], chips[i]] : [chips[i]]);
 }
 
 export const LADDER_PRESETS = {

@@ -7,8 +7,9 @@ import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import { lastSessionDate } from '../engine/session';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines,
-  ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
+  ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
 } from '../utils/ticketMath';
+import { exitRuleFor } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
@@ -70,7 +71,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   const mkRow = (qty, pct) => ({ qty, pct, price: snap(targetToPrice(pos, pct), tick), status: 'Working', fill: '' });
   const [rows, setRows] = useState(() => {
     const saved = loadPlan(pos.timestamp);
-    const src = saved?.rows?.length ? saved.rows : ladder(pos.qtyOpen || 1, is45 ? [50, 75] : [50]);
+    const src = saved?.rows?.length ? saved.rows : ladder(pos.qtyOpen || 1, ruleLadderPcts(exitRuleFor(pos.engine || (is45 ? '45DTE' : '0DTE'), pos.strategy), is45 ? [50, 75] : [50]));
     // Trim the plan to what is still open. Contracts closed since the plan was
     // saved came off the FRONT of the ladder (the nearest targets fill first), so
     // skip that many from the front and keep the runners.

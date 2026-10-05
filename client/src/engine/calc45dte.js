@@ -2,7 +2,7 @@
 //  45DTE CALCULATION ENGINE
 //  Pure functions — no DOM access.
 // ================================================================
-import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE } from './data.js';
+import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor } from './data.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -356,7 +356,13 @@ export function calc45DTE(inputs) {
     return { winCap: 0.40, lossCap: 0.60 };
   }
   const { winCap: evWinCap, lossCap: evLossCap } = captureFractions45(legStrat);
-  const estAvgWin = win * evWinCap;
+  // A structure managed on its DEBIT (the calendar: tastylive takes 25% of what was
+  // paid) wins that, not a fraction of a model max profit. The default 0.40 × max
+  // profit at the near expiry roughly doubled a calendar's average win. (Oct 2026.)
+  const exitRule = exitRuleFor('45DTE', legStrat);
+  const estAvgWin = exitRule.basis === 'entry' && risk > 0
+    ? risk * exitRule.target / 100
+    : win * evWinCap;
   const estAvgLoss = risk * evLossCap;
   const histTrades = history?.trades || 0;
   const hasMeasured = histTrades >= EV_HISTORY_THRESHOLD && history?.avgWin > 0 && history?.avgLoss > 0;
@@ -392,7 +398,8 @@ export function calc45DTE(inputs) {
     pMaxLossSource: pMaxLossSource,
     winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
-    winCap: evWinCap, lossCap: evLossCap,
+    winCap: exitRule.basis === 'entry' ? null : evWinCap, lossCap: evLossCap,
+    winBasis: exitRule.basis === 'entry' ? `${exitRule.target}% of debit` : `${Math.round(evWinCap * 100)}% of max`,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk,
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate
   };

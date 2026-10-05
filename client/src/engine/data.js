@@ -142,6 +142,63 @@ export const STRATEGY_CASH_TYPE = {
   'Ratio spread':           'varies'  // front-ratio credit / back-ratio debit
 };
 
+// ── Exit rules per strategy (Oct 2026) ──
+// One table for where every structure takes profit and when it closes. Sourced from
+// tastylive's strategy pages and research (claude/45dte-exit-rules-tastylive-oct2026.md,
+// claude/0dte-exit-rules-tastylive-oct2026.md); the 21-DTE hard close is the trader's
+// own rule and applies to every 45DTE structure — change closeDte here to change it.
+//
+//   target   default profit target, %
+//   basis    what the % is OF: 'max' = max profit (45DTE convention, manage winners
+//            at 50%), 'entry' = the premium paid/received (0DTE convention; and the
+//            calendar, which tastylive manages at 25% OF THE DEBIT — its max profit is
+//            a model number, not a contract term). For credit trades the two coincide.
+//   chips    the % choices offered on the Profit Taker
+//   closeDte 45DTE only: days before the (near) expiry the trade is closed regardless
+//   why      one line shown with the target
+export const CLOSE_DTE_45 = 21;
+const R45 = (target, chips, why, extra = {}) => ({ target, basis: 'max', chips, closeDte: CLOSE_DTE_45, why, ...extra });
+const R0 = (target, chips, why, extra = {}) => ({ target, basis: 'entry', chips, why, ...extra });
+export const EXIT_RULES = {
+  '45DTE': {
+    'Iron Condor - Normal':  R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll the untested side if tested'),
+    'Chicken condor':        R45(50, [25, 50, 75], 'tastylive: 50% of max profit'),
+    'Credit spread':         R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
+    'Bull put spread':       R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
+    'Bear call spread':      R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
+    'Jade lizard':           R45(50, [25, 50, 75], 'tastylive gives no number — managed like a strangle (50%)'),
+    'Iron butterfly':        R45(25, [15, 25, 50], 'tastylive manages straddles/iron flies at 25%, not 50%'),
+    'Standard butterfly':    R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; losers not managed'),
+    'Asymmetric butterfly':  R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit (long fly)'),
+    'Broken wing butterfly': R45(50, [25, 50, 75], 'tastylive: 50% of max profit (25% for an early exit)'),
+    'Ratio spread':          R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit'),
+    'Bull call spread':      R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
+    'Bear put spread':       R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
+    'Calendar spread':       R45(25, [10, 15, 25], 'tastylive: 10–25% of the DEBIT, usually 25%; don\'t wait for more', { basis: 'entry' }),
+    'Diagonal spread':       R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; roll the short down if tested'),
+    'Long Condor - Reversed':R45(50, [25, 50, 75], 'no tastylive guidance (long-gamma debit) — app default'),
+  },
+  '0DTE': {
+    // tastylive 0DTE research: short premium managed at 15–25% beat holding; manage in
+    // the first half of the day; never sell premium in the last 30 minutes.
+    'Iron Condor - Normal':  R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+    'Chicken condor':        R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+    'Iron butterfly':        R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+    'Bull put spread':       R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+    'Bear call spread':      R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+  },
+};
+// Rule for a strategy; anything unlisted keeps the engine's historic default
+// (45DTE: 50% of max; 0DTE: 50% return on entry).
+export function exitRuleFor(engine, strategy) {
+  const e = /45/.test(String(engine || '')) ? '45DTE' : '0DTE';
+  const r = EXIT_RULES[e][strategy];
+  if (r) return r;
+  return e === '45DTE'
+    ? { target: 50, basis: 'max', chips: [25, 50, 75], closeDte: CLOSE_DTE_45, why: '' }
+    : { target: 50, basis: 'entry', chips: null, why: '' };
+}
+
 // Resolve the effective type for a strategy given the ticket's net credit/debit.
 // netCreditDebit: positive = credit received, negative = debit paid, 0/blank = unknown.
 // Returns 'credit' | 'debit' | 'varies' (varies only when no net is available yet).

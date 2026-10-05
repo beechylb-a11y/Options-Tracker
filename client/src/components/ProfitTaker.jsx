@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ladder, snap, defaultTick,
-  round2, stopToPrice, maxTargetPct, pnlPct
+  round2, stopToPrice, maxTargetPct, pnlPct, ruleLadderPcts
 } from '../utils/ticketMath';
+import { exitRuleFor } from '../engine/data';
 import TicketHelp from './TicketHelp';
 import { unitsFromLegs, DEFAULT_COMMISSION } from '../utils/commission';
 
@@ -26,13 +27,15 @@ const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d',
 const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
-export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate }) {
+export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate, strategy }) {
   const is0 = !/45/.test(engine);
+  // Per-strategy target and basis (Oct 2026): tastylive's numbers, not one 50% for all.
+  const rule = exitRuleFor(engine, strategy);
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
     qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying,
-    basis: is0 ? 'entry' : 'max'
-  }), [ncd, win, qty, underlying, is0]);
+    basis: rule.basis
+  }), [ncd, win, qty, underlying, rule.basis]);
   const tick = defaultTick(underlying);
   // Contracts per unit, "x2" bodies counted twice (a fly is 4). The rate is the
   // account's (Settings); the box below overrides it for this ticket only.
@@ -43,11 +46,18 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
 
   const entry = Math.abs(pos.ncd || 0);
   const capPct = maxTargetPct(pos);            // e.g. 517% for a 0.64 fly with 3.31 max
-  const chips = is0 ? (pos.isCredit ? [25, 50, 75] : [25, 50, 75, 100, 150, 200]) : [25, 50, 75];
+  const chips = rule.chips || (is0 ? (pos.isCredit ? [25, 50, 75] : [25, 50, 75, 100, 150, 200]) : [25, 50, 75]);
+  const ladderPcts = ruleLadderPcts(rule, [25, 50, 100]);
 
-  const [target, setTarget] = useState({ pct: 50, price: '' });
+  const [target, setTarget] = useState({ pct: rule.target, price: '' });
   const [split, setSplit] = useState(false);
-  const [rows, setRows] = useState(() => ladder(qty, [25, 50, 100]));
+  const [rows, setRows] = useState(() => ladder(qty, ladderPcts));
+  // Switching structure moves the default target with it.
+  useEffect(() => {
+    setTarget({ pct: rule.target, price: '' });
+    setRows(ladder(qty, ladderPcts));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy, engine]);
   const [stopPct, setStopPct] = useState('');
   useEffect(() => { setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 100])); }, [qty]);
 
@@ -62,7 +72,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
   }, [JSON.stringify(effRows), stopPct]);
 
   const closeSide = pos.isCredit ? 'db' : 'cr';
-  const basisWord = is0 || pos.isCredit ? 'on entry' : 'of max profit';
+  const basisWord = is0 || pos.isCredit ? 'on entry' : pos.basis === 'entry' ? 'of the debit' : 'of max profit';
   const allocated = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
 
   // What to type in TWS for a given closing price — in words, one line.
@@ -96,7 +106,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         )}
         {over && <span style={{ color: '#f85149' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
         <br />{twsLine(price)}
-        {!is0 && !pos.isCredit && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
+        {!is0 && !pos.isCredit && pos.basis === 'max' && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
           <span style={{ color: '#d29922' }}><br />45DTE targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
         )}
       </div>
@@ -131,11 +141,16 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
           <input type="number" step={tick} style={{ ...cell, width: 80 }} value={target.price !== '' ? target.price : priceOf(target.pct)}
             onChange={e => { const p = parseFloat(e.target.value); const t = isFinite(p) ? priceToTarget(pos, p) : null; setTarget({ price: e.target.value, pct: t != null ? round2(t) : '' }); }} />
         </div>
+        {(rule.why || !is0) && (
+          <div style={{ fontSize: 12, color: '#8b949e', marginTop: 4 }} data-testid="exit-rule">
+            {rule.why}{rule.why && !is0 ? ' · ' : ''}{!is0 && rule.closeDte ? `close by ${rule.closeDte} DTE whatever the P&L` : ''}
+          </div>
+        )}
         <Result q={qty} pct={Number(target.pct) || 0} price={tPrice} />
       </>) : (<>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
           <span style={{ fontSize: 12, color: '#8b949e' }}>Tranches, target {basisWord}</span>
-          <button style={{ ...btn(false), borderColor: '#2f81f7', color: '#58a6ff' }} onClick={() => setRows(r => [...r, { qty: 1, pct: 50 }])}>+ Tranche</button>
+          <button style={{ ...btn(false), borderColor: '#2f81f7', color: '#58a6ff' }} onClick={() => setRows(r => [...r, { qty: 1, pct: rule.target }])}>+ Tranche</button>
           <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: allocated === qty ? '#8b949e' : '#f85149' }}>{allocated} / {qty} allocated</span>
         </div>
         {rows.map((r, i) => {

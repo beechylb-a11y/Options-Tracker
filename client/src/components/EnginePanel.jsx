@@ -4,7 +4,7 @@ import { normalisePosition, planText, savePlan } from '../utils/ticketMath';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
-import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
+import { UNDERLYING_LIST, resolveCashType, exitRuleFor } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
@@ -1358,8 +1358,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const nearLeg = cl.find(l => l.dte === nd);
     const sigmaNear = nearLeg ? nearLeg.iv : baseIV / 100;
     const atExpiry = curveAt(cl, { net, lo, hi, days: nd });
-    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl), sigmaNear, divYield,
-      atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
+    // The strategy's profit target in $ per contract (EXIT_RULES): % of the debit for
+    // a calendar, % of max profit (at expiry / near expiry) for everything else.
+    const rule = exitRuleFor('45DTE', effectiveStrat);
+    const tgtBase = rule.basis === 'entry' ? Math.abs(net) * 100 : atExpiry.maxProfit;
+    const target = tgtBase > 0 ? { dollars: tgtBase * rule.target / 100,
+      label: `${rule.target}% of ${rule.basis === 'entry' ? 'the debit' : 'max profit'}` } : null;
+    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, rule.closeDte), closeDte: rule.closeDte,
+      sigmaNear, divYield, target, atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
   })();
   // Sizing suggestions for 45DTE come from the expiry curve (near expiry for a time
   // spread) — the engine's capture fractions already model the 21-DTE exit, so
@@ -2242,8 +2248,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // ticket looks the plan up by.
     const logTs = new Date().toISOString();
     const ncdNow = fv(inp, 'netCreditDebit');
-    const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: ncdNow,
-      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: is0 ? 'entry' : 'max' });
+    const ncdSigned = signedNet(inp.netCreditDebit, cashType);
+    const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: isFinite(ncdSigned) ? ncdSigned : ncdNow,
+      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: exitRuleFor(is0 ? '0DTE' : '45DTE', effectiveStrat).basis });
     const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
       ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
     const expiriesLine = isTimeSpread && nearExp && farExp
@@ -3338,9 +3345,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           {/* Profit target scale */}
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
-            <ProfitTaker ncd={parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit)} win={parseFloat(is0?i0.win:i45.win) || 0}
+            <ProfitTaker ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
               contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
-              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} />
+              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} strategy={effectiveStrat} />
           )}
 
           </InputSection>
@@ -3642,7 +3649,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <PayoffTimeChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
                 lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
                 closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
-                underlying={i45.underlying} divYield={payCurve.divYield} />
+                underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target} />
             </div>
           )}
           {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
@@ -3703,7 +3710,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
                   {r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
-                    : `EV estimated (capture ${(r.evBasis.winCap*100).toFixed(0)}%/${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
+                    : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                       + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
                   {r.evBasis.commissionRoundTrip > 0 && (
                     <div style={{marginTop:4,color:'#c9d1d9'}}>

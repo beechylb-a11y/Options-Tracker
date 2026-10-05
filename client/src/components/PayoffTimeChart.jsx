@@ -14,7 +14,8 @@ const money = v => (v < 0 ? '−$' : '$') + Math.abs(Math.round(v)).toLocaleStri
 const kfmt = v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1) + 'K' : String(Math.round(v));
 
 export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
-  todayYmd, isTimeSpread, underlying, divYield }) {
+  todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target }) {
+  // target: { dollars, label } — the strategy's profit target per contract (EXIT_RULES).
   const [day, setDay] = useState(closeDay);
   const [band, setBand] = useState(2);
   const [hoverPx, setHoverPx] = useState(null);
@@ -36,7 +37,8 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
   }, [cl, net, lo, hi, d, nearDte, band, maxLegDte]);
 
   const all = [curves.sel, curves.today, curves.exp, curves.up, curves.dn].filter(Boolean);
-  const pnls = all.flatMap(c => c.points.map(p => p.pnl));
+  const tgt = target && target.dollars > 0 ? target.dollars : null;
+  const pnls = all.flatMap(c => c.points.map(p => p.pnl)).concat(tgt != null ? [tgt] : []);
   const minPnl = Math.min(0, ...pnls), maxPnl = Math.max(0, ...pnls);
   const range = (maxPnl - minPnl) || 1;
   const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
@@ -60,8 +62,8 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
   const atSpot = pnlAt(cl, spot, net, d);
   const dateYmd = addDaysYmd(todayYmd, d);
   const left = nearDte - d;
-  const isClose = d === closeDay && nearDte > HARD_CLOSE_DTE;
-  const label = d === 0 ? 'Today' : d === nearDte ? (isTimeSpread ? 'Near expiry' : 'Expiry') : isClose ? '21-DTE close' : 'Chosen date';
+  const isClose = d === closeDay && nearDte > closeDte;
+  const label = d === 0 ? 'Today' : d === nearDte ? (isTimeSpread ? 'Near expiry' : 'Expiry') : isClose ? `${closeDte}-DTE close` : 'Chosen date';
   const hoverVals = hoverPx != null ? {
     sel: pnlAt(cl, hoverPx, net, d),
     today: d === 0 ? null : pnlAt(cl, hoverPx, net, 0),
@@ -76,7 +78,7 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
 
   const btn = on => ({ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
     border: '1px solid ' + (on ? '#2f81f7' : '#30363d'), background: on ? '#0d1a2b' : 'transparent', color: on ? '#58a6ff' : '#c9d1d9' });
-  const closeLabel = nearDte > HARD_CLOSE_DTE ? `21-DTE close · ${fmtExpiry(addDaysYmd(todayYmd, closeDay))}` : 'Close now (inside 21 DTE)';
+  const closeLabel = nearDte > closeDte ? `${closeDte}-DTE close · ${fmtExpiry(addDaysYmd(todayYmd, closeDay))}` : `Close now (inside ${closeDte} DTE)`;
 
   return (
     <div data-testid="payoff-time-chart">
@@ -97,8 +99,8 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         aria-label="Days from today" style={{ width: '100%', accentColor: '#58a6ff' }} />
       <div style={{ position: 'relative', fontSize: 11, color: '#8b949e', height: 14, marginBottom: 4 }}>
         <span style={{ position: 'absolute', left: 0 }}>today</span>
-        {nearDte > HARD_CLOSE_DTE && (
-          <span style={{ position: 'absolute', left: `${closeDay / nearDte * 100}%`, transform: 'translateX(-50%)', color: '#d29922' }}>▲ 21 DTE</span>
+        {nearDte > closeDte && (
+          <span style={{ position: 'absolute', left: `${closeDay / nearDte * 100}%`, transform: 'translateX(-50%)', color: '#d29922' }}>▲ {closeDte} DTE</span>
         )}
         <span style={{ position: 'absolute', right: 0 }}>{isTimeSpread ? 'near exp' : 'expiry'}</span>
       </div>
@@ -123,6 +125,12 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         <path d={selArea} fill="rgba(248,81,73,0.12)" clipPath="url(#ptc-below)" />
         {bandPath && <path d={bandPath} fill="rgba(88,166,255,0.16)" stroke="none" />}
         {curves.exp && <path d={path(curves.exp)} fill="none" stroke="#6e7681" strokeWidth="1.2" strokeDasharray="5 4" />}
+        {tgt != null && (
+          <g>
+            <line x1={PAD.left} x2={W - PAD.right} y1={y(tgt)} y2={y(tgt)} stroke="#3fb950" strokeWidth="1" strokeDasharray="6 3" />
+            <text x={W - PAD.right - 2} y={y(tgt) - 4} textAnchor="end" fontSize="10.5" fill="#3fb950" fontFamily="JetBrains Mono,monospace">target {money(tgt)}</text>
+          </g>
+        )}
         {curves.today && <path d={path(curves.today)} fill="none" stroke="#a8b2be" strokeWidth="1.6" strokeDasharray="1.5 4" strokeLinecap="round" />}
         <path d={path(sel)} fill="none" stroke="#e6edf3" strokeWidth="2" />
         {spot > 0 && spot >= lo && spot <= hi && (
@@ -146,6 +154,7 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         {curves.exp && <span><span style={{ color: '#6e7681' }}>╌</span> {isTimeSpread ? 'Near expiry' : 'Expiry'}</span>}
         {bandPath && <span><span style={{ color: '#58a6ff' }}>▆</span> IV ±{band} pts</span>}
         <span><span style={{ color: '#2f81f7' }}>┆</span> Spot</span>
+        {tgt != null && <span><span style={{ color: '#3fb950' }}>╌</span> Target{target.label ? ` (${target.label})` : ''}</span>}
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1" style={{ fontSize: 13 }}>
@@ -155,16 +164,21 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         <Row k="Max loss (window)" v={money(sel.maxLoss)} c="#f85149" />
         <Row k="Breakevens" v={sel.breakevens.length ? sel.breakevens.map(Math.round).join(' / ') : 'none'} />
         <Row k="P(profit) on this date" v={pop == null ? '—' : (pop * 100).toFixed(0) + '%'} />
+        {tgt != null && (() => {
+          const band = targetBand(sel, tgt);
+          return <Row k={`Target ${money(tgt)} on this date`} c={band ? '#3fb950' : '#d29922'}
+            v={band ? `${Math.round(band[0])}–${Math.round(band[1])}` : `not reachable (best ${money(sel.maxProfit)})`} />;
+        })()}
       </div>
 
-      {nearDte <= HARD_CLOSE_DTE && (
+      {nearDte <= closeDte && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>
-          ⚠ The near expiry is {nearDte} days out — already inside the 21-DTE close. By the playbook this trade closes now.
+          ⚠ The near expiry is {nearDte} days out — already inside the {closeDte}-DTE close. By the playbook this trade closes now.
         </div>
       )}
-      {isTimeSpread && nearDte > HARD_CLOSE_DTE && (
+      {isTimeSpread && nearDte > closeDte && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: '#a8b2be' }}>
-          A time spread makes most of its money in the last weeks of the near leg. Closed at 21 DTE it banks the
+          A time spread makes most of its money in the last weeks of the near leg. Closed at {closeDte} DTE it banks the
           {' '}{money(curveAt(cl, { net, lo, hi, days: closeDay }).maxProfit)} peak shown, not the
           {' '}{money(curveAt(cl, { net, lo, hi, days: nearDte }).maxProfit)} at near expiry.
         </div>
@@ -177,6 +191,13 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
       </div>
     </div>
   );
+}
+
+// Price band where the curve is at or above the target (outermost crossings).
+function targetBand(curve, tgt) {
+  const ok = curve.points.filter(p => p.pnl >= tgt);
+  if (!ok.length) return null;
+  return [ok[0].price, ok[ok.length - 1].price];
 }
 
 function Row({ k, v, c }) {
