@@ -82,7 +82,7 @@ describe('verdict band', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
     const line = screen.getByTestId('strike-line');
     expect(line.style.flexWrap).toBe('nowrap');
-    expect(line.textContent.replace(/[≡ⓘ\s]/g, '')).toBe('+7305P\u22127345P\u22127450C+7495C');
+    expect(line.textContent.replace(/[≡ⓘ\s]/g, '')).toBe('+7305Put\u22127345Put\u22127450Call+7495Call');
   });
 
   it('ladder rows show what moving the leg does to the trade, without the bridge', () => {
