@@ -10,6 +10,8 @@ import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, sh
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
+import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf } from '../engine/payoffCurve';
+import PayoffTimeChart from './PayoffTimeChart';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 // '' = unknown. Only used when IV Front/Back are absent — with both present the
@@ -1304,6 +1306,52 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       dot: fvs >= 70 ? '#3fb950' : fvs >= 50 ? '#d29922' : '#f85149' }] : [])
   ];
 
+  // ── Payoff at any date (45DTE, Oct 2026) ──
+  // Every leg valued with Black-Scholes at its own expiry and IV, so the curve
+  // exists for calendars and diagonals and for any day up to expiry — the 21-DTE
+  // hard close above all. IV per leg: the leg's own model IV from Fetch Greeks
+  // (matched by strike, right and, for time spreads, expiry); else for a time
+  // spread's far leg the vol surface interpolated to its DTE; else the ticket IV.
+  const payCurve = (() => {
+    if (is0 || !Array.isArray(r.legs) || !r.legs.length) return null;
+    const spot = fv(i45, 'price'), baseIV = fv(i45, 'iv');
+    if (!(spot > 0) || !(baseIV > 0)) return null;
+    const tradeDte = parseInt(i45.dte, 10) || 45;
+    const dteOf = l => { const e = legExpiryOf(l); return e ? dteBetween(todayYmd, e) : tradeDte; };
+    const rows = legGreeks && legGreeks.bag === '45' && Array.isArray(legGreeks.rows) ? legGreeks.rows : [];
+    const ivOf = l => {
+      const e = legExpiryOf(l);
+      const right = String(l.label || '').toLowerCase().includes('put') ? 'P' : 'C';
+      const row = rows.find(x => x.strike === Number(l.strike) && x.right === right && (isTimeSpread ? x.expiry === e : true));
+      if (row && row.iv > 0) return row.iv;
+      if (isTimeSpread && e) {
+        const dd = dteBetween(todayYmd, e);
+        const vmE = volMeta && volMeta.expiries;
+        return ivAtDte(dd, tradeDte, baseIV, vmE && vmE.backDte, fv(i45, 'ivBack'));
+      }
+      return null;
+    };
+    const divYield = divYieldOf(i45.underlying);
+    const cl = curveLegs(r.legs, { dteOf, ivOf, baseIV, divYield });
+    if (!cl) return null;
+    const { net, source } = entryNet(cl, spot, ticketNet, cashType);
+    if (net == null) return null;
+    const [lo, hi] = priceRange(cl, spot, baseIV);
+    const nd = nearDteOf(cl);
+    // ATM IV to the near expiry for P(profit): the near leg's own IV, else the ticket IV.
+    const nearLeg = cl.find(l => l.dte === nd);
+    const sigmaNear = nearLeg ? nearLeg.iv : baseIV / 100;
+    const atExpiry = curveAt(cl, { net, lo, hi, days: nd });
+    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl), sigmaNear, divYield,
+      atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
+  })();
+  // Sizing suggestions for 45DTE come from the expiry curve (near expiry for a time
+  // spread) — the engine's capture fractions already model the 21-DTE exit, so
+  // feeding it the at-close numbers would discount the trade twice. Only offered
+  // once the ticket carries a real fill; a model-priced curve is a picture, not a fill.
+  const pay45 = payCurve && payCurve.netSource === 'ticket' ? payCurve.atExpiry : null;
+  const sizingPay = r.payoff || pay45;
+
   // ── Trade choices (Oct 2026) ──
   // Built from stratCompare (current + next two, each a full engine run). The
   // current card uses this ticket's own payoff and fill. Alternatives are drawn at
@@ -1312,7 +1360,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const choiceList = (!hasBlocker && Array.isArray(stratCompare)) ? stratCompare.map(c => {
     const res = c.res || {};
     const isCur = !!c.current;
-    const netNow = parseFloat(ticketNet);
+    // Signed by the structure's cash type: a debit typed as a positive number (the
+    // way TWS shows it) was drawn and labelled as a credit.
+    const netNow = signedNet(ticketNet, cashType);
     let pay = null, priced = 'shape', netShow = null;
     if (isCur) {
       if (res.payoff && Array.isArray(res.payoff.points) && res.payoff.points.length > 1) { pay = res.payoff; priced = 'ticket'; }
@@ -1324,7 +1374,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       priced = fair != null && pay && !pay.shapeOnly ? 'fair' : 'shape';
       netShow = fair;
     }
-    if (pay && /calendar|diagonal/i.test(c.name)) { pay = null; priced = 'shape'; }
+    if (/calendar|diagonal/i.test(c.name)) {
+      // Intrinsic maths can't draw a time spread; the current ticket's BS curve can.
+      if (isCur && payCurve) { pay = payCurve.atExpiry; priced = payCurve.netSource === 'ticket' ? 'ticket' : 'fair'; }
+      else { pay = null; priced = 'shape'; }
+    }
     const rr = pay && !pay.shapeOnly && pay.maxProfit > 0 && pay.maxLoss < 0 ? pay.maxProfit / Math.abs(pay.maxLoss) : null;
     return {
       name: c.name, rating: c.rating, isCur, override: isCur && isOverride,
@@ -1352,8 +1406,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   }
 
   // ── Price map inputs (Oct 2026) ──
-  const netNum = parseFloat(ticketNet);
-  const mapPay = (hasBlocker || /calendar|diagonal/i.test(effectiveStrat || '')) ? null
+  const netNum = signedNet(ticketNet, cashType);
+  const mapPay = hasBlocker ? null
+    : /calendar|diagonal/i.test(effectiveStrat || '') ? (payCurve ? payCurve.atExpiry : null)
     : (r.payoff && Array.isArray(r.payoff.points) && r.payoff.points.length > 1) ? r.payoff
     : legsPayoff(r.legs, isFinite(netNum) && netNum !== 0 ? netNum : null);
   const mapEM = is0 ? (r.emRemaining || 0) : (r.em45 || 0);
@@ -1414,7 +1469,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       if (Array.isArray(d.legs)) {
         fetchedRows = d.legs.filter(l => l.greeks && l.greeks.delta != null && isFinite(l.greeks.delta))
           .map(l => ({ strike: Number(l.strike), right: String(l.right || '').toUpperCase(),
-            delta: l.greeks.delta, iv: l.greeks.iv }));
+            delta: l.greeks.delta, iv: l.greeks.iv, ...(l.expiry ? { expiry: String(l.expiry) } : {}) }));
         setLegGreeks({ bag, asOf: d.asOf || new Date().toISOString(), rows: fetchedRows });
       }
       fetchedLegs = legsSrc;
@@ -2512,10 +2567,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {n.sizing && (
                 <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-start'}}>
                   <NeedNum label="Win $" value={secBag.win} onChange={v=>is0?set0('win',v):set45('win',v)}
-                    suggest={r.payoff?.maxProfit > 0 ? Math.round(r.payoff.maxProfit) : null} />
+                    suggest={sizingPay?.maxProfit > 0 ? Math.round(sizingPay.maxProfit) : null} />
                   <NeedNum label="Risk $" value={secBag.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}
-                    suggest={r.payoff && Number.isFinite(r.payoff.maxLoss) && r.payoff.maxLoss !== 0 ? Math.round(Math.abs(r.payoff.maxLoss)) : null} />
-                  <NeedNum label="POP %" value={secBag.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)} />
+                    suggest={sizingPay && Number.isFinite(sizingPay.maxLoss) && sizingPay.maxLoss !== 0 ? Math.round(Math.abs(sizingPay.maxLoss)) : null} />
+                  <NeedNum label="POP %" value={secBag.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}
+                    suggest={!is0 && pay45 && payCurve.popExpiry != null ? Math.round(payCurve.popExpiry * 100) : null} />
                 </div>
               )}
               {(n.actions || []).map(a => (
@@ -3067,7 +3123,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
             <div>
               <Inp label="Win amount ($)" field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
-              <PrefillChip payoffVal={r.payoff?.maxProfit} fieldVal={is0?i0.win:i45.win}
+              <PrefillChip payoffVal={sizingPay?.maxProfit} fieldVal={is0?i0.win:i45.win}
                 onFill={v=>is0?set0('win',v):set45('win',v)}/>
             </div>
             <div>
@@ -3100,7 +3156,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 }}
               />
               {r.kellyDollar > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
-              <PrefillChip payoffVal={r.payoff?.maxLoss} fieldVal={is0?i0.risk:i45.risk}
+              <PrefillChip payoffVal={sizingPay?.maxLoss} fieldVal={is0?i0.risk:i45.risk}
                 onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
             </div>
           </div>
@@ -3563,6 +3619,21 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           </div>
           <div className="empty:hidden" style={tabShow('timing')}>
+          {/* Payoff over time — 45DTE: today / 21-DTE close / expiry, calendars included */}
+          {!is0 && payCurve && (
+            <div className="card">
+              <SectionLabel white info="Position P&L on any date up to expiry, TWS performance-graph style. Opens on the 21-DTE hard close: that is the curve a 45DTE trade realises, since it never reaches expiry. Solid = chosen date, with a band for IV moving ±N vol points. Dotted = today. Dashed = expiry (near expiry for a calendar or diagonal). Each leg is priced with Black-Scholes at its own expiry and IV — Fetch Greeks first for the exact leg IVs. Drag the slider or hover the chart for P&L at a price.">Payoff over time</SectionLabel>
+              <PayoffTimeChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
+                lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
+                closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
+                underlying={i45.underlying} divYield={payCurve.divYield} />
+            </div>
+          )}
+          {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
+            <div className="card" style={{ fontSize: 13, color: '#a8b2be' }}>
+              Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.
+            </div>
+          )}
           {/* Payoff diagram — full width */}
           {r.payoff && r.payoff.points.length > 0 && (
             <div className="card">
@@ -3971,6 +4042,14 @@ function NeedNum({ label, value, onChange, suggest }) {
   );
 }
 
+// Net per share, credit > 0, from what was typed: a strategy that is always a debit
+// (or always a credit) takes that sign whatever was typed; 'varies' keeps the sign.
+function signedNet(typed, cashType) {
+  const n = parseFloat(typed);
+  if (!isFinite(n) || n === 0) return NaN;
+  return cashType === 'debit' ? -Math.abs(n) : cashType === 'credit' ? Math.abs(n) : n;
+}
+
 // ── Trade choice cards (Oct 2026) ──
 // Expiry payoff from engine legs, mirroring calc0dte's generic payoff: intrinsic
 // per leg × side × qty, plus the per-share net (credit > 0). With no net the
@@ -4045,7 +4124,8 @@ function strikeMarks(legs) {
     const lb = String(l.label || '').toLowerCase();
     const m = by.get(l.strike) || { strike: l.strike, short: false, n: 0 };
     m.short = m.short || lb.includes('short') || lb.includes('sell');
-    m.n += /x2\b/.test(lb) ? 2 : 1;
+    // A calendar's two legs share a strike but not an expiry — one mark, not "2×".
+    m.n += legRole(lb) ? 0.5 : /x2\b/.test(lb) ? 2 : 1;
     by.set(l.strike, m);
   });
   return [...by.values()].map(m => ({ strike: m.strike, short: m.short, x2: m.n > 1 })).sort((a, b) => a.strike - b.strike);
