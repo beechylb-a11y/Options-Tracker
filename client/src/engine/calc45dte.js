@@ -5,6 +5,7 @@
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE } from './data.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
+import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
 
 function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
@@ -462,6 +463,16 @@ export function calc45DTE(inputs) {
   _ev45.warnings.forEach(w => warnings.push(w));
   const notices = [..._ev45.notices];
 
+  // ── Delta cross-check and delta strikes (R-49, Oct 2026) — see calc0dte.js ──
+  const deltaCheck = deltaCrossCheck({ legs, strat: legStrat, horizon: '45dte',
+    legGreeks: inputs.legGreeks || null, pop, price });
+  deltaCheck.warnings.forEach(w => warnings.push(w));
+  deltaCheck.notices.forEach(n => notices.push(n));
+  const deltaPlan = deltaCheck.applicable && Array.isArray(inputs.legGreeks) && inputs.legGreeks.length
+    ? deltaStrikePlan({ legs, strat: legStrat, horizon: '45dte', price, legGreeks: inputs.legGreeks,
+        T: (dte > 0 ? dte : 45) / 365, underlying })
+    : null;
+
   let decision, decisionClass;
   if (hardBlocker) { decision='No trade'; decisionClass='nogo'; }
   else if (setup === 'No setup') { decision='No trade'; decisionClass='nogo'; }
@@ -564,7 +575,7 @@ export function calc45DTE(inputs) {
     termDiff, termLabel, skew,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
-    legs, engineLegs, strikeOrderWarning, strikeLine,
+    legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan,
     eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,

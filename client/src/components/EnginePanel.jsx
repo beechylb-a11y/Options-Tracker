@@ -6,6 +6,7 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
 import { tradingSession } from '../engine/session';
+import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 
@@ -262,6 +263,86 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   );
 }
 
+// ── Strike method + delta cross-check strip (R-49, Oct 2026) ──
+// Sits under the strike chips. One line chooses how strikes are built (EM | Delta |
+// Both); one line shows each short's live delta against its band and the POP those
+// deltas imply; and, when the delta method would place the shorts differently, one
+// line shows where — with the button that applies it or goes back to EM.
+function DeltaStrip({ check, plan, method, onMethod, builtBy, confirmed, pop, legs,
+  onFetch, fetching, onApply, applying, onBack }) {
+  const seg = on => ({ padding:'2px 10px', fontSize:12, fontWeight:600, cursor:'pointer',
+    border:'1px solid ' + (on ? '#58a6ff' : '#30363d'), background: on ? '#0d1a2b' : '#0d1117',
+    color: on ? '#58a6ff' : '#a8b2be' });
+  const link = { color:'#58a6ff', textDecoration:'underline', cursor:'pointer' };
+  const methods = [['em','EM'], ['delta','Delta'], ['both','Both']];
+  const ip = check.impliedPop != null ? check.impliedPop * 100 : null;
+  const gapBad = check.popGap != null && Math.abs(check.popGap) > 10;
+  const planStrikes = plan ? plan.legs.map(l => l.strike).join(' / ') : '';
+  const showPlan = plan && plan.changed && method !== 'em' && builtBy !== 'Delta';
+  return (
+    <div data-testid="delta-strip" style={{marginTop:8,display:'flex',flexDirection:'column',gap:5,fontSize:12.5,color:'#a8b2be'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <span style={{fontSize:11,letterSpacing:'0.06em',textTransform:'uppercase'}}>Strikes by</span>
+        <span style={{display:'inline-flex'}}>
+          {methods.map(([id, lbl], i) => (
+            <button key={id} onClick={() => onMethod(id)} data-testid={'method-' + id}
+              title={id === 'em' ? 'Expected-move strikes; deltas are a cross-check only'
+                : id === 'delta' ? 'Short strikes placed at their target delta after Fetch Greeks'
+                : 'EM strikes on the ticket, delta strikes alongside'}
+              style={{...seg(method === id), borderRadius: i === 0 ? '6px 0 0 6px' : i === 2 ? '0 6px 6px 0' : 0,
+                marginLeft: i ? -1 : 0}}>{lbl}</button>
+          ))}
+        </span>
+        <span>on ticket: <span style={{color:'#c9d1d9'}}>{builtBy}</span>
+          {builtBy === 'Delta' && <span style={{color: confirmed ? '#3fb950' : '#d29922'}}>{confirmed ? ' ✓ confirmed' : ' · estimated'}</span>}</span>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+        {!check.haveGreeks ? (
+          <span>{check.stale ? 'Strikes changed since the last fetch — ' : 'No live deltas yet — '}
+            <span onClick={onFetch} style={link}>{fetching ? 'fetching…' : 'fetch greeks'}</span>
+            {' '}to check the short strikes{method !== 'em' ? ' and solve delta strikes' : ''}.</span>
+        ) : check.suspended ? (
+          <span>Delta check off — final hour (0DTE deltas collapse toward zero).</span>
+        ) : (<>
+          {check.rows.filter(x => x.target != null).map(x => (
+            <span key={x.strike + x.right} className="mono"
+              title={`Band ${x.lo}–${x.hi}Δ, target ${x.target}Δ`}
+              style={{padding:'1px 7px',borderRadius:5,background: x.inBand ? '#0d2818' : '#2d1f0a',
+                color: x.inBand ? '#3fb950' : '#e3a008'}}>
+              {x.strike}{x.right} {x.delta.toFixed(0)}Δ <span style={{opacity:0.7}}>({x.lo}–{x.hi})</span>
+            </span>
+          ))}
+          {ip != null && (
+            <span className="mono" style={{color: gapBad ? '#e3a008' : '#a8b2be'}}
+              title="POP ≈ 1 − the short deltas (one per side): the chance both shorts expire out of the money">
+              POP by delta ~{ip.toFixed(0)}%{pop > 0 ? ` · entered ${pop.toFixed(0)}%` : ''}
+              {check.popGap != null ? ` (${check.popGap > 0 ? '+' : ''}${check.popGap.toFixed(0)})` : ''}
+            </span>
+          )}
+        </>)}
+      </div>
+      {showPlan && (
+        <div data-testid="delta-plan" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',
+          padding:'5px 9px',borderRadius:6,border:'1px solid #21262d',background:'#0d1117'}}>
+          <span style={{color:'#c9d1d9',fontWeight:600}}>Delta strikes</span>
+          <span className="mono" style={{color:'#c9d1d9'}}>{planStrikes}</span>
+          <span>{plan.moves.map(m => `${m.right === 'P' ? 'put' : 'call'} ${m.from}→${m.to} (~${m.estDelta.toFixed(0)}Δ)`).join(' · ')}</span>
+          <button onClick={onApply} disabled={applying}
+            style={{marginLeft:'auto',padding:'3px 10px',borderRadius:6,fontSize:12,fontWeight:600,cursor:'pointer',
+              background:'#1f6feb',color:'#fff',border:'none',opacity: applying ? 0.6 : 1}}>
+            {applying ? 'Confirming…' : 'Use delta strikes'}</button>
+        </div>
+      )}
+      {builtBy === 'Delta' && method !== 'delta' && (
+        <span>Delta strikes on the ticket · <span onClick={onBack} style={link}>back to EM strikes</span></span>
+      )}
+      {plan && !plan.changed && method !== 'em' && builtBy !== 'Delta' && check.haveGreeks && (
+        <span>The EM strikes already sit at the target delta.</span>
+      )}
+    </div>
+  );
+}
+
 export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, onSummary, toast, onOpenInTab }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
@@ -301,6 +382,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // the tab like overrideStrat so a tab reopens on the structure you chose, and read
   // by Log trade and Print summary so the record says which one actually went on.
   const [vertVariant, setVertVariant] = useState(init?.vertVariant ?? 'engine');
+  // ── Strike method (R-49, Oct 2026) ──
+  // 'em'    — expected-move strikes; deltas are only a cross-check.
+  // 'delta' — short strikes placed at their target delta (applied after Fetch Greeks).
+  // 'both'  — EM strikes on the ticket, delta strikes alongside to compare or switch to.
+  // Defaults: EM for 0DTE (it tracks the time left in the session exactly), Delta for
+  // 45DTE (it carries skew and is stable over days). The last choice per engine is
+  // remembered in this browser; a tab keeps its own.
+  const [strikeMethod, setStrikeMethodState] = useState(() => {
+    if (init?.strikeMethod) return init.strikeMethod;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('ot_strike_method')) || {}; } catch (e) { /* private mode */ }
+    return { '0': saved['0'] || DEFAULT_STRIKE_METHOD['0dte'], '45': saved['45'] || DEFAULT_STRIKE_METHOD['45dte'] };
+  });
+  // Per-leg greeks from the last Fetch Greeks: { bag, asOf, rows: [{ strike, right, delta, iv }] }.
+  // The delta check matches them to legs by strike, so a strike edited afterwards simply
+  // reads as "not fetched" rather than borrowing another strike's delta.
+  const [legGreeks, setLegGreeks] = useState(init?.legGreeks ?? null);
+  // The strikes the delta method last applied: { bag, strat, map }. Log trade compares the
+  // live overrides with it to record which method actually built the ticket.
+  const [deltaApplied, setDeltaApplied] = useState(init?.deltaApplied ?? null);
+  const [applyingDelta, setApplyingDelta] = useState(false);
   // The last raw bridge pull: what it gave us, what it did not, and when. This is
   // what lets a re-fill say "these three did not come back" instead of quietly
   // leaving stale numbers behind a LIVE badge.
@@ -476,8 +578,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -527,6 +629,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrikes: overrideStrikes['0']?.map || null,
           overrideStrikesStrat: overrideStrikes['0']?.strat || null,
           vertVariant,
+          legGreeks: legGreeks && legGreeks.bag === '0' ? legGreeks.rows : null,
+          hoursToBell: tradingSession().hoursToBell,
           historyByStrategy: strategyHistory || null,
           wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
             lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
@@ -555,6 +659,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrategy: overrideStrat,
           overrideStrikes: overrideStrikes['45']?.map || null,
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
+          legGreeks: legGreeks && legGreeks.bag === '45' ? legGreeks.rows : null,
           historyByStrategy: strategyHistory || null,
           wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
             lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
@@ -588,7 +693,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, commRateAcct]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, commRateAcct, legGreeks]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1184,13 +1289,19 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   // Show VWAP scaling notice (vwapScaled defined above)
 
-  async function handleFetchGreeks() {
+  // opts.autoApply === false: a refetch the delta method itself asked for, which must
+  // not trigger another apply. Click handlers pass an event here, which reads as auto.
+  async function handleFetchGreeks(opts) {
+    const autoApply = !(opts && opts.autoApply === false);
+    let fetchedRows = null, fetchedLegs = null;
     setFetchingGreeks(true);
     try {
       const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
       if (!bridgeUrl) { notify('Set IBKR Bridge URL in Settings first'); setFetchingGreeks(false); return; }
       const underlying = is0 ? i0.underlying : i45.underlying;
-      const legsSrc = r?.legs || [];
+      // opts.legs: the delta method refetching for legs it has just set, before the
+      // re-render that would put them in r.legs.
+      const legsSrc = (opts && Array.isArray(opts.legs) && opts.legs) || r?.legs || [];
       if (!legsSrc.length) { notify('No strikes computed yet — fill in the setup first.'); setFetchingGreeks(false); return; }
 
       // Expiry (YYYYMMDD) — shared derivation with the strike ladder popover.
@@ -1221,6 +1332,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice,
         greekSource: d.greekSource, greeksMixed: !!d.greeksMixed } : null);
       const freshPx = (d.undPrice != null && d.undPrice > 0) ? String(d.undPrice) : null;
+      // Keep every leg's own delta and IV for the delta cross-check (R-49). Only the
+      // wing deltas used to survive this call.
+      if (Array.isArray(d.legs)) {
+        fetchedRows = d.legs.filter(l => l.greeks && l.greeks.delta != null && isFinite(l.greeks.delta))
+          .map(l => ({ strike: Number(l.strike), right: String(l.right || '').toUpperCase(),
+            delta: l.greeks.delta, iv: l.greeks.iv }));
+        setLegGreeks({ bag, asOf: d.asOf || new Date().toISOString(), rows: fetchedRows });
+      }
+      fetchedLegs = legsSrc;
 
       // Net position greeks. gamStrike (pin magnet) ~ the body strike for flies.
       const bodyLeg = legsSrc.find(l => (l.label || '').toLowerCase().includes('body'));
@@ -1294,7 +1414,116 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       notify('Fetch Greeks failed: ' + e.message);
     }
     setFetchingGreeks(false);
+    // Delta method: place the shorts at their target delta straight from these deltas.
+    // Hand-edited strikes are left alone — the apply button is still there if wanted.
+    if (autoApply && fetchedRows && fetchedRows.length && strikeMethod[bag] === 'delta' && strikesBuiltBy !== 'Manual') {
+      const plan = deltaStrikePlan({ legs: fetchedLegs, strat: r.legStrat, horizon: deltaHorizon,
+        price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying });
+      if (plan && plan.changed) await applyDeltaStrikes({ plan, rows: fetchedRows, legs: fetchedLegs });
+      else if (plan) setDeltaApplied({ bag, strat: r.legStrat || '', map: (ovNow && ovNow.map) || {}, confirmed: true, at: new Date().toISOString() });
+    }
   }
+
+  // ── Delta strikes (R-49) ──
+  // r.deltaPlan is the estimate: each short's strike solved from its own live delta.
+  // Before anything is applied, the estimate is confirmed against live greeks on a
+  // small bracket of listed strikes around it, and the strike whose delta is nearest the
+  // target wins. The structure's wings move with their shorts, so widths are unchanged.
+  // Then the greeks are fetched again for the new legs, so the net greeks, combo quote,
+  // P(max loss) and the check itself all describe the trade that is now on the ticket.
+  const deltaHorizon = is0 ? '0dte' : '45dte';
+  const deltaT = () => is0 ? (tradingSession().hoursToBell || 1) / 8760 : (fv(i45, 'dte') || 45) / 365;
+  function setStrikeMethod(m) {
+    setStrikeMethodState(prev => {
+      const next = { ...prev, [bag]: m };
+      try { localStorage.setItem('ot_strike_method', JSON.stringify(next)); } catch (e) { /* private mode */ }
+      return next;
+    });
+    if (m === 'delta' && r.deltaPlan && r.deltaPlan.changed && !overrideStrikes[bag]) applyDeltaStrikes();
+    if (m === 'em' && strikesBuiltBy === 'Delta') backToEmStrikes();
+  }
+  // opts (from Fetch Greeks in Delta mode): { plan, rows, legs } computed from the deltas
+  // just fetched, which have not reached r yet. A click passes an event: use r.
+  async function applyDeltaStrikes(opts) {
+    const o = opts && opts.plan ? opts : {};
+    const plan0 = o.plan || r.deltaPlan;
+    const rowsNow = o.rows || (legGreeks ? legGreeks.rows : null);
+    const legsNow = o.legs || r.legs;
+    if (!plan0 || !plan0.moves || !plan0.moves.length) {
+      notify('Fetch greeks first — delta strikes are solved from the live deltas of the short legs.');
+      return;
+    }
+    setApplyingDelta(true);
+    let plan = plan0, confirmed = false;
+    try {
+      let bridgeUrl = '';
+      try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+      if (bridgeUrl) {
+        const underlying = secBag.underlying;
+        const brackets = {};
+        const req = [];
+        plan0.moves.forEach(m => {
+          brackets[m.idx] = bracketStrikes(m.to, underlying, 2);
+          brackets[m.idx].forEach(k => {
+            if (!req.some(q => q.strike === k && q.right === m.right)) req.push({ strike: k, right: m.right, qty: 1 });
+          });
+        });
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 20000);
+        const url = bridgeUrl + '/api/option-greeks?underlying=' + underlying
+          + '&expiry=' + deriveExpiryYYYYMMDD() + '&legs=' + encodeURIComponent(JSON.stringify(req));
+        const resp = await fetch(url, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
+        clearTimeout(t);
+        const d = await resp.json();
+        if (!d.error && Array.isArray(d.legs)) {
+          const shortStrikes = {};
+          plan0.moves.forEach(m => {
+            const rows = d.legs
+              .filter(l => String(l.right || '').toUpperCase() === m.right && l.greeks && l.greeks.delta != null
+                && brackets[m.idx].includes(Number(l.strike)))
+              .map(l => ({ strike: Number(l.strike), delta: l.greeks.delta }));
+            const pick = pickByDelta(rows, m.target);
+            if (pick) shortStrikes[m.idx] = pick.strike;
+          });
+          if (Object.keys(shortStrikes).length === plan0.moves.length) {
+            const p2 = deltaStrikePlan({ legs: legsNow, strat: r.legStrat, horizon: deltaHorizon,
+              price: fv(secBag, 'price'), legGreeks: rowsNow, T: deltaT(),
+              underlying, shortStrikes });
+            if (p2) { plan = p2; confirmed = true; }
+          }
+        }
+      }
+    } catch (e) { /* bridge unreachable: fall back to the estimate, and say so below */ }
+    const eng = r.engineLegs || [];
+    const map = {};
+    plan.legs.forEach((l, i) => { if (eng[i] && l.strike !== eng[i].strike) map[i] = l.strike; });
+    setOverrideStrikes(prev => {
+      const out = { ...prev };
+      if (Object.keys(map).length) out[bag] = { strat: r.legStrat || '', map }; else delete out[bag];
+      return out;
+    });
+    setDeltaApplied({ bag, strat: r.legStrat || '', map, confirmed, at: new Date().toISOString() });
+    markGreeksStale();
+    setApplyingDelta(false);
+    notify(confirmed
+      ? 'Delta strikes applied and confirmed against live greeks.'
+      : 'Delta strikes applied from the estimate only — the bridge could not confirm them.',
+      confirmed ? 'success' : 'error');
+    // Refresh greeks for the legs now on the ticket (net greeks, combo quote, and the
+    // delta check itself), without re-applying.
+    await handleFetchGreeks({ autoApply: false, legs: plan.legs });
+  }
+  function backToEmStrikes() {
+    resetStrikes();
+    setDeltaApplied(null);
+  }
+  // Which method built the strikes on the ticket right now: 'Delta' when the overrides
+  // are exactly what the delta method applied, 'Manual' for any other hand edit, else 'EM'.
+  const ovNow = overrideStrikes[bag];
+  const deltaMatches = !!(deltaApplied && deltaApplied.bag === bag && deltaApplied.strat === (r.legStrat || '')
+    && JSON.stringify(deltaApplied.map || {}) === JSON.stringify((ovNow && ovNow.map) || {}));
+  const strikesBuiltBy = deltaMatches ? 'Delta' : ovNow ? 'Manual' : 'EM';
+
 
   // Load an option structure from TWS open positions into the ticket, then
   // chain the market-data auto-fill. Auto-loads if one structure, else picker.
@@ -1657,7 +1886,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     lines.push(`Strikes: ${r.legs.map(l=>`${l.strike} ${l.label}`).join(' | ')}`);
     if (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length
         && r.legs.some((l,i)=>l.strike!==r.engineLegs[i].strike)) {
-      lines.push(`Engine strikes (before hand edits): ${r.engineLegs.map(l=>l.strike).join(' / ')}`);
+      lines.push(`Engine strikes (${strikesBuiltBy === 'Delta' ? 'EM, before delta strikes' : 'before hand edits'}): ${r.engineLegs.map(l=>l.strike).join(' / ')}`);
+    }
+    if (r.deltaCheck && r.deltaCheck.applicable) {
+      const dc = r.deltaCheck;
+      lines.push(`Strikes by: ${strikesBuiltBy}${strikesBuiltBy === 'Delta' && !(deltaApplied && deltaApplied.confirmed) ? ' (estimated)' : ''}`
+        + (dc.haveGreeks ? ` · short deltas ${shortDeltaSummary(dc)}` : ' · short deltas not fetched')
+        + (dc.impliedPop != null ? ` · POP by delta ~${(dc.impliedPop * 100).toFixed(0)}%` : '')
+        + (dc.suspended ? ' · delta check off (final hour)' : ''));
     }
     if (r.skewNote) lines.push(r.skewNote);
     if (is0 && r.holdToExpiry) lines.push(`Expiry: ${r.holdToExpiry.label} — ${r.holdToExpiry.note}`);
@@ -1724,6 +1960,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // included); engineStrikes is what the engine itself suggested. Identical
       // when nothing was edited.
       engineStrikes:((r.engineLegs && r.engineLegs.length ? r.engineLegs : r.legs).map(l=>l.strike).join(' / ')),
+      // R-49: which method built the strikes, the shorts' live deltas, and the POP
+      // those deltas imply — so the review can compare EM-built and delta-built trades.
+      strikeMethod: strikesBuiltBy + (strikesBuiltBy === 'Delta' && !(deltaApplied && deltaApplied.confirmed) ? ' (estimated)' : ''),
+      shortDeltas: r.deltaCheck && r.deltaCheck.haveGreeks ? shortDeltaSummary(r.deltaCheck) : '',
+      impliedPop: r.deltaCheck && r.deltaCheck.impliedPop != null ? (r.deltaCheck.impliedPop * 100).toFixed(0) : '',
       marketBehaviour:r.behaviour,
       notes: fullNotes,
       price:fv(inp,'price'), vix:fv(inp,'vix'),
@@ -1967,6 +2208,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             )}
             {r.strikeOrderWarning && (
               <div style={{marginTop:4,fontSize:12.5,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
+            )}
+            {r.deltaCheck && r.deltaCheck.applicable && (
+              <DeltaStrip check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]}
+                onMethod={setStrikeMethod} builtBy={strikesBuiltBy}
+                confirmed={!!(deltaMatches && deltaApplied && deltaApplied.confirmed)}
+                pop={fv(secBag, 'pop')} legs={r.legs}
+                onFetch={handleFetchGreeks} fetching={fetchingGreeks}
+                onApply={applyDeltaStrikes} applying={applyingDelta} onBack={backToEmStrikes} />
             )}
           </div>
         )}
