@@ -5,7 +5,7 @@ import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
-import { tradingSession } from '../engine/session';
+import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
@@ -34,9 +34,11 @@ const agoOf = (ts, now) => {
 
 // Ticker + expiry. 0DTE expires the day the tab was opened; 45DTE is that day
 // plus whatever DTE the panel is carrying.
+// Dated by the NEW YORK session the tab was opened for, not the computer's date:
+// a tab opened at 02:00 in Melbourne during Monday's session is Monday's. (Oct 2026.)
 function tabLabel(mode, underlying, createdAt, dte) {
   const u = underlying || 'SPX';
-  const d = new Date(createdAt || Date.now());
+  const d = new Date(sessionDateOf(new Date(createdAt || Date.now()).toISOString()) + 'T12:00:00');
   if (mode !== '0dte') {
     const n = parseFloat(dte);
     d.setDate(d.getDate() + (isFinite(n) && n > 0 ? Math.round(n) : 45));
@@ -281,7 +283,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Manual ticket state
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({
-    underlying: '', strategy: '', expiry: '', entryDate: new Date().toISOString().split('T')[0],
+    underlying: '', strategy: '', expiry: '', entryDate: lastSessionDate(),
     winAmount: '', riskPerContract: '', contracts: '1', notes: ''
   });
   const [manualSaving, setManualSaving] = useState(false);
@@ -415,7 +417,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       showToast('Manual trade ticket created', 'success');
       setShowManual(false);
       setManualForm({
-        underlying: '', strategy: '', expiry: '', entryDate: new Date().toISOString().split('T')[0],
+        underlying: '', strategy: '', expiry: '', entryDate: lastSessionDate(),
         winAmount: '', riskPerContract: '', contracts: '1', notes: ''
       });
       loadDecisions();
@@ -646,7 +648,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                               // the chained market-data + greeks fetches). Expiry
                               // for IVx only when this is a same-day (0DTE) ticket;
                               // otherwise price/VIX still arrive, IVx stays blank.
-                              const today = new Date().toISOString().split('T')[0];
+                              const today = lastSessionDate();
                               const snap = startCloseVolSnapshot(m.ticket.underlying,
                                 m.ticket.entryDate === today ? { expiry: today } : {});
                               const rowIdx = m.ticket.rowIndex;
@@ -656,7 +658,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                                 }
                               }, 14000);
                               await api.closeTicket(m.ticket.rowIndex, {
-                                closeDate: new Date().toISOString().split('T')[0],
+                                closeDate: lastSessionDate(),
                                 grossPnl: m.grossPnl != null ? m.grossPnl : m.totalPnl,
                                 fees: m.totalComm,
                                 notes: m.pnlBasis === 'ib-realised' ? 'P&L from IBKR realised (after commission); entry commission not itemised' : '',
@@ -665,7 +667,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                               });
                             } else {
                               await api.closeTrade(m.ticket.rowIndex, {
-                                closeDate: new Date().toISOString().split('T')[0],
+                                closeDate: lastSessionDate(),
                                 closePnl: m.totalPnl.toString(),
                                 closePrice: ''
                               });
@@ -700,7 +702,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       <div className="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
                       <span className="mono text-xs text-text-muted w-10">{dec.Engine}</span>
                       <span className="text-xs text-text-muted mono w-16">
-                        {dec.Timestamp ? new Date(dec.Timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}
+                        {dec.Timestamp ? sessionLabelOf(dec.Timestamp) : ''}
                       </span>
                       <span className="text-sm font-medium">{dec.Underlying}</span>
                       <span className="text-xs text-text-muted flex-1">{stratName}</span>
@@ -761,7 +763,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             )}
                           </>)}
                           <button title={hasEntryPrice(dec) ? 'Quick close: type the close price and P&L by hand' : 'This ticket has no Net Debit/Credit, so close it by typing the P&L'}
-                            onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: new Date().toISOString().split('T')[0], closePrice: '', grossPnl: '', fees: String(estCloseFees(dec)) });
+                            onClick={(e) => { e.stopPropagation(); setClosingIdx(isClosing ? null : globalIdx); setCloseForm({ closeDate: lastSessionDate(), closePrice: '', grossPnl: '', fees: String(estCloseFees(dec)) });
                             closeSnapRef.current = isClosing ? {} : startCloseVolSnapshot(dec.Underlying,
                               { expiry: dec.Engine === '0DTE' ? (dec.Timestamp || '').split('T')[0] : '' }); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-dim hover:bg-green text-white rounded-lg transition-colors">
@@ -853,7 +855,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pnl >= 0 ? 'bg-green' : 'bg-red'}`} />
                       <span className="mono text-xs text-text-muted w-10">{dec.Engine}</span>
                       <span className="text-xs text-text-muted mono w-16">
-                        {dec.Timestamp ? new Date(dec.Timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}
+                        {dec.Timestamp ? sessionLabelOf(dec.Timestamp) : ''}
                       </span>
                       <span className="text-sm font-medium">{dec.Underlying}</span>
                       <span className="text-xs text-text-muted flex-1">{stratName}</span>
@@ -947,7 +949,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                   const engineStrat = stratParts.length > 1 ? stratParts.slice(1, -1).join(' - ') : m.decision.strategy;
                   return (
                     <tr key={i} className="table-row">
-                      <td className="py-2 px-2 text-text-muted mono text-xs">{m.decision.timestamp ? new Date(m.decision.timestamp).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : ''}</td>
+                      <td className="py-2 px-2 text-text-muted mono text-xs">{m.decision.timestamp ? sessionLabelOf(m.decision.timestamp) : ''}</td>
                       <td className="py-2 px-2 font-medium">{m.decision.underlying}</td>
                       <td className="py-2 px-2 text-text-muted text-xs">{engineStrat}</td>
                       <td className="py-2 px-2 text-center">
@@ -1039,7 +1041,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           so switching tabs never discards a half-entered ticket. */}
       {tabs.map(t => (
         <div key={t.id} style={{ display: t.id === (activeTab && activeTab.id) ? 'block' : 'none' }}>
-          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog}
+          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt}
             accountConfig={accounts?.find(a => a.id === account) || {}}
             strategyHistory={strategyHistory}
             seed={t.seed} initialState={t.state}

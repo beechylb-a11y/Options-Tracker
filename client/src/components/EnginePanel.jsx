@@ -5,7 +5,7 @@ import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType } from '../engine/data';
-import { tradingSession } from '../engine/session';
+import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
@@ -355,7 +355,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
   );
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, onSummary, toast, onOpenInTab }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -1747,13 +1747,27 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // calendar day in ET. Both go on the ticket: the session date is what files it,
     // the wall clock is what tells you when you looked at it, and when they disagree
     // saying so is the whole point.
-    var _ses = tradingSession();
+    //
+    // Oct 2026: the session is the TICKET's (logged, else when its tab was opened or
+    // last priced live), not the print instant's. Printed after the close, a ticket
+    // built during Monday's session was being dated Tuesday. Every time on the page
+    // is New York time; the computer's own clock appears once, labelled.
+    var _ses = ticketSession({ loggedAt: loggedAt, createdAt: createdAt,
+      pricedAt: dataFresh && (dataFresh.pulledAt || dataFresh.asOf) });
+    var _now = tradingSession();
     var _printDate = _ses.dateISO;
-    var _printTime = _ses.etTime;
-    var _printStamp = _printDate + ' session \u00b7 printed ' + _ses.etDateISO + ' ' + _printTime + ' ET'
-      + (_ses.isNextSession ? ' (' + _ses.phase + ')' : '');
+    var _sesLong = fmtSessionDate(_ses.dateISO);
+    var _nowLong = fmtSessionDate(_now.etDateISO, { weekday: 'short', day: 'numeric', month: 'short' });
+    var _localNow = new Date().toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+    var _basisTxt = { logged: 'logged ', opened: 'opened ', priced: 'priced ', now: '' }[_ses.basis] || '';
+    var _basisAt = _ses.basis === 'logged' ? loggedAt : _ses.basis === 'opened' ? createdAt
+      : _ses.basis === 'priced' ? (dataFresh && (dataFresh.pulledAt || dataFresh.asOf)) : null;
+    var _basisClock = _basisAt ? tradingSession(new Date(_basisAt)).etTime + ' ET' : '';
+    var _printStamp = (_basisTxt && _basisClock ? 'Ticket ' + _basisTxt + _basisClock + ' \u00b7 ' : '')
+      + 'printed ' + _now.etTime + ' ET ' + _nowLong
+      + ' \u00b7 your computer: ' + _localNow.replace(/,/g, '');
 
-    var html = '<!DOCTYPE html><html><head><title>' + underlying + ' ' + effectiveStrat + ' — ' + _printDate + '</title>' +
+    var html = '<!DOCTYPE html><html><head><title>' + underlying + ' ' + effectiveStrat + ' — ' + _printDate + ' NY session</title>' +
       '<style>' +
       'body{font-family:-apple-system,sans-serif;max-width:700px;margin:40px auto;color:#e6edf3;background:#0d1117;padding:20px}' +
       'h1{font-size:22px;margin-bottom:4px}' +
@@ -1772,8 +1786,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '@media print{body{background:#fff;color:#1a1a1a}.leg-long{color:#1a7f37}.leg-short{color:#cf222e}}' +
       '</style></head><body>' +
       '<div class="decision">' + effectiveDecision + (isOverride ? '<span class="override">MANUAL OVERRIDE</span>' : '') + '</div>' +
-      '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') +
-        '<span style="float:right;font-size:13px;font-weight:400;color:#57606a">' + _printStamp + '</span></h1>' +
+      '<h1>' + underlying + ' \u2014 ' + effectiveStrat + ' \u2014 ' + r.contracts + ' contract' + (r.contracts !== 1 ? 's' : '') + '</h1>' +
+      '<div style="font-size:15px;font-weight:600;color:#c9d1d9;margin:2px 0 4px">' + _sesLong + ' \u00b7 New York session</div>' +
+      '<div style="font-size:12px;color:#8b949e;margin-bottom:6px">' + _printStamp + '</div>' +
       '<h2>' + (is0 ? r.dirLabel : r.outlook || '') + ' \u2014 max loss $' + (r.maxRisk ? r.maxRisk.toFixed(0) : '0') + '</h2>' +
       (r.tradeConfidence != null ?
         '<div style="margin-top:12px;padding:12px 16px;border-radius:8px;background:' + confBg + ';border:1px solid ' + confClr + '">' +

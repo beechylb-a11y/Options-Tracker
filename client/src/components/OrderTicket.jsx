@@ -4,6 +4,7 @@ import { unitsFromTicket, roundTripCommission } from '../utils/commission';
 import { useCommissionRate } from '../utils/useCommissionRate';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
+import { lastSessionDate } from '../engine/session';
 import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines,
   ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice
@@ -57,7 +58,7 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
   useEffect(() => { setCommission(acctRate); }, [acctRate]);
   const units = unitsFromTicket(pos.legs, pos.strategyRaw || pos.strategy) || 1;
   const rtFees = q => roundTripCommission(units, q, commission);
-  const [closeDate, setCloseDate] = useState(new Date().toISOString().split('T')[0]);
+  const [closeDate, setCloseDate] = useState(lastSessionDate());   // NY session date, not UTC
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);

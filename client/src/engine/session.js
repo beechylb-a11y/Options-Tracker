@@ -97,3 +97,60 @@ export function sessionDateOf(iso) {
   if (isNaN(d)) return '';
   return tradingSession(d).dateISO;
 }
+
+// ── Dates that must read in New York, not on the computer (Oct 2026) ──
+//
+// Two different questions, and mixing them was the bug:
+//   * Which session is a TICKET for? Fixed by when the ticket was built, not by
+//     when you happen to print it. A ticket priced during Monday's session and
+//     printed at 16:19 ET was being dated Tuesday — the next-session rule above,
+//     applied to the print instant — which in Melbourne is also the computer's
+//     date, so it looked like local time leaking in.
+//   * On which NY date did something already HAPPEN (a close, a fill)? The most
+//     recent session that has opened, never the next one.
+
+// The session a ticket belongs to.
+//   loggedAt  — when it was written to the log: decides outright.
+//   createdAt — when its tab was opened: a tab opened after the close is prep for
+//               the next session, one opened during the session is that session.
+//   pricedAt  — the last market-data pull. A pull DURING a later session moves a
+//               reused tab forward to it; an after-close pull moves nothing.
+// Returns the tradingSession() shape for the chosen instant plus `basis`.
+export function ticketSession({ loggedAt, createdAt, pricedAt } = {}, now = new Date()) {
+  const valid = x => x != null && x !== '' && !isNaN(new Date(x).getTime());
+  if (valid(loggedAt)) return { ...tradingSession(new Date(loggedAt)), basis: 'logged' };
+  let best = null;
+  if (valid(createdAt)) best = { ...tradingSession(new Date(createdAt)), basis: 'opened' };
+  if (valid(pricedAt)) {
+    const p = tradingSession(new Date(pricedAt));
+    if (!p.isNextSession && (!best || p.dateISO > best.dateISO)) best = { ...p, basis: 'priced' };
+  }
+  return best || { ...tradingSession(now), basis: 'now' };
+}
+
+// NY date of the most recent session that has opened — the default date for
+// anything being RECORDED (a close, a manual entry). 16:19 ET Monday → Monday;
+// 08:00 ET Tuesday (before the open) → Monday; Saturday → Friday.
+export function lastSessionDate(at = new Date()) {
+  const et = etClock(at);
+  const minutes = et.getHours() * 60 + et.getMinutes();
+  const d = new Date(et);
+  const dow = d.getDay();
+  const beforeOpen = minutes < OPEN_MINUTES;
+  if (dow === 0 || dow === 6 || beforeOpen) {
+    do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  }
+  return isoOf(d);
+}
+
+// "Mon 5 Oct 2026" for an ISO session date, read as a calendar date (no timezone).
+export function fmtSessionDate(iso, opts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return isNaN(d) ? '' : d.toLocaleDateString('en-AU', opts).replace(',', '');
+}
+
+// Short NY session label for a stored instant: "5 Oct".
+export function sessionLabelOf(ts) {
+  return fmtSessionDate(sessionDateOf(ts), { day: 'numeric', month: 'short' });
+}

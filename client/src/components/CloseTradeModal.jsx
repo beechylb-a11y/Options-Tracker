@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
+import { lastSessionDate } from '../engine/session';
 import { unitsFromTicket, roundTripCommission, pnlFromFills } from '../utils/commission';
 import { useCommissionRate } from '../utils/useCommissionRate';
 
@@ -45,7 +46,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
   const [fetchingTWS, setFetchingTWS] = useState(false);
   const [twsFills, setTwsFills] = useState(null);
   const [form, setForm] = useState({
-    closeDate: new Date().toISOString().split('T')[0],
+    closeDate: lastSessionDate(),   // NY date of the session just traded, not UTC
     closePnl: '',
     closePrice: '',
     partialQty: '',
