@@ -21,6 +21,7 @@ import {
   getClosesList
 } from './db.js';
 import { pnlFromFills, commissionRate } from '../client/src/utils/commission.js';
+import { captureStats } from '../client/src/engine/capture.js';
 import { parseCSV, processCSV } from './csvParser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -569,6 +570,19 @@ app.get('/api/tradelog', requireAuth, async (req, res) => {
     const rows = await getTradeLog();
     const headers = rows[0] || [];
     res.json(rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? '']))));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Capture tracker (Oct 2026): realised share of max profit (winners) and of max
+// risk (losers), per engine and strategy, from closed TradeLog tickets. The
+// engines blend their assumed capture fractions toward these as closes build up.
+app.get('/api/capture-stats', requireAuth, async (req, res) => {
+  try {
+    const rows = await getTradeLog();
+    const headers = rows[0] || [];
+    const objs = rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+    const account = req.query.account && req.query.account !== 'all' ? req.query.account : null;
+    res.json({ account: account || 'all', stats: captureStats(objs, { account }) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

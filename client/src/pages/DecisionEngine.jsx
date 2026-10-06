@@ -213,6 +213,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
   const [decisions, setDecisions] = useState([]);
   const [strategyHistory, setStrategyHistory] = useState(null);
+  // Realised capture per engine × strategy (Oct 2026) — the engines blend their
+  // assumed capture fractions toward it.
+  const [captureStats, setCaptureStats] = useState(null);
   const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
   const [comparison, setComparison] = useState(null);
   const [compLoading, setCompLoading] = useState(false);
@@ -319,6 +322,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     api.getStrategyHistory(account)
       .then(res => setStrategyHistory(res?.history || null))
       .catch(() => setStrategyHistory(null));
+    if (api.getCaptureStats) api.getCaptureStats(account)
+      .then(res => setCaptureStats(res?.stats || null))
+      .catch(() => setCaptureStats(null));
   }, [authenticated, account]);
 
   // Handle native engine log trade
@@ -1043,7 +1049,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         <div key={t.id} style={{ display: t.id === (activeTab && activeTab.id) ? 'block' : 'none' }}>
           <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt}
             accountConfig={accounts?.find(a => a.id === account) || {}}
-            strategyHistory={strategyHistory}
+            strategyHistory={strategyHistory} captureStats={captureStats}
             seed={t.seed} initialState={t.state}
             toast={showToast}
             onOpenInTab={addStateTab}

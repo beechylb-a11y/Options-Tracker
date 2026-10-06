@@ -2,7 +2,8 @@
 //  0DTE CALCULATION ENGINE v2
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
-import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions } from './data.js';
+import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions, EXIT_RULES } from './data.js';
+import { blendCapture } from './capture.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -201,6 +202,25 @@ export function getStrategyRatings(dirScore, gapBandIdx, rmRatio, isCompressing,
   return ratings;
 }
 
+// Assumed capture fractions (share of max profit / max risk) before any measured
+// history — exported so the capture tracker can show them. (Oct 2026.)
+export function assumedCapture0(s) {
+  if (s === 'Standard butterfly') return { winCap: 0.28, lossCap: 0.45 };
+  // Split from Standard (Aug 2026). The 1.5x far wing means the payoff does NOT
+  // return to zero beyond that wing — it settles at a constant −0.5 x D — so this is
+  // a mild broken-wing fly, not a symmetric one. Its losing tail is wider and
+  // one-sided, so losers give back more than a standard fly's. Sits between Standard
+  // (0.45) and BWB (0.50); winCap matches BWB because the same tilt is what pays.
+  if (s === 'Asymmetric butterfly') return { winCap: 0.30, lossCap: 0.48 };
+  if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
+  if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
+  if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
+  if (s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 }; // credit spreads
+  if (s.includes('Bull call') || s.includes('Bear put')) return { winCap: 0.50, lossCap: 0.60 }; // debit spreads
+  if (s.includes('Reversed') || s === 'Long Condor - Reversed') return { winCap: 0.45, lossCap: 0.55 };
+  return { winCap: 0.40, lossCap: 0.60 }; // sensible default
+}
+
 export function calc0DTE(inputs) {
   const { price, high, low, vwap5, vwap5_30, vwapRoll30, vwapRoll30Prior, vwapAccept,
     atr, em, atr5, atr2h, gamStrike,
@@ -221,7 +241,7 @@ export function calc0DTE(inputs) {
     // by strategy name (the engine indexes it by its own legStrat below).
     // wingDeltas: { lowerAbsDelta, upperAbsDelta } — |delta| of the outer wing
     // options from the live chain, for the skew-aware P(max loss) cross-check.
-    history: historyInput, historyByStrategy, wingDeltas,
+    history: historyInput, historyByStrategy, wingDeltas, captureByStrategy,
     // Quoted bid/ask of the WHOLE structure, from TWS or rebuilt from the per-leg
     // quotes the bridge returns. Optional: absent it the frictions gauge says so.
     comboBid, comboAsk } = inputs;
@@ -1889,24 +1909,20 @@ export function calc0DTE(inputs) {
   // lossCap = typical fraction of MAX LOSS actually given back on losers.
   // Butterflies: pin is rare, so winCap is low; managed exits keep lossCap < 1.
   // Condors/credit spreads: take-profit at ~50% credit, stops cap the loss.
-  function captureFractions(s) {
-    if (s === 'Standard butterfly') return { winCap: 0.28, lossCap: 0.45 };
-    // Split from Standard (Aug 2026). The 1.5x far wing means the payoff does NOT
-    // return to zero beyond that wing — it settles at a constant −0.5 x D — so this is
-    // a mild broken-wing fly, not a symmetric one. Its losing tail is wider and
-    // one-sided, so losers give back more than a standard fly's. Sits between Standard
-    // (0.45) and BWB (0.50); winCap matches BWB because the same tilt is what pays.
-    if (s === 'Asymmetric butterfly') return { winCap: 0.30, lossCap: 0.48 };
-    if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
-    if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
-    if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
-    if (s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 }; // credit spreads
-    if (s.includes('Bull call') || s.includes('Bear put')) return { winCap: 0.50, lossCap: 0.60 }; // debit spreads
-    if (s.includes('Reversed') || s === 'Long Condor - Reversed') return { winCap: 0.45, lossCap: 0.55 };
-    return { winCap: 0.40, lossCap: 0.60 }; // sensible default
-  }
+  const captureFractions = assumedCapture0;
 
-  const { winCap, lossCap } = captureFractions(legStrat);
+  const { winCap: baseWinCap, lossCap: baseLossCap } = captureFractions(legStrat);
+  // Capture fix (Oct 2026). 0DTE premium-selling trades are now closed at their
+  // tastylive target (EXIT_RULES: 25%), so the assumed average win is that target,
+  // not 0.50-0.55 of max profit, which roughly doubled their EV and Kelly size.
+  // Every strategy then blends toward its MEASURED capture from closed tickets
+  // (capture tracker) as winners and losers accumulate.
+  const rule0 = EXIT_RULES['0DTE'][legStrat];
+  const priorWinCap = rule0 && rule0.basis === 'entry' ? rule0.target / 100 : baseWinCap;
+  const capStat = captureByStrategy ? captureByStrategy[legStrat] : null;
+  const winCapB = blendCapture(priorWinCap, capStat && capStat.winCap, capStat && capStat.winSamples);
+  const lossCapB = blendCapture(baseLossCap, capStat && capStat.lossCap, capStat && capStat.lossSamples);
+  const winCap = winCapB.value, lossCap = lossCapB.value;
 
   // Estimated average winner / loser (dollars per contract) from the structure.
   const estAvgWin = win * winCap;
@@ -1976,6 +1992,7 @@ export function calc0DTE(inputs) {
     threshold: EV_HISTORY_THRESHOLD,
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate,
     winCap, lossCap,
+    capture: { win: winCapB, loss: lossCapB, closed: capStat ? capStat.closed : 0 },
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed,
     maxWin: win, maxLoss: risk
   };

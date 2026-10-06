@@ -5,6 +5,10 @@ import { api } from '../utils/api';
 import { fmt$, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
+import { blendCapture, CAPTURE_K } from '../engine/capture';
+import { assumedCapture0 } from '../engine/calc0dte';
+import { assumedCapture45 } from '../engine/calc45dte';
+import { EXIT_RULES } from '../engine/data';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
@@ -80,6 +84,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
     { id: 'regime', label: 'Regime performance', icon: Layers },
     { id: 'decay', label: 'DTE analysis', icon: Calendar },
     { id: 'rolling', label: 'Rolling stats', icon: Activity },
+    { id: 'capture', label: 'Capture', icon: Layers },
   ];
 
   return (
@@ -105,6 +110,80 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
       {section === 'regime' && <RegimePerformance closed={closed} decisions={decisions} />}
       {section === 'decay' && <DTEAnalysis closed={closed} />}
       {section === 'rolling' && <RollingStats closed={closed} />}
+      {section === 'capture' && <CaptureTracker account={account} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  CAPTURE TRACKER (Oct 2026)
+//  What share of max profit winners actually bank, and what share of max risk
+//  losers give back, per engine × strategy — against what the engine assumes.
+//  The engine blends toward the measured number: (n·measured + 10·assumed)/(n+10).
+// ═══════════════════════════════════════════
+function priorFor(engine, strat) {
+  if (engine === '0DTE') {
+    const r = EXIT_RULES['0DTE'][strat];
+    const a = assumedCapture0(strat);
+    return { win: r && r.basis === 'entry' ? r.target / 100 : a.winCap, loss: a.lossCap, winNote: r ? `${r.target}% target` : '' };
+  }
+  const a = assumedCapture45(strat);
+  const r = EXIT_RULES['45DTE'][strat];
+  return { win: a.winCap, loss: a.lossCap, winNote: r && r.basis === 'entry' ? `${r.target}% of debit` : '' };
+}
+
+function CaptureTracker({ account }) {
+  const [stats, setStats] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    setErr(null);
+    api.getCaptureStats(account).then(r => setStats(r?.stats || {})).catch(e => setErr(e.message || 'Failed to load'));
+  }, [account]);
+  if (err) return <ErrorBanner message={err} />;
+  if (!stats) return <div className="text-text-muted text-sm">Loading capture stats…</div>;
+  const pc = v => v == null ? '—' : (v * 100).toFixed(0) + '%';
+  const rows = [];
+  ['0DTE', '45DTE'].forEach(eng => Object.entries(stats[eng] || {}).forEach(([strat, st]) => {
+    const pr = priorFor(eng, strat);
+    const w = blendCapture(pr.win, st.winCap, st.winSamples);
+    const l = blendCapture(pr.loss, st.lossCap, st.lossSamples);
+    rows.push({ eng, strat, st, pr, w, l });
+  }));
+  rows.sort((a, b) => a.eng.localeCompare(b.eng) || b.st.closed - a.st.closed);
+  const flag = (measured, prior) => measured == null ? '' : Math.abs(measured - prior) >= 0.10 ? (measured < prior ? ' ▼' : ' ▲') : '';
+  return (
+    <div className="card" data-testid="capture-tracker">
+      <h3 className="text-sm font-semibold mb-1">Capture tracker</h3>
+      <p className="text-text-muted text-xs mb-3" style={{ lineHeight: 1.5 }}>
+        Win capture = realised P&L per contract ÷ max profit per contract, on closed winners. Loss capture = realised loss ÷ max risk, on closed losers.
+        The engine's EV starts from the assumed number and moves toward yours: {CAPTURE_K} closes move it halfway. ▼/▲ = yours differs by 10 points or more.
+        Needs Max Profit / Max Risk on the logged ticket — engine-logged trades have both.
+      </p>
+      {rows.length === 0 ? <div className="text-text-muted text-sm">No closed engine tickets with max profit/risk yet.</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="w-full text-xs mono">
+            <thead><tr className="text-text-muted text-left">
+              <th className="py-1 pr-3">Engine</th><th className="pr-3">Strategy</th><th className="pr-3">Closed</th><th className="pr-3">Win rate</th>
+              <th className="pr-3">Win capture: assumed</th><th className="pr-3">yours (n, median)</th><th className="pr-3">engine uses</th>
+              <th className="pr-3">Loss capture: assumed</th><th className="pr-3">yours (n)</th><th className="pr-3">engine uses</th>
+            </tr></thead>
+            <tbody>{rows.map(({ eng, strat, st, pr, w, l }) => (
+              <tr key={eng + strat} className="border-t border-bg-border">
+                <td className="py-1 pr-3">{eng}</td><td className="pr-3" style={{ fontFamily: 'inherit' }}>{strat}</td>
+                <td className="pr-3">{st.closed}</td><td className="pr-3">{pc(st.winRate)}</td>
+                <td className="pr-3">{pc(pr.win)}{pr.winNote ? ` (${pr.winNote})` : ''}</td>
+                <td className="pr-3" style={{ color: flag(st.winCap, pr.win) ? '#d29922' : undefined }}>
+                  {st.winSamples ? `${pc(st.winCap)} (${st.winSamples}, ${pc(st.winCapMedian)})${flag(st.winCap, pr.win)}` : '—'}</td>
+                <td className="pr-3" style={{ color: '#e6edf3' }}>{pc(w.value)}</td>
+                <td className="pr-3">{pc(pr.loss)}</td>
+                <td className="pr-3" style={{ color: flag(st.lossCap, pr.loss) ? '#d29922' : undefined }}>
+                  {st.lossSamples ? `${pc(st.lossCap)} (${st.lossSamples})${flag(st.lossCap, pr.loss)}` : '—'}</td>
+                <td className="pr-3" style={{ color: '#e6edf3' }}>{pc(l.value)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

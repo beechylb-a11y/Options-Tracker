@@ -45,7 +45,7 @@ describe('profit taker', () => {
       legs={[{ label: 'Long call (back month)', strike: 7775 }, { label: 'Short call (front month)', strike: 7775 }]} commRate={0} />);
     expect(screen.getAllByText(/of the debit/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Sell @ 76\.25/)).toBeTruthy();
-    expect(screen.getByTestId('exit-rule').textContent).toMatch(/10–25% of the DEBIT.*close by 21 DTE/);
+    expect(screen.getByTestId('exit-rule').textContent).toMatch(/10–25% of the DEBIT.*close by 7 DTE on the front leg/);
   });
 
   it('defaults a 0DTE condor to 25% and a 45DTE condor to 50%', () => {

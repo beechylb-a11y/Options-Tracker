@@ -23,6 +23,9 @@ describe('payoff over time', () => {
   it('draws a calendar and opens on the 21-DTE close', () => {
     mount({ i45: { netCreditDebit: '61' }, state: { overrideStrat: 'Calendar spread' } });
     const c = within(screen.getByTestId('payoff-time-chart'));
+    expect(c.getByRole('button', { name: /7-DTE close ·/, hidden: true })).toBeTruthy();
+    // front-leg stop by default; the toggle switches it to 21
+    fireEvent.click(c.getByRole('button', { name: /^21 DTE$/, hidden: true }));
     expect(c.getByRole('button', { name: /21-DTE close ·/, hidden: true })).toBeTruthy();
     expect(c.getByRole('button', { name: /Near expiry ·/, hidden: true })).toBeTruthy();
     expect(c.getByText(/makes most of its money in the last weeks/)).toBeTruthy();

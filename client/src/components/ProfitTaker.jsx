@@ -27,10 +27,15 @@ const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d',
 const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
-export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate, strategy }) {
+export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate, strategy,
+  tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte }) {
   const is0 = !/45/.test(engine);
   // Per-strategy target and basis (Oct 2026): tastylive's numbers, not one 50% for all.
-  const rule = exitRuleFor(engine, strategy);
+  // tastyFly (0DTE long flies only; null = not offered): switch to tastylive's
+  // 25–50% of MAX PROFIT instead of the % return on the debit.
+  const baseRule = exitRuleFor(engine, strategy);
+  const rule = tastyFly ? { ...baseRule, basis: 'max', target: 25, chips: [25, 35, 50],
+    why: 'tastylive long-fly guidance: 25–50% of max profit' } : baseRule;
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
     qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying,
@@ -57,7 +62,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
     setTarget({ pct: rule.target, price: '' });
     setRows(ladder(qty, ladderPcts));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategy, engine]);
+  }, [strategy, engine, tastyFly]);
   const [stopPct, setStopPct] = useState('');
   useEffect(() => { setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 100])); }, [qty]);
 
@@ -67,12 +72,13 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
   const stop = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
   useEffect(() => {
-    onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)) });
+    onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)),
+      basis: pos.basis });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(effRows), stopPct]);
+  }, [JSON.stringify(effRows), stopPct, pos.basis]);
 
   const closeSide = pos.isCredit ? 'db' : 'cr';
-  const basisWord = is0 || pos.isCredit ? 'on entry' : pos.basis === 'entry' ? 'of the debit' : 'of max profit';
+  const basisWord = pos.isCredit ? 'on entry' : pos.basis === 'max' ? 'of max profit' : is0 ? 'on entry' : 'of the debit';
   const allocated = rows.reduce((a, r) => a + (Number(r.qty) || 0), 0);
 
   // What to type in TWS for a given closing price — in words, one line.
@@ -106,8 +112,8 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         )}
         {over && <span style={{ color: '#f85149' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
         <br />{twsLine(price)}
-        {!is0 && !pos.isCredit && pos.basis === 'max' && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
-          <span style={{ color: '#d29922' }}><br />45DTE targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
+        {!pos.isCredit && pos.basis === 'max' && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
+          <span style={{ color: '#d29922' }}><br />{is0 ? 'These' : '45DTE'} targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
         )}
       </div>
     );
@@ -141,9 +147,23 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
           <input type="number" step={tick} style={{ ...cell, width: 80 }} value={target.price !== '' ? target.price : priceOf(target.pct)}
             onChange={e => { const p = parseFloat(e.target.value); const t = isFinite(p) ? priceToTarget(pos, p) : null; setTarget({ price: e.target.value, pct: t != null ? round2(t) : '' }); }} />
         </div>
+        {tastyFly !== null && onTastyFly && (
+          <button type="button" data-testid="tasty-fly-toggle-pt" onClick={() => onTastyFly(!tastyFly)}
+            title="tastylive's long-fly guidance: take 25–50% of MAX PROFIT, not a % of the debit"
+            style={{ ...btn(!!tastyFly), marginTop: 6, borderColor: tastyFly ? '#2f81f7' : '#30363d', color: tastyFly ? '#58a6ff' : '#a8b2be', background: tastyFly ? '#0d1a2b' : 'transparent' }}>
+            {tastyFly ? '✓ ' : ''}tastylive targets: 25–50% of max
+          </button>
+        )}
         {(rule.why || !is0) && (
           <div style={{ fontSize: 12, color: '#8b949e', marginTop: 4 }} data-testid="exit-rule">
-            {rule.why}{rule.why && !is0 ? ' · ' : ''}{!is0 && rule.closeDte ? `close by ${rule.closeDte} DTE whatever the P&L` : ''}
+            {rule.why}{rule.why && !is0 ? ' · ' : ''}{!is0 && (closeDteIn || rule.closeDte) ? `close by ${closeDteIn || rule.closeDte} DTE${rule.closeLeg ? ' on the ' + rule.closeLeg : ''} whatever the P&L` : ''}
+            {!is0 && Array.isArray(rule.closeOptions) && onCloseDte && (
+              <span style={{ marginLeft: 8, display: 'inline-flex', gap: 4 }}>
+                {rule.closeOptions.map(c => (
+                  <button key={c} type="button" onClick={() => onCloseDte(c)} style={btn((closeDteIn || rule.closeDte) === c)}>{c} DTE</button>
+                ))}
+              </span>
+            )}
           </div>
         )}
         <Result q={qty} pct={Number(target.pct) || 0} price={tPrice} />

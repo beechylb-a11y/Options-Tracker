@@ -37,7 +37,13 @@ const MANUAL_ACCOUNT_PREFIXES = ['papertrade'];
 
 
 export default function OrderTicket({ position, onClose, onDone, initialTab }) {
-  const pos = useMemo(() => normalisePosition(position), [position]);
+  // A plan saved at entry carries its basis (e.g. a 0DTE fly planned on tastylive's
+  // % of max profit); price its tranches on the same basis it was planned on.
+  const pos = useMemo(() => {
+    const p0 = normalisePosition(position);
+    const sb = loadPlan(p0.timestamp)?.basis;
+    return sb ? { ...p0, basis: sb } : p0;
+  }, [position]);
   const tick = defaultTick(pos.underlying);
   const side = pos.isCredit ? 'db' : 'cr';                      // side the CLOSE prices on
   const isManual = MANUAL_ACCOUNT_PREFIXES.some(p => pos.account.toLowerCase().startsWith(p));

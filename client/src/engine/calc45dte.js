@@ -3,6 +3,7 @@
 //  Pure functions — no DOM access.
 // ================================================================
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor } from './data.js';
+import { blendCapture } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -22,6 +23,19 @@ const TERM_BIASES = ['contango', 'flat', 'backwardation'];
 
 function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[Math.min(o.indexOf(r)+1,3)]; }
 
+// Assumed capture fractions (share of max profit / max risk) before any measured
+// history — exported so the capture tracker can show them. (Oct 2026.)
+export function assumedCapture45(s) {
+  if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
+  if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
+  if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
+  if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
+  if (s.includes('Credit') || s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 };
+  if (s.includes('Bull call') || s.includes('Bear put') || s.includes('Debit')) return { winCap: 0.50, lossCap: 0.60 };
+  if (s.includes('Reversed')) return { winCap: 0.45, lossCap: 0.55 };
+  return { winCap: 0.40, lossCap: 0.60 };
+}
+
 export function calc45DTE(inputs) {
   const { underlying, price, ivr, iv, hv, vix, ivFront, ivBack, skew,
     termBias, dte=45, outlook, pop, win, risk, bankroll, startBR,
@@ -29,7 +43,7 @@ export function calc45DTE(inputs) {
     // Optional per-strategy realized history (resolved object or a map keyed
     // by strategy name via historyByStrategy).
     // wingDeltas: { lowerAbsDelta, upperAbsDelta } for skew-aware P(max loss).
-    history: historyInput, historyByStrategy, wingDeltas } = inputs;
+    history: historyInput, historyByStrategy, wingDeltas, captureByStrategy } = inputs;
 
   // Signed theta: positive collects decay, negative pays it. Gate on magnitude so a
   // debit structure still gets scored, and let the signed tEff below score it honestly
@@ -123,6 +137,9 @@ export function calc45DTE(inputs) {
   // Override: if caller specifies a strategy, use that for legs
   const overrideStrategy = inputs.overrideStrategy || null;
   const legStrat = overrideStrategy || bestStrat;
+  // Planned exit: closeDte days before the (near) expiry — 21 by the playbook, 7 on
+  // the front leg for calendars/diagonals (EXIT_RULES); inputs.closeDte overrides.
+  const closeDte45 = inputs.closeDte > 0 ? inputs.closeDte : exitRuleFor('45DTE', legStrat).closeDte;
 
   // Strike engine
   const strikeStep45 = ['SPX', 'NDX', 'RUT'].includes(String(underlying || '').toUpperCase()) ? 5
@@ -239,7 +256,7 @@ export function calc45DTE(inputs) {
     // a 21 DTE exit, so P(max loss) uses the days-to-exit horizon (dte − 21),
     // not the full dte. Using full expiry overstated tail risk ~2x because it
     // priced 24 days of movement the trade is never exposed to.
-    const holdDays = Math.max(dte - 21, 1);
+    const holdDays = Math.max(dte - closeDte45, 1);
     const sigma = price * (iv / 100) * Math.sqrt(holdDays / 365);
     if (sigma > 0) {
       pMaxLossLow = normCdf((lowerWing - price) / sigma);
@@ -345,22 +362,24 @@ export function calc45DTE(inputs) {
   // until >= 50 closed trades exist for the strategy, then from realized stats.
   const EV_HISTORY_THRESHOLD = 50;
   const history = historyInput || (historyByStrategy ? historyByStrategy[legStrat] : null);
-  function captureFractions45(s) {
-    if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
-    if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
-    if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
-    if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
-    if (s.includes('Credit') || s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 };
-    if (s.includes('Bull call') || s.includes('Bear put') || s.includes('Debit')) return { winCap: 0.50, lossCap: 0.60 };
-    if (s.includes('Reversed')) return { winCap: 0.45, lossCap: 0.55 };
-    return { winCap: 0.40, lossCap: 0.60 };
-  }
-  const { winCap: evWinCap, lossCap: evLossCap } = captureFractions45(legStrat);
+  const captureFractions45 = assumedCapture45;
+  const { winCap: baseWinCap45, lossCap: baseLossCap45 } = captureFractions45(legStrat);
   // A structure managed on its DEBIT (the calendar: tastylive takes 25% of what was
   // paid) wins that, not a fraction of a model max profit. The default 0.40 × max
   // profit at the near expiry roughly doubled a calendar's average win. (Oct 2026.)
   const exitRule = exitRuleFor('45DTE', legStrat);
-  const estAvgWin = exitRule.basis === 'entry' && risk > 0
+  // Measured capture from closed tickets (capture tracker) pulls the assumed
+  // fractions toward reality as evidence builds — winners as a share of max
+  // profit, losers as a share of max risk. (Oct 2026.)
+  const capStat45 = captureByStrategy ? captureByStrategy[legStrat] : null;
+  const debitBasis = exitRule.basis === 'entry' && risk > 0;
+  // A debit-managed structure's prior is its target ÷ (max profit / debit), so it is
+  // on the same "share of max profit" scale the tracker measures.
+  const priorWin45 = debitBasis && win > 0 ? (risk * exitRule.target / 100) / win : baseWinCap45;
+  const winCapB45 = blendCapture(priorWin45, capStat45 && capStat45.winCap, capStat45 && capStat45.winSamples);
+  const lossCapB45 = blendCapture(baseLossCap45, capStat45 && capStat45.lossCap, capStat45 && capStat45.lossSamples);
+  const evWinCap = winCapB45.value, evLossCap = lossCapB45.value;
+  const estAvgWin = debitBasis && !(win > 0)
     ? risk * exitRule.target / 100
     : win * evWinCap;
   const estAvgLoss = risk * evLossCap;
@@ -398,8 +417,9 @@ export function calc45DTE(inputs) {
     pMaxLossSource: pMaxLossSource,
     winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
-    winCap: exitRule.basis === 'entry' ? null : evWinCap, lossCap: evLossCap,
-    winBasis: exitRule.basis === 'entry' ? `${exitRule.target}% of debit` : `${Math.round(evWinCap * 100)}% of max`,
+    winCap: evWinCap, lossCap: evLossCap,
+    winBasis: debitBasis && winCapB45.source === 'assumed' ? `${exitRule.target}% of debit` : `${Math.round(evWinCap * 100)}% of max`,
+    capture: { win: winCapB45, loss: lossCapB45, closed: capStat45 ? capStat45.closed : 0 },
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk,
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate
   };
@@ -433,8 +453,8 @@ export function calc45DTE(inputs) {
 
     // 45DTE Directional Edge
     // Remaining EM = IV × √(remaining DTE / 365) × price
-    const remainingDTE = Math.max(dte - 21, 1); // target exit at 21 DTE
-    const daysToExit = dte - 21; // days until planned exit
+    const remainingDTE = Math.max(dte - closeDte45, 1); // target exit at closeDte45 (21 by default)
+    const daysToExit = dte - closeDte45; // days until planned exit
     const remainingEM = iv > 0 && price > 0 ? price * (iv / 100) * Math.sqrt(remainingDTE / 365) : 0;
     const directionalGain = Math.abs(delta) * remainingEM;
     const thetaPressure = thetaAbs * Math.max(daysToExit, 1); // magnitude — thetaPaid says which way it flows
@@ -614,7 +634,7 @@ export function calc45DTE(inputs) {
 
   return {
     em45, ivhvRatio, ivhvLabel, ivrBand, ivrStructures,
-    termDiff, termLabel, skew, termBias: termBiasEff, termRatio, termDerived: hasTerm,
+    termDiff, termLabel, skew, termBias: termBiasEff, termRatio, termDerived: hasTerm, closeDte: closeDte45,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan,

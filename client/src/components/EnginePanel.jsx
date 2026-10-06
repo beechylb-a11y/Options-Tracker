@@ -366,7 +366,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
   );
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, captureStats, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -447,6 +447,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Exit plan from the BUY ticket's profit-taker ladder; written into the notes and
   // saved under the log timestamp so the Sell ticket opens with it.
   const [exitPlan, setExitPlan] = useState(null);
+  // tastylive long-fly targets (25–50% of MAX PROFIT) instead of the 0DTE default of
+  // % return on the debit. One switch shared by the payoff card and the Profit Taker
+  // so the two always show the same target. (Oct 2026.)
+  const [tastyFly, setTastyFly] = useState(false);
+  // Calendar/diagonal close: null = the rule's default (7 DTE on the front leg);
+  // the chart and Profit Taker can switch it to 21. Persisted with the tab.
+  const [tsClose, setTsClose] = useState(init?.tsClose ?? null);
   // Inline log-note input (replaces the old window.prompt on Log trade).
   const [logNoteOpen, setLogNoteOpen] = useState(false);
   // Set only after the write is CONFIRMED (onLogTrade resolves true). `loggedSig` is a
@@ -614,8 +621,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -668,6 +675,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           legGreeks: legGreeks && legGreeks.bag === '0' ? legGreeks.rows : null,
           hoursToBell: tradingSession().hoursToBell,
           historyByStrategy: strategyHistory || null,
+          captureByStrategy: captureStats ? captureStats['0DTE'] || null : null,
           wingDeltas: (i0.lowerWingDelta !== '' || i0.upperWingDelta !== '') ? {
             lowerAbsDelta: i0.lowerWingDelta !== '' ? Math.abs(parseFloat(i0.lowerWingDelta)) : null,
             upperAbsDelta: i0.upperWingDelta !== '' ? Math.abs(parseFloat(i0.upperWingDelta)) : null
@@ -696,7 +704,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrikes: overrideStrikes['45']?.map || null,
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
           legGreeks: legGreeks && legGreeks.bag === '45' ? legGreeks.rows : null,
+          closeDte: tsClose || null,
           historyByStrategy: strategyHistory || null,
+          captureByStrategy: captureStats ? captureStats['45DTE'] || null : null,
           wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
             lowerAbsDelta: i45.lowerWingDelta !== '' ? Math.abs(parseFloat(i45.lowerWingDelta)) : null,
             upperAbsDelta: i45.upperWingDelta !== '' ? Math.abs(parseFloat(i45.upperWingDelta)) : null
@@ -729,7 +739,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, commRateAcct, legGreeks]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -765,7 +775,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       { k:'Confidence',     now:num(r.tradeConfidence),    alt:num(a.tradeConfidence) }
     ];
     return { label, short, rows, changed: rows.filter(x => x.now !== x.alt).length };
-  }, [is0, i0, r, overrideStrat, strategyHistory]);
+  }, [is0, i0, r, overrideStrat, strategyHistory, captureStats]);
 
   // Override: calc engine generates legs for overrideStrat if set
   const isOverride = overrideStrat && overrideStrat !== r.bestStrat;
@@ -1082,7 +1092,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         return res ? { name, rating, res, current: false } : null;
       } catch (e) { return null; }
     }).filter(Boolean);
-  }, [is0, i0, i45, r, overrideStrat, strategyHistory]);
+  }, [is0, i0, i45, r, overrideStrat, strategyHistory, captureStats]);
 
   let bannerTitle, bannerGrade;
   if (hasBlocker) {
@@ -1334,6 +1344,26 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       dot: fvs >= 70 ? '#3fb950' : fvs >= 50 ? '#d29922' : '#f85149' }] : [])
   ];
 
+  // 0DTE long flies: the tastylive "% of max profit" targets are offered alongside the
+  // app's % on entry. Ticket target and tastylive lines in $ per contract for the chart.
+  const flyTastyOk = is0 && /^(Standard|Asymmetric|Broken wing) butterfly$/.test(effectiveStrat || '');
+  const flyTargets = (() => {
+    if (!is0 || !r.payoff || !(r.payoff.maxProfit > 0)) return [];
+    const ncdS = signedNet(ticketNet, cashType);
+    const rule = exitRuleFor('0DTE', effectiveStrat);
+    const useMax = flyTastyOk && tastyFly;
+    const pct = exitPlan && exitPlan.rows && exitPlan.rows.length ? Number(exitPlan.rows[0].pct) || 0 : (useMax ? 25 : rule.target);
+    const out = [];
+    const tick = useMax || rule.basis === 'max' ? r.payoff.maxProfit * pct / 100
+      : (isFinite(ncdS) ? Math.abs(ncdS) * 100 * pct / 100 : null);
+    if (tick > 0) out.push({ pnl: tick, label: `ticket +${pct}%${useMax || rule.basis === 'max' ? ' of max' : ' on entry'}`, color: '#3fb950' });
+    if (flyTastyOk && tastyFly) [25, 50].forEach(p => {
+      const v = r.payoff.maxProfit * p / 100;
+      if (!out.some(o => Math.abs(o.pnl - v) < 1)) out.push({ pnl: v, label: `tastylive ${p}% of max`, color: '#58a6ff' });
+    });
+    return out;
+  })();
+
   // ── Payoff at any date (45DTE, Oct 2026) ──
   // Every leg valued with Black-Scholes at its own expiry and IV, so the curve
   // exists for calendars and diagonals and for any day up to expiry — the 21-DTE
@@ -1373,10 +1403,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // The strategy's profit target in $ per contract (EXIT_RULES): % of the debit for
     // a calendar, % of max profit (at expiry / near expiry) for everything else.
     const rule = exitRuleFor('45DTE', effectiveStrat);
+    const closeDte = (rule.closeOptions && tsClose && rule.closeOptions.includes(tsClose)) ? tsClose : rule.closeDte;
     const tgtBase = rule.basis === 'entry' ? Math.abs(net) * 100 : atExpiry.maxProfit;
     const target = tgtBase > 0 ? { dollars: tgtBase * rule.target / 100,
       label: `${rule.target}% of ${rule.basis === 'entry' ? 'the debit' : 'max profit'}` } : null;
-    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, rule.closeDte), closeDte: rule.closeDte,
+    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, closeDte), closeDte,
+      closeOptions: rule.closeOptions || null, closeLeg: rule.closeLeg || '',
       sigmaNear, divYield, target, atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
   })();
   // Sizing suggestions for 45DTE come from the expiry curve (near expiry for a time
@@ -2262,7 +2294,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const ncdNow = fv(inp, 'netCreditDebit');
     const ncdSigned = signedNet(inp.netCreditDebit, cashType);
     const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: isFinite(ncdSigned) ? ncdSigned : ncdNow,
-      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: exitRuleFor(is0 ? '0DTE' : '45DTE', effectiveStrat).basis });
+      maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: (exitPlan && exitPlan.basis) || exitRuleFor(is0 ? '0DTE' : '45DTE', effectiveStrat).basis });
     const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
       ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
     const expiriesLine = isTimeSpread && nearExp && farExp
@@ -3362,7 +3394,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
             <ProfitTaker ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
               contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
-              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} strategy={effectiveStrat} />
+              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
+              tastyFly={flyTastyOk ? tastyFly : null} onTastyFly={setTastyFly}
+              closeDte={!is0 ? (r.closeDte || null) : null} onCloseDte={setTsClose} />
           )}
 
           </InputSection>
@@ -3664,7 +3698,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <PayoffTimeChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
                 lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
                 closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
-                underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target} />
+                underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
+                closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} />
             </div>
           )}
           {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
@@ -3676,7 +3711,23 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {r.payoff && r.payoff.points.length > 0 && (
             <div className="card">
               <SectionLabel white info="P&L diagram at expiration across price range. Green zone = profit, red zone = loss. White line = payoff curve. Blue dashed = current price. Yellow dots = breakeven prices. Calculated from leg structure and net credit/debit entered.">Payoff at expiry</SectionLabel>
-              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} />
+              {flyTastyOk && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 6px' }}>
+                  <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)}
+                    title="tastylive's long-fly guidance: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                    style={{ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                      border: '1px solid ' + (tastyFly ? '#2f81f7' : '#30363d'), background: tastyFly ? '#0d1a2b' : 'transparent', color: tastyFly ? '#58a6ff' : '#c9d1d9' }}>
+                    {tastyFly ? '✓ ' : ''}tastylive targets: 25–50% of max
+                  </button>
+                  {r.payoff.maxProfit > 0 && isFinite(signedNet(ticketNet, cashType)) && (
+                    <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>
+                      25% of max = +{(r.payoff.maxProfit * 0.25 / (Math.abs(signedNet(ticketNet, cashType)) * 100) * 100).toFixed(0)}% on entry ·
+                      50% = +{(r.payoff.maxProfit * 0.5 / (Math.abs(signedNet(ticketNet, cashType)) * 100) * 100).toFixed(0)}%
+                    </span>
+                  )}
+                </div>
+              )}
+              <PayoffDiagram payoff={r.payoff} currentPrice={is0?fv(i0,'price'):fv(i45,'price')} targets={flyTargets} />
               <div className="grid grid-cols-2 gap-1.5 mt-3">
                 <KV label="Max profit" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
                 <KV label="Max loss" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
@@ -3727,6 +3778,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                       + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
+                  {r.evBasis.mode !== 'measured' && r.evBasis.capture && (() => {
+                    // Capture tracker: what the win/loss fractions are built from.
+                    const cw = r.evBasis.capture.win, cl = r.evBasis.capture.loss;
+                    const pc = v => (v * 100).toFixed(0) + '%';
+                    const side = (lbl, c, unit) => c.n > 0
+                      ? `${lbl} ${pc(c.value)} — assumed ${pc(c.prior)}, your ${c.n} closed ${unit} ${pc(c.measured)}`
+                      : `${lbl} ${pc(c.value)} — assumed, no closed ${unit} yet`;
+                    return (
+                      <div data-testid="capture-basis" style={{marginTop:4,color:'#c9d1d9'}}>
+                        Capture: {side('win', cw, 'winners')} · {side('loss', cl, 'losers')}
+                        {(cw.n > 0 || cl.n > 0) ? ` (blended, ${10} closes = halfway)` : ''}
+                      </div>
+                    );
+                  })()}
                   {r.evBasis.commissionRoundTrip > 0 && (
                     <div style={{marginTop:4,color:'#c9d1d9'}}>
                       Commission {r.evBasis.commissionUnits} contracts × ${r.evBasis.commissionRate.toFixed(2)} × 2 sides = <b style={{color:'#fff'}}>${r.evBasis.commissionRoundTrip.toFixed(2)}</b> per unit
@@ -4553,7 +4618,7 @@ function SetupQualityCard({ r, sBg, sClr }) {
   );
 }
 
-function PayoffDiagram({ payoff, currentPrice, mini }) {
+function PayoffDiagram({ payoff, currentPrice, mini, targets }) {
   if (!payoff || !payoff.points || payoff.points.length < 2) return null;
   const W = mini ? 280 : 460;
   const H = mini ? 140 : 220;
@@ -4566,7 +4631,8 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
   const minPnl = Math.min(...pnls, 0);
-  const maxPnl = Math.max(...pnls, 0);
+  const tgts = (targets || []).filter(t => t && t.pnl > 0 && isFinite(t.pnl));
+  const maxPnl = Math.max(...pnls, 0, ...tgts.map(t => t.pnl));
   const pnlRange = maxPnl - minPnl || 1;
   const x = p => PAD.left + (p - minP) / (maxP - minP) * cW;
   const y = pnl => PAD.top + cH - ((pnl - minPnl) / pnlRange) * cH;
@@ -4613,6 +4679,13 @@ function PayoffDiagram({ payoff, currentPrice, mini }) {
           <text x={x(currentPrice)} y={PAD.top-2} textAnchor="middle" fill="#58a6ff" fontSize={fs} fontWeight="600">{Math.round(currentPrice)}</text>
         </>
       )}
+      {/* Profit-target lines (ticket target, tastylive % of max) */}
+      {tgts.map((t, i) => (
+        <g key={'t' + i}>
+          <line x1={PAD.left} x2={W-PAD.right} y1={y(t.pnl)} y2={y(t.pnl)} stroke={t.color || '#3fb950'} strokeWidth="1" strokeDasharray="6,3"/>
+          <text x={W-PAD.right-2} y={y(t.pnl)-3} textAnchor="end" fill={t.color || '#3fb950'} fontSize={fs}>{t.label + ' $' + t.pnl.toFixed(0)}</text>
+        </g>
+      ))}
       {/* Breakevens */}
       {payoff.breakevens?.map((be, i) => be >= minP && be <= maxP && (
         <g key={i}>

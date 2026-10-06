@@ -14,7 +14,7 @@ const money = v => (v < 0 ? '−$' : '$') + Math.abs(Math.round(v)).toLocaleStri
 const kfmt = v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1) + 'K' : String(Math.round(v));
 
 export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
-  todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target }) {
+  todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, closeOptions, closeLeg, onCloseDte }) {
   // target: { dollars, label } — the strategy's profit target per contract (EXIT_RULES).
   const [day, setDay] = useState(closeDay);
   const [band, setBand] = useState(2);
@@ -87,6 +87,16 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         <button type="button" style={btn(d === closeDay)} onClick={() => setDay(closeDay)}>{closeLabel}</button>
         <button type="button" style={btn(d === nearDte)} onClick={() => setDay(nearDte)}>
           {isTimeSpread ? 'Near expiry' : 'Expiry'} · {fmtExpiry(addDaysYmd(todayYmd, nearDte))}</button>
+        {Array.isArray(closeOptions) && onCloseDte && (
+          <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 12, color: '#a8b2be' }} data-testid="close-dte-toggle">
+            Close at
+            {closeOptions.map(c => (
+              <button key={c} type="button" onClick={() => onCloseDte(c)} style={btn(closeDte === c)}>
+                {c} DTE{c === closeOptions[0] && closeLeg ? ` (${closeLeg})` : ''}
+              </button>
+            ))}
+          </span>
+        )}
         <label style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be', display: 'flex', alignItems: 'center', gap: 6 }}>
           Vol band ±
           <select value={band} onChange={e => setBand(+e.target.value)}

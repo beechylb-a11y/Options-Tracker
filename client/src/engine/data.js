@@ -174,8 +174,13 @@ export const EXIT_RULES = {
     'Ratio spread':          R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit'),
     'Bull call spread':      R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
     'Bear put spread':       R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
-    'Calendar spread':       R45(25, [10, 15, 25], 'tastylive: 10–25% of the DEBIT, usually 25%; don\'t wait for more', { basis: 'entry' }),
-    'Diagonal spread':       R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; roll the short down if tested'),
+    // Time spreads close on the FRONT leg at 7 DTE, not 21: a calendar earns most of
+    // its money in the near leg's last weeks, and at 21 DTE its own 25%-of-debit
+    // target is usually out of reach. closeOptions = the toggle on chart/Profit Taker.
+    'Calendar spread':       R45(25, [10, 15, 25], 'tastylive: 10–25% of the DEBIT, usually 25%; don\'t wait for more',
+                               { basis: 'entry', closeDte: 7, closeOptions: [7, 21], closeLeg: 'front leg' }),
+    'Diagonal spread':       R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; roll the short down if tested',
+                               { closeDte: 7, closeOptions: [7, 21], closeLeg: 'front leg' }),
     'Long Condor - Reversed':R45(50, [25, 50, 75], 'no tastylive guidance (long-gamma debit) — app default'),
   },
   '0DTE': {
