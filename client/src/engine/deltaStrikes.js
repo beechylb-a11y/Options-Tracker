@@ -130,11 +130,13 @@ const roundToGrid = (k, step) => Math.round(k / step) * step;
 export const DELTA_TARGETS = {
   '0dte': {
     'Iron Condor - Normal': { mode: 'side', pop: 'credit', shorts: { P: { t: 16, lo: 8, hi: 25 }, C: { t: 16, lo: 8, hi: 25 } } },
-    'Bull put spread':      { mode: 'side', pop: 'credit', shorts: { P: { t: 15, lo: 6, hi: 25 } } },
-    'Bear call spread':     { mode: 'side', pop: 'credit', shorts: { C: { t: 15, lo: 6, hi: 25 } } },
+    // V1 (Oct 2026): 0DTE credit verticals at ~20Δ (band 12–25) — skew-aware, and
+    // close to the 1-SD EM strike on a put; debit verticals' short at 28Δ.
+    'Bull put spread':      { mode: 'side', pop: 'credit', shorts: { P: { t: 20, lo: 12, hi: 25 } } },
+    'Bear call spread':     { mode: 'side', pop: 'credit', shorts: { C: { t: 20, lo: 12, hi: 25 } } },
     'Chicken condor':       { mode: 'side', pop: 'credit', shorts: { near: { t: 16, lo: 8, hi: 25 }, far: { t: 7, lo: 3, hi: 14 } } },
-    'Bull call spread':     { mode: 'short', pop: null, shorts: { C: { t: 30, lo: 20, hi: 42 } } },
-    'Bear put spread':      { mode: 'short', pop: null, shorts: { P: { t: 30, lo: 20, hi: 42 } } },
+    'Bull call spread':     { mode: 'short', pop: null, shorts: { C: { t: 28, lo: 20, hi: 40 } } },
+    'Bear put spread':      { mode: 'short', pop: null, shorts: { P: { t: 28, lo: 20, hi: 40 } } },
   },
   '45dte': {
     'Iron Condor - Normal': { mode: 'side', pop: 'credit', shorts: { P: { t: 18, lo: 12, hi: 25 }, C: { t: 18, lo: 12, hi: 25 } } },

@@ -4,6 +4,7 @@
 // ================================================================
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions, EXIT_RULES } from './data.js';
 import { blendCapture, stopLossFrac } from './capture.js';
+import { flyBand, BAND_THIN_PCT_OF_DAY } from './flyBand.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -23,6 +24,11 @@ const VERTICALS = ['Bull put spread', 'Bear call spread', 'Bull call spread', 'B
 
 // +1 bull put, -1 bear call, 0 anything else. Credit verticals are directional range
 // bets: they want direction on their own side and fear it on the other. (Oct 2026)
+// 0DTE credit vertical floors (Oct 2026): collect at least 10% of the width, and keep
+// the short at least 0.8 × the remaining SD from spot (the EM sanity check on delta strikes).
+export const MIN_CREDIT_FRAC_0DTE = 0.10;
+export const SHORT_MIN_EM_0DTE = 0.8;
+
 export function creditVerticalSide(strat) {
   const s = String(strat || '');
   if (s.includes('Bull put')) return 1;
@@ -2449,6 +2455,30 @@ export function calc0DTE(inputs) {
     : null;
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
+  // ── Fly profit band in the market's units (F1, Oct 2026) ──
+  // Band vs the move still to come (remaining SD) and vs the day's ±EM; warns when the
+  // band is a sliver of the day — a late entry or a quiet-priced day.
+  const flyBandR = (isDebitBfly && legs.length >= 3)
+    ? flyBand({ legs, price, sdLeft: emRemaining, sdDay: emSession, net: netCreditDebit }) : null;
+  if (flyBandR && flyBandR.lo != null && flyBandR.hi != null && flyBandR.pctOfDay != null && flyBandR.pctOfDay < BAND_THIN_PCT_OF_DAY) {
+    warnings.push(`Profit band ${flyBandR.lo.toFixed(1)}–${flyBandR.hi.toFixed(1)} is only ${Math.round(flyBandR.pctOfDay * 100)}% of today's ±EM `
+      + `(±${flyBandR.halfSD.toFixed(1)} SD of the move left, ${Math.round(flyBandR.pInside * 100)}% to finish inside) — late or quiet-priced; little room for the day to move`);
+  }
+
+  // ── 0DTE credit verticals: minimum credit and short-strike room (V3 / V1, Oct 2026) ──
+  if (creditVerticalSide(legStrat) !== 0 && legs.length === 2 && price > 0) {
+    const w = Math.abs(legs[0].strike - legs[1].strike);
+    if (netCreditDebit > 0 && w > 0 && netCreditDebit / w < MIN_CREDIT_FRAC_0DTE) {
+      warnings.push(`Credit ${netCreditDebit.toFixed(2)} is ${(netCreditDebit / w * 100).toFixed(1)}% of the ${w}-wide spread — under the `
+        + `${Math.round(MIN_CREDIT_FRAC_0DTE * 100)}% floor ($${Math.round(netCreditDebit * 100)} to win, $${Math.round((w - netCreditDebit) * 100)} at risk). Move the short one strike closer, or pass`);
+    }
+    const sh = legs.find(l => /short/i.test(l.label || ''));
+    if (sh && emRemaining > 0) {
+      const room = Math.abs(sh.strike - price) / emRemaining;
+      if (room < SHORT_MIN_EM_0DTE) warnings.push(`Short ${sh.strike} is ${room.toFixed(2)}× the move left from spot — closer than ${SHORT_MIN_EM_0DTE}×: an ordinary push reaches it`);
+    }
+  }
+
   // Debit/wing ratio check for butterflies
   if (isDebitBfly && D > 0 && netCreditDebit < 0) {
     const debitWingRatio = Math.abs(netCreditDebit) / (editedWingWidth ?? D);
@@ -2639,7 +2669,7 @@ export function calc0DTE(inputs) {
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning,
-    vertVariants, vertVariant: vertVariantId, priceCheck,
+    vertVariants, vertVariant: vertVariantId, priceCheck, flyBand: flyBandR,
     deltaCheck, deltaPlan,
     eventsToday: _ev0.events, notices,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
