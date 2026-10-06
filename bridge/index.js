@@ -411,6 +411,8 @@ const contracts = {
   IWM: { symbol: 'IWM', secType: SecType.STK, exchange: 'SMART', primaryExch: 'ARCA', currency: 'USD' },
   VIX: { symbol: 'VIX', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   VIX1D: { symbol: 'VIX1D', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
+  // 3-month VIX: VIX / VIX3M above 1 is index-level backwardation (Oct 2026).
+  VIX3M: { symbol: 'VIX3M', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   ES: { symbol: 'ES', secType: SecType.FUT, exchange: 'CME', currency: 'USD', lastTradeDateOrContractMonth: '' },
 };
 
@@ -1282,14 +1284,26 @@ async function getVolHistory(underlying) {
   if (hit && Date.now() - hit.at < HIST_TTL_MS) return hit;
   const c = contracts[underlying];
   const pct = bars => bars.map(b => barClose(b)).filter(x => x > 0).map(x => x * 100);
-  let iv = [], hv = [], closes = [];
+  let iv = [], hv = [], closes = [], daily = [];
   try { iv = pct(await getHistoricalBars(c, '1 Y', '1 day', WhatToShow.OPTION_IMPLIED_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface IV history:', e.message); }
   try { hv = pct(await getHistoricalBars(c, '3 M', '1 day', WhatToShow.HISTORICAL_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface HV history:', e.message); }
+  // Daily OHLC for the 45DTE trend read (SMA 20/50, ADX 14, stretch, HV10/HV60).
+  // Indices have no TRADES history here, so SPX/XSP read SPY and RUT reads IWM —
+  // every trend number is a ratio or a %, so the proxy's scale does not matter.
+  const dailySource = (underlying === 'SPX' || underlying === 'XSP') ? 'SPY' : underlying === 'RUT' ? 'IWM' : underlying;
+  try {
+    const bars = await getHistoricalBars(contracts[dailySource] || c, '1 Y', '1 day', WhatToShow.TRADES);
+    daily = bars.filter(b => b && b.close > 0 && b.high > 0 && b.low > 0)
+      .map(b => [String(b.date).slice(0, 8), +b.open || +b.close, +b.high, +b.low, +b.close]);
+  } catch (e) { console.log('[BRIDGE] vol-surface daily bars:', e.message); }
   if (!hv.length) {
-    try { closes = (await getHistoricalBars(c, '3 M', '1 day', WhatToShow.TRADES)).map(barClose); } catch (e) { /* fallback only */ }
+    closes = daily.length ? daily.map(b => b[4]) : [];
+    if (!closes.length) {
+      try { closes = (await getHistoricalBars(c, '3 M', '1 day', WhatToShow.TRADES)).map(barClose); } catch (e) { /* fallback only */ }
+    }
   }
-  const out = { at: Date.now(), iv, hv, closes };
-  if (iv.length || hv.length || closes.length) vsCache.hist[underlying] = out;
+  const out = { at: Date.now(), iv, hv, closes, daily, dailySource };
+  if (iv.length || hv.length || closes.length || daily.length) vsCache.hist[underlying] = out;
   return out;
 }
 
@@ -1330,7 +1344,10 @@ app.get('/api/vol-surface', async (req, res) => {
     const missing = [], notes = [];
 
     // History runs alongside the option pulls — it is the slow, cacheable half.
-    const histP = getVolHistory(underlying).catch(() => ({ iv: [], hv: [], closes: [] }));
+    const histP = getVolHistory(underlying).catch(() => ({ iv: [], hv: [], closes: [], daily: [] }));
+    const lvl = s => (s && (s.mid > 0 ? s.mid : s.last > 0 ? s.last : s.prevClose > 0 ? s.prevClose : 0)) || 0;
+    const vixP = Promise.all([getSnapshot(contracts.VIX).catch(() => null), getSnapshot(contracts.VIX3M).catch(() => null)])
+      .then(([a, b]) => ({ vix: lvl(a), vix3m: lvl(b) }));
 
     // 1) Spot
     let spot = Number(req.query.spot) || 0;
@@ -1417,8 +1434,14 @@ app.get('/api/vol-surface', async (req, res) => {
       iv30: ivStats ? +ivStats.current.toFixed(2) : null,
       iv52wLow: ivStats ? +ivStats.low.toFixed(2) : null, iv52wHigh: ivStats ? +ivStats.high.toFixed(2) : null,
       hv, hvSource,
+      // Daily bars [yyyymmdd, o, h, l, c] (last ~260) for the client's trend read.
+      daily: (hist.daily || []).slice(-260), dailySource: hist.dailySource || null,
       asOf: new Date().toISOString(),
     };
+    const vx = await vixP;
+    out.vix = vx.vix > 0 ? +vx.vix.toFixed(2) : null;
+    out.vix3m = vx.vix3m > 0 ? +vx.vix3m.toFixed(2) : null;
+    out.vixTermRatio = out.vix && out.vix3m ? +(out.vix / out.vix3m).toFixed(3) : null;
     ['iv', 'ivFront', 'ivBack', 'skew', 'ivr', 'hv'].forEach(k => { if (out[k] == null) missing.push(k); });
     if (!term.bias) missing.push('termBias');
     const md = (tradeAtm && tradeAtm.mdType) || (frontAtm && frontAtm.mdType) || null;

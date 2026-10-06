@@ -47,7 +47,9 @@ export function calc45DTE(inputs) {
     // Optional per-strategy realized history (resolved object or a map keyed
     // by strategy name via historyByStrategy).
     // wingDeltas: { lowerAbsDelta, upperAbsDelta } for skew-aware P(max loss).
-    history: historyInput, historyByStrategy, wingDeltas, captureByStrategy } = inputs;
+    history: historyInput, historyByStrategy, wingDeltas, captureByStrategy,
+    // Daily trend read (engine/trend.js computeTrend) and VIX / VIX3M — optional.
+    trend, vixTermRatio } = inputs;
 
   // Signed theta: positive collects decay, negative pays it. Gate on magnitude so a
   // debit structure still gets scored, and let the signed tEff below score it honestly
@@ -519,6 +521,20 @@ export function calc45DTE(inputs) {
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');
   if (!termBiasEff) warnings.push('Term structure unknown — fetch the vol surface or set term bias (scores 0/15 until then)');
   if (greeks && greeks.tvRatio > 4) warnings.push('Vega/theta elevated — vol expansion risk');
+  // ── Daily backdrop (Oct 2026): the 45DTE replacements for the 0DTE session reads.
+  const _sellsPremium = /Iron Condor|Chicken|Credit|Bull put|Bear call|Jade|Iron butterfly|Strangle|Ratio/i.test(legStrat);
+  if (trend) {
+    const z = trend.z20;
+    if (trend.stretch === 'stretched up' && (isBull || /Bull|Call|Diagonal/.test(legStrat) && !/Bear call/.test(legStrat)))
+      warnings.push(`Price stretched ${z.toFixed(1)}σ above its 20-day mean — bullish entries often give back to the mean first`);
+    else if (trend.stretch === 'stretched down' && (isBear || /Bear|Put spread/.test(legStrat) && !/Bull put/.test(legStrat)))
+      warnings.push(`Price stretched ${Math.abs(z).toFixed(1)}σ below its 20-day mean — bearish entries often give back to the mean first`);
+    if (_sellsPremium && trend.hvRegime === 'coiled')
+      warnings.push(`Realised vol coiled (HV10/HV60 ${trend.hvRatio.toFixed(2)}) — quiet stretches end in a move; size down short premium`);
+    if (_sellsPremium && trend.hvRegime === 'expanding')
+      warnings.push(`Realised vol expanding (HV10/HV60 ${trend.hvRatio.toFixed(2)}) — let it settle before selling premium`);
+  }
+  if (vixTermRatio >= 1) warnings.push(`VIX above VIX3M (${(+vixTermRatio).toFixed(2)}) — index stress: same direction odds, wider swings; size down`);
   // ── Scheduled macro events between entry and expiry (Aug 2026) ──
   // For a premium seller the COUNT matters more than any single date: each event is
   // another chance for vol to expand through the wings over a 45-day hold. Events in
@@ -653,6 +669,6 @@ export function calc45DTE(inputs) {
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
     tradeConfidence, confidenceTier, confidenceDriver, confConflicts,
     behaviour: MARKET_BEHAVIOUR_45DTE[legStrat] || '',
-    outlook
+    outlook, trend: trend || null, vixTermRatio: vixTermRatio || null
   };
 }

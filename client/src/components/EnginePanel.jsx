@@ -12,6 +12,7 @@ import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/com
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
 import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf } from '../engine/payoffCurve';
 import PayoffTimeChart from './PayoffTimeChart';
+import { computeTrend, trendLabel } from '../engine/trend';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 // '' = unknown. Only used when IV Front/Back are absent — with both present the
@@ -431,7 +432,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // leaving stale numbers behind a LIVE badge.
   const [feed, setFeed] = useState(init?.feed ?? null);
   // Last /api/vol-surface pull: expiries used, IVR basis, 25Δ legs, notes. Display only.
-  const [volMeta, setVolMeta] = useState(init?.volMeta ?? null);
+  // A 45DTE scan pick carries the trend it read, so the ticket opens with it.
+  const [volMeta, setVolMeta] = useState(init?.volMeta ?? (seed && seed._scanMode === '45dte' && seed._trend
+    ? { und: seed.underlying, trend: seed._trend, vixTermRatio: seed.vixTermRatio || null, dailySource: seed._dailySource || null } : null));
   const [fetchingVol, setFetchingVol] = useState(false);
   const [justRefreshed, setJustRefreshed] = useState(false);
   const [tick, setTick] = useState(() => Date.now());
@@ -515,6 +518,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // A 45DTE scan also carries the vol surface it pulled; a 0DTE scan never seeds 45DTE vol.
     const out = applySeed(base, seed, seed && seed._scanMode === '45dte' ? [...MKT_45, ...VOL_45] : MKT_45);
     if (seed && seed._scanMode === '45dte' && seed.termBias) out.termBias = seed.termBias;
+    if (seed && seed._scanMode === '45dte' && seed.outlook) out.outlook = seed.outlook;
     return out;
   });
 
@@ -525,7 +529,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const bag = is0 ? '0' : '45';
   const markHeld = (b, k) => setHeld(h => (h[b + ':' + k] ? h : { ...h, [b + ':' + k]: true }));
   const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
-  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k)) markHeld('45', k); };
+  // Outlook is held too (Oct 2026): the daily trend sets it on every vol-surface
+  // pull until you choose one yourself.
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -694,6 +700,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // The 45DTE argument object, same shape/purpose as mk0: built once so the
   // structure-comparison table can re-run the engine at a different strategy
   // without duplicating the input mapping.
+  const trendNow = volMeta && volMeta.trend && (!volMeta.und || volMeta.und === i45.underlying) ? volMeta.trend : null;
   const mk45 = (over) => ({
           price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
           hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
@@ -703,6 +710,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
           theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
           underlying:i45.underlying, termBias:i45.termBias, outlook:i45.outlook,
+          // the trend read only while it is for this underlying
+          trend: trendNow, vixTermRatio: trendNow ? (volMeta.vixTermRatio || null) : null,
           overrideStrategy: overrideStrat,
           overrideStrikes: overrideStrikes['45']?.map || null,
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
@@ -742,7 +751,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1817,7 +1826,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         VOL_45.forEach(k => { if (!held['45:' + k] && vals[k] !== undefined) out[k] = vals[k]; });
         return out;
       });
-      setVolMeta({ asOf: d.asOf, dataType: d.dataType, expiries: d.expiries, atmStrike: d.atm ? d.atm.strike : null,
+      const trend = computeTrend(d.daily);
+      if (trend && !held['45:outlook']) setI45(prev => ({ ...prev, outlook: trend.outlook }));
+      setVolMeta({ und: i45.underlying, trend, vix: d.vix, vix3m: d.vix3m, vixTermRatio: d.vixTermRatio, dailySource: d.dailySource || null,
+        asOf: d.asOf, dataType: d.dataType, expiries: d.expiries, atmStrike: d.atm ? d.atm.strike : null,
         termBias: d.termBias, termRatio: d.termRatio, ivPctl: d.ivPctl, iv30: d.iv30,
         iv52wLow: d.iv52wLow, iv52wHigh: d.iv52wHigh, hvSource: d.hvSource,
         skewDetail: d.skewDetail, notes: d.notes || [], missing });
@@ -2303,7 +2315,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const expiriesLine = isTimeSpread && nearExp && farExp
       ? `Expiries: sell ${fmtExpiry(nearExp)} ${nearExp.slice(0, 4)} (${dteBetween(todayYmd, nearExp)}d) / buy ${fmtExpiry(farExp)} ${farExp.slice(0, 4)} (${dteBetween(todayYmd, farExp)}d)\n`
       : '';
-    const fullNotes = expiriesLine + engineSummary + planBlock
+    // Legs with side, right and expiry (Oct 2026), so the 45DTE check-up can find the
+    // position when TWS has no match (the Wing Strikes column is strikes only).
+    // A 45DTE expiry here is the one PLANNED from the DTE unless the chain set it.
+    const legsLine = !is0 && r.legs && r.legs.length ? 'Legs: ' + r.legs.map(l => {
+      const lb = String(l.label || '').toLowerCase();
+      const q = (/short|sell/.test(lb) ? -1 : 1) * (/x2\b/.test(lb) ? 2 : 1);
+      return `${q > 0 ? '+' : '-'}${Math.abs(q)} ${l.strike}${lb.includes('put') ? 'P' : 'C'} ${legExpiryOf(l) || deriveExpiryYYYYMMDD()}`;
+    }).join(' / ') + '\n' : '';
+    const fullNotes = expiriesLine + legsLine + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
@@ -2371,7 +2391,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // morning the latter is the expiry that has already expired. Close dates
       // elsewhere in the app deliberately keep the UTC date: a close looks BACK at the
       // session that just ended, which is the one the UTC date already names.
-      expiryDate: is0 ? tradingSession().dateISO : (isTimeSpread && nearExp ? isoFromYmd(nearExp) : '')
+      expiryDate: is0 ? tradingSession().dateISO : isoFromYmd(isTimeSpread && nearExp ? nearExp : deriveExpiryYYYYMMDD())
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -3073,6 +3093,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <Inp label="DTE" value={i45.dte} onChange={v=>set45('dte',v)}/>
                 <Sel label="Outlook" value={i45.outlook} onChange={v=>set45('outlook',v)} options={OUTLOOKS}/>
               </div>
+              <TrendReadout trend={trendNow} held={!!held['45:outlook']} outlook={i45.outlook}
+                vixTermRatio={trendNow ? volMeta.vixTermRatio : null} source={volMeta && volMeta.dailySource}
+                onUseTrend={() => { setHeld(h => { const o = { ...h }; delete o['45:outlook']; return o; });
+                  setI45(p => ({ ...p, outlook: trendNow.outlook })); }} />
             </InputSection>
           )}
 
@@ -4207,6 +4231,49 @@ function profitIfText(pay, underlying) {
     ? `${u} stays ${f(bes[0])}–${f(bes[1])}` : `${u} breaks out of ${f(bes[0])}–${f(bes[1])}`;
   if (bes.length === 1) return at(bes[0] + 1) > 0 ? `${u} holds above ${f(bes[0])}` : `${u} holds below ${f(bes[0])}`;
   return '';
+}
+
+// Daily trend under the Outlook select: what it says, why, and whether the
+// outlook is following it or you have set your own.
+function TrendReadout({ trend, held, outlook, vixTermRatio, source, onUseTrend }) {
+  if (!trend) return (
+    <div data-testid="trend-readout" style={{ marginTop: 8, fontSize: 12.5, color: '#8b949e' }}>
+      Daily trend: fetch the vol surface to read it — until then the outlook is yours to set.
+    </div>
+  );
+  const col = trend.outlook === 'bullish' ? '#3fb950' : trend.outlook === 'bearish' ? '#f85149' : '#c9d1d9';
+  const chip = (label, val, tone, tip) => (
+    <span title={tip} style={{ display: 'inline-flex', gap: 4, padding: '2px 7px', borderRadius: 5, background: '#161b22',
+      border: '1px solid #30363d', color: tone || '#c9d1d9', fontSize: 12 }}>
+      <span style={{ color: '#8b949e' }}>{label}</span><span className="mono">{val}</span>
+    </span>
+  );
+  const sgn = x => (x > 0 ? '+' : '') + x;
+  return (
+    <div data-testid="trend-readout" data-outlook={trend.outlook} style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#0d1117', border: '1px solid #21262d' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
+        <span style={{ color: '#8b949e' }}>Daily trend{source ? ` (${source})` : ''}</span>
+        <b style={{ color: col }}>{trendLabel(trend)}</b>
+        {held && outlook !== trend.outlook
+          ? <button data-testid="use-trend" onClick={onUseTrend} style={{ marginLeft: 'auto', fontSize: 12, padding: '2px 8px', borderRadius: 5,
+              border: '1px solid #1f6feb', color: '#58a6ff', background: 'transparent', cursor: 'pointer' }}>
+              You set {outlook} · use trend ({trend.outlook})</button>
+          : <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8b949e' }}>{held ? 'outlook set by you' : 'outlook follows the trend'}</span>}
+      </div>
+      <div style={{ fontSize: 12, color: '#a8b2be', marginTop: 4 }}>{trend.why}</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+        {trend.pctVs20 != null && chip('vs 20d', sgn(trend.pctVs20) + '%', null, 'Close against the 20-day simple moving average')}
+        {trend.pctVs50 != null && chip('vs 50d', sgn(trend.pctVs50) + '%', null, 'Close against the 50-day simple moving average')}
+        {trend.z20 != null && chip('stretch', sgn(trend.z20) + 'σ', trend.stretch !== 'normal' ? '#d29922' : null,
+          'Distance from the 20-day mean in standard deviations of the last 20 closes. Beyond ±2 is stretched.')}
+        {trend.accept10 != null && chip('above 20d', Math.round(trend.accept10 * 10) + '/10', null, 'How many of the last 10 closes were above the 20-day average')}
+        {trend.hvRatio != null && chip('HV10/60', trend.hvRatio.toFixed(2), trend.hvRegime !== 'steady' ? '#d29922' : null,
+          'Realised vol, last 10 days over last 60. Below 0.7 coiled, above 1.3 expanding.')}
+        {vixTermRatio != null && chip('VIX/VIX3M', (+vixTermRatio).toFixed(2), vixTermRatio >= 1 ? '#f85149' : null,
+          'Above 1 is index backwardation — wider swings ahead: a sizing signal, not a direction call.')}
+      </div>
+    </div>
+  );
 }
 
 function outlookOf(name) {

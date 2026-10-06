@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Zap, Timer, CalendarDays, Radar, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
+import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
+import Checkup45 from '../components/Checkup45';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
+import { computeTrend, trendLabel } from '../engine/trend';
 import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
@@ -524,6 +526,16 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             style={panel === 'multiscan' ? { borderColor: modeUi(mode).border, background: modeUi(mode).bg } : undefined}>
             <Radar size={14} /> Multi-scan <ModeBadge mode={mode} />
           </button>
+          <button onClick={() => setPanel(panel === 'checkup' ? null : 'checkup')} data-testid="checkup-toggle"
+            title="Hold, take profit, roll or close — a check-up of every open 45DTE trade"
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'checkup' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
+            style={panel === 'checkup' ? { borderColor: MODE_UI['45dte'].border, background: MODE_UI['45dte'].bg } : undefined}>
+            <Stethoscope size={14} /> Check-up
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 5, color: MODE_UI['45dte'].fg,
+              background: MODE_UI['45dte'].bg, border: `1px solid ${MODE_UI['45dte'].border}` }}>
+              {openTickets.filter(d => /45/.test(String(d.Engine || ''))).length} open
+            </span>
+          </button>
         </div>
       </div>
 
@@ -954,6 +966,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       )}
 
       {/* COMPARISON PANEL */}
+      {panel === 'checkup' && (
+        <Checkup45 tickets={openTickets} />
+      )}
+
       {panel === 'multiscan' && (
         <MultiScanPanel mode={mode} onSelect={handleSelectFromScan} onMode={switchMode} />
       )}
@@ -1213,6 +1229,30 @@ const SCAN_ROWS = {
         const n = r.result?.eventHighCount;
         return n == null ? '--' : <span style={{color: n > 2 ? '#d29922' : '#c9d1d9'}}>{n} high-impact</span>;
       }},
+    { label: 'Trend', tip: 'Daily trend: close vs 20- and 50-day averages, the 20-day slope, and ADX(14). Sets the ticket\u2019s outlook. ADX under 20 is a range — neutral, whatever the averages say.',
+      render: r => {
+        const t = r.data?._trend;
+        if (!t) return <span style={{color:'#8b949e'}}>--</span>;
+        const col = t.outlook === 'bullish' ? '#3fb950' : t.outlook === 'bearish' ? '#f85149' : '#c9d1d9';
+        return <span style={{color:col}} title={t.why}>{trendLabel(t)}</span>;
+      }},
+    { label: 'Stretch', tip: 'Distance from the 20-day mean in standard deviations of the last 20 closes. Beyond ±2 a move back toward the mean is common.',
+      render: r => {
+        const t = r.data?._trend;
+        if (!t || t.z20 == null) return <span style={{color:'#8b949e'}}>--</span>;
+        return <span style={{color: t.stretch !== 'normal' ? '#d29922' : '#c9d1d9'}}>{t.z20 > 0 ? '+' : ''}{t.z20.toFixed(1)}σ <span style={{fontSize:12,color:'#a8b2be'}}>{t.pctVs20 > 0 ? '+' : ''}{t.pctVs20.toFixed(1)}% vs 20d</span></span>;
+      }},
+    { label: 'Realised vol', tip: 'HV10 ÷ HV60. Below 0.7 coiled (quiet before a move), above 1.3 expanding (let it settle before selling premium).',
+      render: r => {
+        const t = r.data?._trend;
+        if (!t || t.hvRatio == null) return <span style={{color:'#8b949e'}}>--</span>;
+        return <span style={{color: t.hvRegime !== 'steady' ? '#d29922' : '#c9d1d9'}}>{t.hvRatio.toFixed(2)} <span style={{fontSize:12,color:'#a8b2be'}}>{t.hvRegime}</span></span>;
+      }},
+    { label: 'VIX / VIX3M', tip: 'Above 1 is index backwardation: about the same direction odds, much wider swings. Size down rather than call a direction.',
+      render: r => {
+        const x = parseFloat(r.data?.vixTermRatio);
+        return x > 0 ? <span style={{color: x >= 1 ? '#f85149' : '#c9d1d9'}}>{x.toFixed(2)}</span> : <span style={{color:'#8b949e'}}>--</span>;
+      }},
     { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
   ],
 };
@@ -1373,6 +1413,10 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
               if (ok && (md[k] === undefined || md[k] === '')) md[k] = String(v);
             });
             if (vs.termBias) md.termBias = vs.termBias;
+            // The daily trend read (SMA 20/50, ADX, stretch, HV10/60) and VIX/VIX3M.
+            const tr = computeTrend(vs.daily);
+            if (tr) { md._trend = tr; md._dailySource = vs.dailySource || null; }
+            if (vs.vixTermRatio) md.vixTermRatio = vs.vixTermRatio;
             mergedData[underlying] = md;
           });
         }
@@ -1441,6 +1485,8 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
         if (!is0) {
           VOL_SCAN_KEYS.forEach(k => { if (m0[k] !== undefined && m0[k] !== '') vol[k] = m0[k]; });
           if (m0.termBias) vol.termBias = m0.termBias;
+          if (m0._trend) { vol._trend = m0._trend; vol.outlook = m0._trend.outlook; vol._dailySource = m0._dailySource; }
+          if (m0.vixTermRatio) vol.vixTermRatio = m0.vixTermRatio;
         }
         const data = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
         if (!inp.price) return { underlying, error: 'No price', result: null, data };
@@ -1459,7 +1505,9 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
             dte: 45, pop: 0, win: 0, risk: 0,
             bankroll: 3000, startBR: 3000, maxLoss: 300, maxOpen: 450, bpr: 0,
             theta: 0, vega: 0, delta: 0, underlying,
-            outlook: 'neutral', overrideStrategy: null
+            // Outlook from the daily trend when the bridge sent bars; neutral otherwise.
+            outlook: vol.outlook || 'neutral', trend: vol._trend || null,
+            vixTermRatio: vol.vixTermRatio || null, overrideStrategy: null
           });
           return { underlying, result, data };
         } catch (e) {
