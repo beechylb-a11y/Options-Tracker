@@ -1828,7 +1828,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       });
       const trend = computeTrend(d.daily);
       if (trend && !held['45:outlook']) setI45(prev => ({ ...prev, outlook: trend.outlook }));
-      setVolMeta({ und: i45.underlying, trend, vix: d.vix, vix3m: d.vix3m, vixTermRatio: d.vixTermRatio, dailySource: d.dailySource || null,
+      setVolMeta({ und: i45.underlying, trend, oldBridge: !('daily' in d) && !('vix3m' in d), vix: d.vix, vix3m: d.vix3m, vixTermRatio: d.vixTermRatio, dailySource: d.dailySource || null,
         asOf: d.asOf, dataType: d.dataType, expiries: d.expiries, atmStrike: d.atm ? d.atm.strike : null,
         termBias: d.termBias, termRatio: d.termRatio, ivPctl: d.ivPctl, iv30: d.iv30,
         iv52wLow: d.iv52wLow, iv52wHigh: d.iv52wHigh, hvSource: d.hvSource,
@@ -3094,6 +3094,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <Sel label="Outlook" value={i45.outlook} onChange={v=>set45('outlook',v)} options={OUTLOOKS}/>
               </div>
               <TrendReadout trend={trendNow} held={!!held['45:outlook']} outlook={i45.outlook}
+                oldBridge={!!(volMeta && volMeta.oldBridge && (!volMeta.und || volMeta.und === i45.underlying))}
                 vixTermRatio={trendNow ? volMeta.vixTermRatio : null} source={volMeta && volMeta.dailySource}
                 onUseTrend={() => { setHeld(h => { const o = { ...h }; delete o['45:outlook']; return o; });
                   setI45(p => ({ ...p, outlook: trendNow.outlook })); }} />
@@ -4235,10 +4236,12 @@ function profitIfText(pay, underlying) {
 
 // Daily trend under the Outlook select: what it says, why, and whether the
 // outlook is following it or you have set your own.
-function TrendReadout({ trend, held, outlook, vixTermRatio, source, onUseTrend }) {
+function TrendReadout({ trend, held, outlook, vixTermRatio, source, onUseTrend, oldBridge }) {
   if (!trend) return (
-    <div data-testid="trend-readout" style={{ marginTop: 8, fontSize: 12.5, color: '#8b949e' }}>
-      Daily trend: fetch the vol surface to read it — until then the outlook is yours to set.
+    <div data-testid="trend-readout" style={{ marginTop: 8, fontSize: 12.5, color: oldBridge ? '#d29922' : '#8b949e' }}>
+      {oldBridge
+        ? 'Daily trend: your Bridge predates the 6 Oct update and sends no daily bars — git pull in the bridge folder and restart it. Until then the outlook is yours to set.'
+        : 'Daily trend: fetch the vol surface to read it — until then the outlook is yours to set.'}
     </div>
   );
   const col = trend.outlook === 'bullish' ? '#3fb950' : trend.outlook === 'bearish' ? '#f85149' : '#c9d1d9';

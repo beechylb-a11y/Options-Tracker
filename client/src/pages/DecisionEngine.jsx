@@ -1179,6 +1179,13 @@ const SCAN_FIELDS = {
 };
 const VOL_SCAN_KEYS = ['iv', 'ivr', 'hv', 'ivFront', 'ivBack', 'skew'];
 
+// Blank trend cell: say why — an old bridge, or a bridge that returned no daily bars.
+const trendMissing = r => r.data?._oldBridge
+  ? <span style={{color:'#d29922'}} title="Your Bridge predates the 6 Oct update: it sends no daily bars or VIX3M. In the bridge folder: git pull, then restart the bridge.">update Bridge</span>
+  : r.data?._noDaily
+    ? <span style={{color:'#d29922'}} title="The Bridge returned no daily bars for this ticker (TWS historical data request failed or timed out). Scan again.">no daily bars</span>
+    : <span style={{color:'#8b949e'}}>--</span>;
+
 // What each scan type shows per underlying. The 0DTE rows read today's session;
 // none of them means anything six weeks out, so 45DTE gets its own set.
 const SCAN_ROWS = {
@@ -1232,26 +1239,26 @@ const SCAN_ROWS = {
     { label: 'Trend', tip: 'Daily trend: close vs 20- and 50-day averages, the 20-day slope, and ADX(14). Sets the ticket\u2019s outlook. ADX under 20 is a range — neutral, whatever the averages say.',
       render: r => {
         const t = r.data?._trend;
-        if (!t) return <span style={{color:'#8b949e'}}>--</span>;
+        if (!t) return trendMissing(r);
         const col = t.outlook === 'bullish' ? '#3fb950' : t.outlook === 'bearish' ? '#f85149' : '#c9d1d9';
         return <span style={{color:col}} title={t.why}>{trendLabel(t)}</span>;
       }},
     { label: 'Stretch', tip: 'Distance from the 20-day mean in standard deviations of the last 20 closes. Beyond ±2 a move back toward the mean is common.',
       render: r => {
         const t = r.data?._trend;
-        if (!t || t.z20 == null) return <span style={{color:'#8b949e'}}>--</span>;
+        if (!t || t.z20 == null) return trendMissing(r);
         return <span style={{color: t.stretch !== 'normal' ? '#d29922' : '#c9d1d9'}}>{t.z20 > 0 ? '+' : ''}{t.z20.toFixed(1)}σ <span style={{fontSize:12,color:'#a8b2be'}}>{t.pctVs20 > 0 ? '+' : ''}{t.pctVs20.toFixed(1)}% vs 20d</span></span>;
       }},
     { label: 'Realised vol', tip: 'HV10 ÷ HV60. Below 0.7 coiled (quiet before a move), above 1.3 expanding (let it settle before selling premium).',
       render: r => {
         const t = r.data?._trend;
-        if (!t || t.hvRatio == null) return <span style={{color:'#8b949e'}}>--</span>;
+        if (!t || t.hvRatio == null) return trendMissing(r);
         return <span style={{color: t.hvRegime !== 'steady' ? '#d29922' : '#c9d1d9'}}>{t.hvRatio.toFixed(2)} <span style={{fontSize:12,color:'#a8b2be'}}>{t.hvRegime}</span></span>;
       }},
     { label: 'VIX / VIX3M', tip: 'Above 1 is index backwardation: about the same direction odds, much wider swings. Size down rather than call a direction.',
       render: r => {
         const x = parseFloat(r.data?.vixTermRatio);
-        return x > 0 ? <span style={{color: x >= 1 ? '#f85149' : '#c9d1d9'}}>{x.toFixed(2)}</span> : <span style={{color:'#8b949e'}}>--</span>;
+        return x > 0 ? <span style={{color: x >= 1 ? '#f85149' : '#c9d1d9'}}>{x.toFixed(2)}</span> : r.data?._oldBridge ? trendMissing(r) : <span style={{color:'#8b949e'}}>--</span>;
       }},
     { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
   ],
@@ -1416,6 +1423,10 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
             // The daily trend read (SMA 20/50, ADX, stretch, HV10/60) and VIX/VIX3M.
             const tr = computeTrend(vs.daily);
             if (tr) { md._trend = tr; md._dailySource = vs.dailySource || null; }
+            // A bridge from before 6 Oct sends no `daily` / `vix3m` at all — say so in
+            // the cells instead of a blank that looks like "no reading".
+            md._oldBridge = !('daily' in vs) && !('vix3m' in vs);
+            md._noDaily = !md._oldBridge && !tr;
             if (vs.vixTermRatio) md.vixTermRatio = vs.vixTermRatio;
             mergedData[underlying] = md;
           });
@@ -1487,6 +1498,8 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
           if (m0.termBias) vol.termBias = m0.termBias;
           if (m0._trend) { vol._trend = m0._trend; vol.outlook = m0._trend.outlook; vol._dailySource = m0._dailySource; }
           if (m0.vixTermRatio) vol.vixTermRatio = m0.vixTermRatio;
+          if (m0._oldBridge) vol._oldBridge = true;
+          if (m0._noDaily) vol._noDaily = true;
         }
         const data = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
         if (!inp.price) return { underlying, error: 'No price', result: null, data };
