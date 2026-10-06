@@ -37,10 +37,10 @@ describe('45DTE strikes and expiry', () => {
   it('trades a listed expiry and shows it on every leg', async () => {
     mount();
     await waitFor(() => screen.getByTestId('expiry-single'));
-    expect(tiles()).toMatch(/Put · 20 Nov/);
+    expect(screen.getAllByTestId('leg-expiry').map(e => e.textContent)).toEqual(['20 Nov', '20 Nov', '20 Nov', '20 Nov']);
     // picking another expiry moves the ticket to it
     fireEvent.click(screen.getByText('27 Nov'));
-    await waitFor(() => expect(tiles()).toMatch(/27 Nov/));
+    await waitFor(() => expect(screen.getAllByTestId('leg-expiry')[0].textContent).toBe('27 Nov'));
   });
 
   it('Delta fetches greeks on the listed expiry and moves the tiles; EM puts them back', async () => {

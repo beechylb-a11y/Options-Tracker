@@ -226,7 +226,8 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   }, [ladderOpen]);
 
   const box = {
-    padding: fill ? '9px 12px' : compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize: fill ? 16 : 13, fontWeight:700, whiteSpace:'nowrap',
+    padding: fill ? (expiryTag ? '6px 10px' : '9px 12px') : compact ? '3px 8px' : '3px 10px', borderRadius:8, fontSize: fill ? 16 : 13, fontWeight:700, whiteSpace:'nowrap',
+    overflow:'hidden', textOverflow:'ellipsis',
     ...(fill ? { textAlign:'center', boxSizing:'border-box', width:'100%' } : {}),
     // TWS convention: sell red, buy blue.
     background:isShort?'#8b2025':'#0c2d6b', color:isShort?'#ff7b72':'#79c0ff',
@@ -256,11 +257,19 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
     <div onClick={()=>{ if (ladderOpen && onCloseLadder) onCloseLadder(); setText(String(leg.strike)); setEditing(true); }}
       title={(compact ? label + ' — ' : '') + (edited ? `Edited by hand — engine suggested ${engineStrike}. Click to change.` : 'Click to edit this strike')}
       style={{...box, cursor:'pointer'}}>
-      {compact ? ticketTxt : leg.strike}{expiryTag && <span style={{fontWeight:600,opacity:0.85}}> · {expiryTag}</span>}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>}{!compact && <> <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span></>}
-      {onOpenLadder && (
-        <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
-          title="Strike ladder — what moving this leg does to the trade"
-          style={{fontSize:12,marginLeft:5,opacity:0.6,cursor:'pointer'}}>≡</span>
+      {/* The expiry sits on its own small line under the strike, so four legs with a
+          date each still fit their tiles (it ran past the edge inline). (Oct 2026.) */}
+      <div style={{overflow:'hidden',textOverflow:'ellipsis'}}>
+        {compact ? ticketTxt : leg.strike}{edited && <span style={{fontSize:11,marginLeft:3,color:'#d29922'}}>✎</span>}{!compact && <> <span style={{fontSize:12,fontWeight:400,opacity:0.8}}>{label}</span></>}
+        {onOpenLadder && (
+          <span onClick={e=>{ e.stopPropagation(); onOpenLadder(idx); }}
+            title="Strike ladder — what moving this leg does to the trade"
+            style={{fontSize:12,marginLeft:5,opacity:0.6,cursor:'pointer'}}>≡</span>
+        )}
+      </div>
+      {expiryTag && (
+        <div data-testid="leg-expiry" style={{fontSize:11.5,fontWeight:600,opacity:0.8,lineHeight:1.2,marginTop:1,
+          overflow:'hidden',textOverflow:'ellipsis'}}>{expiryTag}</div>
       )}
     </div>
   );
