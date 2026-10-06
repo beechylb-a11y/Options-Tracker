@@ -134,12 +134,12 @@ export function curveAt(cl, { net, days = 0, volShift = 0, lo, hi, n = 160 }) {
 // Zero drift; sigma is the ATM IV to that horizon (decimal). Sums the mass of
 // every profitable stretch between grid points, so it handles one, two or more
 // breakevens without special cases.
-export function probProfit(curve, spot, sigma, days) {
+export function probProfit(curve, spot, sigma, days, mu = 0) {
   if (!curve || !(spot > 0) || !(sigma > 0)) return null;
   const t = days / 365;
   if (!(t > 0)) return null;
   const sT = sigma * Math.sqrt(t);
-  const F = x => x <= 0 ? 0 : normCdf((Math.log(x / spot) + 0.5 * sT * sT) / sT);
+  const F = x => x <= 0 ? 0 : normCdf((Math.log(x / spot) - (mu - 0.5 * sigma * sigma) * t) / sT);
   const pts = curve.points;
   let p = 0;
   // tails beyond the window take the sign of the end points
@@ -170,4 +170,87 @@ export function ivAtDte(d, d1, iv1, d2, iv2) {
   const dd = Math.max(1, d);
   const w = w1 + (w2 - w1) * (dd - d1) / (d2 - d1);
   return w > 0 ? Math.sqrt(w / dd) * 100 : iv1;
+}
+
+// Outcome of holding the position to `days` under a lognormal price (zero drift,
+// ATM vol `sigma` decimal): probability of profit, average win and average loss
+// in $ per contract. Winners are capped at `cap` (the profit target — you would
+// have closed there), so the average win is what a managed trade banks.
+// This is how the engine prices a trade TWS gives no POP for (calendars and
+// diagonals — two expiries): POP, win and loss all come from the same curve.
+// (Oct 2026.)
+// mu = annual drift; pass the pricing carry (rate − dividend yield) so a trade
+// entered at the model's own fair value comes out at EV ≈ 0 rather than biased by
+// the drift the option prices already contain.
+export function curveOutcome(curve, spot, sigma, days, cap = Infinity, mu = 0) {
+  if (!curve || !(spot > 0) || !(sigma > 0) || !(days > 0)) return null;
+  const t = days / 365, sT = sigma * Math.sqrt(t);
+  const F = x => x <= 0 ? 0 : normCdf((Math.log(x / spot) - (mu - 0.5 * sigma * sigma) * t) / sT);
+  const pts = curve.points;
+  let pW = 0, sW = 0, pL = 0, sL = 0;
+  const add = (mass, pnl) => {
+    if (!(mass > 0)) return;
+    if (pnl > 0) { pW += mass; sW += mass * Math.min(pnl, cap); }
+    else if (pnl < 0) { pL += mass; sL += mass * -pnl; }
+  };
+  add(F(pts[0].price), pts[0].pnl);
+  add(1 - F(pts[pts.length - 1].price), pts[pts.length - 1].pnl);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if ((a.pnl > 0) === (b.pnl > 0) || a.pnl === 0 || b.pnl === 0) {
+      add(F(b.price) - F(a.price), (a.pnl + b.pnl) / 2);
+    } else {                                    // breakeven inside: split at the crossing
+      const x = a.price + (a.pnl / (a.pnl - b.pnl)) * (b.price - a.price);
+      add(F(x) - F(a.price), a.pnl / 2);
+      add(F(b.price) - F(x), b.pnl / 2);
+    }
+  }
+  const tot = pW + pL;
+  if (!(tot > 0)) return null;
+  return { pop: pW / tot, avgWin: pW > 0 ? sW / pW : 0, avgLoss: pL > 0 ? sL / pL : 0,
+    ev: (sW - sL) / tot };
+}
+
+// Small seeded PRNG (mulberry32) + Box-Muller, so a simulation gives the same
+// answer every render for the same inputs.
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// The managed trade, path by path (Oct 2026): price walks daily (lognormal, vol
+// `sigma`, drift `mu`); the position is revalued with Black-Scholes each day; it
+// closes at `target` $ the first day P&L reaches it, else at `closeDay`. Returns
+// POP (finished green), P(target hit), average win, average loss and EV in $ per
+// contract. This is the trade the playbook actually runs — target or time stop —
+// which a single end-of-period curve can't price: a path that tags the target and
+// then falls back still banked the target.
+export function simulateExit(cl, { net, spot, sigma, mu = 0, closeDay, target = Infinity, paths = 1000, seed = 7 }) {
+  if (!cl || !(spot > 0) || !(sigma > 0) || !(closeDay >= 1) || net == null) return null;
+  const rand = rng(seed);
+  const dt = 1 / 365, drift = (mu - 0.5 * sigma * sigma) * dt, vol = sigma * Math.sqrt(dt);
+  let wins = 0, hits = 0, sW = 0, sL = 0, nL = 0;
+  const half = Math.ceil(paths / 2);
+  for (let p = 0; p < half; p++) {
+    // antithetic pair: same shocks, opposite sign — halves the noise for free
+    const z = [];
+    for (let d = 0; d < closeDay; d++) {
+      const u1 = Math.max(1e-12, rand()), u2 = rand();
+      z.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2));
+    }
+    for (const sgn of [1, -1]) {
+      let S = spot, pnl = 0, hit = false;
+      for (let d = 1; d <= closeDay; d++) {
+        S *= Math.exp(drift + vol * sgn * z[d - 1]);
+        pnl = (positionValue(cl, S, d) + net) * 100;
+        if (pnl >= target) { pnl = target; hit = true; break; }
+      }
+      if (hit) hits++;
+      if (pnl > 0) { wins++; sW += pnl; } else { nL++; sL += -pnl; }
+    }
+  }
+  const n = half * 2;
+  return { pop: wins / n, pTarget: hits / n, avgWin: wins ? sW / wins : 0, avgLoss: nL ? sL / nL : 0,
+    ev: (sW - sL) / n, paths: n, closeDay };
 }

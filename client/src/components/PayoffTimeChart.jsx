@@ -14,7 +14,7 @@ const money = v => (v < 0 ? '−$' : '$') + Math.abs(Math.round(v)).toLocaleStri
 const kfmt = v => Math.abs(v) >= 1000 ? (v / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1) + 'K' : String(Math.round(v));
 
 export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
-  todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, closeOptions, closeLeg, onCloseDte }) {
+  todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, closeOptions, closeLeg, onCloseDte, exitSim }) {
   // target: { dollars, label } — the strategy's profit target per contract (EXIT_RULES).
   const [day, setDay] = useState(closeDay);
   const [band, setBand] = useState(2);
@@ -181,6 +181,20 @@ export default function PayoffTimeChart({ cl, net, netSource, spot, lo, hi, sigm
         })()}
       </div>
 
+      {exitSim && (
+        <div data-testid="exit-sim" style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#0d1117', border: '1px solid #21262d', fontSize: 12.5, color: '#c9d1d9', lineHeight: 1.55 }}>
+          <b style={{ color: '#e6edf3' }}>Managed trade</b> — {exitSim.paths.toLocaleString()} simulated paths, each closed at the
+          {tgt != null ? ` ${money(tgt)} target` : ' target'} or at {closeDte} DTE:
+          {' '}POP <b style={{ color: '#e6edf3' }}>{(exitSim.pop * 100).toFixed(0)}%</b>
+          {tgt != null && <> · target hit <b style={{ color: '#e6edf3' }}>{(exitSim.pTarget * 100).toFixed(0)}%</b></>}
+          {' '}· avg win <span style={{ color: '#3fb950' }}>{money(exitSim.avgWin)}</span>
+          {' '}· avg loss <span style={{ color: '#f85149' }}>{money(-exitSim.avgLoss)}</span>
+          {' '}· EV <b style={{ color: exitSim.ev >= 0 ? '#3fb950' : '#f85149' }}>{money(exitSim.ev)}</b>
+          <div style={{ color: '#8b949e', fontSize: 11.5 }}>
+            Price moves at the near leg's IV ({(sigmaNear * 100).toFixed(1)}%) and every leg keeps its IV — a calendar's edge from back-month IV rising, or IV crush on the front, is not in this number.
+          </div>
+        </div>
+      )}
       {nearDte <= closeDte && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>
           ⚠ The near expiry is {nearDte} days out — already inside the {closeDte}-DTE close. By the playbook this trade closes now.

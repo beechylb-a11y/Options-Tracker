@@ -394,12 +394,18 @@ export function calc45DTE(inputs) {
   const wMeasured = Math.min(1, histTrades / EV_HISTORY_THRESHOLD);
   const realWinP = (history?.winRate > 0) ? history.winRate : popFrac;
   const winP = (history?.winRate > 0) ? (1 - wMeasured) * popFrac + wMeasured * realWinP : popFrac;
-  const avgWinUsed = hasMeasured ? history.avgWin : estAvgWin;
-  const avgLossUsed = hasMeasured ? history.avgLoss : estAvgLoss;
+  // Time spreads (calendar, diagonal): TWS shows no POP and the capture fractions
+  // have nothing to anchor on, so the panel simulates the managed trade from the
+  // payoff curve — target or time stop — and hands over avg win and avg loss.
+  // (Oct 2026.) POP itself arrives through the pop input (model-filled when blank).
+  const cm = inputs.curveModel && /Calendar|Diagonal/.test(legStrat) && !hasMeasured
+    && inputs.curveModel.avgWin > 0 && inputs.curveModel.avgLoss > 0 ? inputs.curveModel : null;
+  const avgWinUsed = hasMeasured ? history.avgWin : cm ? cm.avgWin : estAvgWin;
+  const avgLossUsed = hasMeasured ? history.avgLoss : cm ? cm.avgLoss : estAvgLoss;
   // Distribution-weighted loss when P(max loss) is known (estimated mode):
   // price the max-loss tail explicitly rather than smearing into one average.
-  let lossTerm45 = (1 - winP) * avgLossUsed, lossModel45 = 'flat';
-  if (!hasMeasured && pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
+  let lossTerm45 = (1 - winP) * avgLossUsed, lossModel45 = cm ? 'curve' : 'flat';
+  if (!hasMeasured && !cm && pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
     const pTail = Math.min(pMaxLoss, 1 - winP);
     const pPartial = Math.max(0, (1 - winP) - pTail);
     const partialLoss = risk * (evLossCap * 0.6);
@@ -426,6 +432,7 @@ export function calc45DTE(inputs) {
     winCap: evWinCap, lossCap: evLossCap,
     winBasis: debitBasis && winCapB45.source === 'assumed' ? `${exitRule.target}% of debit` : `${Math.round(evWinCap * 100)}% of max`,
     capture: { win: winCapB45, loss: lossCapB45, closed: capStat45 ? capStat45.closed : 0 },
+    curve: cm ? { pTarget: cm.pTarget, paths: cm.paths, closeDte: cm.closeDte, modelPop: cm.pop, netSource: cm.netSource } : null,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed, maxWin: win, maxLoss: risk,
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate
   };

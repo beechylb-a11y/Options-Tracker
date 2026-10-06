@@ -10,7 +10,7 @@ import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, sh
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
-import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf } from '../engine/payoffCurve';
+import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE } from '../engine/payoffCurve';
 import PayoffTimeChart from './PayoffTimeChart';
 import { computeTrend, trendLabel } from '../engine/trend';
 
@@ -457,6 +457,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Calendar/diagonal close: null = the rule's default (7 DTE on the front leg);
   // the chart and Profit Taker can switch it to 21. Persisted with the tab.
   const [tsClose, setTsClose] = useState(init?.tsClose ?? null);
+  // Payoff-curve model of the managed trade (time spreads): POP, avg win, avg loss
+  // from simulating target-or-time-stop exits. Fed to the 45DTE engine, which has no
+  // TWS POP for a two-expiry trade. (Oct 2026.)
+  const [curveModel, setCurveModel] = useState(null);
   // Inline log-note input (replaces the old window.prompt on Log trade).
   const [logNoteOpen, setLogNoteOpen] = useState(false);
   // Set only after the write is CONFIRMED (onLogTrade resolves true). `loggedSig` is a
@@ -531,7 +535,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
   // Outlook is held too (Oct 2026): the daily trend sets it on every vol-surface
   // pull until you choose one yourself.
-  const set45 = (k,v) => { setI45(p => ({...p,[k]:v})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
+  // Typing POP replaces a model-filled one (popSource 'model' → '').
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v, ...(k === 'pop' ? { popSource: '' } : {})})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -717,6 +722,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
           legGreeks: legGreeks && legGreeks.bag === '45' ? legGreeks.rows : null,
           closeDte: tsClose || null,
+          curveModel,
           historyByStrategy: strategyHistory || null,
           captureByStrategy: captureStats ? captureStats['45DTE'] || null : null,
           wingDeltas: (i45.lowerWingDelta !== '' || i45.upperWingDelta !== '') ? {
@@ -751,7 +757,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1429,6 +1435,39 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // once the ticket carries a real fill; a model-priced curve is a picture, not a fill.
   const pay45 = payCurve && payCurve.netSource === 'ticket' ? payCurve.atExpiry : null;
   const sizingPay = r.payoff || pay45;
+
+  // ── The managed trade, simulated (Oct 2026) ──
+  // 1,000 price paths at the near leg's IV; each closes at the profit target the
+  // first day it is reached, else at the planned close. Gives POP for trades TWS
+  // shows none for (calendars, diagonals), and avg win / avg loss that already
+  // reflect the exit rules. Memoised on its inputs — ~50 ms a run.
+  const simKey = payCurve ? JSON.stringify([
+    payCurve.cl.map(l => [l.strike, l.right, l.sign, l.qty, l.dte, +l.iv.toFixed(4)]),
+    +payCurve.net.toFixed(4), payCurve.spot, +payCurve.sigmaNear.toFixed(4), payCurve.closeDay,
+    payCurve.target ? Math.round(payCurve.target.dollars) : null]) : '';
+  const exitSim = useMemo(() => (payCurve && payCurve.closeDay >= 1)
+    ? simulateExit(payCurve.cl, { net: payCurve.net, spot: payCurve.spot, sigma: payCurve.sigmaNear,
+        mu: RATE - payCurve.divYield, closeDay: payCurve.closeDay,
+        target: payCurve.target ? payCurve.target.dollars : Infinity })
+    : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [simKey]);
+  useEffect(() => {
+    if (is0) return;
+    // Engine model for time spreads only; every other 45DTE structure keeps its
+    // capture-fraction EV (and the capture tracker).
+    const want = isTimeSpread && exitSim ? { key: simKey, pop: exitSim.pop, avgWin: exitSim.avgWin, avgLoss: exitSim.avgLoss,
+      pTarget: exitSim.pTarget, ev: exitSim.ev, paths: exitSim.paths, closeDte: payCurve ? payCurve.closeDte : null,
+      netSource: payCurve ? payCurve.netSource : '' } : null;
+    setCurveModel(prev => (prev && want && prev.key === want.key) || (!prev && !want) ? prev : want);
+    // POP: fill a blank (or model-filled) POP from the simulation, any structure.
+    // Type TWS's POP to override; clearing the field brings the model back.
+    if (exitSim && (i45.pop === '' || i45.popSource === 'model')) {
+      const p = String(Math.round(exitSim.pop * 100));
+      if (i45.pop !== p) setI45(prev => ({ ...prev, pop: p, popSource: 'model' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simKey, is0, isTimeSpread, i45.pop, i45.popSource]);
 
   // ── Trade choices (Oct 2026) ──
   // Built from stratCompare (current + next two, each a full engine run). The
@@ -2664,7 +2703,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <NeedNum label="Risk $" value={secBag.risk} onChange={v=>is0?set0('risk',v):set45('risk',v)}
                     suggest={sizingPay && Number.isFinite(sizingPay.maxLoss) && sizingPay.maxLoss !== 0 ? Math.round(Math.abs(sizingPay.maxLoss)) : null} />
                   <NeedNum label="POP %" value={secBag.pop} onChange={v=>is0?set0('pop',v):set45('pop',v)}
-                    suggest={!is0 && pay45 && payCurve.popExpiry != null ? Math.round(payCurve.popExpiry * 100) : null} />
+                    suggest={!is0 && exitSim ? Math.round(exitSim.pop * 100) : null} />
                 </div>
               )}
               {(n.actions || []).map(a => (
@@ -3218,6 +3257,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 }}
               />
               {r.bePop > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Min POP: {(r.bePop*100).toFixed(1)}%</div>}
+              {!is0 && i45.popSource === 'model' && exitSim && (
+                <div data-testid="pop-model-note" style={{fontSize:11.5,color:'#58a6ff',marginTop:2,lineHeight:1.4}}>
+                  Model POP — {exitSim.paths.toLocaleString()} simulated paths, closing at the target or at {payCurve.closeDte} DTE.
+                  {' '}Type TWS's POP to override.
+                </div>
+              )}
             </div>
             <div>
               <Inp label="Win amount ($)" field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
@@ -3727,7 +3772,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
                 closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
                 underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
-                closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} />
+                closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim} />
             </div>
           )}
           {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
@@ -3802,11 +3847,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   + (r.ev>100?' · Excellent':r.ev>50?' · Good':r.ev>0?' · Marginal':' · No edge')} />
               {r.evBasis && (
                 <div style={{fontSize:'13px',lineHeight:'1.5',color:'#e6edf3',margin:'4px 0 12px',paddingLeft:'2px',whiteSpace:'normal'}}>
-                  {r.evBasis.mode==='measured'
+                  {r.evBasis.curve
+                    ? `EV from the payoff curve (${r.evBasis.curve.paths} paths, close at the target or ${r.evBasis.curve.closeDte} DTE): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
+                      + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')
+                      + ` · P(target hit) ${(r.evBasis.curve.pTarget*100).toFixed(0)}%`
+                      + (r.evBasis.curve.netSource !== 'ticket' ? ' · priced at model fair — enter the fill' : '')
+                  : r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                       + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
-                  {r.evBasis.mode !== 'measured' && r.evBasis.capture && (() => {
+                  {r.evBasis.mode !== 'measured' && !r.evBasis.curve && r.evBasis.capture && (() => {
                     // Capture tracker: what the win/loss fractions are built from.
                     const cw = r.evBasis.capture.win, cl = r.evBasis.capture.loss;
                     const pc = v => (v * 100).toFixed(0) + '%';
