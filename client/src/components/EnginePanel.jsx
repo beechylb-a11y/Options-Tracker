@@ -551,6 +551,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Evidence drawer (Oct 2026): which tab is open, or null for closed. Closed by
   // default — the verdict, the choices and the Needs-you queue carry the decision.
   const [drawerTab, setDrawerTab] = useState(null);
+  // The Needs-you row the cursor is in. A row whose last missing input you are
+  // typing would otherwise vanish on the first keystroke (sizing complete →
+  // the row is gone), dropping focus to the page, where the next digit hit the
+  // 1–9 page shortcuts and opened another page. (Oct 2026.)
+  const [needsFocus, setNeedsFocus] = useState(null);
+  const lastNeedsRef = useRef({});
   const panelRef = useRef(null);
   const tabShow = id => ({ display: drawerTab === id ? undefined : 'none' });
   // The proposed trade used to scroll away long before the market data you are
@@ -1246,6 +1252,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     title: `Greeks are ${greeksAgeMin} minutes old`,
     detail: 'Chance of max loss is still using the earlier wing deltas.',
     actions: [{ label: 'Refresh greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
+
+  // Keep the row you are typing in until you leave it, shown as done.
+  needs.forEach(n => { lastNeedsRef.current[n.key] = n; });
+  if (needsFocus && !needs.some(n => n.key === needsFocus) && lastNeedsRef.current[needsFocus]) {
+    needs.push({ ...lastNeedsRef.current[needsFocus], resolved: true, actions: [] });
+  }
 
   // Commission for the execution row: the trade as sized, round trip.
   const commUnitsNow = unitsFromLegs(r.legs);
@@ -2575,12 +2587,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             Needs you · {needs.length}
           </div>
           {needs.map((n, idx) => (
-            <div key={n.key} style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:10,
-              background:'#0d1117',border:`1px solid ${n.tone==='bad'?'#6e2427':n.tone==='warn'?'#9e6a03':'#30363d'}`}}>
+            <div key={n.key} data-testid={'need-' + n.key} data-resolved={n.resolved ? '1' : '0'}
+              onFocus={() => setNeedsFocus(n.key)}
+              onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setNeedsFocus(k => (k === n.key ? null : k)); }}
+              style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:10,
+              background:'#0d1117',border:`1px solid ${n.resolved ? '#238636' : n.tone==='bad'?'#6e2427':n.tone==='warn'?'#9e6a03':'#30363d'}`}}>
               <span className="mono" style={{width:24,height:24,borderRadius:'50%',flex:'none',display:'flex',alignItems:'center',justifyContent:'center',
-                fontSize:12.5,fontWeight:700,color:'#0d1117',background:n.tone==='bad'?'#f85149':n.tone==='warn'?'#d29922':'#8b949e'}}>{idx+1}</span>
+                fontSize:12.5,fontWeight:700,color:'#0d1117',background:n.resolved ? '#3fb950' : n.tone==='bad'?'#f85149':n.tone==='warn'?'#d29922':'#8b949e'}}>{n.resolved ? '✓' : idx+1}</span>
               <div style={{flex:'1 1 280px',minWidth:0,display:'flex',flexDirection:'column',gap:3}}>
-                <span style={{fontSize:14.5,fontWeight:600,color:'#fff'}}>{n.title}</span>
+                <span style={{fontSize:14.5,fontWeight:600,color:'#fff'}}>{n.resolved ? 'Done — ' : ''}{n.title}</span>
                 {n.detail && <span style={{fontSize:13,lineHeight:1.45,color:'#a8b2be'}}>{n.detail}</span>}
               </div>
               {n.net && (

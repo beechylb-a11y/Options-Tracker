@@ -104,6 +104,19 @@ describe('verdict band', () => {
     expect(screen.getByTestId('evidence-body').style.display).toBe('block');
   });
 
+  it('keeps the sizing row while you type the last field, so the input never disappears mid-number', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '' });
+    const pop = screen.getByTestId('needs-you').querySelectorAll('input')[2];
+    fireEvent.focus(pop);
+    fireEvent.change(pop, { target: { value: '9' } });
+    expect(document.body.contains(pop)).toBe(true);
+    fireEvent.change(pop, { target: { value: '92' } });
+    expect(pop.value).toBe('92');
+    expect(screen.getByTestId('need-size').dataset.resolved).toBe('1');
+    fireEvent.blur(pop, { relatedTarget: null });
+    expect(screen.queryByTestId('need-size')).toBeNull();
+  });
+
   it('keeps the evidence drawer closed until a tab is chosen', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
     const body = screen.getByTestId('evidence-body');
