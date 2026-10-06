@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Zap, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
+import { Zap, Timer, CalendarDays, Radar, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
@@ -44,6 +44,27 @@ function tabLabel(mode, underlying, createdAt, dte) {
     d.setDate(d.getDate() + (isFinite(n) && n > 0 ? Math.round(n) : 45));
   }
   return u + ' ' + d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
+
+// ── Mode identity (Oct 2026) ──
+// 0DTE is amber with a timer, 45DTE is blue with a calendar — on the mode
+// switch, the multi-scan, its results, its Open buttons, the tab chips and the
+// banner over the ticket. A 0DTE scan opened as a 45DTE ticket (the scan kept
+// its 0DTE results after the mode was switched) is the mistake this prevents.
+export const MODE_UI = {
+  '0dte': { short: '0DTE', long: '0DTE \u00b7 expires today', fg: '#e3b341', solid: '#d29922', bg: '#1f1a0d', border: '#9e6a03', Icon: Timer },
+  '45dte': { short: '45DTE', long: '45DTE \u00b7 about six weeks', fg: '#58a6ff', solid: '#2f81f7', bg: '#0c1d36', border: '#1f6feb', Icon: CalendarDays },
+};
+const modeUi = m => MODE_UI[m === '0dte' ? '0dte' : '45dte'];
+function ModeBadge({ mode, size = 'sm', testid }) {
+  const u = modeUi(mode);
+  const big = size === 'lg';
+  return (
+    <span data-testid={testid} data-mode={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: big ? '3px 9px' : '1px 6px',
+      borderRadius: 5, fontSize: big ? 12.5 : 11, fontWeight: 700, letterSpacing: '.02em', color: u.fg, background: u.bg, border: `1px solid ${u.border}` }}>
+      <u.Icon size={big ? 13 : 11} /> {u.short}
+    </span>
+  );
 }
 
 function newTab(mode, seed) {
@@ -441,9 +462,25 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const closedTickets = accountDecisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
 
   // A scan pick opens its OWN tab and leaves the scan panel up, so you can take
-  // one candidate, then another, without losing the first.
-  function handleSelectFromScan(underlying, data, meta) {
-    addTab({ underlying, ...(data || {}), _meta: meta || null });
+  // one candidate, then another, without losing the first. It opens in the mode
+  // the SCAN ran in — never the mode the header happens to show now.
+  function handleSelectFromScan(underlying, data, meta, scanMode) {
+    const m = scanMode || mode;
+    addTab({ underlying, ...(data || {}), _meta: meta || null, _scanMode: m }, m);
+  }
+
+  // The mode switch converts a blank or hand-typed ticket in place, as before.
+  // A ticket opened from a scan is locked to the scan's mode: its market data was
+  // pulled for that mode, so switching opens a fresh ticket in the other mode
+  // instead of relabelling this one.
+  function switchMode(m) {
+    if (m === mode) return;
+    if (activeTab && activeTab.seed && activeTab.seed._scanMode) {
+      addTab(null, m);
+      showToast(`Opened a new ${modeUi(m).short} ticket \u2014 the ${modeUi(mode).short} scan ticket stays as it was`, 'info');
+      return;
+    }
+    setMode(m);
   }
 
   return (
@@ -455,15 +492,19 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           <p className="text-text-muted text-sm mt-0.5">Pre-trade analysis, trade tickets & performance tracking</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex border border-bg-border rounded-lg overflow-hidden">
-            <button onClick={() => setMode('0dte')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${mode === '0dte' ? 'bg-accent text-white' : 'text-text-muted hover:text-text hover:bg-bg-hover'}`}>
-              <Zap size={14} className="inline mr-1" /> 0DTE
-            </button>
-            <button onClick={() => setMode('45dte')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${mode === '45dte' ? 'bg-accent text-white' : 'text-text-muted hover:text-text hover:bg-bg-hover'}`}>
-              45 DTE
-            </button>
+          <div className="flex border border-bg-border rounded-lg overflow-hidden" data-testid="mode-switch">
+            {['0dte', '45dte'].map(m => {
+              const u = modeUi(m), on = mode === m;
+              return (
+                <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
+                  title={on ? `This ticket is ${u.short}` : (activeTab && activeTab.seed && activeTab.seed._scanMode
+                    ? `Opens a new ${u.short} ticket (this one came from a scan and keeps its mode)` : `Switch this ticket to ${u.short}`)}
+                  className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
+                  style={on ? { background: u.solid, color: '#0d1117', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
+                  <u.Icon size={14} /> {u.short}
+                </button>
+              );
+            })}
           </div>
           <button onClick={() => { setPanel(panel === 'log' ? null : 'log'); }}
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'log' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
@@ -477,9 +518,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <GitCompare size={14} /> Compare
           </button>
-          <button onClick={() => setPanel(panel === 'multiscan' ? null : 'multiscan')}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'multiscan' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <Zap size={14} /> Multi-scan
+          <button onClick={() => setPanel(panel === 'multiscan' ? null : 'multiscan')} data-testid="multiscan-toggle"
+            title={`Scan several underlyings for a ${modeUi(mode).short} trade`}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'multiscan' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
+            style={panel === 'multiscan' ? { borderColor: modeUi(mode).border, background: modeUi(mode).bg } : undefined}>
+            <Radar size={14} /> Multi-scan <ModeBadge mode={mode} />
           </button>
         </div>
       </div>
@@ -912,7 +955,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
       {/* COMPARISON PANEL */}
       {panel === 'multiscan' && (
-        <MultiScanPanel mode={mode} onSelect={handleSelectFromScan} />
+        <MultiScanPanel mode={mode} onSelect={handleSelectFromScan} onMode={switchMode} />
       )}
 
       {panel === 'compare' && (
@@ -1001,10 +1044,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                 + (conf != null ? ` \u00b7 Trade Confidence ${conf}/100 ${sum.tier}` : '')
                 + (sum && sum.blocked ? ' \u00b7 blocked' : '')
                 + (rankable ? ` \u00b7 ranked #${i + 1}` : '')}
-              style={tint ? {
+              data-mode={t.mode}
+              style={{ ...(tint ? {
                 background: tint.bg, borderColor: tint.border, color: '#e6edf3',
                 boxShadow: on ? `0 0 0 2px ${tint.color}` : 'none', opacity: on ? 1 : 0.85
-              } : undefined}
+              } : {}), borderLeft: `3px solid ${modeUi(t.mode).solid}` }}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${tint ? '' : (on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover')}`}>
               {rankable && (
                 <span className="mono text-[11px] text-text-faint" style={{ minWidth: 12 }}>{i + 1}</span>
@@ -1015,9 +1059,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                   {sum.blocked ? '\u2298 ' : ''}{comp}
                 </span>
               )}
-              <span className={`text-[11px] px-1.5 py-0.5 rounded ${t.mode === '0dte' ? 'bg-amber/10 text-amber' : 'bg-accent/10 text-accent'}`}>
-                {t.mode === '0dte' ? '0DTE' : '45D'}
-              </span>
+              <ModeBadge mode={t.mode} />
               {tabs.length > 1 && (
                 <span onClick={e => { e.stopPropagation(); closeTab(t.id); }}
                   className="text-text-faint hover:text-red text-sm leading-none">×</span>
@@ -1047,6 +1089,18 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           so switching tabs never discards a half-entered ticket. */}
       {tabs.map(t => (
         <div key={t.id} style={{ display: t.id === (activeTab && activeTab.id) ? 'block' : 'none' }}>
+          <div data-testid="ticket-mode-banner" data-mode={t.mode}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', marginBottom: 10, borderRadius: 8,
+              background: modeUi(t.mode).bg, borderLeft: `4px solid ${modeUi(t.mode).solid}`, fontSize: 12.5, color: '#c9d1d9' }}>
+            <ModeBadge mode={t.mode} size="lg" />
+            <span style={{ color: modeUi(t.mode).fg, fontWeight: 600 }}>{modeUi(t.mode).long}</span>
+            {t.seed && t.seed._scanMode && (
+              <span style={{ color: '#a8b2be' }}>
+                · from the {modeUi(t.seed._scanMode).short} multi-scan
+                {t.seed._meta && t.seed._meta.pulledAt ? ' ' + new Date(t.seed._meta.pulledAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}
+              </span>
+            )}
+          </div>
           <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt}
             accountConfig={accounts?.find(a => a.id === account) || {}}
             strategyHistory={strategyHistory} captureStats={captureStats}
@@ -1070,24 +1124,11 @@ function Row({ label, value }) {
   );
 }
 
-function MultiScanPanel({ mode, onSelect }) {
-  const is0 = mode === '0dte';
-  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'XSP', 'QQQ']);
-  const [scanning, setScanning] = useState(false);
-  const [results, setResults] = useState(null);
-  const [error, setError] = useState('');
-  const [manualData, setManualData] = useState({});
-  const [showInputs, setShowInputs] = useState(false);
-  // When the scan last pulled, and what each ticker's feed said about itself.
-  const [scannedAt, setScannedAt] = useState(null);
-  const [scanMeta, setScanMeta] = useState({});
-  const [scanNow, setScanNow] = useState(() => Date.now());
-  useEffect(() => {
-    const h = setInterval(() => setScanNow(Date.now()), 15000);
-    return () => clearInterval(h);
-  }, []);
-
-  const inputFields = [
+// Market fields each scan type asks of the bridge (and lets you type by hand).
+// 0DTE reads the session: VWAP, intraday ranges, the ES overnight. 45DTE reads
+// volatility: IV, its rank, realised vol, the term structure and skew.
+const SCAN_FIELDS = {
+  '0dte': [
     { key: 'price', label: 'Price' },
     { key: 'high', label: 'Day High' },
     { key: 'low', label: 'Day Low' },
@@ -1108,7 +1149,98 @@ function MultiScanPanel({ mode, onSelect }) {
     { key: 'esOvernightHigh', label: 'ES O/N High' },
     { key: 'esOvernightLow', label: 'ES O/N Low' },
     { key: 'esEM', label: 'ES EM' },
-  ];
+  ],
+  '45dte': [
+    { key: 'price', label: 'Price' },
+    { key: 'vix', label: 'VIX' },
+    { key: 'iv', label: 'IV % (45d ATM)' },
+    { key: 'ivr', label: 'IV Rank %' },
+    { key: 'hv', label: 'HV % (30d)' },
+    { key: 'ivFront', label: 'IV front (~30d)' },
+    { key: 'ivBack', label: 'IV back (~90d)' },
+    { key: 'skew', label: 'Skew 25Δ (P−C)' },
+  ],
+};
+const VOL_SCAN_KEYS = ['iv', 'ivr', 'hv', 'ivFront', 'ivBack', 'skew'];
+
+// What each scan type shows per underlying. The 0DTE rows read today's session;
+// none of them means anything six weeks out, so 45DTE gets its own set.
+const SCAN_ROWS = {
+  '0dte': [
+    { label: 'Direction', render: r => <span style={{color: r.result?.dirScore > 0 ? '#3fb950' : r.result?.dirScore < 0 ? '#f85149' : '#c9d1d9'}}>{r.result?.dirLabel || '--'}</span> },
+    { label: 'Move consumed', render: r => r.result?.moveConsumed !== undefined ? (r.result.moveConsumed * 100).toFixed(0) + '%' : '--' },
+    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
+    { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
+    { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>{r.result?.trendPattern || '--'}</span> },
+    { label: 'VWAP trend', render: r => {
+      const s = r.result?.slope5;
+      const a = r.result?.vwapAccept;
+      return <span style={{color: s?.direction === 'rising' ? '#3fb950' : s?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
+    }},
+  ],
+  '45dte': [
+    { label: 'IV rank', tip: 'Where today’s IV sits in its 52-week range. Above 30–40 favours selling premium; under 20 favours debit and calendar structures.',
+      render: r => {
+        const v = parseFloat(r.data?.ivr);
+        if (!(v > 0)) return <span style={{color:'#8b949e'}}>--</span>;
+        const col = v > 40 ? '#3fb950' : v > 20 ? '#c9d1d9' : '#d29922';
+        return <span style={{color:col}}>{v.toFixed(0)}% <span style={{fontSize:12,color:'#a8b2be'}}>{r.result?.ivrBand || ''}</span></span>;
+      }},
+    { label: 'IV / HV', tip: 'Implied over 30-day realised. Above 1 the options are paying more than the index has been moving — the edge a premium seller is collecting.',
+      render: r => {
+        const x = r.result?.ivhvRatio;
+        if (!(x > 0)) return <span style={{color:'#8b949e'}}>--</span>;
+        return <span style={{color: x >= 1.1 ? '#3fb950' : x >= 1 ? '#c9d1d9' : '#f85149'}}>{x.toFixed(2)}× <span style={{fontSize:12,color:'#a8b2be'}}>{r.data?.iv}/{r.data?.hv}</span></span>;
+      }},
+    { label: 'Term', tip: 'Front-month IV against ~90-day IV. Contango (front cheaper) is normal and calm; backwardation means stress now and blocks naked short premium.',
+      render: r => {
+        const t = r.result?.termBias;
+        if (!t) return <span style={{color:'#8b949e'}}>--</span>;
+        return <span style={{color: t === 'contango' ? '#3fb950' : t === 'backwardation' ? '#f85149' : '#c9d1d9'}}>{t}{r.result?.termRatio ? ` ${(+r.result.termRatio).toFixed(2)}` : ''}</span>;
+      }},
+    { label: 'Skew 25Δ', tip: 'Put IV minus call IV at 25 delta, in vol points. A steep skew pays more for the put side.',
+      render: r => {
+        const k = parseFloat(r.data?.skew);
+        return isFinite(k) && r.data?.skew !== '' && r.data?.skew != null ? <span>{k > 0 ? '+' : ''}{k.toFixed(1)} pts</span> : <span style={{color:'#8b949e'}}>--</span>;
+      }},
+    { label: 'Move to expiry', tip: 'One standard deviation to a 45-day expiry, from IV: price × IV × √(45/365).',
+      render: r => {
+        const e = r.result?.em45, p = parseFloat(r.data?.price);
+        return e > 0 ? <span>±{e.toFixed(e > 50 ? 0 : 1)} <span style={{fontSize:12,color:'#a8b2be'}}>{p > 0 ? (e / p * 100).toFixed(1) + '%' : ''}</span></span> : <span style={{color:'#8b949e'}}>--</span>;
+      }},
+    { label: 'Events', tip: 'Scheduled high-impact releases (FOMC, CPI, jobs) before the 45-day expiry.',
+      render: r => {
+        const n = r.result?.eventHighCount;
+        return n == null ? '--' : <span style={{color: n > 2 ? '#d29922' : '#c9d1d9'}}>{n} high-impact</span>;
+      }},
+    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
+  ],
+};
+
+function MultiScanPanel({ mode, onSelect, onMode }) {
+  const scanMode = mode === '0dte' ? '0dte' : '45dte';
+  const ui = modeUi(scanMode);
+  const otherMode = scanMode === '0dte' ? '45dte' : '0dte';
+  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'XSP', 'QQQ']);
+  const [scanning, setScanning] = useState(null);           // the mode being scanned, or null
+  // Results are kept PER MODE. A 0DTE scan never shows while the panel is in 45DTE
+  // (and the reverse), so an Open button can only ever open the mode it was scanned in.
+  const [byMode, setByMode] = useState({});
+  const [error, setError] = useState('');
+  const [manualData, setManualData] = useState({});
+  const [showInputs, setShowInputs] = useState(false);
+  const [scanNow, setScanNow] = useState(() => Date.now());
+  useEffect(() => {
+    const h = setInterval(() => setScanNow(Date.now()), 15000);
+    return () => clearInterval(h);
+  }, []);
+
+  const cur = byMode[scanMode] || null;
+  const results = cur ? cur.results : null;
+  const scannedAt = cur ? cur.scannedAt : null;
+  const scanMeta = cur ? cur.meta : {};
+  const other = byMode[otherMode] || null;
+  const inputFields = SCAN_FIELDS[scanMode];
 
   function getVal(underlying, key) {
     return manualData[underlying]?.[key] ?? '';
@@ -1122,7 +1254,10 @@ function MultiScanPanel({ mode, onSelect }) {
   }
 
   async function handleScan() {
-    setScanning(true);
+    const m = scanMode;                       // fixed for this scan, whatever happens to the header meanwhile
+    const is0 = m === '0dte';
+    const fields = SCAN_FIELDS[m];
+    setScanning(m);
     setError('');
     const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
     const pulledAt = new Date().toISOString();
@@ -1149,8 +1284,8 @@ function MultiScanPanel({ mode, onSelect }) {
               pulledAt,
             };
             const existing = mergedData[underlying] || {};
-            const merged = {};
-            inputFields.forEach(f => {
+            const merged = { ...existing };
+            SCAN_FIELDS['0dte'].forEach(f => {
               // See EnginePanel: vwapAccept is a 0..1 ratio, so 0 is a real reading
               // (nothing closed above VWAP all hour) and only -1 means no reading.
               // Every other field here is a price or level where 0 does mean failure.
@@ -1214,6 +1349,32 @@ function MultiScanPanel({ mode, onSelect }) {
               };
             }
           });
+        } else {
+          // ── 45DTE: the vol surface per underlying — ATM IV at ~45 days, IV rank,
+          // 30-day HV, front/back IV for the term structure, 25Δ skew. Without it a
+          // 45DTE scan scores every ticker on price and VIX alone. Slow (option
+          // greeks at three expiries), so generous timeout; failures leave blanks.
+          const vFetches = underlyings.filter(u => u).map(underlying => {
+            const spot = parseFloat(mergedData[underlying]?.price) || 0;
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 45000);
+            return fetch(bridgeUrl + '/api/vol-surface?underlying=' + underlying + (spot > 0 ? '&spot=' + spot : ''),
+              { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+              .then(r => r.json()).then(vs => { clearTimeout(t); return { underlying, vs }; })
+              .catch(() => ({ underlying, vs: null }));
+          });
+          const surfaces = await Promise.all(vFetches);
+          surfaces.forEach(({ underlying, vs }) => {
+            if (!vs || vs.error || !mergedData[underlying]) return;
+            const md = { ...mergedData[underlying] };
+            VOL_SCAN_KEYS.forEach(k => {
+              const v = vs[k];
+              const ok = v != null && v !== '' && isFinite(v) && (k === 'skew' || v > 0);
+              if (ok && (md[k] === undefined || md[k] === '')) md[k] = String(v);
+            });
+            if (vs.termBias) md.termBias = vs.termBias;
+            mergedData[underlying] = md;
+          });
         }
         setManualData(mergedData);
       }
@@ -1221,100 +1382,125 @@ function MultiScanPanel({ mode, onSelect }) {
       console.error('Bridge fetch error:', e);
     }
 
-    setScanMeta(meta);
-    setScannedAt(pulledAt);
-    // Run engine with the merged data directly (not from state)
-    runEngine(mergedData);
-    setScanning(false);
+    runEngine(mergedData, m, { meta, scannedAt: pulledAt });
+    setScanning(null);
   }
 
-  function runEngine(dataOverride) {
+  function runEngine(dataOverride, m, stamp) {
+    const is0 = m === '0dte';
     const dataSource = dataOverride || manualData;
     try {
       const engineResults = underlyings.filter(u => u).map(underlying => {
-        const m = dataSource[underlying] || {};
+        const m0 = dataSource[underlying] || {};
         const scaleV = (v) => {
-          const p = parseFloat(m.price) || 0;
+          const p = parseFloat(m0.price) || 0;
           if (underlying === 'SPX' && p > 1000 && v > 0 && v < p * 0.3) return v * 10;
           return v;
         };
         const inp = {
-          price: parseFloat(m.price) || 0,
+          price: parseFloat(m0.price) || 0,
           // high/low/open are returned in SPY-scale for SPX (bridge uses SPY bars);
           // scaleV lifts them ×10 so the range/rm calc isn't broken (was: raw → SPX
           // showed high 742 against price 7408).
-          high: scaleV(parseFloat(m.high) || 0),
-          low: scaleV(parseFloat(m.low) || 0),
-          cashOpen: scaleV(parseFloat(m.cashOpen) || 0),
-          em: parseFloat(m.em) || 0,
-          emSource: m.emSource || (m.em ? 'vix' : undefined),
-          straddleCall: parseFloat(m.straddleCall) || undefined,
-          straddlePut: parseFloat(m.straddlePut) || undefined,
-          atr: parseFloat(m.atr) || 0,
-          atr5: parseFloat(m.atr5) || 0,
-          atr2h: parseFloat(m.atr2h) || 0,
-          vix: parseFloat(m.vix) || 0,
-          vix1d: parseFloat(m.vix1d) || 0,
-          vwap5: scaleV(parseFloat(m.vwap5) || 0),
-          vwap5_30: scaleV(parseFloat(m.vwap5_30) || 0),
-          vwapRoll30: scaleV(parseFloat(m.vwapRoll30) || 0),
-          vwapRoll30Prior: scaleV(parseFloat(m.vwapRoll30Prior) || 0),
+          high: scaleV(parseFloat(m0.high) || 0),
+          low: scaleV(parseFloat(m0.low) || 0),
+          cashOpen: scaleV(parseFloat(m0.cashOpen) || 0),
+          em: parseFloat(m0.em) || 0,
+          emSource: m0.emSource || (m0.em ? 'vix' : undefined),
+          straddleCall: parseFloat(m0.straddleCall) || undefined,
+          straddlePut: parseFloat(m0.straddlePut) || undefined,
+          atr: parseFloat(m0.atr) || 0,
+          atr5: parseFloat(m0.atr5) || 0,
+          atr2h: parseFloat(m0.atr2h) || 0,
+          vix: parseFloat(m0.vix) || 0,
+          vix1d: parseFloat(m0.vix1d) || 0,
+          vwap5: scaleV(parseFloat(m0.vwap5) || 0),
+          vwap5_30: scaleV(parseFloat(m0.vwap5_30) || 0),
+          vwapRoll30: scaleV(parseFloat(m0.vwapRoll30) || 0),
+          vwapRoll30Prior: scaleV(parseFloat(m0.vwapRoll30Prior) || 0),
           // Ratio, never scaled. The bridge sends -1 when it has no reading;
           // null tells the engine "unavailable" rather than "0% acceptance".
-          vwapAccept: (m.vwapAccept == null || m.vwapAccept === '' || parseFloat(m.vwapAccept) < 0)
-            ? null : parseFloat(m.vwapAccept),
-          esClose: parseFloat(m.esClose) || 0,
-          priorDayClose: parseFloat(m.priorDayClose) || 0,
-          esOvernightHigh: parseFloat(m.esOvernightHigh) || 0,
-          esOvernightLow: parseFloat(m.esOvernightLow) || 0,
-          esEM: parseFloat(m.esEM) || 0,
+          vwapAccept: (m0.vwapAccept == null || m0.vwapAccept === '' || parseFloat(m0.vwapAccept) < 0)
+            ? null : parseFloat(m0.vwapAccept),
+          esClose: parseFloat(m0.esClose) || 0,
+          priorDayClose: parseFloat(m0.priorDayClose) || 0,
+          esOvernightHigh: parseFloat(m0.esOvernightHigh) || 0,
+          esOvernightLow: parseFloat(m0.esOvernightLow) || 0,
+          esEM: parseFloat(m0.esEM) || 0,
         };
         // Price fallback: when the bridge returns no spot but VWAP is present,
         // use VWAP (≈ intraday price) so the scan still runs. SPX VWAP is SPY-scale
         // so lift it ×10; SPY/QQQ use it as-is.
         if (!inp.price) {
-          let vp = parseFloat(m.vwap5) || 0;
+          let vp = parseFloat(m0.vwap5) || 0;
           if (underlying === 'SPX' && vp > 0 && vp < 3000) vp *= 10;
           if (vp > 0) inp.price = vp;
         }
-        if (!inp.price) return { underlying, error: 'No price', result: null, data: inp };
+        // 45DTE carries the vol fields as the strings the ticket will be seeded with.
+        const vol = {};
+        if (!is0) {
+          VOL_SCAN_KEYS.forEach(k => { if (m0[k] !== undefined && m0[k] !== '') vol[k] = m0[k]; });
+          if (m0.termBias) vol.termBias = m0.termBias;
+        }
+        const data = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
+        if (!inp.price) return { underlying, error: 'No price', result: null, data };
         try {
           const result = is0 ? calc0DTE({
             ...inp, gamStrike: 0, bankroll: 3000, startBR: 3000, risk: 0,
             maxLoss: 300, win: 0, maxOpen: 450, pop: 0, theta: 0, delta: 0,
             gamma: 0, hours: 6.5, underlying, overrideStrategy: null
           }) : calc45DTE({
-            price: inp.price, ivr: 0, iv: 0, hv: 0, vix: inp.vix,
-            ivFront: 0, ivBack: 0, skew: 0, dte: 45, pop: 0, win: 0, risk: 0,
+            price: inp.price, vix: inp.vix,
+            ivr: parseFloat(vol.ivr) || 0, iv: parseFloat(vol.iv) || 0, hv: parseFloat(vol.hv) || 0,
+            ivFront: parseFloat(vol.ivFront) || 0, ivBack: parseFloat(vol.ivBack) || 0,
+            skew: parseFloat(vol.skew) || 0,
+            // No invented contango: without front/back IV the term structure is unknown.
+            termBias: vol.termBias || '',
+            dte: 45, pop: 0, win: 0, risk: 0,
             bankroll: 3000, startBR: 3000, maxLoss: 300, maxOpen: 450, bpr: 0,
-            theta: 0, vega: 0, delta: 0, underlying, termBias: 'contango',
+            theta: 0, vega: 0, delta: 0, underlying,
             outlook: 'neutral', overrideStrategy: null
           });
-          return { underlying, result, data: inp };
+          return { underlying, result, data };
         } catch (e) {
-          return { underlying, error: e.message, result: null, data: inp };
+          return { underlying, error: e.message, result: null, data };
         }
       });
 
       engineResults.sort((a, b) => (b.result?.setupScore || 0) - (a.result?.setupScore || 0));
-      setResults(engineResults);
+      setByMode(prev => {
+        const old = prev[m] || {};
+        return { ...prev, [m]: { mode: m, results: engineResults,
+          scannedAt: (stamp && stamp.scannedAt) || old.scannedAt || new Date().toISOString(),
+          meta: (stamp && stamp.meta) || old.meta || {} } };
+      });
     } catch (e) {
       setError('Engine error: ' + e.message);
     }
   }
 
   // Re-run engine when manual data changes
-  function handleRecalc() { runEngine(manualData); }
+  function handleRecalc() { runEngine(manualData, scanMode); }
+
+  const busy = scanning != null;
+  const openMeta = r => scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null);
 
   return (
-    <div className="card mb-4 fade-in">
+    <div className="card mb-4 fade-in" data-testid="multiscan" data-mode={scanMode}
+      style={{ borderColor: ui.border, borderTop: `4px solid ${ui.solid}` }}>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-sm font-medium text-white">Multi-Underlying Scan</h3>
-          <p className="text-xs text-text-muted mt-0.5">Compare setups across underlyings — pick the best trade of the day</p>
+          <h3 className="text-sm font-medium text-white flex items-center gap-2">
+            <ModeBadge mode={scanMode} size="lg" testid="multiscan-mode" /> Multi-Underlying Scan
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {scanMode === '0dte'
+              ? 'Today’s session: direction, range used, compression, VWAP — for a same-day trade'
+              : 'Volatility: IV rank, IV vs realised, term structure, skew — for a trade about six weeks out'}
+          </p>
           {scannedAt && (
             <p className="text-[12.5px] mono mt-1" style={{ color: '#a8b2be' }}>
-              Scanned {clockOf(scannedAt)} · {agoOf(scannedAt, scanNow)}
+              {ui.short} scan {clockOf(scannedAt)} · {agoOf(scannedAt, scanNow)}
             </p>
           )}
         </div>
@@ -1327,13 +1513,30 @@ function MultiScanPanel({ mode, onSelect }) {
             className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#a8b2be] hover:bg-[#161b22] disabled:opacity-30">
             Recalculate
           </button>
-          <button onClick={handleScan} disabled={scanning}
-            className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
-            <Zap size={14} className={scanning ? 'animate-spin' : ''} />
-            {scanning ? 'Scanning...' : 'Scan all'}
+          <button onClick={handleScan} disabled={busy} data-testid="scan-all"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
+            style={{ background: ui.solid, color: '#0d1117' }}>
+            <ui.Icon size={14} className={scanning === scanMode ? 'animate-spin' : ''} />
+            {scanning === scanMode ? `Scanning ${ui.short}…` : `Scan all · ${ui.short}`}
           </button>
         </div>
       </div>
+
+      {/* The other mode's results stay, out of sight, a click away. */}
+      {other && other.results && (
+        <div data-testid="multiscan-other" className="mb-3 text-[12.5px] flex items-center gap-2" style={{ color: '#a8b2be' }}>
+          <ModeBadge mode={otherMode} /> scan from {clockOf(other.scannedAt)} is kept separately —
+          <button onClick={() => onMode && onMode(otherMode)} className="underline" style={{ color: modeUi(otherMode).fg }}>
+            switch to {modeUi(otherMode).short}
+          </button>
+          to see it.
+        </div>
+      )}
+      {scanning && scanning !== scanMode && (
+        <div className="mb-3 text-[12.5px]" style={{ color: modeUi(scanning).fg }}>
+          {modeUi(scanning).short} scan still running — its results will be filed under {modeUi(scanning).short}.
+        </div>
+      )}
 
       {/* Underlying selector */}
       <div className="flex gap-2 mb-4">
@@ -1366,7 +1569,7 @@ function MultiScanPanel({ mode, onSelect }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="text-[11px] text-[#a8b2be] uppercase tracking-wider">
-                <th className="text-left py-1 px-1 w-28">Input</th>
+                <th className="text-left py-1 px-1 w-28">{ui.short} input</th>
                 {underlyings.map((u, i) => (
                   <th key={i} className="text-center py-1 px-1 text-white text-sm font-bold">{u}</th>
                 ))}
@@ -1394,10 +1597,10 @@ function MultiScanPanel({ mode, onSelect }) {
       {/* Results comparison table */}
       {results && results.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" data-testid="scan-results" data-mode={scanMode}>
             <thead>
               <tr className="text-[12px] text-[#a8b2be] uppercase tracking-wider">
-                <th className="text-left py-2 px-2"></th>
+                <th className="text-left py-2 px-2"><ModeBadge mode={scanMode} /></th>
                 {results.map((r, i) => (
                   <th key={i} className="text-center py-2 px-3" style={{minWidth:140}}>
                     <span className="text-white text-sm font-bold">{r.underlying}</span>
@@ -1421,16 +1624,7 @@ function MultiScanPanel({ mode, onSelect }) {
                   const col = s >= 85 ? '#3fb950' : s >= 70 ? '#2f81f7' : s >= 50 ? '#d29922' : '#f85149';
                   return <span style={{color:col}}>{s}/100 <span style={{fontSize:12,fontWeight:400}}>{r.result?.setup||''}</span></span>;
                 }},
-                { label: 'Direction', render: r => <span style={{color: r.result?.dirScore > 0 ? '#3fb950' : r.result?.dirScore < 0 ? '#f85149' : '#c9d1d9'}}>{r.result?.dirLabel || '--'}</span> },
-                { label: 'Move consumed', render: r => r.result?.moveConsumed !== undefined ? (r.result.moveConsumed * 100).toFixed(0) + '%' : '--' },
-                { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
-                { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
-                { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>{r.result?.trendPattern || '--'}</span> },
-                { label: 'VWAP trend', render: r => {
-                  const s = r.result?.slope5;
-                  const a = r.result?.vwapAccept;
-                  return <span style={{color: s?.direction === 'rising' ? '#3fb950' : s?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
-                }},
+                ...SCAN_ROWS[scanMode],
                 { label: 'Price', render: r => r.data?.price || '--' },
                 { label: 'VIX', render: r => r.data?.vix || '--' },
                 { label: 'Decision', render: r => {
@@ -1438,16 +1632,20 @@ function MultiScanPanel({ mode, onSelect }) {
                   const col = d === 'Trade' ? '#3fb950' : d === 'Trade with caution' ? '#d29922' : '#f85149';
                   return <span style={{color:col,fontWeight:700}}>{d}</span>;
                 }},
-                { label: '', render: (r, underlying) => {
+                { label: '', render: r => {
                   if (!r.result || !r.data?.price) return null;
-                  return <button onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data, scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null)); }}
-                    style={{padding:'4px 12px',borderRadius:6,border:'1px solid #238636',background:'transparent',color:'#3fb950',fontSize:12.5,fontWeight:600,cursor:'pointer'}}>
-                    Open tab →
+                  return <button data-testid="scan-open" data-mode={scanMode}
+                    onClick={(e) => { e.stopPropagation(); onSelect && onSelect(r.underlying, r.data, openMeta(r), scanMode); }}
+                    title={`Opens a ${ui.short} ticket for ${r.underlying}`}
+                    style={{display:'inline-flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:6,border:`1px solid ${ui.border}`,
+                      background:ui.bg,color:ui.fg,fontSize:12.5,fontWeight:700,cursor:'pointer'}}>
+                    <ui.Icon size={12} /> Open {ui.short} →
                   </button>;
                 }},
               ].map((row, ri) => (
                 <tr key={ri} className="border-t border-[#21262d]">
-                  <td className="py-2 px-2 text-[#a8b2be]">{row.label}</td>
+                  <td className="py-2 px-2 text-[#a8b2be]" title={row.tip || undefined}
+                    style={row.tip ? { textDecoration: 'underline dotted #484f58', textUnderlineOffset: 3, cursor: 'help' } : undefined}>{row.label}</td>
                   {results.map((r, i) => (
                     <td key={i} className="py-2 px-3 text-center mono text-xs">{row.render(r)}</td>
                   ))}
@@ -1458,9 +1656,9 @@ function MultiScanPanel({ mode, onSelect }) {
         </div>
       )}
 
-      {!results && !scanning && (
+      {!results && !busy && (
         <div className="py-8 text-center text-[#8b949e] text-sm">
-          Select underlyings and click "Scan all" to fetch data, or "Show inputs" to enter manually
+          Select underlyings and click “Scan all · {ui.short}” to fetch data, or “Show inputs” to enter manually
         </div>
       )}
     </div>

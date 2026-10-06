@@ -512,7 +512,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     bpr:'', theta:'', vega:'', delta:'', lowerWingDelta:'', upperWingDelta:''
     };
     if (init?.i45) return { ...base, ...init.i45 };
-    return applySeed(base, seed, MKT_45);
+    // A 45DTE scan also carries the vol surface it pulled; a 0DTE scan never seeds 45DTE vol.
+    const out = applySeed(base, seed, seed && seed._scanMode === '45dte' ? [...MKT_45, ...VOL_45] : MKT_45);
+    if (seed && seed._scanMode === '45dte' && seed.termBias) out.termBias = seed.termBias;
+    return out;
   });
 
   // ── Manual holds ──
