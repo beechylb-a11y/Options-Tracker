@@ -79,7 +79,9 @@ describe('tab ranking', () => {
     expect(screen.getByText('37')).toBeTruthy();
   });
 
-  it('sinks a blocked ticket below a lower-scoring tradeable one', async () => {
+  // Oct 2026: blocked tickets rank by composite like any other (they used to be
+  // pushed to the end whatever they scored); the ⊘ on the tab flags the blocker.
+  it('ranks a blocked ticket by its score and marks it ⊘', async () => {
     seedTabs([
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
       { id: 'b', u: 'QQQ', label: 'QQQ 29 Sep', createdAt: 2 },
@@ -87,7 +89,8 @@ describe('tab ranking', () => {
     summaryPlan = { SPX: { confidence: 80, tier: 'High', ready: true, blocked: true, composite: 80, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
                     QQQ: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
-    expect(stripLabels()).toEqual(['QQQ 29 Sep', 'SPX 29 Sep']);
+    expect(stripLabels()).toEqual(['SPX 29 Sep', 'QQQ 29 Sep']);
+    expect(screen.getByText(/⊘\s*80/)).toBeTruthy();
   });
 
   it('does not rank a single ticket', async () => {

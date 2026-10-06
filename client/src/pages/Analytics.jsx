@@ -125,7 +125,8 @@ function priorFor(engine, strat) {
   if (engine === '0DTE') {
     const r = EXIT_RULES['0DTE'][strat];
     const a = assumedCapture0(strat);
-    return { win: r && r.basis === 'entry' ? r.target / 100 : a.winCap, loss: a.lossCap, winNote: r ? `${r.target}% target` : '' };
+    // The engine scores on the historic prior; the exit target is shown, not applied.
+    return { win: a.winCap, loss: a.lossCap, winNote: r ? `target ${r.target}% not applied` : '' };
   }
   const a = assumedCapture45(strat);
   const r = EXIT_RULES['45DTE'][strat];

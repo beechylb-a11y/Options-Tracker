@@ -45,16 +45,21 @@ describe('0DTE engine capture prior', () => {
   const base = { price: 6700, high: 6710, low: 6690, vwap5: 6700, vwap5_30: 6700, vwapRoll30: 6700, vwapRoll30Prior: 6700,
     vwapAccept: 0.5, em: 40, atr: 60, atr5: 6, atr2h: 20, vix: 15, vix1d: 12, hours: 4, bankroll: 25000, startBR: 25000,
     maxLoss: 600, maxOpen: 900, win: 200, risk: 300, pop: 75, netCreditDebit: 2, underlying: 'SPX' };
-  it('uses the 25% target for premium-selling, not 0.50 of max', () => {
+  it('scores on the historic prior and reports the 25%-target EV for information', () => {
     expect(assumedCapture0('Iron Condor - Normal').winCap).toBe(0.5);
     const r = calc0DTE({ ...base, overrideStrategy: 'Iron Condor - Normal' });
-    expect(r.evBasis.winCap).toBeCloseTo(0.25, 6);
-    expect(r.evBasis.capture.win.source).toBe('assumed');
+    expect(r.evBasis.winCap).toBeCloseTo(0.5, 6);
+    expect(r.evBasis.targetCapture.target).toBe(25);
+    expect(r.evBasis.targetCapture.applied).toBe(false);
+    expect(r.evBasis.targetCapture.ev).toBeLessThan(r.ev);
+    const t = calc0DTE({ ...base, overrideStrategy: 'Iron Condor - Normal', useTargetCapture: true });
+    expect(t.evBasis.winCap).toBeCloseTo(0.25, 6);
+    expect(t.ev).toBeCloseTo(r.evBasis.targetCapture.ev, 6);
   });
   it('moves toward measured capture when closes exist', () => {
     const r = calc0DTE({ ...base, overrideStrategy: 'Iron Condor - Normal',
       captureByStrategy: { 'Iron Condor - Normal': { winCap: 0.15, winSamples: 10, lossCap: 0.7, lossSamples: 0, closed: 10 } } });
-    expect(r.evBasis.winCap).toBeCloseTo(0.20, 6);
+    expect(r.evBasis.winCap).toBeCloseTo(0.325, 6);
     expect(r.evBasis.capture.win.n).toBe(10);
   });
   it('leaves fly priors alone until measured', () => {

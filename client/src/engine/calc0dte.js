@@ -1912,15 +1912,20 @@ export function calc0DTE(inputs) {
   const captureFractions = assumedCapture0;
 
   const { winCap: baseWinCap, lossCap: baseLossCap } = captureFractions(legStrat);
-  // Capture fix (Oct 2026). 0DTE premium-selling trades are now closed at their
-  // tastylive target (EXIT_RULES: 25%), so the assumed average win is that target,
-  // not 0.50-0.55 of max profit, which roughly doubled their EV and Kelly size.
-  // Every strategy then blends toward its MEASURED capture from closed tickets
-  // (capture tracker) as winners and losers accumulate.
+  // Capture (Oct 2026). 0DTE premium-selling trades are closed at their tastylive
+  // target (EXIT_RULES: 25%), which would make the average win ~0.25 of max profit,
+  // not the historic 0.50-0.55. By the trader's call the engine does NOT score on
+  // that yet: EV and Kelly keep the historic prior and move only on MEASURED
+  // capture from closed tickets (capture tracker). The at-target figure is
+  // reported alongside (evBasis.targetCapture) so it is visible, not applied.
+  // inputs.useTargetCapture = true scores on it instead (the panel's what-if).
   const rule0 = EXIT_RULES['0DTE'][legStrat];
-  const priorWinCap = rule0 && rule0.basis === 'entry' ? rule0.target / 100 : baseWinCap;
+  const targetWinCap = rule0 && rule0.basis === 'entry' ? rule0.target / 100 : null;
+  const priorWinCap = inputs.useTargetCapture && targetWinCap != null ? targetWinCap : baseWinCap;
   const capStat = captureByStrategy ? captureByStrategy[legStrat] : null;
   const winCapB = blendCapture(priorWinCap, capStat && capStat.winCap, capStat && capStat.winSamples);
+  const winCapTargetB = targetWinCap != null
+    ? blendCapture(targetWinCap, capStat && capStat.winCap, capStat && capStat.winSamples) : null;
   const lossCapB = blendCapture(baseLossCap, capStat && capStat.lossCap, capStat && capStat.lossSamples);
   const winCap = winCapB.value, lossCap = lossCapB.value;
 
@@ -1974,6 +1979,9 @@ export function calc0DTE(inputs) {
     ? (winP * avgWinUsed) - lossTerm
     : 0;
   const ev = (avgWinUsed > 0 && winP > 0) ? evGross - commInEV : 0;
+  // Informational: the same EV if winners bank the exit target (see above).
+  const evAtTarget = (winCapTargetB && !hasMeasured && win > 0 && winP > 0)
+    ? winP * win * winCapTargetB.value - lossTerm - commInEV : null;
 
   // Win amount ($ max profit) needed to reach EV = 0, holding winP, loss and
   // capture fraction fixed. EV=0 when winP × (winBE × winCap) = lossTerm + commission.
@@ -1993,6 +2001,7 @@ export function calc0DTE(inputs) {
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate,
     winCap, lossCap,
     capture: { win: winCapB, loss: lossCapB, closed: capStat ? capStat.closed : 0 },
+    targetCapture: evAtTarget != null ? { target: rule0.target, winCap: winCapTargetB.value, ev: evAtTarget, applied: !!inputs.useTargetCapture } : null,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed,
     maxWin: win, maxLoss: risk
   };

@@ -4,7 +4,7 @@ import { normalisePosition, planText, savePlan } from '../utils/ticketMath';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
-import { UNDERLYING_LIST, resolveCashType, exitRuleFor } from '../engine/data';
+import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
@@ -1531,7 +1531,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           : calc45DTE(mk45({ win: wr.win, risk: wr.risk }));
         return res.ev;
       };
-      return { ...solveBreakevenNet(evAt, lo + eps, hi - eps), basis: 'engine', pop: popNow,
+      // 0DTE premium-selling: also solve as if winners bank the 25% exit target —
+      // shown for information, not used to score (see calc0dte targetCapture).
+      let atTarget = null;
+      if (is0 && EXIT_RULES['0DTE'][effectiveStrat]) {
+        const evT = n => {
+          const wr = winRiskAtNet(mp0, ml0, n);
+          if (!(wr.win > 0) || !(wr.risk > 0)) return NaN;
+          return calc0DTE(mk0({ netCreditDebit: n, win: wr.win, risk: wr.risk, useTargetCapture: true })).ev;
+        };
+        atTarget = { ...solveBreakevenNet(evT, lo + eps, hi - eps), target: EXIT_RULES['0DTE'][effectiveStrat].target };
+      }
+      return { ...solveBreakevenNet(evAt, lo + eps, hi - eps), basis: 'engine', pop: popNow, atTarget,
         measured: !!(r.evBasis && r.evBasis.mode === 'measured') };
     } catch (e) { return null; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1554,9 +1565,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (breakeven.status === 'any') return { tone: 'good', text: 'EV ≥ 0 at any fill in range' };
     const n = breakeven.net, cur = signedNet(ticketNet, cashType);
     const txt = n < 0 ? `pay ≤ ${Math.abs(n).toFixed(2)} debit` : `receive ≥ ${n.toFixed(2)} credit`;
+    const at = breakeven.atTarget;
+    const infoText = !at ? '' : at.status === 'ok'
+      ? `If winners bank your ${at.target}% target: ${at.net < 0 ? `pay ≤ ${Math.abs(at.net).toFixed(2)}` : `receive ≥ ${at.net.toFixed(2)}`} — for information; the engine moves on your measured closes (Analytics → Capture)`
+      : at.status === 'none' ? `If winners bank your ${at.target}% target, no fill clears EV = 0 at this POP — for information only` : '';
     const gap = isFinite(cur) ? cur - n : null;                 // + = your fill is better than break-even
     return { tone: gap == null ? 'muted' : gap >= 0 ? 'good' : 'bad', text: `EV = 0 at: ${txt}`,
       gapText: gap == null ? '' : gap >= 0 ? `your fill clears it by ${gap.toFixed(2)}` : `your fill is ${Math.abs(gap).toFixed(2)} short`,
+      infoText, gap, net: n,
       basis: breakeven.basis === 'sim' ? 'simulated managed trade, target held at the ticket\'s $ figure' : `POP ${breakeven.pop}% held` };
   })();
 
@@ -1900,12 +1916,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   async function applyTwsStructure(s) {
     setTwsStructures(null);
     const underlying = s.underlying || (is0 ? i0.underlying : i45.underlying);
-    // Net credit/debit per contract → dollars (×100). isCredit true = credit.
-    const netDollars = Math.round((s.netCreditDebit || 0) * 100);
+    // The bridge's netCreditDebit is per share for one unit of the structure
+    // (+ credit, − debit) — exactly what the net field holds. It used to be
+    // multiplied by 100 here, so a 0.64 fly landed in the field as 64. (Oct 2026.)
+    const ncdIn = Number(s.netCreditDebit) || 0;
     const patch = {
       underlying,
       contracts: s.contracts || 1,
-      netCreditDebit: netDollars ? String(netDollars) : '',
+      netCreditDebit: ncdIn ? ncdIn.toFixed(2) : '',
     };
     if (is0) setI0(prev => ({ ...prev, ...patch }));
     else setI45(prev => ({ ...prev, ...patch }));
@@ -2859,6 +2877,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               </span>
             )}
             {beView && <BreakevenLine v={beView} onUse={breakeven && breakeven.status === 'ok' ? applyBreakevenNet : null} />}
+            {!is0 && isTimeSpread && <VolViewFlag be={beView} />}
           </div>
           {commUnitsNow > 0 && (
             <div data-testid="commission-cell" style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}
@@ -3319,6 +3338,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 }}
               />
               {beView && <BreakevenLine v={beView} onUse={breakeven && breakeven.status === 'ok' ? applyBreakevenNet : null} />}
+            {!is0 && isTimeSpread && <VolViewFlag be={beView} />}
             </div>
             <div>
               <label className="text-xs text-text-muted block mb-1">POP (%)</label>
@@ -3954,6 +3974,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                     : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                       + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
+                  {r.evBasis.targetCapture && !r.evBasis.targetCapture.applied && (
+                    <div data-testid="target-capture-info" style={{marginTop:4,color:'#8b949e'}}>
+                      ⓘ If winners bank your {r.evBasis.targetCapture.target}% exit target (win capture {(r.evBasis.targetCapture.winCap*100).toFixed(0)}%): EV ${r.evBasis.targetCapture.ev.toFixed(0)}.
+                      {' '}For information — EV and Kelly use the historic capture and move only as your closes come in (Analytics → Capture).
+                    </div>
+                  )}
                   {r.evBasis.mode !== 'measured' && !r.evBasis.curve && r.evBasis.capture && (() => {
                     // Capture tracker: what the win/loss fractions are built from.
                     const cw = r.evBasis.capture.win, cl = r.evBasis.capture.loss;
@@ -4322,6 +4348,26 @@ function NeedNum({ label, value, onChange, suggest }) {
   );
 }
 
+// Time spreads (Oct 2026): the model prices price movement only — at the front
+// leg's IV, every IV held — so a calendar or diagonal usually looks expensive to it.
+// What you pay above its break-even is the price of the vol view (back-month IV
+// holding up or rising, front-month IV crushing). Always on for these trades so the
+// EV, POP and Kelly beside it are read for what they are.
+function VolViewFlag({ be }) {
+  const gap = be && be.gap != null && be.net != null ? -be.gap : null;   // + = paying over break-even
+  return (
+    <span data-testid="vol-view-flag" style={{ display: 'block', marginTop: 4, padding: '6px 8px', borderRadius: 6,
+      background: '#1f1a0d', border: '1px solid #9e6a03', color: '#e3b341', fontSize: 12, lineHeight: 1.45 }}>
+      <b>Vol view not priced.</b>{' '}
+      {gap != null && gap > 0
+        ? <>You're paying <b className="mono">{gap.toFixed(2)}</b> over the movement-only break-even — that is the price of your IV view.</>
+        : gap != null ? <>Your fill is inside the movement-only break-even; any IV view is extra.</>
+        : <>The model prices price movement only.</>}
+      {' '}EV, POP and Kelly here assume IVs stay put; back-month IV rising (or front-month IV crushing) is not in them.
+    </span>
+  );
+}
+
 // One line: the fill at which EV = 0, how the current fill compares, and a button
 // that puts it in the net field. (Oct 2026.)
 function BreakevenLine({ v, onUse }) {
@@ -4331,6 +4377,7 @@ function BreakevenLine({ v, onUse }) {
       style={{ fontSize: 12.5, color: col, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 }}>
       <span className="mono">{v.text}</span>
       {v.gapText && <span style={{ color: '#a8b2be' }}>· {v.gapText}</span>}
+      {v.infoText && <span data-testid="breakeven-target-info" style={{ flexBasis: '100%', color: '#8b949e', fontSize: 12 }}>ⓘ {v.infoText}</span>}
       {onUse && (
         <button type="button" onClick={onUse}
           style={{ padding: '1px 7px', borderRadius: 4, border: '1px solid #1f6feb55', background: '#0d1a2e', color: '#58a6ff',

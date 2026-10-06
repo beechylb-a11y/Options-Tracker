@@ -11,6 +11,7 @@ import { computeOvernight } from './esOvernight.js';
 import { parseLegs, composeCombo, summarise, geometry, legKey } from './replay.js';
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
   interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV } from './volSurface.js';
+import { groupIntoStructures, legPerShare } from './structures.js';
 
 const app = express();
 app.use(cors({
@@ -1599,7 +1600,8 @@ app.get('/api/positions', async (req, res) => {
           right: contract.right || '',      // C or P
           qty: pos,                          // signed: + long, - short
           avgCost: avgCost || 0,             // per contract incl. multiplier
-          multiplier: Number(contract.multiplier) || 100
+          multiplier: Number(contract.multiplier) || 100,
+          perShare: legPerShare(avgCost, contract.multiplier, 'contract')
         });
       }
       function onEnd() {
@@ -1649,6 +1651,7 @@ app.get('/api/open-orders', async (req, res) => {
           qty: signedQty,
           avgCost: order.lmtPrice || 0,     // limit price for a working order
           multiplier: Number(contract.multiplier) || 100,
+          perShare: legPerShare(order.lmtPrice, contract.multiplier, 'share'),
           status: orderState?.status || '',
           lmtPrice: order.lmtPrice || 0
         });
@@ -1673,56 +1676,7 @@ app.get('/api/open-orders', async (req, res) => {
 
 // Group option legs by underlying+expiry into structures the engine can read.
 // Infers a strategy shape and a net price (credit +, debit −) per contract.
-function groupIntoStructures(legs) {
-  const groups = {};
-  legs.forEach(l => {
-    const key = `${l.underlying}|${l.expiry}`;
-    if (!groups[key]) groups[key] = { underlying: l.underlying, expiry: l.expiry, legs: [] };
-    groups[key].legs.push(l);
-  });
-
-  const structures = Object.values(groups).map(g => {
-    // Sort legs by strike for readability
-    const sorted = [...g.legs].sort((a, b) => a.strike - b.strike);
-    const calls = sorted.filter(l => l.right === 'C').length;
-    const puts = sorted.filter(l => l.right === 'P').length;
-    const shorts = sorted.filter(l => l.qty < 0).length;
-    const longs = sorted.filter(l => l.qty > 0).length;
-    const n = sorted.length;
-
-    // Net cash per 1-lot of the structure: sum(qty * avgCost). avgCost from
-    // reqPositions already includes the multiplier and sign of the position,
-    // but for orders it's a per-contract limit price — normalise to per-share.
-    // Net debit (you paid) shows negative; net credit (you received) positive.
-    let netPerContract = 0;
-    sorted.forEach(l => {
-      const perShare = l.avgCost > 100 ? l.avgCost / l.multiplier : l.avgCost;
-      netPerContract += -(Math.sign(l.qty)) * perShare * Math.abs(l.qty);
-    });
-
-    // Rough strategy shape inference (for the banner / ticket label).
-    let shape = 'Custom';
-    if (n === 4 && calls === 2 && puts === 2 && shorts === 2 && longs === 2) shape = 'Iron condor / Iron fly';
-    else if (n === 4 && shorts === 2 && longs === 2 && (calls === 4 || puts === 4)) shape = 'Butterfly';
-    else if (n === 3 && shorts === 1 && longs === 2) shape = 'Broken wing / Butterfly';
-    else if (n === 2 && shorts === 1 && longs === 1) shape = (calls === 2 ? 'Call spread' : puts === 2 ? 'Put spread' : 'Spread');
-
-    return {
-      underlying: g.underlying,
-      expiry: g.expiry,
-      shape,
-      legCount: n,
-      legs: sorted,
-      strikes: sorted.map(l => l.strike),
-      // Suggested ticket fields
-      contracts: Math.min(...sorted.map(l => Math.abs(l.qty))) || 1,
-      netCreditDebit: Math.round(netPerContract * 100) / 100, // + credit, − debit
-      isCredit: netPerContract >= 0
-    };
-  });
-
-  return { structures, raw: legs, count: legs.length };
-}
+// groupIntoStructures lives in ./structures.js (pure, tested).
 
 // Disconnect
 app.post('/api/disconnect', (req, res) => {

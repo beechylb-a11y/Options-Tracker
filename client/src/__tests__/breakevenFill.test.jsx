@@ -39,6 +39,8 @@ describe('panel', () => {
     expect(screen.getByTestId('risk-model-note')).toBeTruthy();
     await waitFor(() => expect(screen.getAllByTestId('breakeven-fill').length).toBeGreaterThan(0));
     expect(screen.getAllByTestId('breakeven-fill')[0].textContent).toMatch(/pay ≤ \d+\.\d\d debit|No fill gives EV/);
+    // the vol view is flagged wherever the break-even shows
+    expect(screen.getAllByTestId('vol-view-flag')[0].textContent).toMatch(/Vol view not priced/);
     // typing a risk replaces the model value
     fireEvent.change(document.querySelector('input[data-field="risk"]'), { target: { value: '5300' } });
     await waitFor(() => expect(document.querySelector('input[data-field="risk"]').value).toBe('5300'));
@@ -52,6 +54,8 @@ describe('panel', () => {
         overrideStrat: 'Iron Condor - Normal' }} />);
     await waitFor(() => expect(screen.getAllByTestId('breakeven-fill').length).toBeGreaterThan(0));
     const line = screen.getAllByTestId('breakeven-fill')[0];
+    // the 25%-target break-even is information, not the scored number
+    expect(within(line).getByTestId('breakeven-target-info').textContent).toMatch(/If winners bank your 25% target/);
     if (/receive ≥/.test(line.textContent)) {
       const m = line.textContent.match(/receive ≥ (\d+\.\d\d)/);
       fireEvent.click(within(line).getByText('use'));
