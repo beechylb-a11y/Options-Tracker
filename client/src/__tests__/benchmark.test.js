@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { closedPnlEvents, scopeFor, runningTotal, pieSlices, benchmarkOf } from '../utils/benchmark';
+import { closedPnlEvents, scopeFor, runningTotal, pieSlices, benchmarkOf, journalSummary, fyStartOf, fyLabel } from '../utils/benchmark';
 
 const accounts = [
   { id: 'bank-1', name: 'TastyTrade', startingBankroll: 3000, journalInvested: 10000, journalSince: '2026-09-01' },
@@ -28,7 +28,7 @@ describe('journal benchmark', () => {
   });
 
   it('falls back to starting bankroll when no benchmark is typed', () => {
-    expect(benchmarkOf(accounts[1])).toEqual({ invested: 5000, since: '', fromStarting: true });
+    expect(benchmarkOf(accounts[1])).toMatchObject({ invested: 5000, since: '', fromStarting: true, targetPct: 10, targetDefault: true });
   });
 
   it('single account: offset + P&L since the benchmark date', () => {
@@ -56,5 +56,38 @@ describe('journal benchmark', () => {
     expect(pieSlices({ invested: 1000, totalPnl: -300 }).map(s => [s.key, s.value]))
       .toEqual([['remaining', 700], ['lost', 300]]);
     expect(pieSlices({ invested: 1000, totalPnl: -1500 }).map(s => s.key)).toEqual(['lost']);
+  });
+
+  it('financial year runs July to June', () => {
+    expect(fyStartOf(2026, 9)).toEqual({ year: 2026, month: 6 });  // Oct 2026 → Jul 2026
+    expect(fyStartOf(2027, 2)).toEqual({ year: 2026, month: 6 });  // Mar 2027 → Jul 2026
+    expect(fyLabel(2026, 9)).toBe('FY27');
+  });
+
+  it('month: only that month\'s trades, return on month-start bank, vs target', () => {
+    const accts = [{ ...accounts[0], journalTargetPct: 5 }];
+    const s = journalSummary('bank-1', accts, events, 2026, 9);  // October
+    expect(s.month.start).toBe(10200);
+    expect(s.month.pnl).toBe(-30);            // -150 + 120, nothing from Sep
+    expect(s.month.trades).toBe(2);
+    expect(s.month.returnPct).toBeCloseTo(-30 / 10200 * 100);
+    expect(s.month.targetPct).toBe(5);
+    expect(s.month.targetAmt).toBeCloseTo(510);
+    expect(s.month.vsTarget).toBeCloseTo(-540);
+  });
+
+  it('FY running total sums Jul → month on screen, benchmark summed the same way', () => {
+    const accts = [{ ...accounts[0], journalTargetPct: 5 }];
+    const s = journalSummary('bank-1', accts, events, 2026, 9);
+    expect(s.fy.rows.map(r => r.label)).toEqual(['Jul', 'Aug', 'Sep', 'Oct']);
+    expect(s.fy.pnl).toBe(170);               // Sep +200, Oct -30 (Aug is before the from date)
+    expect(s.fy.target).toBeCloseTo(500 + 500 + 500 + 510);
+    expect(s.since.returnPct).toBeCloseTo(1.7);
+  });
+
+  it('all accounts: target weighted by each account\'s starting bank', () => {
+    const accts = [{ ...accounts[0], journalTargetPct: 10 }, { ...accounts[1], journalTargetPct: 4 }, accounts[2]];
+    const s = journalSummary('all', accts, events, 2026, 9);
+    expect(s.month.targetPct).toBeCloseTo((10 * 10000 + 4 * 5000) / 15000);
   });
 });

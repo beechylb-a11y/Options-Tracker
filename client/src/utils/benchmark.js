@@ -1,7 +1,9 @@
-// Journal benchmark: money invested per account, and how much of it has come back.
+// Journal returns: the month on its own, the financial year as the running total,
+// and each against a monthly benchmark (target return %, e.g. 10% a month).
 //
-// Each account carries an optional benchmark the user types on the Journal page:
-//   journalInvested — the money put in (the offset the running total starts from)
+// Each account carries, typed on the Journal page:
+//   journalTargetPct — monthly target return %. Blank = DEFAULT_TARGET_PCT.
+//   journalInvested — starting bank, the money put in (the base returns are on)
 //   journalSince    — YYYY-MM-DD; only P&L on/after this date counts toward the
 //                     running total. Set it to the day the invested figure was
 //                     true and history before it isn't double counted. Blank =
@@ -38,14 +40,86 @@ export function closedPnlEvents(tracker = [], decisions = []) {
   return out;
 }
 
+export const DEFAULT_TARGET_PCT = 10;
+
 export function benchmarkOf(acct) {
-  if (!acct) return { invested: 0, since: '', fromStarting: false };
+  if (!acct) return { invested: 0, since: '', fromStarting: false, targetPct: DEFAULT_TARGET_PCT, targetDefault: true };
   const typed = parseFloat(acct.journalInvested);
   const has = isFinite(typed);
+  const tp = parseFloat(acct.journalTargetPct);
   return {
     invested: has ? typed : (parseFloat(acct.startingBankroll) || 0),
     since: acct.journalSince || '',
     fromStarting: !has,
+    targetPct: isFinite(tp) ? tp : DEFAULT_TARGET_PCT,
+    targetDefault: !isFinite(tp),
+  };
+}
+
+// Australian financial year: 1 July – 30 June. Returns the FY's first month.
+export function fyStartOf(year, month) {
+  return month >= 6 ? { year, month: 6 } : { year: year - 1, month: 6 };
+}
+export function fyLabel(year, month) {
+  const s = fyStartOf(year, month).year;
+  return `FY${String(s + 1).slice(-2)}`; // FY27 = Jul 2026 – Jun 2027
+}
+
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Everything the Journal card shows for the month on screen.
+//   month — that month only: bank at month start, P&L of trades closed in the
+//           month, return %, and the benchmark (target % × month-start bank)
+//   fy    — running total from 1 July to the end of the month on screen, one row
+//           per month, with the benchmark accumulated the same way
+//   since — the original view: value and return on the starting bank
+export function journalSummary(account, accounts, events, year, month) {
+  const scope = scopeFor(account, accounts, events);
+  // One target % for the view: each account's target weighted by its starting bank.
+  const w = scope.members.reduce((s, a) => s + benchmarkOf(a).invested, 0);
+  const targetPct = scope.members.length === 0 ? DEFAULT_TARGET_PCT
+    : w > 0 ? scope.members.reduce((s, a) => s + benchmarkOf(a).targetPct * benchmarkOf(a).invested, 0) / w
+    : scope.members.reduce((s, a) => s + benchmarkOf(a).targetPct, 0) / scope.members.length;
+  const targetDefault = scope.members.every(a => benchmarkOf(a).targetDefault);
+
+  const pad = n => String(n).padStart(2, '0');
+  const prefix = `${year}-${pad(month + 1)}`;
+  const rt = runningTotal(scope, year, month);
+  const monthEvents = scope.events.filter(e => e.date.startsWith(prefix));
+  const wins = monthEvents.filter(e => e.pnl > 0).length;
+  const losses = monthEvents.filter(e => e.pnl < 0).length;
+  const targetAmt = rt.startValue * targetPct / 100;
+  const monthOut = {
+    start: rt.startValue, end: rt.endValue, pnl: rt.monthPnl,
+    returnPct: rt.monthReturnPct, trades: monthEvents.length, wins, losses,
+    avgPerTrade: monthEvents.length ? rt.monthPnl / monthEvents.length : 0,
+    targetPct, targetAmt, vsTarget: rt.monthPnl - targetAmt,
+  };
+
+  const fs = fyStartOf(year, month);
+  const rows = [];
+  let cumPnl = 0, cumTarget = 0, y = fs.year, m = fs.month;
+  for (;;) {
+    const r = runningTotal(scope, y, m);
+    const t = r.startValue * targetPct / 100;
+    cumPnl += r.monthPnl; cumTarget += t;
+    rows.push({ label: MON[m], year: y, month: m, start: r.startValue, pnl: r.monthPnl,
+      returnPct: r.monthReturnPct, target: t, cumPnl, cumTarget });
+    if (y === year && m === month) break;
+    m++; if (m > 11) { m = 0; y++; }
+  }
+  const fyStart = rows[0].start;
+  const fyOut = {
+    label: fyLabel(year, month), rows, start: fyStart, pnl: cumPnl, target: cumTarget,
+    returnPct: fyStart > 0 ? (cumPnl / fyStart) * 100 : null,
+    targetReturnPct: fyStart > 0 ? (cumTarget / fyStart) * 100 : null,
+    vsTarget: cumPnl - cumTarget,
+  };
+
+  return {
+    members: scope.members, targetDefault,
+    month: monthOut, fy: fyOut,
+    since: { invested: rt.invested, value: rt.endValue, pnl: rt.totalPnl, returnPct: rt.totalReturnPct },
   };
 }
 
@@ -107,8 +181,9 @@ export function runningTotal({ invested, events }, year, month) {
   };
 }
 
-// Slices for the end-of-month pie. Up: what went in, plus what came back on top.
-// Down: what is left of the money, plus what was lost. Losses past the whole
+// Slices for a return pie. `invested` is the base (the month-start bank for the
+// month pie), `totalPnl` the result on it. Up: base plus what came back on top.
+// Down: what is left of the base, plus what was lost. Losses past the whole
 // invested amount still show as one full red circle.
 export function pieSlices({ invested, totalPnl }) {
   if (totalPnl >= 0) {

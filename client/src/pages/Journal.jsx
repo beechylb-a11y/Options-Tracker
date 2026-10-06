@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap 
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, isAggExcluded } from '../utils/stats';
-import { closedPnlEvents, scopeFor, runningTotal } from '../utils/benchmark';
+import { closedPnlEvents, journalSummary } from '../utils/benchmark';
 import JournalBenchmark from '../components/JournalBenchmark';
 import { sessionDateOf } from '../engine/session';
 import { inferLegs, fetchReplay, buildPack, downloadPack, yyyymmdd } from '../utils/replay';
@@ -236,9 +236,8 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
   const monthLosses = weekStats.reduce((s, w) => s + w.losses, 0);
   const monthDecided = monthWins + monthLosses;
 
-  // Running total against each account's benchmark (money invested), for the month on screen.
-  const benchScope = scopeFor(account, accounts, closedPnlEvents(tracker, decisions));
-  const benchRT = runningTotal(benchScope, year, month);
+  // Month return vs the monthly benchmark, FY running total, and since-start — for the month on screen.
+  const benchSummary = journalSummary(account, accounts, closedPnlEvents(tracker, decisions), year, month);
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
 
   function prevMonth() { setCurrentDate(new Date(year, month - 1, 1)); setSelectedDay(null); }
@@ -586,7 +585,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
 
         {/* Right column */}
         <div>
-          <JournalBenchmark rt={benchRT} members={benchScope.members} accounts={accounts}
+          <JournalBenchmark s={benchSummary} accounts={accounts}
             onAccountsChange={onAccountsChange} monthLabel={currentDate.toLocaleString('default', { month: 'long' })}
             isCurrentMonth={isCurrentMonth} />
           <div className="card mb-4">
