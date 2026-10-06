@@ -783,7 +783,10 @@ export function calc0DTE(inputs) {
         ? [leg('Long call (lower)', gs-D), leg('Short call x2 (body)', gs), leg('Long call (1.5x upper)', gs+D*1.5)]
         : [leg('Long put (upper)', gs+D), leg('Short put x2 (body)', gs), leg('Long put (1.5x lower)', gs-D*1.5)];
     } else if (legStrat === 'Iron Condor - Normal') {
-      legs = [leg('Long put', p-2*D), leg('Short put', p-D), leg('Short call', p+D), leg('Long call', p+2*D)];
+      // One wing width both sides, off the rounded shorts, so TWS reads it as an iron
+      // condor (unequal wings list as a custom combo). (Oct 2026.)
+      const sp = R(p - D), sc = R(p + D), w = Math.max(roundTo || 0.5, R(D));
+      legs = [{ label: 'Long put', strike: sp - w }, { label: 'Short put', strike: sp }, { label: 'Short call', strike: sc }, { label: 'Long call', strike: sc + w }];
     } else if (legStrat === 'Long Condor - Reversed') {
       // Reversed iron condor: sell outer wings, buy inner strikes
       // Profits from large move — debit structure

@@ -874,7 +874,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const isTimeSpread = !is0 && /calendar|diagonal/i.test(effectiveStrat || '');
   const todayYmd = tradingSession().yyyymmdd;
   const chainOk = chainExp && chainExp.underlying === i45.underlying && Array.isArray(chainExp.list) && chainExp.list.length;
-  const expList = isTimeSpread ? (chainOk ? chainExp.list : fridaysFrom(todayYmd)) : [];
+  const expList = !is0 ? (chainOk ? chainExp.list : fridaysFrom(todayYmd)) : [];
+  // 45DTE single-expiry structures trade one listed expiry: the one nearest today + DTE.
+  // Picking another sets DTE to it, so the two never disagree.
+  const singleExp = (!is0 && !isTimeSpread && expList.length)
+    ? nearestExpiry(expList, todayYmd, addDaysYmd(todayYmd, Math.max(1, parseInt(i45.dte, 10) || 45)), 1) : null;
+  function pickSingle(e) {
+    const d = dteBetween(todayYmd, e);
+    if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
+    markGreeksStale();
+  }
   const tsDefault = isTimeSpread ? timeSpreadDefaults(effectiveStrat, i45.dte, expList, todayYmd) : { near: null, far: null };
   const nearExp = isTimeSpread && calExp && calExp.near && expList.includes(calExp.near) && dteBetween(todayYmd, calExp.near) >= 1
     ? calExp.near : tsDefault.near;
@@ -883,7 +892,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     : nearestExpiry(expList.filter(e => e > nearExp), todayYmd,
         addDaysYmd(nearExp, /diagonal/i.test(effectiveStrat || '') ? 42 : 28), 1);
   const legExpiryOf = l => {
-    if (!isTimeSpread || !l) return null;
+    if (!l) return null;
+    if (!isTimeSpread) return singleExp;
     const role = legRole(l.label);
     return role === 'near' ? nearExp : role === 'far' ? farExp : null;
   };
@@ -895,7 +905,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   }
   function pickFar(e) { setCalExp({ near: nearExp, far: e }); }
   useEffect(() => {
-    if (!isTimeSpread) return;
+    if (is0) return;
     if (chainExp && chainExp.underlying === i45.underlying) return;
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
@@ -926,7 +936,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       .finally(() => clearTimeout(t));
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTimeSpread, i45.underlying]);
+  }, [is0, i45.underlying]);
   const editedCount = (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length)
     ? r.legs.reduce((n, l, i) => n + (l.strike !== r.engineLegs[i].strike ? 1 : 0), 0)
     : 0;
@@ -971,6 +981,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // expiry that had just expired, and the greeks came back off a dead chain.
     if (is0) return ses.yyyymmdd;
     if (isTimeSpread && nearExp) return nearExp;
+    // 45DTE single-expiry: the LISTED expiry nearest today + DTE. Today + DTE on its
+    // own lands on whatever weekday that is (Oct 7 + 45 = a Saturday), and greeks
+    // for an expiry that does not exist come back empty — so Delta never moved the
+    // strikes and every card said "no greeks". (Oct 2026.)
+    if (singleExp) return singleExp;
     const base = new Date(ses.dateISO + 'T12:00:00');
     const dte = parseInt(i45.dte, 10);
     if (dte > 0) base.setDate(base.getDate() + dte);
@@ -2631,7 +2646,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // morning the latter is the expiry that has already expired. Close dates
       // elsewhere in the app deliberately keep the UTC date: a close looks BACK at the
       // session that just ended, which is the one the UTC date already names.
-      expiryDate: is0 ? tradingSession().dateISO : isoFromYmd(isTimeSpread && nearExp ? nearExp : deriveExpiryYYYYMMDD())
+      expiryDate: is0 ? tradingSession().dateISO : isoFromYmd(deriveExpiryYYYYMMDD())
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -2772,6 +2787,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 )}
               </div>
             )}
+            {!is0 && !isTimeSpread && singleExp && (
+              <SingleExpiryPicker today={todayYmd} list={expList} sel={singleExp} onPick={pickSingle}
+                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'} />
+            )}
             {isTimeSpread && nearExp && (
               <ExpiryPicker today={todayYmd} list={expList} near={nearExp} far={farExp}
                 onNear={pickNear} onFar={pickFar} isDiagonal={/diagonal/i.test(effectiveStrat || '')}
@@ -2784,6 +2803,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   style={{textDecoration:'underline',cursor:'pointer'}}>reset to engine</span>
               </div>
             )}
+            {(() => {
+              // Unequal condor / iron-fly wings: TWS lists them as a custom combo, not an
+              // iron condor, and max loss is set by the wider wing. (Oct 2026.)
+              const L = r.legs || [];
+              if (L.length !== 4 || !/Iron Condor|Iron butterfly|Chicken condor/i.test(r.legStrat || '')) return null;
+              const ks = L.map(l => l.strike).slice().sort((a, b) => a - b);
+              const wp = ks[1] - ks[0], wc = ks[3] - ks[2];
+              if (!(wp > 0 && wc > 0) || Math.abs(wp - wc) < 1e-9) return null;
+              return (
+                <div data-testid="unequal-wings" style={{marginTop:4,fontSize:12.5,color:'#d29922'}}>
+                  ⚠ Wings are {wp} and {wc} wide — TWS shows unequal wings as a custom combo, not an iron condor, and max loss is set by the {Math.max(wp, wc)}-wide side.
+                </div>
+              );
+            })()}
             {r.strikeOrderWarning && (
               <div style={{marginTop:4,fontSize:12.5,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
             )}
@@ -4310,6 +4343,32 @@ const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #303
 
 // Near (sold) and far (bought) expiries for a calendar or diagonal. Five choices
 // each, around the current pick; the far row only offers dates after the near.
+// 45DTE single-expiry structures: which listed expiry the ticket trades. (Oct 2026.)
+function SingleExpiryPicker({ today, list, sel, onPick, source }) {
+  const items = nearChoices(list, today, sel);
+  return (
+    <div data-testid="expiry-single" style={{marginTop:10,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',padding:'8px 12px',
+      borderRadius:10,background:'rgba(255,255,255,0.03)',border:'1px solid #21262d'}}>
+      <span style={{width:118,fontSize:12.5,color:'#a8b2be'}}>Expiry <span style={{color:'#8b949e'}}>all legs</span></span>
+      {items.map(e => {
+        const on = e === sel;
+        return (
+          <button key={e} type="button" onClick={() => onPick(e)} aria-pressed={on}
+            style={{padding:'5px 10px',borderRadius:7,fontSize:13,cursor:'pointer',minHeight:32,
+              border:`1px solid ${on ? '#58a6ff' : '#30363d'}`,background:on ? '#58a6ff22' : 'transparent',color:on ? '#fff' : '#c9d1d9'}}>
+            <span style={{fontWeight:on ? 700 : 500}}>{fmtExpiry(e)}</span>
+            <span className="mono" style={{fontSize:11.5,color:'#8b949e',marginLeft:6}}>{dteBetween(today, e)}d</span>
+          </button>
+        );
+      })}
+      <span style={{fontSize:12,color:'#8b949e',flexBasis:'100%'}}>
+        {source === 'chain' ? 'Listed expiries from TWS.' : source === 'loading' ? 'Loading listed expiries from TWS…'
+          : 'Weekly Fridays (holidays not checked) — TWS expiry list unavailable' + (source.startsWith('fallback:') ? `: ${source.slice(9)}.` : '.')}
+      </span>
+    </div>
+  );
+}
+
 function ExpiryPicker({ today, list, near, far, onNear, onFar, source, isDiagonal }) {
   const nears = nearChoices(list, today, near);
   const fars = farChoices(list, near, far);

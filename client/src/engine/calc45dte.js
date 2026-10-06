@@ -159,10 +159,17 @@ export function calc45DTE(inputs) {
     const leg = (label, strike) => ({label, strike: R(strike)});
     const sdFull = em45, sd80 = em45*0.80, sd50 = em45*0.50, sd25 = em45*0.25;
 
+    // Wings are one width on both sides, measured from the ROUNDED shorts. Rounding
+    // each leg on its own gave 698/711/813/826-style condors whose sides could differ
+    // by a strike; TWS only recognises an iron condor when the wings match, and lists
+    // anything else as a custom combo. (Oct 2026.)
+    const W = Math.max(strikeStep45, R(sdFull - sd80));
     if (legStrat === 'Iron Condor - Normal') {
-      legs = [leg('Long put',p-sdFull),leg('Short put',p-sd80),leg('Short call',p+sd80),leg('Long call',p+sdFull)];
+      const sp = R(p - sd80), sc = R(p + sd80);
+      legs = [{label:'Long put',strike:sp - W},{label:'Short put',strike:sp},{label:'Short call',strike:sc},{label:'Long call',strike:sc + W}];
     } else if (legStrat === 'Iron butterfly') {
-      legs = [leg('Long put (wing)',p-sd80),leg('Short put (body)',p),leg('Short call (body)',p),leg('Long call (wing)',p+sd80)];
+      const b = R(p), wf = Math.max(strikeStep45, R(sd80));
+      legs = [{label:'Long put (wing)',strike:b - wf},{label:'Short put (body)',strike:b},{label:'Short call (body)',strike:b},{label:'Long call (wing)',strike:b + wf}];
     } else if (legStrat === 'Credit spread') {
       legs = isBull||!isBear ? [leg('Short put',p-sd50),leg('Long put',p-sd80)] : [leg('Short call',p+sd50),leg('Long call',p+sd80)];
     } else if (legStrat === 'Bull call spread') {
