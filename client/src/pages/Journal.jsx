@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
-import { filterTracker } from '../utils/stats';
+import { filterTracker, isAggExcluded } from '../utils/stats';
+import { closedPnlEvents, scopeFor, runningTotal } from '../utils/benchmark';
+import JournalBenchmark from '../components/JournalBenchmark';
 import { sessionDateOf } from '../engine/session';
 import { inferLegs, fetchReplay, buildPack, downloadPack, yyyymmdd } from '../utils/replay';
 import CloseTradeModal from '../components/CloseTradeModal';
@@ -13,7 +15,7 @@ import OrderTicket from '../components/OrderTicket';
 const hasEntry = d => { const v = parseFloat(d?.['Net Debit/Credit']); return isFinite(v) && v !== 0; };
 import ErrorBanner from '../components/ErrorBanner';
 
-export default function Journal({ authenticated, account }) {
+export default function Journal({ authenticated, account, accounts = [], onAccountsChange }) {
   const [journal, setJournal] = useState([]);
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
@@ -97,7 +99,8 @@ export default function Journal({ authenticated, account }) {
   const today = new Date();
 
   // ── Build daily stats from BOTH TradeTracker AND closed Decision tickets ──
-  const filteredTracker = filterTracker(tracker, account);
+  // accounts passed so PaperTrade drops out of "All accounts", as on every other page.
+  const filteredTracker = filterTracker(tracker, account, accounts);
   const dayStats = {};
 
   // 1. CSV / TradeTracker trades
@@ -120,7 +123,9 @@ export default function Journal({ authenticated, account }) {
   });
 
   // 2. Closed decision engine tickets (filtered by account)
-  const accountDecisions = (!account || account === 'all') ? decisions : decisions.filter(d => {
+  const accountDecisions = (!account || account === 'all')
+    ? decisions.filter(d => !isAggExcluded(d.Account || '', accounts))
+    : decisions.filter(d => {
     const decAccount = d.Account || '';
     return decAccount === account || !decAccount;
   });
@@ -230,6 +235,11 @@ export default function Journal({ authenticated, account }) {
   const monthWins = weekStats.reduce((s, w) => s + w.wins, 0);
   const monthLosses = weekStats.reduce((s, w) => s + w.losses, 0);
   const monthDecided = monthWins + monthLosses;
+
+  // Running total against each account's benchmark (money invested), for the month on screen.
+  const benchScope = scopeFor(account, accounts, closedPnlEvents(tracker, decisions));
+  const benchRT = runningTotal(benchScope, year, month);
+  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
 
   function prevMonth() { setCurrentDate(new Date(year, month - 1, 1)); setSelectedDay(null); }
   function nextMonth() { setCurrentDate(new Date(year, month + 1, 1)); setSelectedDay(null); }
@@ -576,6 +586,9 @@ export default function Journal({ authenticated, account }) {
 
         {/* Right column */}
         <div>
+          <JournalBenchmark rt={benchRT} members={benchScope.members} accounts={accounts}
+            onAccountsChange={onAccountsChange} monthLabel={currentDate.toLocaleString('default', { month: 'long' })}
+            isCurrentMonth={isCurrentMonth} />
           <div className="card mb-4">
             <h3 className="text-sm font-medium text-text mb-3">Month Summary</h3>
             <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
