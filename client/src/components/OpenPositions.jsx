@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import OrderTicket from './OrderTicket';
+import { normalisePosition, stopToPrice, pnlAt, loadPlan } from '../utils/ticketMath';
+import { STOP_LOSS_PCT } from '../engine/data';
+
+// Stop line for an open position: the plan saved at entry, else the 100% guide.
+function stopOf(r) {
+  const pos = normalisePosition(r);
+  if (!(Math.abs(pos.ncd || 0) > 0)) return null;
+  const plan = r.timestamp ? loadPlan(r.timestamp) : null;
+  const pct = plan && plan.stopPct !== '' && plan.stopPct != null ? Math.abs(parseFloat(plan.stopPct)) : STOP_LOSS_PCT;
+  if (!isFinite(pct) || pct <= 0) return null;
+  const price = stopToPrice(pos, pct);
+  return { pct, price, side: pos.isCredit ? 'db' : 'cr', loss: pnlAt(pos, price, pos.qtyOpen || 1), guide: !plan || plan.stopPct === '' || plan.stopPct == null };
+}
 
 // Open and partially-closed positions, each expandable to its tranches.
 //
@@ -88,6 +101,7 @@ export default function OpenPositions({ authenticated, account, compact = false 
               {!compact && <th className="text-left py-2 pr-2">Legs</th>}
               <th className="text-right py-2 pr-2">Open / Qty</th>
               <th className="text-right py-2 pr-2">Risk live</th>
+              <th className="text-right py-2 pr-2" title={`Stop: the plan saved at entry, otherwise the ${STOP_LOSS_PCT}%-of-premium guide (credit: buy back at 2× the credit; debit: close when it is worth nothing)`}>Stop</th>
               {!compact && <th className="text-right py-2 pr-2">Avg exit</th>}
               <th className="text-right py-2 pr-2">Banked</th>
               <th className="text-left py-2 pl-2">Status</th>
@@ -115,6 +129,11 @@ export default function OpenPositions({ authenticated, account, compact = false 
                       <b>{r.qtyOpen}</b><span className="text-text-muted"> / {r.qty}</span>
                     </td>
                     <td className="py-2 pr-2 text-right mono">${liveRisk.toFixed(0)}</td>
+                    {(() => { const st = stopOf(r); return (
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-stop" style={{ color: st ? '#f85149' : '#8b949e', whiteSpace: 'nowrap' }}
+                        title={st ? `${st.pct}% of the ${st.side === 'db' ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}` : 'No entry price on the ticket'}>
+                        {st ? <>@{st.price.toFixed(2)} {st.side} <span className="text-text-muted">{money(st.loss)}</span></> : '—'}
+                      </td>); })()}
                     {!compact && <td className="py-2 pr-2 text-right mono text-text-muted">{r.avgExit === '' ? '—' : r.avgExit}</td>}
                     <td className={'py-2 pr-2 text-right mono ' + (n(r.realisedPnl) >= 0 ? 'win' : 'loss')}>
                       {r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
@@ -141,6 +160,7 @@ export default function OpenPositions({ authenticated, account, compact = false 
                       </td>
                       <td className="py-1.5 pr-2 text-right mono text-[12px]">{c.qtyClosed}</td>
                       <td className="py-1.5 pr-2 text-right mono text-[12px] text-text-muted">@ {c.closePrice}</td>
+                      <td></td>
                       {!compact && <td className="py-1.5 pr-2"></td>}
                       <td className={'py-1.5 pr-2 text-right mono text-[12px] ' + (c.pnl >= 0 ? 'win' : 'loss')}>{money(c.pnl)}</td>
                       <td className="py-1.5 pl-2"></td>

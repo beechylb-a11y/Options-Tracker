@@ -9,7 +9,7 @@ import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines,
   ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
 } from '../utils/ticketMath';
-import { exitRuleFor } from '../engine/data';
+import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
@@ -89,7 +89,8 @@ export default function OrderTicket({ position, onClose, onDone, initialTab }) {
     }
     return out.length ? out : [mkRow(pos.qtyOpen || 1, 50)];
   });
-  const [stopPct, setStopPct] = useState(() => loadPlan(pos.timestamp)?.stopPct ?? '');
+  // The plan saved at entry wins; otherwise the 100%-of-premium stop guide.
+  const [stopPct, setStopPct] = useState(() => { const p = loadPlan(pos.timestamp); return p && p.stopPct !== '' && p.stopPct != null ? p.stopPct : String(STOP_LOSS_PCT); });
 
   const setRow = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? { ...r, ...patch } : r));
   const onPct = (i, v) => { const pct = parseFloat(v); setRow(i, { pct: v, price: isFinite(pct) ? snap(targetToPrice(pos, pct), tick) : '' }); };

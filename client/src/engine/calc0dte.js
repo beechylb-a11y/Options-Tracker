@@ -3,7 +3,7 @@
 //  Merged scoring: compression + move consumed + overnight + VWAP + VIX + gamma
 // ================================================================
 import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS, MARKET_BEHAVIOUR_0DTE, PROFIT_LOCUS, CASH_SETTLED_0DTE, computeFrictions, EXIT_RULES } from './data.js';
-import { blendCapture } from './capture.js';
+import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -1926,7 +1926,11 @@ export function calc0DTE(inputs) {
   const winCapB = blendCapture(priorWinCap, capStat && capStat.winCap, capStat && capStat.winSamples);
   const winCapTargetB = targetWinCap != null
     ? blendCapture(targetWinCap, capStat && capStat.winCap, capStat && capStat.winSamples) : null;
-  const lossCapB = blendCapture(baseLossCap, capStat && capStat.lossCap, capStat && capStat.lossSamples);
+  // Loss side starts at the stop guide — lose 100% of the entry premium — and moves
+  // toward what your closed losers actually gave back (Oct 2026). Without an entry
+  // price the old per-strategy prior and P(max loss) tail stand in.
+  const stopFrac = stopLossFrac(netCreditDebit, risk);
+  const lossCapB = blendCapture(stopFrac != null ? stopFrac : baseLossCap, capStat && capStat.lossCap, capStat && capStat.lossSamples);
   const winCap = winCapB.value, lossCap = lossCapB.value;
 
   // Estimated average winner / loser (dollars per contract) from the structure.
@@ -1958,7 +1962,17 @@ export function calc0DTE(inputs) {
   // butterfly's rare-but-large tail is priced explicitly rather than smeared in.
   let lossTerm, evMode2 = 'flat';
   const lossProb = 1 - winP;
-  if (!hasMeasured && pMaxLoss != null && lossProb > 0 && risk > 0) {
+  // Held to expiry with no stop: the old distribution model — P(max loss) × full
+  // risk plus partial losers. Shown beside the stop-based EV, never scored.
+  let lossTermHeld = null;
+  if (pMaxLoss != null && lossProb > 0 && risk > 0) {
+    const pT = Math.min(pMaxLoss, lossProb);
+    lossTermHeld = pT * risk + Math.max(0, lossProb - pT) * risk * (baseLossCap * 0.6);
+  }
+  if (!hasMeasured && stopFrac != null && lossProb > 0 && risk > 0) {
+    lossTerm = lossProb * risk * lossCap;                  // every loser stopped at the (blended) stop
+    evMode2 = 'stop';
+  } else if (!hasMeasured && pMaxLoss != null && lossProb > 0 && risk > 0) {
     const pTail = Math.min(pMaxLoss, lossProb);            // capped at total loss prob
     const pPartial = Math.max(0, lossProb - pTail);
     const partialLoss = risk * (lossCap * 0.6);            // partial losers give back less
@@ -2000,6 +2014,9 @@ export function calc0DTE(inputs) {
     threshold: EV_HISTORY_THRESHOLD,
     evGross, commission: commInEV, commissionRoundTrip: commRT, commissionUnits: commUnits, commissionRate: commRate,
     winCap, lossCap,
+    stopLoss: stopFrac != null ? { pct: 100, frac: stopFrac, perContract: Math.round(stopFrac * risk) } : null,
+    evHeld: evMode2 === 'stop' && lossTermHeld != null && avgWinUsed > 0 && winP > 0
+      ? (winP * avgWinUsed) - lossTermHeld - commInEV : null,
     capture: { win: winCapB, loss: lossCapB, closed: capStat ? capStat.closed : 0 },
     targetCapture: evAtTarget != null ? { target: rule0.target, winCap: winCapTargetB.value, ev: evAtTarget, applied: !!inputs.useTargetCapture } : null,
     winP, avgWin: avgWinUsed, avgLoss: avgLossUsed,

@@ -16,7 +16,7 @@
 // Thresholds marked "ours" are the app's, to calibrate against closes.
 
 import { bsPrice, RATE, divYieldOf } from './payoffCurve';
-import { exitRuleFor } from './data';
+import { exitRuleFor, STOP_LOSS_PCT } from './data';
 import { trendFit } from './trend';
 import { eventRisk45DTE } from './events';
 import CALENDAR from './econ-calendar.js';
@@ -184,6 +184,14 @@ export function reviewOpen45(p) {
     attribution, pace, ivChange, shortVega, trendFit: fit, events, shorts,
     targetLabel: `${rule.target}% of ${rule.basis === 'entry' ? 'the debit' : 'max profit'}`,
   };
+  // Stop guide: lose 100% of the entry premium (credit: buy back at 2×; debit: worth nothing).
+  const stopPct = p.stopPct != null && isFinite(p.stopPct) && p.stopPct > 0 ? +p.stopPct : STOP_LOSS_PCT;
+  const stopShare = Math.abs(ncd) > 0 ? Math.abs(ncd) * stopPct / 100 : null;
+  out.metrics.stopPct = stopPct;
+  out.metrics.stopPrice = stopShare != null ? +(isCredit ? Math.abs(ncd) + stopShare : Math.max(0, Math.abs(ncd) - stopShare)).toFixed(2) : null;
+  out.metrics.stop$ = stopShare != null ? -Math.round(stopShare * 100 * qtyOpen) : null;
+  out.metrics.toStop$ = stopShare != null && pnlShare != null ? Math.round((pnlShare + stopShare) * 100 * qtyOpen) : null;
+  const stopHit = stopShare != null && pnlShare != null && pnlShare <= -stopShare;
 
   // ── What to do ──
   const act = (action, tone, headline) => { out.action = action; out.tone = tone; out.headline = headline; };
@@ -195,6 +203,11 @@ export function reviewOpen45(p) {
     act('take-profit', 'green', `Take profit — at ${Math.round((progress || 1) * rule.target)}% vs the ${rule.target}% target`);
     W.push(`tastylive manages ${strategy} at ${out.metrics.targetLabel}; the rest of the curve pays less per day of risk.`);
     S.push(`Close all ${qtyOpen} at about ${mark != null ? Math.abs(mark).toFixed(2) : 'the mid'} ${isCredit ? 'debit' : 'credit'}.`);
+  } else if (stopHit) {
+    act('close', 'red', `Stop hit — down ${Math.round(-pnlShare / Math.abs(ncd) * 100)}% of the ${isCredit ? 'credit' : 'debit'}`);
+    W.push(`Your stop guide is ${stopPct}% of the ${isCredit ? 'credit' : 'debit'} (${isCredit ? 'buy back at ' : 'close at '}${out.metrics.stopPrice.toFixed(2)}).`);
+    S.push(`Close all ${qtyOpen} at about ${mark != null ? Math.abs(mark).toFixed(2) : 'the mid'} ${isCredit ? 'debit' : 'credit'}.`);
+    if (SHORT_PREMIUM.includes(fam) && dte > closeDte) S.push(`Or roll out in time ${rollCredit} — tastylive found rolling beat stopping on 45-DTE short premium.`);
   } else if (dte <= closeDte) {
     const tested = testedShorts.length > 0;
     if (SHORT_PREMIUM.includes(fam) && !tested && (pnlShare || 0) >= 0) {

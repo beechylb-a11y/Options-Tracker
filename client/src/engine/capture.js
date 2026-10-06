@@ -10,6 +10,18 @@
 //  ÷ max risk per contract (losers), by engine and strategy.
 // ================================================================
 
+import { STOP_LOSS_PCT } from './data.js';
+
+// Loss prior from the stop guide (Oct 2026): a loser gives back STOP_LOSS_PCT of the
+// entry premium, as a share of max risk (capped at 1). Credit 2.50 on $750 risk →
+// 0.33; a plain debit fly → 1 (the debit IS the max loss); an asymmetric fly paid
+// 0.55 with $165 risk → 0.33. Null when the ticket has no entry price yet.
+export function stopLossFrac(netCreditDebit, riskPerContract, pct = STOP_LOSS_PCT) {
+  const prem = Math.abs(parseFloat(netCreditDebit)) * 100 * (pct / 100);
+  if (!(prem > 0) || !(riskPerContract > 0)) return null;
+  return Math.min(1, prem / riskPerContract);
+}
+
 const num = v => { const n = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
 
 // Logged strategy strings look like "SPX - Iron Condor - Normal - neutral"; the
@@ -41,7 +53,7 @@ export function captureStats(rows, { account } = {}) {
     if (!(qty > 0) || !(qClosed > 0) || pnl == null) continue;
     const perCt = pnl / qClosed;
     const key = eng + '|' + strat;
-    const a = acc[key] || (acc[key] = { eng, strat, closed: 0, wins: 0, losses: 0, winFr: [], lossFr: [] });
+    const a = acc[key] || (acc[key] = { eng, strat, closed: 0, wins: 0, losses: 0, winFr: [], lossFr: [], lossPrem: [], stopFr: [] });
     a.closed += 1;
     if (perCt >= 0) {
       a.wins += 1;
@@ -51,6 +63,13 @@ export function captureStats(rows, { account } = {}) {
       a.losses += 1;
       const mrc = maxR > 0 ? maxR / qty : null;
       if (mrc) a.lossFr.push(Math.min(1.5, Math.abs(perCt) / mrc));
+      // Against the stop guide: loss ÷ entry premium (1.0 = exactly the 100% stop),
+      // and the stop's own share of max risk — the prior the engine started from.
+      const ep = num(r['Entry Price']);
+      if (ep && Math.abs(ep) > 0) {
+        a.lossPrem.push(Math.abs(perCt) / (Math.abs(ep) * 100));
+        if (mrc) a.stopFr.push(Math.min(1, Math.abs(ep) * 100 / mrc));
+      }
     }
   }
   for (const a of Object.values(acc)) {
@@ -60,6 +79,8 @@ export function captureStats(rows, { account } = {}) {
       winRate: a.closed ? a.wins / a.closed : 0,
       winCap: avg(a.winFr), winCapMedian: median(a.winFr), winSamples: a.winFr.length,
       lossCap: avg(a.lossFr), lossCapMedian: median(a.lossFr), lossSamples: a.lossFr.length,
+      lossXPremium: avg(a.lossPrem), lossXPremiumMax: a.lossPrem.length ? Math.max(...a.lossPrem) : null,
+      stopFrac: avg(a.stopFr),
     };
   }
   return out;

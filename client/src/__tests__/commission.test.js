@@ -93,3 +93,28 @@ describe('engine EV is after commission', () => {
     expect(a.ev - b.ev).toBeCloseTo(2.96, 2);
   });
 });
+
+describe('EV losses start at the 100% stop (Oct 2026)', () => {
+  const base = { price: 7410, high: 7421, low: 7398, vwap5: 7409, vwap5_30: 7409, vwapRoll30: 7410, vwapRoll30Prior: 7409,
+    vwapAccept: 0.5, atr: 61, em: 38, atr5: 6.5, atr2h: 22, gamStrike: 0, vix: 15.8, vix1d: 12.9, esOvernightHigh: 7430,
+    esOvernightLow: 7388, esClose: 7415, priorDayClose: 7398, cashOpen: 7400, esEM: 40, overnightStale: false,
+    bankroll: 25000, startBR: 25000, maxLoss: 600, maxOpen: 900, theta: 38, delta: -4, gamma: -0.2, hours: 3.5,
+    underlying: 'SPX', overrideStrategy: null, overrideStrikes: null, vertVariant: 'engine', historyByStrategy: null,
+    wingDeltas: { lowerAbsDelta: 0.08, upperAbsDelta: 0.07 }, emSource: 'straddle', straddleCall: 21.5, straddlePut: 20.8,
+    straddleHaircut: 1.2533, netCreditDebit: 6.36, win: 636, risk: 3364, pop: 80, comboBid: null, comboAsk: null, commissionPerContract: 0 };
+
+  it('charges each loser the premium, not P(max loss) × full risk', () => {
+    const r = calc0DTE(base);
+    expect(r.evBasis.lossModel).toBe('stop');
+    expect(r.evBasis.stopLoss.perContract).toBe(636);
+    expect(r.evBasis.lossCap * 3364).toBeCloseTo(636, 0);
+    expect(r.evBasis.evHeld).toBeLessThan(r.ev);            // the no-stop comparison is worse
+  });
+  it('moves toward what closed losers actually gave back', () => {
+    const r = calc0DTE({ ...base, captureByStrategy: { [calc0DTE(base).legStrat]: { lossCap: 0.40, lossSamples: 10, winCap: null, winSamples: 0, closed: 10 } } });
+    expect(r.evBasis.lossCap).toBeCloseTo((10 * 0.40 + 10 * (636 / 3364)) / 20, 4);   // halfway at 10 losers
+  });
+  it('falls back to the P(max loss) model with no entry price', () => {
+    expect(calc0DTE({ ...base, netCreditDebit: 0 }).evBasis.lossModel).not.toBe('stop');
+  });
+});

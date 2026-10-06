@@ -181,6 +181,9 @@ function CheckupCard({ row }) {
         {m.dte != null && <Chip label="DTE" val={m.dte} tone={m.daysToClose <= 5 ? 'amber' : null}
           tip={`Time stop at ${m.closeDte} DTE — ${m.daysToClose > 0 ? m.daysToClose + ' days away' : 'reached'}`} />}
         {m.daysToClose != null && <Chip label="time stop" val={m.daysToClose > 0 ? `in ${m.daysToClose}d` : 'now'} tone={m.daysToClose <= 0 ? 'red' : m.daysToClose <= 5 ? 'amber' : null} />}
+        {m.stopPrice != null && <Chip label="stop" val={`@${m.stopPrice.toFixed(2)} · ${money(m.stop$)}`}
+          tone={m.toStop$ != null && m.toStop$ <= 0 ? 'red' : m.toStop$ != null && m.stop$ && m.toStop$ < Math.abs(m.stop$) * 0.3 ? 'amber' : null}
+          tip={`Stop guide: ${m.stopPct}% of the entry premium.${m.toStop$ != null ? ` ${m.toStop$ > 0 ? money(m.toStop$) + ' of room left' : 'Reached.'}` : ''}`} />}
         {m.ivChange ? <Chip label="IV since entry" val={(m.ivChange > 0 ? '+' : '') + m.ivChange + ' pts'}
           tone={(m.shortVega && m.ivChange >= 2) || (!m.shortVega && m.ivChange <= -2) ? 'amber' : (m.shortVega && m.ivChange < 0) ? 'green' : null} /> : null}
         {trend && <Chip label="trend" val={trendLabel(trend)} tone={m.trendFit < 0 ? 'amber' : m.trendFit > 0 ? 'green' : null}

@@ -3,7 +3,7 @@ import {
   normalisePosition, targetToPrice, priceToTarget, pnlAt, ladder, snap, defaultTick,
   round2, stopToPrice, maxTargetPct, pnlPct, ruleLadderPcts
 } from '../utils/ticketMath';
-import { exitRuleFor } from '../engine/data';
+import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp from './TicketHelp';
 import { unitsFromLegs, DEFAULT_COMMISSION } from '../utils/commission';
 
@@ -63,7 +63,8 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
     setRows(ladder(qty, ladderPcts));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategy, engine, tastyFly]);
-  const [stopPct, setStopPct] = useState('');
+  // The stop starts at the 100%-of-premium guide; clear it for no stop.
+  const [stopPct, setStopPct] = useState(String(STOP_LOSS_PCT));
   useEffect(() => { setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 100])); }, [qty]);
 
   const priceOf = pct => snap(targetToPrice(pos, Number(pct) || 0), tick);
@@ -202,8 +203,9 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop</span>
         <input type="number" step="25" placeholder="% loss" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 80 }} />
         {stop != null && (
-          <span className="mono" style={{ fontSize: 12, color: '#f85149' }}>
-            @ {stop.toFixed(2)} = {pctStr(pnlPct(pos, stop) ?? 0)} · {money(pnlAt(pos, stop, qty))}
+          <span className="mono" data-testid="pt-stop" style={{ fontSize: 12, color: '#f85149' }}>
+            @ {stop.toFixed(2)} {closeSide} = {pctStr(pnlPct(pos, stop) ?? 0)} · {money(pnlAt(pos, stop, qty))}
+            {String(stopPct) === String(STOP_LOSS_PCT) && <span style={{ color: '#8b949e' }}> · guide: {STOP_LOSS_PCT}% of the {pos.isCredit ? 'credit' : 'debit'}</span>}
           </span>
         )}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }} title="Per contract, each way. Set per account in Settings.">Comm / contract</span>

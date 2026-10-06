@@ -77,10 +77,22 @@ describe('other structures', () => {
   it('rolls a tested credit spread out in time', () => {
     const legs = [{ strike: 7250, right: 'P', qty: -1, expiry: EXP, delta: -0.48 }, { strike: 7200, right: 'P', qty: 1, expiry: EXP, delta: -0.33 }];
     const r = reviewOpen45({ strategy: 'Bull put spread', legs, qtyOpen: 1, underlying: 'SPX',
-      entry: { ncd: 1.6, dateYmd: entryYmd, spot: 7410, iv: 16, maxProfit: 160 },
+      entry: { ncd: 15.69, dateYmd: entryYmd, spot: 7410, iv: 16, maxProfit: 1569 },
       now: { todayYmd: '20261016', spot: 7255, iv: 19, mark: markOf(legs, 7255, 19, '20261016') } });
+    expect(r.metrics.toStop$).toBeGreaterThan(0);           // losing, but inside the 100% stop
     expect(r.action).toBe('roll-out');
     expect(r.steps.join(' ')).toMatch(/net credit/);
+  });
+
+  it('closes at the 100% stop, and shows where the stop is', () => {
+    const legs = [{ strike: 7250, right: 'P', qty: -1, expiry: EXP, delta: -0.48 }, { strike: 7200, right: 'P', qty: 1, expiry: EXP, delta: -0.33 }];
+    const r = reviewOpen45({ strategy: 'Bull put spread', legs, qtyOpen: 2, underlying: 'SPX',
+      entry: { ncd: 1.6, dateYmd: entryYmd, spot: 7410, iv: 16, maxProfit: 160 },
+      now: { todayYmd: '20261016', spot: 7255, iv: 19, mark: markOf(legs, 7255, 19, '20261016') } });
+    expect(r.metrics.stopPrice).toBe(3.2);                   // buy back at 2× the 1.60 credit
+    expect(r.metrics.stop$).toBe(-320);
+    expect(r.action).toBe('close');
+    expect(r.headline).toMatch(/Stop hit/);
   });
 
   it('closes a calendar that price has left', () => {

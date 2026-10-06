@@ -72,7 +72,9 @@ describe('verdict band', () => {
   });
 
   it('says pass when EV after commission is negative, and Kelly is shown as no edge', () => {
-    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '80' });
+    // Losers priced at the stop (100% of the 6.36 credit = $636): EV turns negative
+    // below a 2/3 win rate at a 50% average win — 60% is a pass.
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '60' });
     expect(screen.getByTestId('verdict').textContent).toBe('Pass at this price');
     expect(screen.getByTestId('execution').textContent).toMatch(/no edge at this price/);
     expect(screen.getByTestId('commission-cell').textContent).toMatch(/4 contracts × \$0\.65 × 2 sides/);

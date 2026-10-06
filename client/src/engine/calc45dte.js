@@ -3,7 +3,7 @@
 //  Pure functions — no DOM access.
 // ================================================================
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor } from './data.js';
-import { blendCapture } from './capture.js';
+import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
@@ -383,7 +383,10 @@ export function calc45DTE(inputs) {
   // on the same "share of max profit" scale the tracker measures.
   const priorWin45 = debitBasis && win > 0 ? (risk * exitRule.target / 100) / win : baseWinCap45;
   const winCapB45 = blendCapture(priorWin45, capStat45 && capStat45.winCap, capStat45 && capStat45.winSamples);
-  const lossCapB45 = blendCapture(baseLossCap45, capStat45 && capStat45.lossCap, capStat45 && capStat45.lossSamples);
+  // Loss prior = the stop guide (100% of the entry premium), blended toward closed
+  // losers — as 0DTE. (Oct 2026.)
+  const stopFrac45 = stopLossFrac(inputs.netCreditDebit, risk);
+  const lossCapB45 = blendCapture(stopFrac45 != null ? stopFrac45 : baseLossCap45, capStat45 && capStat45.lossCap, capStat45 && capStat45.lossSamples);
   const evWinCap = winCapB45.value, evLossCap = lossCapB45.value;
   const estAvgWin = debitBasis && !(win > 0)
     ? risk * exitRule.target / 100
@@ -405,7 +408,14 @@ export function calc45DTE(inputs) {
   // Distribution-weighted loss when P(max loss) is known (estimated mode):
   // price the max-loss tail explicitly rather than smearing into one average.
   let lossTerm45 = (1 - winP) * avgLossUsed, lossModel45 = cm ? 'curve' : 'flat';
-  if (!hasMeasured && !cm && pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
+  let lossTermHeld45 = null;
+  if (pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
+    const pT = Math.min(pMaxLoss, 1 - winP);
+    lossTermHeld45 = pT * risk + Math.max(0, (1 - winP) - pT) * risk * (baseLossCap45 * 0.6);
+  }
+  if (!hasMeasured && !cm && stopFrac45 != null && (1 - winP) > 0 && risk > 0) {
+    lossModel45 = 'stop';                                   // lossTerm45 already = (1−winP) × risk × blended stop
+  } else if (!hasMeasured && !cm && pMaxLoss != null && (1 - winP) > 0 && risk > 0) {
     const pTail = Math.min(pMaxLoss, 1 - winP);
     const pPartial = Math.max(0, (1 - winP) - pTail);
     const partialLoss = risk * (evLossCap * 0.6);
@@ -430,6 +440,9 @@ export function calc45DTE(inputs) {
     winBreakeven: winBreakeven != null ? Math.round(winBreakeven) : null,
     historyTrades: histTrades, threshold: EV_HISTORY_THRESHOLD,
     winCap: evWinCap, lossCap: evLossCap,
+    stopLoss: stopFrac45 != null ? { pct: 100, frac: stopFrac45, perContract: Math.round(stopFrac45 * risk) } : null,
+    evHeld: lossModel45 === 'stop' && lossTermHeld45 != null && avgWinUsed > 0 && winP > 0
+      ? (winP * avgWinUsed) - lossTermHeld45 - commInEV : null,
     winBasis: debitBasis && winCapB45.source === 'assumed' ? `${exitRule.target}% of debit` : `${Math.round(evWinCap * 100)}% of max`,
     capture: { win: winCapB45, loss: lossCapB45, closed: capStat45 ? capStat45.closed : 0 },
     curve: cm ? { pTarget: cm.pTarget, paths: cm.paths, closeDte: cm.closeDte, modelPop: cm.pop, netSource: cm.netSource } : null,

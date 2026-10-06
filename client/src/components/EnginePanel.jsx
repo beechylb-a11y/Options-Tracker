@@ -713,6 +713,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
           ivBack:fv(i45,'ivBack'), skew:fv(i45,'skew'), dte:fv(i45,'dte')||45,
           pop:fv(i45,'pop'), win:fv(i45,'win'), risk:fv(i45,'risk'),
+          netCreditDebit:fv(i45,'netCreditDebit'),   // the stop-guide loss prior needs the premium
           bankroll:fv(i45,'bankroll'), startBR:fv(i45,'startBR'),
           maxLoss:fv(i45,'maxLoss'), maxOpen:fv(i45,'maxOpen'), bpr:fv(i45,'bpr'),
           theta:fv(i45,'theta'), vega:fv(i45,'vega'), delta:fv(i45,'delta'),
@@ -3972,8 +3973,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                       + (r.evBasis.curve.netSource !== 'ticket' ? ' · priced at model fair — enter the fill' : '')
                   : r.evBasis.mode==='measured'
                     ? `EV from realized history: ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
-                    : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
+                    : r.evBasis.lossModel === 'stop'
+                      ? `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, losers stopped at ${r.evBasis.capture && r.evBasis.capture.loss && r.evBasis.capture.loss.n > 0 ? 'the blended' : '100% of the premium,'} $${(r.evBasis.lossCap * r.evBasis.maxLoss).toFixed(0)}): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${(r.evBasis.lossCap * r.evBasis.maxLoss).toFixed(0)}`
+                        + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')
+                      : `EV estimated (win ${r.evBasis.winBasis || ((r.evBasis.winCap*100).toFixed(0) + '% of max')}, loss ${(r.evBasis.lossCap*100).toFixed(0)}% of max): ${(r.evBasis.winP*100).toFixed(0)}% × $${r.evBasis.avgWin.toFixed(0)} − ${((1-r.evBasis.winP)*100).toFixed(0)}% × $${r.evBasis.avgLoss.toFixed(0)}`
                       + (r.evBasis.commission > 0 ? ` − $${r.evBasis.commission.toFixed(2)} commission` : '')}
+                  {r.evBasis.lossModel === 'stop' && r.evBasis.evHeld != null && (
+                    <div data-testid="ev-held" style={{marginTop:4,color:'#8b949e'}}>
+                      ⓘ Held to expiry with no stop (P(max loss) {r.evBasis.pMaxLoss != null ? (r.evBasis.pMaxLoss*100).toFixed(0) + '%' : '—'} at full risk): EV ${r.evBasis.evHeld.toFixed(0)}. The stop is what keeps losers at the premium — a gap past it costs more.
+                    </div>
+                  )}
                   {r.evBasis.targetCapture && !r.evBasis.targetCapture.applied && (
                     <div data-testid="target-capture-info" style={{marginTop:4,color:'#8b949e'}}>
                       ⓘ If winners bank your {r.evBasis.targetCapture.target}% exit target (win capture {(r.evBasis.targetCapture.winCap*100).toFixed(0)}%): EV ${r.evBasis.targetCapture.ev.toFixed(0)}.
@@ -3984,9 +3993,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     // Capture tracker: what the win/loss fractions are built from.
                     const cw = r.evBasis.capture.win, cl = r.evBasis.capture.loss;
                     const pc = v => (v * 100).toFixed(0) + '%';
+                    const stopLbl = r.evBasis.lossModel === 'stop' ? ' of max (stop at 100% of premium)' : '';
                     const side = (lbl, c, unit) => c.n > 0
-                      ? `${lbl} ${pc(c.value)} — assumed ${pc(c.prior)}, your ${c.n} closed ${unit} ${pc(c.measured)}`
-                      : `${lbl} ${pc(c.value)} — assumed, no closed ${unit} yet`;
+                      ? `${lbl} ${pc(c.value)} — ${lbl === 'loss' && stopLbl ? 'stop' : 'assumed'} ${pc(c.prior)}, your ${c.n} closed ${unit} ${pc(c.measured)}`
+                      : `${lbl} ${pc(c.value)}${lbl === 'loss' ? stopLbl : ''} — assumed, no closed ${unit} yet`;
                     return (
                       <div data-testid="capture-basis" style={{marginTop:4,color:'#c9d1d9'}}>
                         Capture: {side('win', cw, 'winners')} · {side('loss', cl, 'losers')}
@@ -4002,7 +4012,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   )}
                   {r.evBasis.pMaxLoss != null && (
                     <div style={{marginTop:4,color:'#c9d1d9'}}>
-                      P(max loss) used in sizing: <b style={{color:'#fff'}}>{(r.evBasis.pMaxLoss*100).toFixed(1)}%</b>
+                      {r.evBasis.lossModel === 'stop' ? 'P(max loss) at expiry (blockers and the no-stop line; EV uses the stop)' : 'P(max loss) used in sizing'}: <b style={{color:'#fff'}}>{(r.evBasis.pMaxLoss*100).toFixed(1)}%</b>
                       <span style={{marginLeft:5,fontSize:12,fontWeight:600,color:r.evBasis.pMaxLossSource==='blend'?'#3fb950':r.evBasis.pMaxLossSource==='delta'?'#d29922':'#a8b2be'}}>
                         ({r.evBasis.pMaxLossSource==='blend'?'model+delta':r.evBasis.pMaxLossSource==='delta'?'delta/skew':'model'})
                       </span>

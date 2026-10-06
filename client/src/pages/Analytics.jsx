@@ -147,7 +147,12 @@ function CaptureTracker({ account }) {
   ['0DTE', '45DTE'].forEach(eng => Object.entries(stats[eng] || {}).forEach(([strat, st]) => {
     const pr = priorFor(eng, strat);
     const w = blendCapture(pr.win, st.winCap, st.winSamples);
-    const l = blendCapture(pr.loss, st.lossCap, st.lossSamples);
+    // Losses start at the 100% stop (premium ÷ max risk, per ticket); the column uses
+    // the average stop share of these tickets where known.
+    const lossPrior = st.stopFrac != null ? st.stopFrac : pr.loss;
+    const l = blendCapture(lossPrior, st.lossCap, st.lossSamples);
+    pr.lossStop = st.stopFrac != null;
+    pr.loss = lossPrior;
     rows.push({ eng, strat, st, pr, w, l });
   }));
   rows.sort((a, b) => a.eng.localeCompare(b.eng) || b.st.closed - a.st.closed);
@@ -157,7 +162,7 @@ function CaptureTracker({ account }) {
       <h3 className="text-sm font-semibold mb-1">Capture tracker</h3>
       <p className="text-text-muted text-xs mb-3" style={{ lineHeight: 1.5 }}>
         Win capture = realised P&L per contract ÷ max profit per contract, on closed winners. Loss capture = realised loss ÷ max risk, on closed losers.
-        The engine's EV starts from the assumed number and moves toward yours: {CAPTURE_K} closes move it halfway. ▼/▲ = yours differs by 10 points or more.
+        The engine's EV starts from the assumed win capture and, for losers, from the 100% stop (the premium), and moves toward yours: {CAPTURE_K} closes move it halfway. ▼/▲ = yours differs by 10 points or more.
         Needs Max Profit / Max Risk on the logged ticket — engine-logged trades have both.
       </p>
       {rows.length === 0 ? <div className="text-text-muted text-sm">No closed engine tickets with max profit/risk yet.</div> : (
@@ -166,7 +171,8 @@ function CaptureTracker({ account }) {
             <thead><tr className="text-text-muted text-left">
               <th className="py-1 pr-3">Engine</th><th className="pr-3">Strategy</th><th className="pr-3">Closed</th><th className="pr-3">Win rate</th>
               <th className="pr-3">Win capture: assumed</th><th className="pr-3">yours (n, median)</th><th className="pr-3">engine uses</th>
-              <th className="pr-3">Loss capture: assumed</th><th className="pr-3">yours (n)</th><th className="pr-3">engine uses</th>
+              <th className="pr-3" title="Losses start at the stop guide: 100% of the entry premium, as a share of max risk (average over these tickets)">Loss: stop at 100% of premium</th><th className="pr-3">yours (n)</th>
+              <th className="pr-3" title="Average loss ÷ entry premium. 1.0× = losers closed exactly at the stop; above 1 = gave back more than the premium">yours ÷ premium (worst)</th><th className="pr-3">engine uses</th>
             </tr></thead>
             <tbody>{rows.map(({ eng, strat, st, pr, w, l }) => (
               <tr key={eng + strat} className="border-t border-bg-border">
@@ -176,9 +182,11 @@ function CaptureTracker({ account }) {
                 <td className="pr-3" style={{ color: flag(st.winCap, pr.win) ? '#d29922' : undefined }}>
                   {st.winSamples ? `${pc(st.winCap)} (${st.winSamples}, ${pc(st.winCapMedian)})${flag(st.winCap, pr.win)}` : '—'}</td>
                 <td className="pr-3" style={{ color: '#e6edf3' }}>{pc(w.value)}</td>
-                <td className="pr-3">{pc(pr.loss)}</td>
+                <td className="pr-3">{pc(pr.loss)}{pr.lossStop ? '' : ' (no entry price — strategy default)'}</td>
                 <td className="pr-3" style={{ color: flag(st.lossCap, pr.loss) ? '#d29922' : undefined }}>
                   {st.lossSamples ? `${pc(st.lossCap)} (${st.lossSamples})${flag(st.lossCap, pr.loss)}` : '—'}</td>
+                <td className="pr-3" style={{ color: st.lossXPremium > 1.1 ? '#f85149' : undefined }}>
+                  {st.lossXPremium != null ? `${st.lossXPremium.toFixed(2)}× (${st.lossXPremiumMax.toFixed(1)}×)` : '—'}</td>
                 <td className="pr-3" style={{ color: '#e6edf3' }}>{pc(l.value)}</td>
               </tr>
             ))}</tbody>

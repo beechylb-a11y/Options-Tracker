@@ -157,6 +157,12 @@ export const STRATEGY_CASH_TYPE = {
 //   closeDte 45DTE only: days before the (near) expiry the trade is closed regardless
 //   why      one line shown with the target
 export const CLOSE_DTE_45 = 21;
+// Stop-loss guide (Oct 2026): lose 100% of the entry premium. Credit: buy back at
+// 2× the credit. Debit: close when the position is worth nothing — for a plain fly
+// or debit spread that IS the max loss; an asymmetric fly or BWB can lose more than
+// its debit, and this is where to get out before it does. The engines also start
+// their EV loss here (blended toward your closed losers).
+export const STOP_LOSS_PCT = 100;
 const R45 = (target, chips, why, extra = {}) => ({ target, basis: 'max', chips, closeDte: CLOSE_DTE_45, why, ...extra });
 const R0 = (target, chips, why, extra = {}) => ({ target, basis: 'entry', chips, why, ...extra });
 export const EXIT_RULES = {
