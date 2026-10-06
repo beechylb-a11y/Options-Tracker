@@ -53,26 +53,26 @@ describe('tab ranking', () => {
   it('leaves insertion order alone until every ticket is priced', async () => {
     seedTabs([
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
-      { id: 'b', u: 'QQQ', label: 'QQQ 29 Sep', createdAt: 2 },
+      { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
     // Only one of the two has a confidence.
     summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
-                    QQQ: { confidence: null, tier: '--', ready: false, blocked: false, composite: null, grade: '--' } };
+                    XSP: { confidence: null, tier: '--', ready: false, blocked: false, composite: null, grade: '--' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
-    expect(stripLabels()).toEqual(['SPX 29 Sep', 'QQQ 29 Sep']);
+    expect(stripLabels()).toEqual(['SPX 29 Sep', 'XSP 29 Sep']);
     expect(screen.getByText('ranking once all priced')).toBeTruthy();
   });
 
   it('puts the higher confidence on the left once both are priced', async () => {
     seedTabs([
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
-      { id: 'b', u: 'QQQ', label: 'QQQ 29 Sep', createdAt: 2 },
+      { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
     summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
-                    QQQ: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
+                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
-    // QQQ 45 outranks SPX 37 even though SPX was opened first.
-    expect(stripLabels()).toEqual(['QQQ 29 Sep', 'SPX 29 Sep']);
+    // XSP 45 outranks SPX 37 even though SPX was opened first.
+    expect(stripLabels()).toEqual(['XSP 29 Sep', 'SPX 29 Sep']);
     expect(screen.queryByText('ranking once all priced')).toBeNull();
     // The badge shows the composite, which these fixtures set equal to confidence.
     expect(screen.getByText('45')).toBeTruthy();
@@ -84,12 +84,12 @@ describe('tab ranking', () => {
   it('ranks a blocked ticket by its score and marks it ⊘', async () => {
     seedTabs([
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
-      { id: 'b', u: 'QQQ', label: 'QQQ 29 Sep', createdAt: 2 },
+      { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
     summaryPlan = { SPX: { confidence: 80, tier: 'High', ready: true, blocked: true, composite: 80, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
-                    QQQ: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
+                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
-    expect(stripLabels()).toEqual(['SPX 29 Sep', 'QQQ 29 Sep']);
+    expect(stripLabels()).toEqual(['SPX 29 Sep', 'XSP 29 Sep']);
     expect(screen.getByText(/⊘\s*80/)).toBeTruthy();
   });
 

@@ -86,17 +86,17 @@ describe('multi-scan mode', () => {
     fireEvent.click(screen.getAllByTestId('scan-open')[0]);
     expect(visiblePanel().dataset.mode).toBe('45dte');
     expect(visiblePanel().dataset.ivr).toBe('55');           // the vol it scanned travels with it
-    const before = screen.getAllByTestId('tab').length;
+    const before = screen.getAllByTestId('panel').length;
 
     fireEvent.click(screen.getByTestId('mode-0dte'));
-    expect(screen.getAllByTestId('tab').length).toBe(before + 1);
+    expect(screen.getAllByTestId('panel').length).toBe(before + 1);
     expect(visiblePanel().dataset.mode).toBe('0dte');
-    expect(visiblePanel().dataset.u).toBe('');
-    // the scan ticket is still 45DTE
+    expect(visiblePanel().dataset.u).toBe('SPX');              // same underlying, other mode
+    // the scan ticket is still 45DTE, filed in its own group
     const scanPanel = screen.getAllByTestId('panel').find(p => p.dataset.scan === '45dte');
     expect(scanPanel.dataset.mode).toBe('45dte');
-    const tabs = screen.getAllByTestId('tab').map(t => t.dataset.mode);
-    expect(tabs).toContain('45dte');
-    expect(tabs).toContain('0dte');
+    expect(screen.getByTestId('group-0dte-index').dataset.on).toBe('1');
+    expect(screen.getByTestId('group-45dte-index').textContent).toMatch(/2\/5/);
+    expect(screen.getAllByTestId('tab').map(t => t.dataset.mode)).toEqual(['0dte']);
   });
 });

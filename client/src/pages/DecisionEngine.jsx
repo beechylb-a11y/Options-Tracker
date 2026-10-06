@@ -69,11 +69,25 @@ function ModeBadge({ mode, size = 'sm', testid }) {
   );
 }
 
+// ── Tab groups (Oct 2026): 0DTE / 45DTE × Indices / Stocks & ETFs, 5 tabs each ──
+// Indices are the cash-settled, European-style products (no assignment, 60/40 tax);
+// everything else — SPY, QQQ, IWM and single names — trades as shares, with
+// assignment and dividend risk, so it sits in its own group.
+export const INDEX_SYMBOLS = ['SPX', 'SPXW', 'XSP', 'NDX', 'NDXP', 'RUT', 'RUTW', 'VIX', 'OEX', 'XEO', 'DJX'];
+export const TAB_GROUP_MAX = 5;
+export const assetClassOf = u => INDEX_SYMBOLS.includes(String(u || 'SPX').toUpperCase()) ? 'index' : 'stock';
+const CLASS_LABEL = { index: 'Indices', stock: 'Stocks & ETFs' };
+const CLASS_DEFAULT = { index: 'SPX', stock: 'SPY' };
+export const GROUPS = [['0dte', 'index'], ['0dte', 'stock'], ['45dte', 'index'], ['45dte', 'stock']];
+const groupKey = (m, c) => `${m === '0dte' ? '0dte' : '45dte'}|${c}`;
+const tabUnd = t => (t && (t.und || (t.seed && t.seed.underlying))) || 'SPX';
+export const groupOfTab = t => groupKey(t.mode, assetClassOf(tabUnd(t)));
+
 function newTab(mode, seed) {
   const createdAt = Date.now();
   const und = seed && seed.underlying;
   const id = 'tab' + createdAt + '-' + Math.round(Math.random() * 10000);
-  return { id, mode: mode || '0dte', createdAt, seed: seed || null, state: null,
+  return { id, mode: mode || '0dte', createdAt, seed: seed || null, state: null, und: und || null,
            label: tabLabel(mode || '0dte', und, createdAt, seed && seed.dte) };
 }
 
@@ -129,10 +143,14 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // all have price data". Until then the strip keeps insertion order: tabs rearranging
   // themselves while you are still typing into the first one would be worse than
   // useless. Blocked tickets rank by their composite like any other (marked ⊘).
-  const rankable = tabs.length > 1 && tabs.every(t => summaries[t.id] && summaries[t.id].ready);
+  // The strip shows ONE group at a time — the active ticket's — and ranks inside it.
+  const activeGroup = activeTab ? groupOfTab(activeTab) : groupKey('0dte', 'index');
+  const groupTabs = tabs.filter(t => groupOfTab(t) === activeGroup);
+  const groupCount = g => tabs.filter(t => groupOfTab(t) === g).length;
+  const rankable = groupTabs.length > 1 && groupTabs.every(t => summaries[t.id] && summaries[t.id].ready);
   const orderedTabs = React.useMemo(() => {
-    if (!rankable) return tabs;
-    return tabs.slice().sort((a, b) => {
+    if (!rankable) return groupTabs;
+    return groupTabs.slice().sort((a, b) => {
       const sa = summaries[a.id], sb = summaries[b.id];
       // Pure composite order (Oct 2026). Blocked tickets used to be pushed to the
       // end whatever they scored, so a 46 sat ahead of a 55 and the strip looked
@@ -144,7 +162,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       if (sb.confidence !== sa.confidence) return sb.confidence - sa.confidence;
       return a.createdAt - b.createdAt;          // stable for ties
     });
-  }, [tabs, summaries, rankable]);
+  }, [tabs, summaries, rankable, activeGroup]);
+  // Last ticket looked at in each group, so switching groups returns to it.
+  const lastInGroup = useRef({});
+  if (activeTab) lastInGroup.current[activeGroup] = activeTab.id;
 
   function handlePanelState(id, st) {
     panelStateRef.current[id] = st;
@@ -154,9 +175,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       const t = prev[i];
       const inp = t.mode === '0dte' ? st.i0 : st.i45;
       const lab = tabLabel(t.mode, inp && inp.underlying, t.createdAt, st.i45 && st.i45.dte);
-      if (lab === t.label) return prev;
+      const und = (inp && inp.underlying) || t.und || null;
+      if (lab === t.label && und === t.und) return prev;
       const next = prev.slice();
-      next[i] = { ...t, label: lab };
+      next[i] = { ...t, label: lab, und };
       return next;
     });
   }
@@ -166,11 +188,26 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     if (i < 0) return;
     const next = tabs.filter(t => t.id !== id);
     delete panelStateRef.current[id];
-    if (id === (activeTab && activeTab.id)) setActiveId(next[Math.min(i, next.length - 1)].id);
+    if (id === (activeTab && activeTab.id)) {
+      const g = groupOfTab(tabs[i]);
+      const sameGroup = next.filter(t => groupOfTab(t) === g);
+      setActiveId((sameGroup[0] || next[Math.min(i, next.length - 1)]).id);
+    }
     setTabs(next);
   }
+  // A group holds at most TAB_GROUP_MAX tickets; a sixth is refused with a toast
+  // rather than closing one you may still be working on.
+  function groupFull(m, und) {
+    const g = groupKey(m, assetClassOf(und || 'SPX'));
+    if (groupCount(g) < TAB_GROUP_MAX) return false;
+    const [gm, gc] = g.split('|');
+    showToast(`${modeUi(gm).short} · ${CLASS_LABEL[gc]} already has ${TAB_GROUP_MAX} tickets — close one first`, 'error');
+    return true;
+  }
   function addTab(seed, m) {
-    const t = newTab(m || mode, seed || null);
+    const mm = m || mode;
+    if (groupFull(mm, seed && seed.underlying)) return null;
+    const t = newTab(mm, seed || null);
     setTabs(prev => [...prev, t]);
     setActiveId(t.id);
     return t;
@@ -185,17 +222,28 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   function addStateTab(state, m, tag) {
     const createdAt = Date.now();
     const mode2 = m || mode;
-    const und = (state && state.i0 && state.i0.underlying)
+    const und = (state && (mode2 === '0dte' ? state.i0 : state.i45) && (mode2 === '0dte' ? state.i0 : state.i45).underlying)
+      || (state && state.i0 && state.i0.underlying)
       || (state && state.i45 && state.i45.underlying) || null;
+    if (groupFull(mode2, und)) return null;
     const t = {
       id: 'tab' + createdAt + '-' + Math.round(Math.random() * 10000),
-      mode: mode2, createdAt, seed: null, state: state || null,
+      mode: mode2, createdAt, seed: null, state: state || null, und,
       label: tabLabel(mode2, und, createdAt, state && state.i45 && state.i45.dte)
              + (tag ? ' \u00b7 ' + tag : '')
     };
     setTabs(prev => [...prev, t]);
     setActiveId(t.id);
     return t;
+  }
+
+  function openGroup(m, c) {
+    const g = groupKey(m, c);
+    const last = lastInGroup.current[g];
+    const inGroup = tabs.filter(t => groupOfTab(t) === g);
+    const target = inGroup.find(t => t.id === last) || inGroup[0];
+    if (target) { setActiveId(target.id); return; }
+    addTab(c === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null, m);
   }
 
   // Wipe every tab back to one fresh ticket. Two-step: the first click arms it,
@@ -207,11 +255,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     const h = setTimeout(() => setConfirmClear(false), 4000);
     return () => clearTimeout(h);
   }, [confirmClear]);
+  // Clears the group on screen only; the other three keep their tickets.
   function clearAllTabs() {
-    const t = newTab(mode, null);
-    panelStateRef.current = {};
-    try { localStorage.removeItem(TABS_KEY); } catch (e) { /* private mode */ }
-    setTabs([t]);
+    const [gm, gc] = activeGroup.split('|');
+    const t = newTab(gm, gc === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null);
+    const keep = tabs.filter(x => groupOfTab(x) !== activeGroup);
+    tabs.filter(x => groupOfTab(x) === activeGroup).forEach(x => { delete panelStateRef.current[x.id]; });
+    setTabs([...keep, t]);
     setActiveId(t.id);
     setConfirmClear(false);
   }
@@ -224,7 +274,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         localStorage.setItem(TABS_KEY, JSON.stringify({
           savedAt: Date.now(),
           activeId: activeId || (tabs[0] && tabs[0].id) || null,
-          tabs: tabs.map(t => ({ id: t.id, mode: t.mode, label: t.label, createdAt: t.createdAt,
+          tabs: tabs.map(t => ({ id: t.id, mode: t.mode, label: t.label, createdAt: t.createdAt, und: t.und || null,
                                  seed: t.seed, state: panelStateRef.current[t.id] || t.state || null })),
         }));
       } catch (e) { /* private mode / quota — not worth breaking the page over */ }
@@ -477,11 +527,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // instead of relabelling this one.
   function switchMode(m) {
     if (m === mode) return;
+    const und = tabUnd(activeTab);
     if (activeTab && activeTab.seed && activeTab.seed._scanMode) {
-      addTab(null, m);
-      showToast(`Opened a new ${modeUi(m).short} ticket \u2014 the ${modeUi(mode).short} scan ticket stays as it was`, 'info');
+      // same underlying, other mode — the scan ticket itself is untouched
+      if (addTab({ underlying: und }, m)) showToast(`Opened a new ${modeUi(m).short} ${und} ticket \u2014 the ${modeUi(mode).short} scan ticket stays as it was`, 'info');
       return;
     }
+    if (groupFull(m, und)) return;                 // the ticket would move into a full group
     setMode(m);
   }
 
@@ -1043,7 +1095,24 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         </div>
       )}
 
-      {/* Trade tabs */}
+      {/* Tab groups: 0DTE / 45DTE × Indices / Stocks & ETFs */}
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap" data-testid="tab-groups">
+        {GROUPS.map(([gm, gc]) => {
+          const g = groupKey(gm, gc), n = groupCount(g), on = g === activeGroup, u = modeUi(gm);
+          return (
+            <button key={g} data-testid={'group-' + gm + '-' + gc} data-on={on ? '1' : '0'} onClick={() => openGroup(gm, gc)}
+              title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets${gc === 'index' ? ' (SPX, XSP, NDX, RUT: cash-settled)' : ' (SPY, QQQ, IWM, single stocks: shares, assignment risk)'}`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, fontSize: 12.5, fontWeight: on ? 700 : 500,
+                border: `1px solid ${on ? u.border : '#30363d'}`, background: on ? u.bg : 'transparent', color: on ? u.fg : '#a8b2be' }}>
+              <u.Icon size={12} /> {u.short} · {CLASS_LABEL[gc]}
+              <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: '#0d1117',
+                color: n > TAB_GROUP_MAX ? '#f85149' : n ? (on ? u.fg : '#c9d1d9') : '#6e7681' }}>{n}/{TAB_GROUP_MAX}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Trade tabs — the active group only */}
       <div className="flex items-center gap-1.5 mb-3 flex-wrap" data-testid="tab-strip">
         {orderedTabs.map((t, i) => {
           const on = t.id === (activeTab && activeTab.id);
@@ -1083,21 +1152,29 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             </div>
           );
         })}
-        {tabs.length > 1 && !rankable && (
+        {groupTabs.length > 1 && !rankable && (
           <span className="text-[11px] text-text-faint" title="The composite needs the sizing inputs on every ticket before the tabs can be ordered">
             ranking once all priced
           </span>
         )}
-        <button onClick={() => addTab(null)} title="New blank ticket"
-          className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors">
-          + Trade
-        </button>
+        {(() => {
+          const [gm, gc] = activeGroup.split('|');
+          const full = groupTabs.length >= TAB_GROUP_MAX;
+          return (
+            <button data-testid="add-tab" disabled={full}
+              onClick={() => addTab(gc === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null, gm)}
+              title={full ? `${TAB_GROUP_MAX} tickets is the most for a group — close one first` : `New ${modeUi(gm).short} · ${CLASS_LABEL[gc]} ticket`}
+              className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              + Trade
+            </button>
+          );
+        })()}
         <button onClick={() => (confirmClear ? clearAllTabs() : setConfirmClear(true))}
-          title="Close every tab and start one fresh ticket"
+          title="Close every ticket in this group and start one fresh one"
           className={`ml-auto px-2.5 py-1.5 border rounded-lg text-xs transition-colors ${confirmClear
             ? 'border-red text-red bg-red/10'
             : 'border-bg-border text-text-faint hover:text-white hover:border-red'}`}>
-          {confirmClear ? 'Clear all tabs?' : 'Clear all'}
+          {confirmClear ? `Clear ${groupTabs.length} here?` : 'Clear group'}
         </button>
       </div>
 
