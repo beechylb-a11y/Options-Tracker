@@ -6,6 +6,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { describe, it, expect, afterEach } from 'vitest';
 import { captureStats, blendCapture, strategyOf, engineOf } from '../engine/capture';
 import { calc0DTE, assumedCapture0 } from '../engine/calc0dte';
+import { calc45DTE, assumedCapture45 } from '../engine/calc45dte';
 import ProfitTaker from '../components/ProfitTaker';
 
 afterEach(cleanup);
@@ -75,5 +76,17 @@ describe('tastylive fly toggle', () => {
       strategy="Standard butterfly" legs={legs} commRate={0} tastyFly={on} onTastyFly={v => { on = v; }} />);
     expect(screen.getByText(/Sell @ 1\.47/)).toBeTruthy();           // 0.64 + 25% × 3.31 = 1.4675
     expect(screen.getAllByText(/of max profit/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('45DTE iron fly and diagonal priors', () => {
+  it('assume their 25% exit target', () => {
+    expect(assumedCapture45('Iron butterfly').winCap).toBe(0.25);
+    expect(assumedCapture45('Diagonal spread').winCap).toBe(0.25);
+    const base = { underlying: 'SPX', price: 6700, ivr: 40, iv: 16, hv: 13, vix: 16, dte: 45, outlook: 'neutral',
+      pop: 60, win: 800, risk: 1200, bankroll: 100000, startBR: 100000, maxLoss: 3000, maxOpen: 20000,
+      bpr: 1200, theta: 20, vega: -30, delta: 1 };
+    expect(calc45DTE({ ...base, overrideStrategy: 'Iron butterfly' }).evBasis.avgWin).toBeCloseTo(200, 6);
+    expect(calc45DTE({ ...base, overrideStrategy: 'Diagonal spread' }).evBasis.avgWin).toBeCloseTo(200, 6);
   });
 });

@@ -28,7 +28,11 @@ function degrade(r) { const o=['EXCELLENT','GOOD','MARGINAL','POOR']; return o[M
 export function assumedCapture45(s) {
   if (s === 'Standard butterfly' || s === 'Asymmetric butterfly') return { winCap: 0.28, lossCap: 0.45 };
   if (s === 'Broken wing butterfly' || s.includes('BWB')) return { winCap: 0.30, lossCap: 0.50 };
-  if (s === 'Iron butterfly') return { winCap: 0.35, lossCap: 0.55 };
+  // Iron fly and diagonal match their exit targets (Oct 2026): tastylive manages iron
+  // flies at 25% and diagonals at 25–50% (app default 25%), so winners bank ~0.25 of
+  // max — not 0.35 / the 0.40 default. The capture tracker refines both from closes.
+  if (s === 'Iron butterfly') return { winCap: 0.25, lossCap: 0.55 };
+  if (s === 'Diagonal spread') return { winCap: 0.25, lossCap: 0.60 };
   if (s.includes('Iron Condor') || s === 'Chicken condor') return { winCap: 0.50, lossCap: 0.70 };
   if (s.includes('Credit') || s.includes('Bull put') || s.includes('Bear call')) return { winCap: 0.55, lossCap: 0.75 };
   if (s.includes('Bull call') || s.includes('Bear put') || s.includes('Debit')) return { winCap: 0.50, lossCap: 0.60 };
