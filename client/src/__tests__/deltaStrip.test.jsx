@@ -57,8 +57,8 @@ describe('delta strip', () => {
     expect(t).toMatch(/7345P \d+Δ/);
     expect(t).toMatch(/7450C \d+Δ/);
     expect(t).toMatch(/POP by delta ~\d+% · entered 92%/);
-    // EM mode: no delta-strike card
-    expect(screen.queryByTestId('delta-plan')).toBeNull();
+    // EM on the ticket, and the delta alternative offered beside it (Oct 2026: 'Both' retired)
+    expect(screen.getByTestId('delta-plan')).toBeTruthy();
   });
 
   it('Both: offers delta strikes, confirms them on a bracket, applies and logs the method', async () => {
@@ -69,7 +69,10 @@ describe('delta strip', () => {
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/on ticket: Delta ✓ confirmed/));
     // bracket call + the refetch for the new legs
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
-    // New strikes, old net: the price check may block — Log anyway is the same write.
+    // New strikes clear the old fill (it priced the old strikes) — enter it again.
+    expect(screen.getByTestId('verdict').textContent).toBe('Waiting on sizing');
+    const set = (f, v) => fireEvent.change(document.querySelector(`[data-field="${f}"]`), { target: { value: v } });
+    set('netCreditDebit', '5.10'); set('win', '510'); set('risk', '3490'); set('pop', '90');
     const btn = screen.getByTestId('log-trade');
     fireEvent.click(btn.disabled ? screen.getByTestId('log-anyway') : btn);
     fireEvent.click(screen.getByRole('button', { name: 'Log' }));

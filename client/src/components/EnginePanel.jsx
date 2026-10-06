@@ -6,7 +6,7 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
-import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
+import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
@@ -276,22 +276,78 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   );
 }
 
+// ── Vertical strike choices (Oct 2026) ──
+// One row, one choice, one spread on the ticket. Replaces the old stack of variant
+// cards over two strike rows (VIX pair and VIX1D pair) under an EM/Delta/Both toggle,
+// where picking things often changed nothing visible. Each tile says where its strikes
+// sit; the chosen one IS the trade — payoff, price map, EV all follow it.
+function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fetching }) {
+  const isDebit = /Bull call|Bear put/.test(strat || '');
+  const spec = (DELTA_TARGETS['0dte'] || {})[strat];
+  const tgt = spec ? Object.values(spec.shorts)[0].t : null;
+  const shortOf = legs => (legs || []).find(l => /short/i.test(l.label || ''));
+  const tip = {
+    engine: 'Strikes from the expected move left today by VIX (the full-day EM scaled to the hours left), slid by the pullback buffer.',
+    em1d: 'Same rule, from VIX1D — the market\u2019s one-day vol. Usually tighter than VIX on a quiet day, wider on an event day.',
+    v1d: isDebit ? 'Whole spread slid toward the money by EM remaining (VIX1D), capped at 40% of its width — break-even comes down through spot; the debit rises.' : 'Short pushed a further EM remaining (VIX1D) out of the money — safer, less credit.',
+    vix: isDebit ? 'Whole spread slid toward the money by EM remaining (VIX), capped at 40% of its width.' : 'Short pushed a further EM remaining (VIX) out of the money.',
+  };
+  const tile = (id, label, strikes, sub, title, disabled) => {
+    const on = active === id;
+    return (
+      <button key={id} data-testid={'strike-choice-' + id} data-on={on ? '1' : '0'} disabled={disabled}
+        onClick={() => onPick(id)} title={title}
+        style={{textAlign:'left',padding:'6px 10px',borderRadius:8,cursor: disabled ? 'wait' : 'pointer',minWidth:118,
+          background: on ? '#0d1a2b' : '#0d1117', border:`1px solid ${on ? '#58a6ff' : '#30363d'}`,
+          boxShadow: on ? '0 0 0 1px #58a6ff inset' : 'none'}}>
+        <div style={{fontSize:11.5,fontWeight:700,letterSpacing:'0.03em',color: on ? '#58a6ff' : '#a8b2be'}}>{on ? '● ' : ''}{label}</div>
+        <div className="mono" style={{fontSize:13.5,fontWeight:700,color:'#e6edf3'}}>{strikes}</div>
+        <div className="mono" style={{fontSize:11.5,color:'#8b949e'}}>{sub}</div>
+      </button>
+    );
+  };
+  const subOf = v => {
+    if (isDebit) return v.rrCeil != null ? `long ${v.intrinsic.toFixed(2)} ITM · ≤${v.rrCeil.toFixed(2)}:1` : `${v.width} wide · long at/above spot`;
+    return v.otmEM != null ? `short ${v.otmEM.toFixed(1)}× EM OTM` : '';
+  };
+  const ds = plan && plan.moves && plan.moves[0];
+  return (
+    <div data-testid="strike-choices" style={{marginBottom:8}}>
+      <div style={{fontSize:11,letterSpacing:'0.06em',textTransform:'uppercase',color:'#8b949e',marginBottom:4}}>
+        Strikes — pick one{emRem > 0 ? <span style={{textTransform:'none',letterSpacing:0}}> · EM left today ±{emRem.toFixed(emRem < 10 ? 1 : 0)}</span> : null}
+      </div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {variants.map(v => tile(v.id, v.label, v.legs.map(l => l.strike).join(' / '), subOf(v), tip[v.id]))}
+        {tgt != null && tile('delta', `Delta · short ${tgt}Δ`,
+          plan ? plan.legs.map(l => l.strike).join(' / ') : (check && check.suspended ? 'off — final hour' : 'fetch greeks'),
+          ds ? `short ~${ds.estDelta.toFixed(0)}Δ (now ${ds.curDelta.toFixed(0)}Δ)` : 'solved from live deltas',
+          `Short strike moved to ${tgt}Δ (the market\u2019s own probability, skew included); the wing moves with it so the width stays the same.`,
+          fetching || (check && check.suspended))}
+      </div>
+      {active == null && (
+        <div style={{marginTop:4,fontSize:12,color:'#d29922'}}>Strikes edited by hand — none of the choices is on the ticket. Pick one to replace your edits.</div>
+      )}
+    </div>
+  );
+}
+
 // ── Strike method + delta cross-check strip (R-49, Oct 2026) ──
 // Sits under the strike chips. One line chooses how strikes are built (EM | Delta |
 // Both); one line shows each short's live delta against its band and the POP those
 // deltas imply; and, when the delta method would place the shorts differently, one
 // line shows where — with the button that applies it or goes back to EM.
 function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, pop, legs,
-  onFetch, fetching, onApply, applying, onBack }) {
+  onFetch, fetching, onApply, applying, onBack, hideMethod }) {
   const seg = on => ({ padding:'2px 10px', fontSize:12, fontWeight:600, cursor:'pointer',
     border:'1px solid ' + (on ? '#58a6ff' : '#30363d'), background: on ? '#0d1a2b' : '#0d1117',
     color: on ? '#58a6ff' : '#a8b2be' });
   const link = { color:'#58a6ff', textDecoration:'underline', cursor:'pointer' };
-  const methods = [['em','EM'], ['delta','Delta'], ['both','Both']];
+  const methods = [['em','EM'], ['delta','Delta']];
   const ip = check.impliedPop != null ? check.impliedPop * 100 : null;
   const gapBad = check.popGap != null && Math.abs(check.popGap) > 10;
   const planStrikes = plan ? plan.legs.map(l => l.strike).join(' / ') : '';
-  const showPlan = plan && plan.changed && method !== 'em' && builtBy !== 'Delta';
+  // The delta alternative shows whenever it differs and isn't already on the ticket.
+  const showPlan = !hideMethod && plan && plan.changed && builtBy !== 'Delta';
   // Always on screen, so the control can be found; structures with no delta band say
   // why instead of showing an empty check. (Oct 2026.)
   if (!check.applicable) {
@@ -306,21 +362,21 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
   }
   return (
     <div data-testid="delta-strip" style={{marginTop:8,display:'flex',flexDirection:'column',gap:5,fontSize:12.5,color:'#a8b2be'}}>
-      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      {!hideMethod && <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
         <span style={{fontSize:11,letterSpacing:'0.06em',textTransform:'uppercase'}}>Strikes by</span>
         <span style={{display:'inline-flex'}}>
           {methods.map(([id, lbl], i) => (
             <button key={id} onClick={() => onMethod(id)} data-testid={'method-' + id}
-              title={id === 'em' ? 'Expected-move strikes; deltas are a cross-check only'
-                : id === 'delta' ? 'Short strikes placed at their target delta after Fetch Greeks'
-                : 'EM strikes on the ticket, delta strikes alongside'}
-              style={{...seg(method === id), borderRadius: i === 0 ? '6px 0 0 6px' : i === 2 ? '0 6px 6px 0' : 0,
+              title={id === 'em' ? 'Put the engine\u2019s expected-move strikes on the ticket (clears hand edits)'
+                : 'Move the short strikes to their target delta (fetches greeks first if needed)'}
+              style={{...seg(builtBy === 'Delta' ? id === 'delta' : builtBy === 'EM' ? id === 'em' : false), borderRadius: i === 0 ? '6px 0 0 6px' : '0 6px 6px 0',
                 marginLeft: i ? -1 : 0}}>{lbl}</button>
           ))}
         </span>
         <span>on ticket: <span style={{color:'#c9d1d9'}}>{builtBy}</span>
-          {builtBy === 'Delta' && <span style={{color: confirmed ? '#3fb950' : '#d29922'}}>{confirmed ? ' ✓ confirmed' : ' · estimated'}</span>}</span>
-      </div>
+          {builtBy === 'Delta' && <span style={{color: confirmed ? '#3fb950' : '#d29922'}}>{confirmed ? ' ✓ confirmed' : ' · estimated'}</span>}
+          {builtBy === 'Manual' && <span style={{color:'#d29922'}}> — hand-edited; EM or Delta replaces your edits</span>}</span>
+      </div>}
       <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
         {!check.haveGreeks ? (
           <span>{check.stale ? 'Strikes changed since the last fetch — ' : 'No live deltas yet — '}
@@ -329,7 +385,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
         ) : check.suspended ? (
           <span>Delta check off — final hour (0DTE deltas collapse toward zero).</span>
         ) : (<>
-          {check.rows.filter(x => x.target != null).map(x => (
+          {check.rows.filter((x, i, a) => x.target != null && a.findIndex(y => y.strike === x.strike && y.right === x.right) === i).map(x => (
             <span key={x.strike + x.right} className="mono"
               title={`Band ${x.lo}–${x.hi}Δ, target ${x.target}Δ`}
               style={{padding:'1px 7px',borderRadius:5,background: x.inBand ? '#0d2818' : '#2d1f0a',
@@ -358,10 +414,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
             {applying ? 'Confirming…' : 'Use delta strikes'}</button>
         </div>
       )}
-      {builtBy === 'Delta' && method !== 'delta' && (
-        <span>Delta strikes on the ticket · <span onClick={onBack} style={link}>back to EM strikes</span></span>
-      )}
-      {plan && !plan.changed && method !== 'em' && builtBy !== 'Delta' && check.haveGreeks && (
+      {plan && !plan.changed && builtBy !== 'Delta' && check.haveGreeks && (
         <span>The EM strikes already sit at the target delta.</span>
       )}
     </div>
@@ -415,10 +468,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // 45DTE (it carries skew and is stable over days). The last choice per engine is
   // remembered in this browser; a tab keeps its own.
   const [strikeMethod, setStrikeMethodState] = useState(() => {
-    if (init?.strikeMethod) return init.strikeMethod;
+    // 'both' was retired in Oct 2026 — the alternative is always shown beside EM now.
+    const fix = m => (m === 'both' ? 'em' : m);
+    if (init?.strikeMethod) return { '0': fix(init.strikeMethod['0']), '45': fix(init.strikeMethod['45']) };
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('ot_strike_method')) || {}; } catch (e) { /* private mode */ }
-    return { '0': saved['0'] || DEFAULT_STRIKE_METHOD['0dte'], '45': saved['45'] || DEFAULT_STRIKE_METHOD['45dte'] };
+    return { '0': fix(saved['0']) || DEFAULT_STRIKE_METHOD['0dte'], '45': fix(saved['45']) || DEFAULT_STRIKE_METHOD['45dte'] };
   });
   // Per-leg greeks from the last Fetch Greeks: { bag, asOf, rows: [{ strike, right, delta, iv }] }.
   // The delta check matches them to legs by strike, so a strike edited afterwards simply
@@ -1793,14 +1848,50 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // P(max loss) and the check itself all describe the trade that is now on the ticket.
   const deltaHorizon = is0 ? '0dte' : '45dte';
   const deltaT = () => is0 ? (tradingSession().hoursToBell || 1) / 8760 : (fv(i45, 'dte') || 45) / 365;
-  function setStrikeMethod(m) {
+  function persistMethod(m) {
     setStrikeMethodState(prev => {
       const next = { ...prev, [bag]: m };
       try { localStorage.setItem('ot_strike_method', JSON.stringify(next)); } catch (e) { /* private mode */ }
       return next;
     });
-    if (m === 'delta' && r.deltaPlan && r.deltaPlan.changed && !overrideStrikes[bag]) applyDeltaStrikes();
-    if (m === 'em' && strikesBuiltBy === 'Delta') backToEmStrikes();
+  }
+  // New strikes, new trade: the fill typed for the old strikes would price the new
+  // ones wrongly (that is what blocked "debit 1.88 on 777/782" — a long 4 pts ITM can't
+  // cost 1.88). Clear it, like a structure switch does, and say so.
+  function clearFillForNewStrikes() {
+    const typed = fv(secBag, 'netCreditDebit') !== 0 || fv(secBag, 'win') > 0 || fv(secBag, 'pop') > 0;
+    const strip = o => ({ ...o, win: '', risk: '', pop: '', netCreditDebit: '' });
+    if (is0) setI0(strip); else setI45(strip);
+    if (typed) notify('Strikes changed — enter the fill, win, risk and POP for the new strikes', 'info');
+  }
+  // The method buttons now DO something every time (Oct 2026). EM puts the engine's
+  // EM strikes back, hand edits included; Delta moves the shorts to their target
+  // delta, fetching greeks first if it has none.
+  const [pendingDeltaFetch, setPendingDeltaFetch] = useState(false);
+  useEffect(() => {
+    if (!pendingDeltaFetch) return;
+    setPendingDeltaFetch(false);
+    handleFetchGreeks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDeltaFetch]);
+  function setStrikeMethod(m) {
+    persistMethod(m);
+    if (m === 'delta') {
+      if (r.deltaPlan && r.deltaPlan.changed) { applyDeltaStrikes(); clearFillForNewStrikes(); }
+      else if (r.deltaPlan && !r.deltaPlan.changed) notify('These strikes already sit at the target delta', 'info');
+      else { if (overrideStrikes[bag]) { resetStrikes(); setDeltaApplied(null); } setPendingDeltaFetch(true); }
+    }
+    if (m === 'em' && overrideStrikes[bag]) { backToEmStrikes(); clearFillForNewStrikes(); }
+  }
+  // Vertical strike choices: one tile = one spread on the ticket.
+  function chooseVertical(id) {
+    if (id === 'delta') { setStrikeMethod('delta'); return; }
+    persistMethod('em');
+    const changing = id !== (r.vertVariant || 'engine') || !!overrideStrikes[bag];
+    if (overrideStrikes[bag]) { resetStrikes(); }
+    setDeltaApplied(null);
+    setVertVariant(id);
+    if (changing) { clearFillForNewStrikes(); markGreeksStale(); }
   }
   // opts (from Fetch Greeks in Delta mode): { plan, rows, legs } computed from the deltas
   // just fetched, which have not reached r yet. A click passes an event: use r.
@@ -2658,62 +2749,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 worse; it is shown because the engine cannot price the debit and the cost
                 of shifting into the money is otherwise invisible until the fill. */}
             {r.vertVariants && (
-              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
-                {r.vertVariants.map(v => {
-                  const on = v.id === (r.vertVariant || 'engine');
-                  const thin = v.rrCeil != null && v.rrCeil < 0.25;
-                  const clr = on ? (thin ? '#d29922' : '#58a6ff') : '#a8b2be';
-                  return (
-                    <button key={v.id} onClick={() => setVertVariant(v.id)}
-                      title={v.id === 'engine'
-                        ? 'The engine’s own strikes, including the pullback ramp.'
-                        : `Whole spread slid ${v.shift.toFixed(2)} pts toward the money`
-                          + (v.capped
-                            ? ` — capped from ${v.wanted.toFixed(2)} (1 × ${v.id === 'v1d' ? 'EM rem VIX1D' : 'EM rem VIX'}) at 40% of the spread's own width, which holds reward/risk at 1.5:1 or better. Uncapped, the long leg would sit two widths ITM and max profit would be zero.`
-                            : ` (1 × ${v.id === 'v1d' ? 'EM remaining VIX1D' : 'EM remaining VIX'}).`)
-                          + ' Width unchanged; pullback ramp not applied.'}
-                      style={{textAlign:'left',padding:'5px 9px',borderRadius:6,cursor:'pointer',
-                        background: on ? (thin ? '#1f1a0d' : '#0d1a2b') : '#0d1117',
-                        border:`1px solid ${on ? clr : '#21262d'}`, color: clr}}>
-                      <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.03em'}}>
-                        {v.label}{v.shift > 0 ? ` · ${v.shift.toFixed(2)}` : ''}{v.capped ? ' · capped' : ''}
-                      </div>
-                      <div className="mono" style={{fontSize:12.5,color: on ? '#c9d1d9' : '#9aa4b0'}}>
-                        {(v.id === 'engine' ? v.legs.slice(0,2) : v.legs).map(l => l.strike).join(' / ')}
-                        {v.rrCeil != null
-                          ? `  ≤+${v.maxProfitCeil.toFixed(2)} / ${v.intrinsic.toFixed(2)} (${v.rrCeil.toFixed(2)}:1)`
-                          : v.otmEM != null ? `  ${v.otmEM.toFixed(1)}× EM OTM` : ''}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+              <StrikeChoices variants={r.vertVariants} active={strikesBuiltBy === 'Delta' ? 'delta' : strikesBuiltBy === 'Manual' ? null : (r.vertVariant || 'engine')}
+                strat={r.legStrat} plan={r.deltaPlan} check={r.deltaCheck} emRem={r.emRemaining}
+                onPick={chooseVertical} fetching={fetchingGreeks || applyingDelta} />
             )}
-            {r.legs.length === 4 && r.legs[0]?.label?.includes('VIX') ? (
-              // Dual EM suggestions for spreads
-              <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:12,color:'#a8b2be',width:50,flex:'none'}}>EM(VIX):</span>
-                  {r.legs.slice(0,2).map((l,i) => (
-                    <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX)','')} compact fill
-                      ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
-                      onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
-                  ))}
-                  {(r.wingTxt || r.strikeLine) && <span aria-hidden="true" style={{fontSize:12.5,visibility:'hidden'}}>ⓘ</span>}
-                </div>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'nowrap'}}>
-                  <span style={{fontSize:12,color:'#a8b2be',width:50,flex:'none'}}>EM(1D):</span>
-                  {r.legs.slice(2,4).map((l,i) => (
-                    <StrikeChip key={i} leg={l} idx={i+2} engineStrike={r.engineLegs?.[i+2]?.strike}
-                      step={strikeStep} onCommit={commitStrike} stripLabel={s=>s.replace(' (VIX1D)','')} compact fill
-                      ladderOpen={ladder?.idx === i+2} ladder={ladder} outcomes={ladder?.idx === i+2 ? ladderOutcomes : null}
-                      onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
-                  ))}
-                  {(r.wingTxt || r.strikeLine) && <span title={r.wingTxt || r.strikeLine} style={{fontSize:12.5,color:'#8b949e',cursor:'help'}}>ⓘ</span>}
-                </div>
-              </div>
-            ) : (
+            {false ? (
+              <div />            ) : (
               // The trade on one line, low strike to high, order-ticket style
               // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
               <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
@@ -2747,12 +2788,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <div style={{marginTop:4,fontSize:12.5,color:'#f85149'}}>⚠ {r.strikeOrderWarning}</div>
             )}
             {r.deltaCheck && r.legs.length > 0 && (
-              <DeltaStrip strat={r.legStrat} check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]}
+              <DeltaStrip strat={r.legStrat} check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]} hideMethod={!!r.vertVariants}
                 onMethod={setStrikeMethod} builtBy={strikesBuiltBy}
                 confirmed={!!(deltaMatches && deltaApplied && deltaApplied.confirmed)}
                 pop={fv(secBag, 'pop')} legs={r.legs}
                 onFetch={handleFetchGreeks} fetching={fetchingGreeks}
-                onApply={applyDeltaStrikes} applying={applyingDelta} onBack={backToEmStrikes} />
+                onApply={() => setStrikeMethod('delta')} applying={applyingDelta} onBack={() => setStrikeMethod('em')} />
             )}
           </div>
         )}

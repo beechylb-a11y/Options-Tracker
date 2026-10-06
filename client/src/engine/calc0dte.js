@@ -941,20 +941,28 @@ export function calc0DTE(inputs) {
         clamped: pair.some(l => l.clamped),
         dRem, legs: pair, ...economics(pair, dRem) };
     };
+    // ── One spread on the ticket, one list of strike choices (Oct 2026) ──
+    // The builder makes two EM pairs — one from EM remaining by VIX, one by VIX1D —
+    // and the ticket used to carry BOTH (four legs, two rows), trade the first, and
+    // offer ITM variants on top: three overlapping strike systems. Now every choice is
+    // a variant and the chosen one is the whole ticket: two legs, one payoff.
+    //   engine — EM · VIX       (the VIX pair, pullback buffer included; the default)
+    //   em1d   — EM · VIX1D     (the VIX1D pair, same rule)
+    //   v1d    — shifted · VIX1D (debit: toward the money; credit: further OTM)
+    //   vix    — shifted · VIX
+    // Delta strikes are applied on top of whichever is chosen (panel, deltaStrikePlan).
+    const untag = (l, tag) => ({ ...l, label: String(l.label || '').replace(` (${tag})`, '') });
+    const pairVix = legs.length === 4 ? legs.slice(0, 2).map(l => untag(l, 'VIX')) : legs.slice(0, 2).map(l => ({ ...l }));
+    const pair1d = legs.length === 4 ? legs.slice(2, 4).map(l => untag(l, 'VIX1D')) : null;
+    const shiftWord = isDebitVert ? 'ITM' : 'Further OTM';
     vertVariants = [
-      // The engine's own suggestion, shown for comparison. Its legs are the built
-      // `legs` (pullback ramp included) — the dual-EM pair the ticket already renders.
-      { id: 'engine', label: 'Engine', shift: 0, dRem: dVixRem, legs: legs.map(l => ({ ...l })),
-        ...economics([legs[0] || { strike: p }, legs[1] || { strike: p }], dVixRem) },
-      variant('v1d', 'EM(VIX1D) ITM', dV1dRem, dV1dRem),
-      variant('vix', 'EM(VIX) ITM', dVixRem, dVixRem),
-    ];
-    // Selecting a variant REPLACES the dual-EM pair with a single unambiguous two-leg
-    // structure. That is deliberate: with four legs the downstream consumers disagree
-    // about which pair is the trade (vertWidth reads legs[0..1], P(max loss) reads
-    // Math.min across all four), and a chosen variant should leave nothing to guess.
-    const chosen = vertVariants.find(v => v.id === vertVariantId);
-    if (chosen && chosen.id !== 'engine') legs = chosen.legs.map(l => ({ ...l }));
+      { id: 'engine', label: 'EM · VIX', basis: 'em', shift: 0, dRem: dVixRem, legs: pairVix, ...economics(pairVix, dVixRem) },
+      pair1d ? { id: 'em1d', label: 'EM · VIX1D', basis: 'em', shift: 0, dRem: dV1dRem, legs: pair1d, ...economics(pair1d, dV1dRem) } : null,
+      { ...variant('v1d', `${shiftWord} · VIX1D`, dV1dRem, dV1dRem), basis: 'shift' },
+      { ...variant('vix', `${shiftWord} · VIX`, dVixRem, dVixRem), basis: 'shift' },
+    ].filter(Boolean);
+    const chosen = vertVariants.find(v => v.id === vertVariantId) || vertVariants[0];
+    legs = chosen.legs.map(l => ({ ...l }));
   }
 
   // ── Max-profit strike may not cross spot (Aug 2026) ──
@@ -2337,11 +2345,13 @@ export function calc0DTE(inputs) {
   // blocks rather than warns — there is nothing to weigh up until one of the two is fixed.
   if (priceCheck?.arb) {
     blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} is outside `
-      + `what these strikes can pay (${priceCheck.bareMin.toFixed(2)} to ${priceCheck.bareMax.toFixed(2)}) — impossible at any volatility`);
+      + `what these strikes can pay (${priceCheck.bareMin.toFixed(2)} to ${priceCheck.bareMax.toFixed(2)}) — impossible at any volatility. `
+      + `Usually the strikes moved after the price was entered: enter the fill for these strikes`);
   } else if (priceCheck?.mismatch) {
     blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} vs `
       + `${priceCheck.fair.toFixed(2)} fair for these strikes at spot (${priceCheck.gap > 0 ? '+' : ''}${priceCheck.gap.toFixed(2)}) — `
-      + `the price and the strikes describe different trades; EV, Kelly and the payoff all run off this number`);
+      + `the price and the strikes describe different trades; EV, Kelly and the payoff all run off this number. `
+      + `If the strikes changed after the price was entered, enter the fill for these strikes`);
   }
   // Both gated on the measurement actually meaning something. "Theta edge too weak"
   // off a delta-flat denominator would be arithmetic, not a finding.

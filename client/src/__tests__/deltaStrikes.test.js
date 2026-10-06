@@ -161,7 +161,7 @@ describe('engine wiring', () => {
     expect(r.deltaCheck.haveGreeks).toBe(true);
     expect(r.deltaCheck.impliedPop).toBeGreaterThan(0);
     expect(r.warnings.some(w => /POP 95% entered/.test(w))).toBe(true);
-    expect(r.deltaPlan && r.deltaPlan.legs).toHaveLength(4);
+    expect(r.deltaPlan && r.deltaPlan.legs).toHaveLength(2);           // one spread on the ticket (Oct 2026)
   });
   it('0DTE suspends the check in the final hour', () => {
     const base = calc0DTE({ ...bull, hours: 0.6 });
