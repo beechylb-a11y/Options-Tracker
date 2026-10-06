@@ -74,7 +74,7 @@ describe('multi-scan mode', () => {
     expect(banner.textContent).toMatch(/from the 0DTE multi-scan/);
   });
 
-  it('a scan ticket keeps its mode: the switch opens a new ticket instead', async () => {
+  it('the mode switch moves between groups; a scan ticket stays where it was opened', async () => {
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
     fireEvent.click(screen.getByTestId('mode-45dte'));
     fireEvent.click(screen.getByTestId('multiscan-toggle'));
@@ -86,17 +86,11 @@ describe('multi-scan mode', () => {
     fireEvent.click(screen.getAllByTestId('scan-open')[0]);
     expect(visiblePanel().dataset.mode).toBe('45dte');
     expect(visiblePanel().dataset.ivr).toBe('55');           // the vol it scanned travels with it
-    const before = screen.getAllByTestId('panel').length;
-
     fireEvent.click(screen.getByTestId('mode-0dte'));
-    expect(screen.getAllByTestId('panel').length).toBe(before + 1);
-    expect(visiblePanel().dataset.mode).toBe('0dte');
-    expect(visiblePanel().dataset.u).toBe('SPX');              // same underlying, other mode
-    // the scan ticket is still 45DTE, filed in its own group
+    expect(screen.getByTestId('group-0dte-index').dataset.on).toBe('1');
+    expect(screen.queryAllByTestId('tab')).toHaveLength(0);    // nothing made for you
     const scanPanel = screen.getAllByTestId('panel').find(p => p.dataset.scan === '45dte');
     expect(scanPanel.dataset.mode).toBe('45dte');
-    expect(screen.getByTestId('group-0dte-index').dataset.on).toBe('1');
-    expect(screen.getByTestId('group-45dte-index').textContent).toMatch(/2\/5/);
-    expect(screen.getAllByTestId('tab').map(t => t.dataset.mode)).toEqual(['0dte']);
+    expect(screen.getByTestId('group-45dte-index').textContent).toMatch(/1\/5/);
   });
 });

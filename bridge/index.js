@@ -416,6 +416,15 @@ const contracts = {
   VIX3M: { symbol: 'VIX3M', secType: SecType.IND, exchange: 'CBOE', currency: 'USD' },
   ES: { symbol: 'ES', secType: SecType.FUT, exchange: 'CME', currency: 'USD', lastTradeDateOrContractMonth: '' },
 };
+// Any other ticker (AAPL, NVDA, TSLA, AMD, DIA ...) is a US stock or ETF on SMART.
+// Before Oct 2026 an unknown symbol silently fell back to SPX, so a stock scan came
+// back with SPX's numbers under AAPL's name.
+function contractOf(underlying) {
+  const u = String(underlying || '').toUpperCase();
+  if (contracts[u]) return contracts[u];
+  if (/^[A-Z][A-Z.]{0,5}$/.test(u)) return { symbol: u, secType: SecType.STK, exchange: 'SMART', currency: 'USD' };
+  return null;
+}
 
 // Get front-month ES contract
 function getESContract() {
@@ -542,7 +551,8 @@ app.get('/api/market-data', async (req, res) => {
     const usesIWMVwap = underlying === 'RUT';
 
     // 1. Get snapshots in parallel
-    const mainContract = contracts[underlying] || contracts.SPX;
+    const mainContract = contractOf(underlying);
+    if (!mainContract) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
     const esContract = getESContract();
     const vwapContract = usesSPYVwap ? contracts.SPY : mainContract;
 
@@ -838,7 +848,7 @@ app.get('/api/history', async (req, res) => {
     const underlying = (req.query.underlying || 'QQQ').toUpperCase();
     const barSize = req.query.barSize || '5 mins';
     const months = Math.max(1, Math.min(12, parseInt(req.query.months || '3', 10)));
-    const contract = contracts[underlying];
+    const contract = contractOf(underlying);
     if (!contract) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
     const whatToShow = (contract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
 
@@ -898,7 +908,7 @@ app.get('/api/trade-replay', async (req, res) => {
     const expiry = String(req.query.expiry || '');
     const date = String(req.query.date || '');
     const barSize = req.query.barSize || '5 mins';
-    if (!contracts[underlying]) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
+    if (!contractOf(underlying)) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
     if (!/^\d{8}$/.test(expiry)) return res.status(400).json({ error: 'expiry must be YYYYMMDD' });
     if (!/^\d{8}$/.test(date)) return res.status(400).json({ error: 'date must be YYYYMMDD' });
 
@@ -931,8 +941,8 @@ app.get('/api/trade-replay', async (req, res) => {
         ask: await pull(c, WhatToShow.ASK, k),
       };
     }
-    const und = await pull(contracts[underlying],
-      contracts[underlying].secType === SecType.IND ? WhatToShow.MIDPOINT : WhatToShow.TRADES,
+    const und = await pull(contractOf(underlying),
+      contractOf(underlying).secType === SecType.IND ? WhatToShow.MIDPOINT : WhatToShow.TRADES,
       underlying);
 
     const { bars, dropped } = composeCombo(legs, legBars, und);
@@ -1154,7 +1164,7 @@ app.get('/api/atm-straddle', async (req, res) => {
     // snapshot. The multi-scan passes its resolved VWAP-fallback price as ?spot=,
     // which lets the straddle price even when the live STK snapshot returns nothing
     // (SPY/QQQ/IWM) and skips a ~6s snapshot when spot is already known.
-    const spotContract = contracts[underlying] || { symbol: underlying, secType: SecType.IND, exchange: 'CBOE', currency: 'USD' };
+    const spotContract = contractOf(underlying) || { symbol: underlying, secType: SecType.IND, exchange: 'CBOE', currency: 'USD' };
     const spotHint = req.query.spot ? Number(req.query.spot) : 0;
     let spot = spotHint > 0 ? spotHint : 0;
     if (!spot) {
@@ -1245,7 +1255,7 @@ function getConId(contract) {
 async function getOptionChain(underlying) {
   const key = underlying + ':' + nyToday();
   if (vsCache.chain[key]) return vsCache.chain[key];
-  const base = contracts[underlying];
+  const base = contractOf(underlying);
   if (!base) return null;
   const conId = await getConId(base);
   if (!conId) return null;
@@ -1283,7 +1293,7 @@ async function getOptionChain(underlying) {
 async function getVolHistory(underlying) {
   const hit = vsCache.hist[underlying];
   if (hit && Date.now() - hit.at < HIST_TTL_MS) return hit;
-  const c = contracts[underlying];
+  const c = contractOf(underlying);
   const pct = bars => bars.map(b => barClose(b)).filter(x => x > 0).map(x => x * 100);
   let iv = [], hv = [], closes = [], daily = [];
   try { iv = pct(await getHistoricalBars(c, '1 Y', '1 day', WhatToShow.OPTION_IMPLIED_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface IV history:', e.message); }
@@ -1316,7 +1326,7 @@ app.get('/api/option-chain', async (req, res) => {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
-    if (!contracts[underlying]) return res.status(400).json({ error: `No option chain for ${underlying}` });
+    if (!contractOf(underlying)) return res.status(400).json({ error: `No option chain for ${underlying}` });
     const chain = await getOptionChain(underlying);
     if (!chain) return res.status(502).json({ error: 'TWS returned no option chain' });
     const today = nyToday();
@@ -1337,7 +1347,7 @@ app.get('/api/vol-surface', async (req, res) => {
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
     try { ib.reqMarketDataType(2); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
-    if (!contracts[underlying] || ['VIX', 'VIX1D', 'ES'].includes(underlying)) {
+    if (!contractOf(underlying) || ['VIX', 'VIX1D', 'ES'].includes(underlying)) {
       return res.status(400).json({ error: `Vol surface not supported for ${underlying}` });
     }
     const today = nyToday();
@@ -1353,7 +1363,7 @@ app.get('/api/vol-surface', async (req, res) => {
     // 1) Spot
     let spot = Number(req.query.spot) || 0;
     if (!(spot > 0)) {
-      const s = await getSnapshot(contracts[underlying]);
+      const s = await getSnapshot(contractOf(underlying));
       spot = s.mid || s.last || s.prevClose || 0;
     }
 

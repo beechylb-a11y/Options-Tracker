@@ -35,7 +35,7 @@ function seedTabs(list) {
   localStorage.setItem(TABS_KEY, JSON.stringify({
     savedAt: Date.now(), activeId: list[0].id,
     tabs: list.map(t => ({ id: t.id, mode: '0dte', label: t.label, createdAt: t.createdAt,
-      seed: { underlying: t.u }, state: null })),
+      seed: { underlying: t.u, _scanMode: '0dte' }, state: null })),
   }));
 }
 // Read the strip in DOM order — that order IS the ranking.

@@ -4,9 +4,8 @@ import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
 import Checkup45 from '../components/Checkup45';
-import { calc0DTE } from '../engine/calc0dte';
-import { calc45DTE } from '../engine/calc45dte';
-import { computeTrend, trendLabel } from '../engine/trend';
+import { trendLabel } from '../engine/trend';
+import { SCAN_FIELDS, VOL_SCAN_KEYS, fetchScanData, computeScan, newScanCache } from '../utils/multiScan';
 import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
@@ -69,19 +68,43 @@ function ModeBadge({ mode, size = 'sm', testid }) {
   );
 }
 
-// ── Tab groups (Oct 2026): 0DTE / 45DTE × Indices / Stocks & ETFs, 5 tabs each ──
-// Indices are the cash-settled, European-style products (no assignment, 60/40 tax);
-// everything else — SPY, QQQ, IWM and single names — trades as shares, with
-// assignment and dividend risk, so it sits in its own group.
+// ── Tab groups (Oct 2026): 0DTE / 45DTE × Indices / ETFs / Stocks, 5 tickets each ──
+// Indices are cash-settled and European (no assignment, 60/40 tax). ETFs and single
+// stocks both trade as shares with assignment and dividend risk, but behave very
+// differently (an index-tracking ETF vs one company's earnings), so each gets its own
+// group — and its own default scan list.
 export const INDEX_SYMBOLS = ['SPX', 'SPXW', 'XSP', 'NDX', 'NDXP', 'RUT', 'RUTW', 'VIX', 'OEX', 'XEO', 'DJX'];
+export const ETF_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA', 'GLD', 'SLV', 'TLT', 'HYG', 'XLF', 'XLE', 'XLK', 'SMH', 'EEM', 'EFA', 'ARKK', 'USO', 'IBIT'];
 export const TAB_GROUP_MAX = 5;
-export const assetClassOf = u => INDEX_SYMBOLS.includes(String(u || 'SPX').toUpperCase()) ? 'index' : 'stock';
-const CLASS_LABEL = { index: 'Indices', stock: 'Stocks & ETFs' };
-const CLASS_DEFAULT = { index: 'SPX', stock: 'SPY' };
-export const GROUPS = [['0dte', 'index'], ['0dte', 'stock'], ['45dte', 'index'], ['45dte', 'stock']];
+export const assetClassOf = u => {
+  const x = String(u || 'SPX').toUpperCase();
+  return INDEX_SYMBOLS.includes(x) ? 'index' : ETF_SYMBOLS.includes(x) ? 'etf' : 'stock';
+};
+const CLASS_LABEL = { index: 'Indices', etf: 'ETFs', stock: 'Stocks' };
+const CLASS_DEFAULT = { index: 'SPX', etf: 'SPY', stock: 'AAPL' };
+// Default scan lists per class (editable per group, remembered in this browser).
+export const SCAN_DEFAULTS = { index: ['SPX', 'XSP'], etf: ['SPY', 'QQQ', 'IWM'], stock: ['AAPL', 'NVDA', 'TSLA', 'AMD'] };
+const SCAN_CHOICES = { index: ['SPX', 'XSP', 'NDX', 'RUT'], etf: ['SPY', 'QQQ', 'IWM', 'DIA', 'GLD', 'TLT', 'SMH', 'XLF'],
+  stock: ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'AVGO', 'NFLX', 'PLTR', 'MSTR'] };
+export const CLASSES = ['index', 'etf', 'stock'];
+export const GROUPS = [['0dte', 'index'], ['0dte', 'etf'], ['0dte', 'stock'], ['45dte', 'index'], ['45dte', 'etf'], ['45dte', 'stock']];
 const groupKey = (m, c) => `${m === '0dte' ? '0dte' : '45dte'}|${c}`;
 const tabUnd = t => (t && (t.und || (t.seed && t.seed.underlying))) || 'SPX';
 export const groupOfTab = t => groupKey(t.mode, assetClassOf(tabUnd(t)));
+const SCAN_LISTS_KEY = 'ot-scan-underlyings-v1';
+const SCAN_FRESH_MS = 15 * 60 * 1000;            // a scan older than this asks to be re-run
+
+// A ticket nobody has worked on: not from a scan, no fill, no sizing, no structure or
+// strike override. These are what used to sit in every group as a blank "SPX" tab;
+// they are dropped on load and when a scan opens a ticket in their group.
+export function isBlankTab(t, st) {
+  if (t.seed && t.seed._scanMode) return false;
+  const s = st || t.state;
+  if (!s) return true;
+  if (s.overrideStrat || (s.overrideStrikes && Object.keys(s.overrideStrikes).length) || s.loggedAt) return false;
+  const typed = b => b && ['netCreditDebit', 'win', 'risk', 'pop'].some(k => b[k] !== '' && b[k] != null && parseFloat(b[k]) !== 0);
+  return !typed(s.i0) && !typed(s.i45);
+}
 
 function newTab(mode, seed) {
   const createdAt = Date.now();
@@ -94,34 +117,35 @@ function newTab(mode, seed) {
 function loadTabs() {
   try {
     const raw = JSON.parse(localStorage.getItem(TABS_KEY) || 'null');
-    if (!raw || !Array.isArray(raw.tabs) || !raw.tabs.length) return null;
+    if (!raw || !Array.isArray(raw.tabs)) return null;
     if (!raw.savedAt || Date.now() - raw.savedAt > TABS_MAX_AGE_MS) return null;
-    const tabs = raw.tabs.filter(t => t && t.id);
-    if (!tabs.length) return null;
-    return { tabs, activeId: raw.activeId && tabs.some(t => t.id === raw.activeId) ? raw.activeId : tabs[0].id };
+    const tabs = raw.tabs.filter(t => t && t.id && !isBlankTab(t));
+    const g = raw.group && GROUPS.some(([m, c]) => groupKey(m, c) === raw.group) ? raw.group : null;
+    return { tabs, activeId: raw.activeId && tabs.some(t => t.id === raw.activeId) ? raw.activeId : (tabs[0] ? tabs[0].id : null), group: g };
   } catch (e) { return null; }
+}
+function loadScanLists() {
+  try { return JSON.parse(localStorage.getItem(SCAN_LISTS_KEY)) || {}; } catch (e) { return {}; }
 }
 
 export default function DecisionEngine({ authenticated, account, accounts }) {
   const restored = React.useMemo(() => loadTabs(), []);
-  const [tabs, setTabs] = useState(() => (restored ? restored.tabs : [newTab('0dte', null)]));
+  // No blank ticket by default (Oct 2026): a group starts empty until a scan opens a
+  // ticket or + Trade adds one.
+  const [tabs, setTabs] = useState(() => (restored ? restored.tabs : []));
   const [activeId, setActiveId] = useState(() => (restored ? restored.activeId : null));
-  const activeTab = tabs.find(t => t.id === activeId) || tabs[0];
-  const mode = activeTab ? activeTab.mode : '0dte';
-  const setMode = m => setTabs(prev => prev.map(t => (t.id === (activeTab && activeTab.id) ? { ...t, mode: m, label: tabLabel(m, labelUnderlyingOf(t, m), t.createdAt, dteOf(t)) } : t)));
+  // The group on screen is its own state now — a group can be empty.
+  const [activeGroup, setActiveGroup] = useState(() => (restored && restored.group)
+    || (restored && restored.tabs.find(t => t.id === restored.activeId) ? groupOfTab(restored.tabs.find(t => t.id === restored.activeId)) : groupKey('0dte', 'index')));
+  const [groupMode, groupClass] = activeGroup.split('|');
+  const mode = groupMode;
+  const groupTabs = tabs.filter(t => groupOfTab(t) === activeGroup);
+  const activeTab = groupTabs.find(t => t.id === activeId) || groupTabs[0] || null;
+  const groupCount = g => tabs.filter(t => groupOfTab(t) === g).length;
 
   // Live panel state, held in a ref: a keystroke in one tab must not re-render
   // the others. Only the tab LABEL is promoted into React state.
   const panelStateRef = useRef({});
-  function labelUnderlyingOf(t, m) {
-    const st = panelStateRef.current[t.id] || t.state;
-    const inp = st && (m === '0dte' ? st.i0 : st.i45);
-    return (inp && inp.underlying) || (t.seed && t.seed.underlying) || null;
-  }
-  function dteOf(t) {
-    const st = panelStateRef.current[t.id] || t.state;
-    return st && st.i45 ? st.i45.dte : undefined;
-  }
   // Per-tab verdicts, reported up by each panel. Kept out of `tabs` so that a score
   // ticking over cannot rewrite the tab objects (and therefore localStorage) on every
   // keystroke — this is derived, disposable data.
@@ -136,28 +160,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     });
   }
 
-  // Tab order, best first, by composite score.
-  //
-  // Ranking only kicks in once EVERY ticket has a Trade Confidence — which is the
-  // engine's own test for having the sizing inputs, so it is the same thing as "they
-  // all have price data". Until then the strip keeps insertion order: tabs rearranging
-  // themselves while you are still typing into the first one would be worse than
-  // useless. Blocked tickets rank by their composite like any other (marked ⊘).
-  // The strip shows ONE group at a time — the active ticket's — and ranks inside it.
-  const activeGroup = activeTab ? groupOfTab(activeTab) : groupKey('0dte', 'index');
-  const groupTabs = tabs.filter(t => groupOfTab(t) === activeGroup);
-  const groupCount = g => tabs.filter(t => groupOfTab(t) === g).length;
+  // Tab order, best first, by composite score, within the group on screen. Ranking
+  // only kicks in once EVERY ticket in the group is priced; until then insertion order.
   const rankable = groupTabs.length > 1 && groupTabs.every(t => summaries[t.id] && summaries[t.id].ready);
   const orderedTabs = React.useMemo(() => {
     if (!rankable) return groupTabs;
     return groupTabs.slice().sort((a, b) => {
       const sa = summaries[a.id], sb = summaries[b.id];
-      // Pure composite order (Oct 2026). Blocked tickets used to be pushed to the
-      // end whatever they scored, so a 46 sat ahead of a 55 and the strip looked
-      // unranked. The ⊘ on the tab still flags a blocker; the order is the score.
-      // Composite, not Trade Confidence (Sep 2026): the composite is the headline
-      // number on every ticket and already folds in setup, Kelly, EV and POP, so
-      // ranking on anything else made the strip disagree with the banners.
       if (sb.composite !== sa.composite) return sb.composite - sa.composite;
       if (sb.confidence !== sa.confidence) return sb.confidence - sa.confidence;
       return a.createdAt - b.createdAt;          // stable for ties
@@ -182,43 +191,54 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       return next;
     });
   }
+  // A ticket whose underlying changes class (typing QQQ into an SPX ticket) moves to
+  // that group; the screen follows it.
+  useEffect(() => {
+    const t = tabs.find(x => x.id === activeId);
+    if (t && groupOfTab(t) !== activeGroup && activeTab == null) setActiveGroup(groupOfTab(t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs]);
+
   function closeTab(id) {
-    if (tabs.length <= 1) return;
     const i = tabs.findIndex(t => t.id === id);
     if (i < 0) return;
     const next = tabs.filter(t => t.id !== id);
     delete panelStateRef.current[id];
     if (id === (activeTab && activeTab.id)) {
-      const g = groupOfTab(tabs[i]);
-      const sameGroup = next.filter(t => groupOfTab(t) === g);
-      setActiveId((sameGroup[0] || next[Math.min(i, next.length - 1)]).id);
+      const sameGroup = next.filter(t => groupOfTab(t) === activeGroup);
+      setActiveId(sameGroup[0] ? sameGroup[0].id : null);
     }
     setTabs(next);
   }
   // A group holds at most TAB_GROUP_MAX tickets; a sixth is refused with a toast
   // rather than closing one you may still be working on.
-  function groupFull(m, und) {
+  function groupFull(m, und, list) {
     const g = groupKey(m, assetClassOf(und || 'SPX'));
-    if (groupCount(g) < TAB_GROUP_MAX) return false;
+    if ((list || tabs).filter(t => groupOfTab(t) === g).length < TAB_GROUP_MAX) return false;
     const [gm, gc] = g.split('|');
     showToast(`${modeUi(gm).short} · ${CLASS_LABEL[gc]} already has ${TAB_GROUP_MAX} tickets — close one first`, 'error');
     return true;
   }
-  function addTab(seed, m) {
+  // opts.dropBlanks: a scan pick clears the untouched tickets in its group first.
+  function addTab(seed, m, opts) {
     const mm = m || mode;
-    if (groupFull(mm, seed && seed.underlying)) return null;
+    const und = (seed && seed.underlying) || null;
+    const g = groupKey(mm, assetClassOf(und || 'SPX'));
+    let base = tabs;
+    if (opts && opts.dropBlanks) {
+      base = tabs.filter(t => !(groupOfTab(t) === g && isBlankTab(t, panelStateRef.current[t.id])));
+      tabs.filter(t => !base.includes(t)).forEach(t => { delete panelStateRef.current[t.id]; });
+    }
+    if (groupFull(mm, und, base)) return null;
     const t = newTab(mm, seed || null);
-    setTabs(prev => [...prev, t]);
+    setTabs([...base, t]);
     setActiveId(t.id);
+    setActiveGroup(g);
     return t;
   }
 
   // Open a tab that starts from an ALREADY-BUILT panel state rather than a seed.
-  // Structure comparison uses it: comparing two structures used to mean overwriting
-  // the ticket in place, so the one you were looking at was gone by the time you
-  // had a view on the other. Now each becomes its own tab and both stay on screen.
-  // The tag distinguishes them, since both carry the same underlying and date.
-  // (Aug 2026.)
+  // Structure comparison uses it: each compared structure becomes its own tab.
   function addStateTab(state, m, tag) {
     const createdAt = Date.now();
     const mode2 = m || mode;
@@ -234,35 +254,30 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     };
     setTabs(prev => [...prev, t]);
     setActiveId(t.id);
+    setActiveGroup(groupKey(mode2, assetClassOf(und || 'SPX')));
     return t;
   }
 
+  // Show a group: its last-viewed ticket, or nothing — no blank ticket is made.
   function openGroup(m, c) {
     const g = groupKey(m, c);
-    const last = lastInGroup.current[g];
     const inGroup = tabs.filter(t => groupOfTab(t) === g);
-    const target = inGroup.find(t => t.id === last) || inGroup[0];
-    if (target) { setActiveId(target.id); return; }
-    addTab(c === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null, m);
+    const target = inGroup.find(t => t.id === lastInGroup.current[g]) || inGroup[0];
+    setActiveGroup(g);
+    setActiveId(target ? target.id : null);
   }
 
-  // Wipe every tab back to one fresh ticket. Two-step: the first click arms it,
-  // the second within 4s does it — tabs now survive a reload, so an accidental
-  // click here would throw away work that used to be unrecoverable.
+  // Close every ticket in the group on screen. Two-step: the first click arms it.
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
     if (!confirmClear) return;
     const h = setTimeout(() => setConfirmClear(false), 4000);
     return () => clearTimeout(h);
   }, [confirmClear]);
-  // Clears the group on screen only; the other three keep their tickets.
   function clearAllTabs() {
-    const [gm, gc] = activeGroup.split('|');
-    const t = newTab(gm, gc === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null);
-    const keep = tabs.filter(x => groupOfTab(x) !== activeGroup);
     tabs.filter(x => groupOfTab(x) === activeGroup).forEach(x => { delete panelStateRef.current[x.id]; });
-    setTabs([...keep, t]);
-    setActiveId(t.id);
+    setTabs(tabs.filter(x => groupOfTab(x) !== activeGroup));
+    setActiveId(null);
     setConfirmClear(false);
   }
 
@@ -273,7 +288,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       try {
         localStorage.setItem(TABS_KEY, JSON.stringify({
           savedAt: Date.now(),
-          activeId: activeId || (tabs[0] && tabs[0].id) || null,
+          activeId: activeId || null, group: activeGroup,
           tabs: tabs.map(t => ({ id: t.id, mode: t.mode, label: t.label, createdAt: t.createdAt, und: t.und || null,
                                  seed: t.seed, state: panelStateRef.current[t.id] || t.state || null })),
         }));
@@ -282,7 +297,60 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     save();
     const h = setInterval(save, 5000);
     return () => clearInterval(h);
-  }, [tabs, activeId]);
+  }, [tabs, activeId, activeGroup]);
+
+  // ── Scans, per group (Oct 2026) ──
+  // Lifted out of the panel so results survive closing it, every group keeps its own,
+  // and "Scan everything" can fill all six. { [groupKey]: { results, meta, scannedAt, manualData } }
+  const [scans, setScans] = useState({});
+  const [scanLists, setScanLists] = useState(() => {
+    const saved = loadScanLists();
+    const out = {};
+    GROUPS.forEach(([m, c]) => { const g = groupKey(m, c); out[g] = Array.isArray(saved[g]) && saved[g].length ? saved[g] : SCAN_DEFAULTS[c]; });
+    return out;
+  });
+  function setScanList(g, list) {
+    setScanLists(prev => {
+      const next = { ...prev, [g]: list };
+      try { localStorage.setItem(SCAN_LISTS_KEY, JSON.stringify(next)); } catch (e) { /* private mode */ }
+      return next;
+    });
+  }
+  const [scanBusy, setScanBusy] = useState({});
+  const [master, setMaster] = useState(null);       // { i, n, label } while Scan everything runs
+  const [scanNow, setScanNow] = useState(() => Date.now());
+  useEffect(() => { const h = setInterval(() => setScanNow(Date.now()), 15000); return () => clearInterval(h); }, []);
+  async function runGroupScan(g, cache, typed) {
+    const [m] = g.split('|');
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    setScanBusy(b => ({ ...b, [g]: true }));
+    try {
+      const list = scanLists[g] || [];
+      const { mergedData, meta, pulledAt } = await fetchScanData({ mode: m, underlyings: list, manualData: typed || {}, bridgeUrl, cache });
+      const results = computeScan(m, list, mergedData);
+      setScans(prev => ({ ...prev, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData } }));
+    } catch (e) {
+      showToast('Scan failed: ' + e.message, 'error');
+    }
+    setScanBusy(b => { const o = { ...b }; delete o[g]; return o; });
+  }
+  async function runAllScans() {
+    const cache = newScanCache();
+    for (let i = 0; i < GROUPS.length; i++) {
+      const [m, c] = GROUPS[i];
+      setMaster({ i: i + 1, n: GROUPS.length, label: `${modeUi(m).short} · ${CLASS_LABEL[c]}` });
+      await runGroupScan(groupKey(m, c), cache);
+    }
+    setMaster(null);
+    showToast('All six scans done — each group has its results', 'success');
+  }
+  function recalcGroup(g, manualData) {
+    const [m] = g.split('|');
+    const list = scanLists[g] || [];
+    setScans(prev => ({ ...prev, [g]: { ...(prev[g] || {}), manualData, results: computeScan(m, list, manualData),
+      scannedAt: (prev[g] && prev[g].scannedAt) || new Date().toISOString(), meta: (prev[g] && prev[g].meta) || {} } }));
+  }
 
   const [decisions, setDecisions] = useState([]);
   const [strategyHistory, setStrategyHistory] = useState(null);
@@ -518,23 +586,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // the SCAN ran in — never the mode the header happens to show now.
   function handleSelectFromScan(underlying, data, meta, scanMode) {
     const m = scanMode || mode;
-    addTab({ underlying, ...(data || {}), _meta: meta || null, _scanMode: m }, m);
+    addTab({ underlying, ...(data || {}), _meta: meta || null, _scanMode: m }, m, { dropBlanks: true });
   }
 
-  // The mode switch converts a blank or hand-typed ticket in place, as before.
-  // A ticket opened from a scan is locked to the scan's mode: its market data was
-  // pulled for that mode, so switching opens a fresh ticket in the other mode
-  // instead of relabelling this one.
+  // The mode switch moves to the same class of group in the other mode.
   function switchMode(m) {
     if (m === mode) return;
-    const und = tabUnd(activeTab);
-    if (activeTab && activeTab.seed && activeTab.seed._scanMode) {
-      // same underlying, other mode — the scan ticket itself is untouched
-      if (addTab({ underlying: und }, m)) showToast(`Opened a new ${modeUi(m).short} ${und} ticket \u2014 the ${modeUi(mode).short} scan ticket stays as it was`, 'info');
-      return;
-    }
-    if (groupFull(m, und)) return;                 // the ticket would move into a full group
-    setMode(m);
+    openGroup(m, groupClass);
   }
 
   return (
@@ -551,8 +609,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               const u = modeUi(m), on = mode === m;
               return (
                 <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
-                  title={on ? `This ticket is ${u.short}` : (activeTab && activeTab.seed && activeTab.seed._scanMode
-                    ? `Opens a new ${u.short} ticket (this one came from a scan and keeps its mode)` : `Switch this ticket to ${u.short}`)}
+                  title={on ? `Showing ${u.short} · ${CLASS_LABEL[groupClass]}` : `Show ${u.short} · ${CLASS_LABEL[groupClass]}`}
                   className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
                   style={on ? { background: u.solid, color: '#0d1117', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
                   <u.Icon size={14} /> {u.short}
@@ -576,7 +633,12 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             title={`Scan several underlyings for a ${modeUi(mode).short} trade`}
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'multiscan' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
             style={panel === 'multiscan' ? { borderColor: modeUi(mode).border, background: modeUi(mode).bg } : undefined}>
-            <Radar size={14} /> Multi-scan <ModeBadge mode={mode} />
+            <Radar size={14} /> Multi-scan <ModeBadge mode={mode} /> <span style={{ fontSize: 11.5 }}>{CLASS_LABEL[groupClass]}</span>
+          </button>
+          <button onClick={() => { setPanel('multiscan'); runAllScans(); }} disabled={!!master} data-testid="scan-everything"
+            title="Run all six scans — 0DTE and 45DTE, indices, ETFs and stocks — and file each group's results with it"
+            className="flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors border-bg-border text-text-muted hover:bg-bg-hover disabled:opacity-60">
+            <Radar size={14} className={master ? 'animate-spin' : ''} /> {master ? `Scanning ${master.i}/${master.n}…` : 'Scan everything'}
           </button>
           <button onClick={() => setPanel(panel === 'checkup' ? null : 'checkup')} data-testid="checkup-toggle"
             title="Hold, take profit, roll or close — a check-up of every open 45DTE trade"
@@ -1023,7 +1085,14 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       )}
 
       {panel === 'multiscan' && (
-        <MultiScanPanel mode={mode} onSelect={handleSelectFromScan} onMode={switchMode} />
+        <MultiScanPanel mode={mode} cls={groupClass} classLabel={CLASS_LABEL[groupClass]}
+          scan={scans[activeGroup] || null} busy={!!scanBusy[activeGroup]} master={master} now={scanNow}
+          underlyings={scanLists[activeGroup] || []} choices={SCAN_CHOICES[groupClass]}
+          onUnderlyings={list => setScanList(activeGroup, list)}
+          onScan={typed => runGroupScan(activeGroup, null, typed)} onScanAll={runAllScans}
+          onRecalc={md => recalcGroup(activeGroup, md)}
+          otherScans={GROUPS.map(([m, c]) => ({ g: groupKey(m, c), m, c, s: scans[groupKey(m, c)] })).filter(x => x.g !== activeGroup && x.s)}
+          onOpenGroup={openGroup} onSelect={handleSelectFromScan} />
       )}
 
       {panel === 'compare' && (
@@ -1095,16 +1164,22 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         </div>
       )}
 
-      {/* Tab groups: 0DTE / 45DTE × Indices / Stocks & ETFs */}
+      {/* Tab groups: 0DTE / 45DTE × Indices / ETFs / Stocks */}
       <div className="flex items-center gap-1.5 mb-2 flex-wrap" data-testid="tab-groups">
         {GROUPS.map(([gm, gc]) => {
           const g = groupKey(gm, gc), n = groupCount(g), on = g === activeGroup, u = modeUi(gm);
+          const sc = scans[g];
+          const age = sc && sc.scannedAt ? scanNow - new Date(sc.scannedAt).getTime() : null;
+          const dot = scanBusy[g] ? '#58a6ff' : age == null ? null : age < SCAN_FRESH_MS ? '#3fb950' : '#d29922';
+          const best = sc && sc.results && sc.results[0] && sc.results[0].result ? sc.results[0] : null;
           return (
             <button key={g} data-testid={'group-' + gm + '-' + gc} data-on={on ? '1' : '0'} onClick={() => openGroup(gm, gc)}
-              title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets${gc === 'index' ? ' (SPX, XSP, NDX, RUT: cash-settled)' : ' (SPY, QQQ, IWM, single stocks: shares, assignment risk)'}`}
+              title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets`
+                + (scanBusy[g] ? ' · scanning…' : age == null ? ' · not scanned yet' : ` · scanned ${clockOf(sc.scannedAt)} (${agoOf(sc.scannedAt, scanNow)})${age >= SCAN_FRESH_MS ? ' — rescan' : ''}${best ? ` · best ${best.underlying} ${best.result.setupScore}/100` : ''}`)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, fontSize: 12.5, fontWeight: on ? 700 : 500,
                 border: `1px solid ${on ? u.border : '#30363d'}`, background: on ? u.bg : 'transparent', color: on ? u.fg : '#a8b2be' }}>
               <u.Icon size={12} /> {u.short} · {CLASS_LABEL[gc]}
+              {dot && <span data-testid={'scan-dot-' + gm + '-' + gc} style={{ width: 7, height: 7, borderRadius: '50%', background: dot }} />}
               <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: '#0d1117',
                 color: n > TAB_GROUP_MAX ? '#f85149' : n ? (on ? u.fg : '#c9d1d9') : '#6e7681' }}>{n}/{TAB_GROUP_MAX}</span>
             </button>
@@ -1145,13 +1220,18 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                 </span>
               )}
               <ModeBadge mode={t.mode} />
-              {tabs.length > 1 && (
-                <span onClick={e => { e.stopPropagation(); closeTab(t.id); }}
-                  className="text-text-faint hover:text-red text-sm leading-none">×</span>
-              )}
+              <span onClick={e => { e.stopPropagation(); closeTab(t.id); }} title="Close this ticket"
+                className="text-text-faint hover:text-red text-sm leading-none">×</span>
             </div>
           );
         })}
+        {groupTabs.length === 0 && (
+          <span data-testid="group-empty" className="text-[12.5px] text-text-faint">
+            No {modeUi(groupMode).short} · {CLASS_LABEL[groupClass]} tickets —
+            {' '}<button onClick={() => setPanel('multiscan')} className="underline" style={{ color: modeUi(groupMode).fg }}>scan this group</button>
+            {' '}or add one with + Trade.
+          </span>
+        )}
         {groupTabs.length > 1 && !rankable && (
           <span className="text-[11px] text-text-faint" title="The composite needs the sizing inputs on every ticket before the tabs can be ordered">
             ranking once all priced
@@ -1162,7 +1242,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           const full = groupTabs.length >= TAB_GROUP_MAX;
           return (
             <button data-testid="add-tab" disabled={full}
-              onClick={() => addTab(gc === 'stock' ? { underlying: CLASS_DEFAULT.stock } : null, gm)}
+              onClick={() => addTab(gc === 'index' ? null : { underlying: CLASS_DEFAULT[gc] }, gm)}
               title={full ? `${TAB_GROUP_MAX} tickets is the most for a group — close one first` : `New ${modeUi(gm).short} · ${CLASS_LABEL[gc]} ticket`}
               className="px-2.5 py-1.5 border border-dashed border-bg-border rounded-lg text-xs text-text-faint hover:text-white hover:border-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
               + Trade
@@ -1170,7 +1250,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           );
         })()}
         <button onClick={() => (confirmClear ? clearAllTabs() : setConfirmClear(true))}
-          title="Close every ticket in this group and start one fresh one"
+          title="Close every ticket in this group"
           className={`ml-auto px-2.5 py-1.5 border rounded-lg text-xs transition-colors ${confirmClear
             ? 'border-red text-red bg-red/10'
             : 'border-bg-border text-text-faint hover:text-white hover:border-red'}`}>
@@ -1216,45 +1296,6 @@ function Row({ label, value }) {
     </div>
   );
 }
-
-// Market fields each scan type asks of the bridge (and lets you type by hand).
-// 0DTE reads the session: VWAP, intraday ranges, the ES overnight. 45DTE reads
-// volatility: IV, its rank, realised vol, the term structure and skew.
-const SCAN_FIELDS = {
-  '0dte': [
-    { key: 'price', label: 'Price' },
-    { key: 'high', label: 'Day High' },
-    { key: 'low', label: 'Day Low' },
-    { key: 'cashOpen', label: 'Open' },
-    { key: 'em', label: 'EM' },
-    { key: 'atr', label: 'ATR 1 Day' },
-    { key: 'atr5', label: 'ATR 5m' },
-    { key: 'atr2h', label: 'ATR 2h' },
-    { key: 'vix', label: 'VIX' },
-    { key: 'vix1d', label: 'VIX1D' },
-    { key: 'vwap5', label: 'VWAP 5' },
-    { key: 'vwap5_30', label: 'VWAP 5 -30m' },
-    { key: 'vwapRoll30', label: 'VWAP last 30m' },
-    { key: 'vwapRoll30Prior', label: 'VWAP prior 30m' },
-    { key: 'vwapAccept', label: 'VWAP acceptance' },
-    { key: 'esClose', label: 'ES Pre-open' },
-    { key: 'priorDayClose', label: 'ES Prior Close' },
-    { key: 'esOvernightHigh', label: 'ES O/N High' },
-    { key: 'esOvernightLow', label: 'ES O/N Low' },
-    { key: 'esEM', label: 'ES EM' },
-  ],
-  '45dte': [
-    { key: 'price', label: 'Price' },
-    { key: 'vix', label: 'VIX' },
-    { key: 'iv', label: 'IV % (45d ATM)' },
-    { key: 'ivr', label: 'IV Rank %' },
-    { key: 'hv', label: 'HV % (30d)' },
-    { key: 'ivFront', label: 'IV front (~30d)' },
-    { key: 'ivBack', label: 'IV back (~90d)' },
-    { key: 'skew', label: 'Skew 25Δ (P−C)' },
-  ],
-};
-const VOL_SCAN_KEYS = ['iv', 'ivr', 'hv', 'ivFront', 'ivBack', 'skew'];
 
 // Blank trend cell: say why — an old bridge, or a bridge that returned no daily bars.
 const trendMissing = r => r.data?._oldBridge
@@ -1341,376 +1382,121 @@ const SCAN_ROWS = {
   ],
 };
 
-function MultiScanPanel({ mode, onSelect, onMode }) {
+function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underlyings, choices, onUnderlyings,
+  onScan, onScanAll, onRecalc, otherScans, onOpenGroup, onSelect }) {
   const scanMode = mode === '0dte' ? '0dte' : '45dte';
   const ui = modeUi(scanMode);
-  const otherMode = scanMode === '0dte' ? '45dte' : '0dte';
-  const [underlyings, setUnderlyings] = useState(['SPX', 'SPY', 'XSP', 'QQQ']);
-  const [scanning, setScanning] = useState(null);           // the mode being scanned, or null
-  // Results are kept PER MODE. A 0DTE scan never shows while the panel is in 45DTE
-  // (and the reverse), so an Open button can only ever open the mode it was scanned in.
-  const [byMode, setByMode] = useState({});
-  const [error, setError] = useState('');
-  const [manualData, setManualData] = useState({});
+  // Only what you TYPE is kept here; everything else comes fresh from each scan. (A
+  // rescan used to keep the previous scan's numbers, because fetched values were
+  // stored as if typed and typed values win.)
+  const [typed, setTyped] = useState({});
+  useEffect(() => { setTyped({}); }, [cls, scanMode]);
+  const fetched = (scan && scan.manualData) || {};
   const [showInputs, setShowInputs] = useState(false);
-  const [scanNow, setScanNow] = useState(() => Date.now());
-  useEffect(() => {
-    const h = setInterval(() => setScanNow(Date.now()), 15000);
-    return () => clearInterval(h);
-  }, []);
-
-  const cur = byMode[scanMode] || null;
-  const results = cur ? cur.results : null;
-  const scannedAt = cur ? cur.scannedAt : null;
-  const scanMeta = cur ? cur.meta : {};
-  const other = byMode[otherMode] || null;
+  const results = scan ? scan.results : null;
+  const scannedAt = scan ? scan.scannedAt : null;
+  const scanMeta = (scan && scan.meta) || {};
+  const stale = scannedAt && now - new Date(scannedAt).getTime() >= SCAN_FRESH_MS;
   const inputFields = SCAN_FIELDS[scanMode];
-
-  function getVal(underlying, key) {
-    return manualData[underlying]?.[key] ?? '';
-  }
-
-  function setVal(underlying, key, value) {
-    setManualData(prev => ({
-      ...prev,
-      [underlying]: { ...(prev[underlying] || {}), [key]: value }
-    }));
-  }
-
-  async function handleScan() {
-    const m = scanMode;                       // fixed for this scan, whatever happens to the header meanwhile
-    const is0 = m === '0dte';
-    const fields = SCAN_FIELDS[m];
-    setScanning(m);
-    setError('');
-    const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
-    const pulledAt = new Date().toISOString();
-    const meta = {};
-    let mergedData = { ...manualData };
-
-    try {
-      if (bridgeUrl) {
-        const fetches = underlyings.filter(u => u).map(underlying =>
-          fetch(bridgeUrl + '/api/market-data?underlying=' + underlying, {
-            headers: { 'ngrok-skip-browser-warning': '1' }
-          }).then(r => r.json()).then(data => ({ underlying, data }))
-          .catch(() => ({ underlying, data: null }))
-        );
-        const marketData = await Promise.all(fetches);
-        marketData.forEach(({ underlying, data }) => {
-          if (data && !data.error) {
-            // Freshness metadata is not an engine input, so it never survives the
-            // inputFields merge below — capture it here and carry it to the tab.
-            meta[underlying] = {
-              isLive: !!data.isLive,
-              label: data.dataTypeLabel || (data.isLive ? 'Live' : 'Last close'),
-              asOf: data.asOf || data.timestamp || null,
-              pulledAt,
-            };
-            const existing = mergedData[underlying] || {};
-            const merged = { ...existing };
-            SCAN_FIELDS['0dte'].forEach(f => {
-              // See EnginePanel: vwapAccept is a 0..1 ratio, so 0 is a real reading
-              // (nothing closed above VWAP all hour) and only -1 means no reading.
-              // Every other field here is a price or level where 0 does mean failure.
-              const v = data[f.key];
-              const usable = f.key === 'vwapAccept' ? (v != null && v >= 0) : (v != null && v !== 0);
-              merged[f.key] = existing[f.key] || (usable ? String(v) : existing[f.key] || '');
-            });
-            mergedData[underlying] = merged;
-          }
-        });
-
-        // ── Normalize merged inputs FIRST so the table and the engine agree, and
-        // so we have a resolved spot to hand to the straddle fetch below. Scaling +
-        // the VWAP price fallback previously lived only in runEngine's local `inp`,
-        // so the table still showed blanks (ETF price) and SPY-scale SPX bars.
-        underlyings.filter(u => u).forEach(u => {
-          const md = mergedData[u];
-          if (!md) return;
-          const num = k => parseFloat(md[k]) || 0;
-          // SPX bridge fields come in SPY-scale; lift ×10 only when clearly unscaled
-          // (< 3000). Idempotent: already-index-scale values (7408, 7393) are left.
-          const scale = v => (u === 'SPX' && v > 0 && v < 3000) ? v * 10 : v;
-          const price = num('price') || scale(num('vwap5'));  // bridge spot, else VWAP
-          if (price) md.price = String(+price.toFixed(2));
-          // vwapAccept is a 0..1 ratio, not a price — deliberately excluded from scaling.
-          ['high', 'low', 'cashOpen', 'vwap5', 'vwap5_30', 'vwapRoll30', 'vwapRoll30Prior'].forEach(k => {
-            const v = num(k);
-            if (v) md[k] = String(+scale(v).toFixed(2));
-          });
-          // VIX/√252 model EM from the resolved price (a real straddle overrides below).
-          const vix = num('vix');
-          if (price && vix) md.em = String(Math.round(price * (vix / 100) / Math.sqrt(252) * 10) / 10);
-        });
-
-        // ── Straddle EM per underlying (0DTE) — the market-priced move, preferred
-        // over the VIX model. Pass the resolved spot so the bridge SKIPS its own
-        // (slow, ETF-failing) spot snapshot and only needs option prices. Timeout is
-        // generous (13s) because each bridge getSnapshot waits its full ~6s window,
-        // so spot+legs can approach ~12s — a 7s timeout was aborting even SPX.
-        if (is0) {
-          const today = tradingSession().yyyymmdd;
-          const sFetches = underlyings.filter(u => u).map(underlying => {
-            const spot = parseFloat(mergedData[underlying]?.price) || 0;
-            const spotQ = spot > 0 ? '&spot=' + spot : '';
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 13000);
-            return fetch(bridgeUrl + '/api/atm-straddle?underlying=' + underlying + '&expiry=' + today + '&haircut=0.85' + spotQ,
-              { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
-              .then(r => r.json()).then(sd => { clearTimeout(t); return { underlying, sd }; })
-              .catch(() => ({ underlying, sd: null }));
-          });
-          const straddles = await Promise.all(sFetches);
-          straddles.forEach(({ underlying, sd }) => {
-            if (sd && sd.source === 'straddle' && sd.expectedMove > 0 && mergedData[underlying]) {
-              mergedData[underlying] = {
-                ...mergedData[underlying],
-                em: String(sd.expectedMove),
-                emSource: 'straddle',
-                straddleCall: String(sd.callPrice),
-                straddlePut: String(sd.putPrice),
-              };
-            }
-          });
-        } else {
-          // ── 45DTE: the vol surface per underlying — ATM IV at ~45 days, IV rank,
-          // 30-day HV, front/back IV for the term structure, 25Δ skew. Without it a
-          // 45DTE scan scores every ticker on price and VIX alone. Slow (option
-          // greeks at three expiries), so generous timeout; failures leave blanks.
-          const vFetches = underlyings.filter(u => u).map(underlying => {
-            const spot = parseFloat(mergedData[underlying]?.price) || 0;
-            const ctrl = new AbortController();
-            const t = setTimeout(() => ctrl.abort(), 45000);
-            return fetch(bridgeUrl + '/api/vol-surface?underlying=' + underlying + (spot > 0 ? '&spot=' + spot : ''),
-              { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
-              .then(r => r.json()).then(vs => { clearTimeout(t); return { underlying, vs }; })
-              .catch(() => ({ underlying, vs: null }));
-          });
-          const surfaces = await Promise.all(vFetches);
-          surfaces.forEach(({ underlying, vs }) => {
-            if (!vs || vs.error || !mergedData[underlying]) return;
-            const md = { ...mergedData[underlying] };
-            VOL_SCAN_KEYS.forEach(k => {
-              const v = vs[k];
-              const ok = v != null && v !== '' && isFinite(v) && (k === 'skew' || v > 0);
-              if (ok && (md[k] === undefined || md[k] === '')) md[k] = String(v);
-            });
-            if (vs.termBias) md.termBias = vs.termBias;
-            // The daily trend read (SMA 20/50, ADX, stretch, HV10/60) and VIX/VIX3M.
-            const tr = computeTrend(vs.daily);
-            if (tr) { md._trend = tr; md._dailySource = vs.dailySource || null; }
-            // A bridge from before 6 Oct sends no `daily` / `vix3m` at all — say so in
-            // the cells instead of a blank that looks like "no reading".
-            md._oldBridge = !('daily' in vs) && !('vix3m' in vs);
-            md._noDaily = !md._oldBridge && !tr;
-            if (vs.vixTermRatio) md.vixTermRatio = vs.vixTermRatio;
-            mergedData[underlying] = md;
-          });
-        }
-        setManualData(mergedData);
-      }
-    } catch (e) {
-      console.error('Bridge fetch error:', e);
-    }
-
-    runEngine(mergedData, m, { meta, scannedAt: pulledAt });
-    setScanning(null);
-  }
-
-  function runEngine(dataOverride, m, stamp) {
-    const is0 = m === '0dte';
-    const dataSource = dataOverride || manualData;
-    try {
-      const engineResults = underlyings.filter(u => u).map(underlying => {
-        const m0 = dataSource[underlying] || {};
-        const scaleV = (v) => {
-          const p = parseFloat(m0.price) || 0;
-          if (underlying === 'SPX' && p > 1000 && v > 0 && v < p * 0.3) return v * 10;
-          return v;
-        };
-        const inp = {
-          price: parseFloat(m0.price) || 0,
-          // high/low/open are returned in SPY-scale for SPX (bridge uses SPY bars);
-          // scaleV lifts them ×10 so the range/rm calc isn't broken (was: raw → SPX
-          // showed high 742 against price 7408).
-          high: scaleV(parseFloat(m0.high) || 0),
-          low: scaleV(parseFloat(m0.low) || 0),
-          cashOpen: scaleV(parseFloat(m0.cashOpen) || 0),
-          em: parseFloat(m0.em) || 0,
-          emSource: m0.emSource || (m0.em ? 'vix' : undefined),
-          straddleCall: parseFloat(m0.straddleCall) || undefined,
-          straddlePut: parseFloat(m0.straddlePut) || undefined,
-          atr: parseFloat(m0.atr) || 0,
-          atr5: parseFloat(m0.atr5) || 0,
-          atr2h: parseFloat(m0.atr2h) || 0,
-          vix: parseFloat(m0.vix) || 0,
-          vix1d: parseFloat(m0.vix1d) || 0,
-          vwap5: scaleV(parseFloat(m0.vwap5) || 0),
-          vwap5_30: scaleV(parseFloat(m0.vwap5_30) || 0),
-          vwapRoll30: scaleV(parseFloat(m0.vwapRoll30) || 0),
-          vwapRoll30Prior: scaleV(parseFloat(m0.vwapRoll30Prior) || 0),
-          // Ratio, never scaled. The bridge sends -1 when it has no reading;
-          // null tells the engine "unavailable" rather than "0% acceptance".
-          vwapAccept: (m0.vwapAccept == null || m0.vwapAccept === '' || parseFloat(m0.vwapAccept) < 0)
-            ? null : parseFloat(m0.vwapAccept),
-          esClose: parseFloat(m0.esClose) || 0,
-          priorDayClose: parseFloat(m0.priorDayClose) || 0,
-          esOvernightHigh: parseFloat(m0.esOvernightHigh) || 0,
-          esOvernightLow: parseFloat(m0.esOvernightLow) || 0,
-          esEM: parseFloat(m0.esEM) || 0,
-        };
-        // Price fallback: when the bridge returns no spot but VWAP is present,
-        // use VWAP (≈ intraday price) so the scan still runs. SPX VWAP is SPY-scale
-        // so lift it ×10; SPY/QQQ use it as-is.
-        if (!inp.price) {
-          let vp = parseFloat(m0.vwap5) || 0;
-          if (underlying === 'SPX' && vp > 0 && vp < 3000) vp *= 10;
-          if (vp > 0) inp.price = vp;
-        }
-        // 45DTE carries the vol fields as the strings the ticket will be seeded with.
-        const vol = {};
-        if (!is0) {
-          VOL_SCAN_KEYS.forEach(k => { if (m0[k] !== undefined && m0[k] !== '') vol[k] = m0[k]; });
-          if (m0.termBias) vol.termBias = m0.termBias;
-          if (m0._trend) { vol._trend = m0._trend; vol.outlook = m0._trend.outlook; vol._dailySource = m0._dailySource; }
-          if (m0.vixTermRatio) vol.vixTermRatio = m0.vixTermRatio;
-          if (m0._oldBridge) vol._oldBridge = true;
-          if (m0._noDaily) vol._noDaily = true;
-        }
-        const data = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
-        if (!inp.price) return { underlying, error: 'No price', result: null, data };
-        try {
-          const result = is0 ? calc0DTE({
-            ...inp, gamStrike: 0, bankroll: 3000, startBR: 3000, risk: 0,
-            maxLoss: 300, win: 0, maxOpen: 450, pop: 0, theta: 0, delta: 0,
-            gamma: 0, hours: 6.5, underlying, overrideStrategy: null
-          }) : calc45DTE({
-            price: inp.price, vix: inp.vix,
-            ivr: parseFloat(vol.ivr) || 0, iv: parseFloat(vol.iv) || 0, hv: parseFloat(vol.hv) || 0,
-            ivFront: parseFloat(vol.ivFront) || 0, ivBack: parseFloat(vol.ivBack) || 0,
-            skew: parseFloat(vol.skew) || 0,
-            // No invented contango: without front/back IV the term structure is unknown.
-            termBias: vol.termBias || '',
-            dte: 45, pop: 0, win: 0, risk: 0,
-            bankroll: 3000, startBR: 3000, maxLoss: 300, maxOpen: 450, bpr: 0,
-            theta: 0, vega: 0, delta: 0, underlying,
-            // Outlook from the daily trend when the bridge sent bars; neutral otherwise.
-            outlook: vol.outlook || 'neutral', trend: vol._trend || null,
-            vixTermRatio: vol.vixTermRatio || null, overrideStrategy: null
-          });
-          return { underlying, result, data };
-        } catch (e) {
-          return { underlying, error: e.message, result: null, data };
-        }
-      });
-
-      engineResults.sort((a, b) => (b.result?.setupScore || 0) - (a.result?.setupScore || 0));
-      setByMode(prev => {
-        const old = prev[m] || {};
-        return { ...prev, [m]: { mode: m, results: engineResults,
-          scannedAt: (stamp && stamp.scannedAt) || old.scannedAt || new Date().toISOString(),
-          meta: (stamp && stamp.meta) || old.meta || {} } };
-      });
-    } catch (e) {
-      setError('Engine error: ' + e.message);
-    }
-  }
-
-  // Re-run engine when manual data changes
-  function handleRecalc() { runEngine(manualData, scanMode); }
-
-  const busy = scanning != null;
+  const getVal = (u, k) => typed[u]?.[k] ?? fetched[u]?.[k] ?? '';
+  const setVal = (u, k, v) => setTyped(prev => ({ ...prev, [u]: { ...(prev[u] || {}), [k]: v } }));
+  const withTyped = () => {
+    const out = {};
+    new Set([...Object.keys(fetched), ...Object.keys(typed)]).forEach(u => { out[u] = { ...(fetched[u] || {}), ...(typed[u] || {}) }; });
+    return out;
+  };
   const openMeta = r => scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null);
+  const opts = Array.from(new Set([...(choices || []), ...underlyings]));
 
   return (
-    <div className="card mb-4 fade-in" data-testid="multiscan" data-mode={scanMode}
+    <div className="card mb-4 fade-in" data-testid="multiscan" data-mode={scanMode} data-cls={cls}
       style={{ borderColor: ui.border, borderTop: `4px solid ${ui.solid}` }}>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <h3 className="text-sm font-medium text-white flex items-center gap-2">
-            <ModeBadge mode={scanMode} size="lg" testid="multiscan-mode" /> Multi-Underlying Scan
+            <ModeBadge mode={scanMode} size="lg" testid="multiscan-mode" /> {classLabel} scan
           </h3>
           <p className="text-xs text-text-muted mt-1">
             {scanMode === '0dte'
-              ? 'Today’s session: direction, range used, compression, VWAP — for a same-day trade'
-              : 'Volatility: IV rank, IV vs realised, term structure, skew — for a trade about six weeks out'}
+              ? 'Today\u2019s session: direction, range used, compression, VWAP — for a same-day trade'
+              : 'Volatility and trend: IV rank, IV vs realised, term, skew, daily trend — for a trade about six weeks out'}
           </p>
           {scannedAt && (
-            <p className="text-[12.5px] mono mt-1" style={{ color: '#a8b2be' }}>
-              {ui.short} scan {clockOf(scannedAt)} · {agoOf(scannedAt, scanNow)}
+            <p className="text-[12.5px] mono mt-1" style={{ color: stale ? '#d29922' : '#a8b2be' }} data-testid="scan-age">
+              {ui.short} · {classLabel} scan {clockOf(scannedAt)} · {agoOf(scannedAt, now)}{stale ? ' — rescan' : ''}
             </p>
           )}
+          {master && <p className="text-[12.5px] mt-1" style={{ color: '#58a6ff' }}>Scan everything: {master.label} ({master.i}/{master.n})…</p>}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => setShowInputs(!showInputs)}
             className={`px-3 py-2 text-xs border rounded-lg transition-colors ${showInputs ? 'border-accent bg-accent/10 text-accent' : 'border-[#30363d] text-[#a8b2be] hover:bg-[#161b22]'}`}>
             {showInputs ? 'Hide inputs' : 'Show inputs'}
           </button>
-          <button onClick={handleRecalc} disabled={!results}
+          <button onClick={() => onRecalc(withTyped())} disabled={!results}
             className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#a8b2be] hover:bg-[#161b22] disabled:opacity-30">
             Recalculate
           </button>
-          <button onClick={handleScan} disabled={busy} data-testid="scan-all"
+          <button onClick={() => onScan(typed)} disabled={busy || !!master} data-testid="scan-all"
+            title={`Scan ${underlyings.join(', ')} for a ${ui.short} trade`}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
             style={{ background: ui.solid, color: '#0d1117' }}>
-            <ui.Icon size={14} className={scanning === scanMode ? 'animate-spin' : ''} />
-            {scanning === scanMode ? `Scanning ${ui.short}…` : `Scan all · ${ui.short}`}
+            <ui.Icon size={14} className={busy ? 'animate-spin' : ''} />
+            {busy ? `Scanning ${classLabel}…` : `Scan ${classLabel} · ${ui.short}`}
+          </button>
+          <button onClick={onScanAll} disabled={!!master} data-testid="scan-everything-panel"
+            title="All six groups: 0DTE and 45DTE × indices, ETFs, stocks"
+            className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#c9d1d9] hover:bg-[#161b22] disabled:opacity-50">
+            Scan everything
           </button>
         </div>
       </div>
 
-      {/* The other mode's results stay, out of sight, a click away. */}
-      {other && other.results && (
-        <div data-testid="multiscan-other" className="mb-3 text-[12.5px] flex items-center gap-2" style={{ color: '#a8b2be' }}>
-          <ModeBadge mode={otherMode} /> scan from {clockOf(other.scannedAt)} is kept separately —
-          <button onClick={() => onMode && onMode(otherMode)} className="underline" style={{ color: modeUi(otherMode).fg }}>
-            switch to {modeUi(otherMode).short}
-          </button>
-          to see it.
-        </div>
-      )}
-      {scanning && scanning !== scanMode && (
-        <div className="mb-3 text-[12.5px]" style={{ color: modeUi(scanning).fg }}>
-          {modeUi(scanning).short} scan still running — its results will be filed under {modeUi(scanning).short}.
+      {otherScans && otherScans.length > 0 && (
+        <div data-testid="multiscan-other" className="mb-3 text-[12.5px] flex items-center gap-2 flex-wrap" style={{ color: '#a8b2be' }}>
+          Other groups:
+          {otherScans.map(o => {
+            const best = o.s.results && o.s.results[0] && o.s.results[0].result ? o.s.results[0] : null;
+            return (
+              <button key={o.g} onClick={() => onOpenGroup(o.m, o.c)} data-testid={'other-' + o.g.replace('|', '-')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 6, border: `1px solid ${modeUi(o.m).border}`,
+                  color: modeUi(o.m).fg, background: modeUi(o.m).bg }}>
+                {modeUi(o.m).short} · {CLASS_LABEL[o.c]}{best ? <span className="mono"> · {best.underlying} {best.result.setupScore}</span> : null}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Underlying selector */}
-      <div className="flex gap-2 mb-4">
+      {/* Underlying selector — this group's list, remembered */}
+      <div className="flex gap-2 mb-4 flex-wrap">
         {underlyings.map((u, i) => (
           <div key={i} className="flex items-center gap-1">
-            <select value={u} onChange={e => {
-              const next = [...underlyings]; next[i] = e.target.value; setUnderlyings(next);
-            }} className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
-              {['SPX','SPY','XSP','QQQ','RUT','IWM','AAPL','TSLA','AMZN','MSFT','NVDA','META','GOOGL'].map(s =>
-                <option key={s} value={s}>{s}</option>
-              )}
+            <select value={u} onChange={e => { const next = [...underlyings]; next[i] = e.target.value; onUnderlyings(next); }}
+              className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
+              {opts.map(x => <option key={x} value={x}>{x}</option>)}
             </select>
-            {underlyings.length > 2 && (
-              <button onClick={() => setUnderlyings(underlyings.filter((_, j) => j !== i))}
+            {underlyings.length > 1 && (
+              <button onClick={() => onUnderlyings(underlyings.filter((_, j) => j !== i))}
                 className="text-[#8b949e] hover:text-red text-xs">×</button>
             )}
           </div>
         ))}
-        {underlyings.length < 5 && (
-          <button onClick={() => setUnderlyings([...underlyings, 'IWM'])}
+        {underlyings.length < 6 && (
+          <button onClick={() => onUnderlyings([...underlyings, (opts.find(x => !underlyings.includes(x)) || opts[0])])}
             className="px-2 py-1.5 border border-dashed border-[#30363d] rounded text-xs text-[#8b949e] hover:text-white">+</button>
         )}
+        <button onClick={() => onUnderlyings(SCAN_DEFAULTS[cls])} title={`Back to ${SCAN_DEFAULTS[cls].join(', ')}`}
+          className="px-2 py-1.5 text-xs text-[#8b949e] hover:text-white underline">defaults</button>
       </div>
 
-      {error && <div className="text-sm text-red mb-3">{error}</div>}
-
-      {/* Manual input grid */}
       {showInputs && (
         <div className="mb-4 overflow-x-auto fade-in">
           <table className="w-full text-xs">
             <thead>
               <tr className="text-[11px] text-[#a8b2be] uppercase tracking-wider">
                 <th className="text-left py-1 px-1 w-28">{ui.short} input</th>
-                {underlyings.map((u, i) => (
-                  <th key={i} className="text-center py-1 px-1 text-white text-sm font-bold">{u}</th>
-                ))}
+                {underlyings.map((u, i) => <th key={i} className="text-center py-1 px-1 text-white text-sm font-bold">{u}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -1719,9 +1505,7 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
                   <td className="py-1 px-1 text-[#a8b2be] text-[12px]">{f.label}</td>
                   {underlyings.map((u, i) => (
                     <td key={i} className="py-1 px-1">
-                      <input type="number" step="any" value={getVal(u, f.key)}
-                        onChange={e => setVal(u, f.key, e.target.value)}
-                        placeholder="—"
+                      <input type="number" step="any" value={getVal(u, f.key)} onChange={e => setVal(u, f.key, e.target.value)} placeholder="—"
                         className="w-full px-2 py-1 bg-[#0d1117] border border-[#21262d] rounded text-[12.5px] text-white mono outline-none focus:border-[#2f81f7] text-center" />
                     </td>
                   ))}
@@ -1732,10 +1516,9 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
         </div>
       )}
 
-      {/* Results comparison table */}
       {results && results.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" data-testid="scan-results" data-mode={scanMode}>
+          <table className="w-full text-sm" data-testid="scan-results" data-mode={scanMode} data-cls={cls}>
             <thead>
               <tr className="text-[12px] text-[#a8b2be] uppercase tracking-wider">
                 <th className="text-left py-2 px-2"><ModeBadge mode={scanMode} /></th>
@@ -1758,9 +1541,9 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
               {[
                 { label: 'Strategy', render: r => r.result?.legStrat || r.result?.bestStrat || r.error || '--' },
                 { label: 'Setup score', render: r => {
-                  const s = r.result?.setupScore || 0;
-                  const col = s >= 85 ? '#3fb950' : s >= 70 ? '#2f81f7' : s >= 50 ? '#d29922' : '#f85149';
-                  return <span style={{color:col}}>{s}/100 <span style={{fontSize:12,fontWeight:400}}>{r.result?.setup||''}</span></span>;
+                  const sc = r.result?.setupScore || 0;
+                  const col = sc >= 85 ? '#3fb950' : sc >= 70 ? '#2f81f7' : sc >= 50 ? '#d29922' : '#f85149';
+                  return <span style={{color:col}}>{sc}/100 <span style={{fontSize:12,fontWeight:400}}>{r.result?.setup||''}</span></span>;
                 }},
                 ...SCAN_ROWS[scanMode],
                 { label: 'Price', render: r => r.data?.price || '--' },
@@ -1784,9 +1567,7 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
                 <tr key={ri} className="border-t border-[#21262d]">
                   <td className="py-2 px-2 text-[#a8b2be]" title={row.tip || undefined}
                     style={row.tip ? { textDecoration: 'underline dotted #484f58', textUnderlineOffset: 3, cursor: 'help' } : undefined}>{row.label}</td>
-                  {results.map((r, i) => (
-                    <td key={i} className="py-2 px-3 text-center mono text-xs">{row.render(r)}</td>
-                  ))}
+                  {results.map((r, i) => <td key={i} className="py-2 px-3 text-center mono text-xs">{row.render(r)}</td>)}
                 </tr>
               ))}
             </tbody>
@@ -1796,7 +1577,7 @@ function MultiScanPanel({ mode, onSelect, onMode }) {
 
       {!results && !busy && (
         <div className="py-8 text-center text-[#8b949e] text-sm">
-          Select underlyings and click “Scan all · {ui.short}” to fetch data, or “Show inputs” to enter manually
+          “Scan {classLabel} · {ui.short}” scans {underlyings.join(', ')} — or “Scan everything” for all six groups. “Show inputs” to enter values by hand.
         </div>
       )}
     </div>
