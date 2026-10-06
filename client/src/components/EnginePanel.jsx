@@ -10,7 +10,8 @@ import { DEFAULT_STRIKE_METHOD, deltaStrikePlan, bracketStrikes, pickByDelta, sh
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
-import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE } from '../engine/payoffCurve';
+import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE, positionValue } from '../engine/payoffCurve';
+import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffTimeChart from './PayoffTimeChart';
 import { computeTrend, trendLabel } from '../engine/trend';
 
@@ -536,7 +537,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Outlook is held too (Oct 2026): the daily trend sets it on every vol-surface
   // pull until you choose one yourself.
   // Typing POP replaces a model-filled one (popSource 'model' → '').
-  const set45 = (k,v) => { setI45(p => ({...p,[k]:v, ...(k === 'pop' ? { popSource: '' } : {})})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
+  const set45 = (k,v) => { setI45(p => ({...p,[k]:v, ...(k === 'pop' ? { popSource: '' } : {}),
+    ...(k === 'win' ? { winSource: '' } : {}), ...(k === 'risk' ? { riskSource: '' } : {})})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -1466,8 +1468,97 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       const p = String(Math.round(exitSim.pop * 100));
       if (i45.pop !== p) setI45(prev => ({ ...prev, pop: p, popSource: 'model' }));
     }
+    // Win and Risk for time spreads (TWS gives neither for two expiries). Win = the
+    // peak of the near-expiry curve; Risk = the most the curve can lose at the near
+    // expiry over a wide price range — the debit for a calendar, debit + strike gap
+    // for a diagonal whose long leg is the further one out. Model-filled when blank;
+    // typing either replaces it.
+    if (isTimeSpread && payCurve) {
+      const winM = String(Math.round(payCurve.atExpiry.maxProfit));
+      const wide = curveAt(payCurve.cl, { net: payCurve.net, lo: payCurve.spot * 0.5, hi: payCurve.spot * 1.6, days: payCurve.nearDte, n: 240 });
+      const riskM = String(Math.round(Math.max(Math.abs(payCurve.net) * 100, -wide.maxLoss)));
+      const patch = {};
+      if ((i45.win === '' || i45.winSource === 'model') && payCurve.atExpiry.maxProfit > 0 && i45.win !== winM) Object.assign(patch, { win: winM, winSource: 'model' });
+      if ((i45.risk === '' || i45.riskSource === 'model') && i45.risk !== riskM) Object.assign(patch, { risk: riskM, riskSource: 'model' });
+      if (Object.keys(patch).length) setI45(prev => ({ ...prev, ...patch }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simKey, is0, isTimeSpread, i45.pop, i45.popSource]);
+  }, [simKey, is0, isTimeSpread, i45.pop, i45.popSource, i45.win, i45.winSource, i45.risk, i45.riskSource]);
+
+  // ── Break-even fill (Oct 2026) ──
+  // The entry price at which EV = 0: pay at most this debit / take at least this
+  // credit. Single-expiry structures re-run the engine across fills — their expiry
+  // payoff is intrinsic + net, so Win and Risk shift one-for-one with the price
+  // (POP held at what is entered). Time spreads re-run the managed-trade simulation
+  // at each fill, POP and all. Memoised; ~25 engine runs or ~18 small simulations.
+  const beBag = is0 ? i0 : i45;
+  const beKey = JSON.stringify([is0, effectiveStrat, overrideStrat, tsClose, (r.legs || []).map(l => [l.strike, l.label]),
+    Object.fromEntries(Object.entries(beBag).filter(([k]) => !['netCreditDebit', 'win', 'risk', 'winSource', 'riskSource', 'popSource'].includes(k))),
+    isTimeSpread && payCurve ? [payCurve.cl.map(l => [l.strike, l.right, l.sign, l.qty, l.dte, +l.iv.toFixed(4)]), payCurve.spot, +payCurve.sigmaNear.toFixed(4), payCurve.closeDay] : null,
+    r.evBasis ? r.evBasis.commissionRoundTrip : 0, captureStats ? 1 : 0]);
+  const breakeven = useMemo(() => {
+    try {
+      if (!Array.isArray(r.legs) || !r.legs.length) return null;
+      if (!is0 && isTimeSpread) {
+        if (!payCurve || payCurve.closeDay < 1) return null;
+        const pc = payCurve;
+        const comm = r.evBasis ? (r.evBasis.commissionRoundTrip || 0) : 0;
+        const fair = -positionValue(pc.cl, pc.spot, 0);           // model fair, per share (− = debit)
+        // The profit target stays at the ticket's own $ figure: re-deriving "25% of the
+        // debit" at each trial price would shrink the target to nothing as the price
+        // falls, and EV would stop rising with a better fill.
+        const tgt = pc.target ? pc.target.dollars : Infinity;
+        const evAt = n => {
+          const sim = simulateExit(pc.cl, { net: n, spot: pc.spot, sigma: pc.sigmaNear, mu: RATE - pc.divYield,
+            closeDay: pc.closeDay, target: tgt > 0 ? tgt : Infinity, paths: 400 });
+          return sim ? sim.ev - comm : NaN;
+        };
+        const worst = Math.min(fair * 3, -0.05);
+        return { ...solveBreakevenNet(evAt, worst, -0.01, 18), basis: 'sim' };
+      }
+      const pay0 = legsPayoff(r.legs, 0);
+      if (!pay0) return null;
+      const mp0 = pay0.maxProfit, ml0 = pay0.maxLoss;
+      const lo = -mp0 / 100, hi = -ml0 / 100;
+      if (!(hi > lo)) return null;
+      const popNow = fv(beBag, 'pop');
+      if (!(popNow > 0)) return { status: 'needPop' };
+      const eps = (hi - lo) * 0.002;
+      const evAt = n => {
+        const wr = winRiskAtNet(mp0, ml0, n);
+        if (!(wr.win > 0) || !(wr.risk > 0)) return NaN;
+        const res = is0 ? calc0DTE(mk0({ netCreditDebit: n, win: wr.win, risk: wr.risk }))
+          : calc45DTE(mk45({ win: wr.win, risk: wr.risk }));
+        return res.ev;
+      };
+      return { ...solveBreakevenNet(evAt, lo + eps, hi - eps), basis: 'engine', pop: popNow,
+        measured: !!(r.evBasis && r.evBasis.mode === 'measured') };
+    } catch (e) { return null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beKey]);
+  // Put the break-even price in the net field, in the same sign style as what's there.
+  function applyBreakevenNet() {
+    if (!breakeven || breakeven.status !== 'ok') return;
+    const n = breakeven.net;
+    // Round toward the safe side: a debit down, a credit up, to the cent.
+    const safe = n < 0 ? -Math.floor(Math.abs(n) * 100) / 100 : Math.ceil(n * 100) / 100;
+    const typed = parseFloat(ticketNet);
+    const v = (isFinite(typed) && typed > 0 && safe < 0) ? Math.abs(safe) : safe;
+    if (is0) set0('netCreditDebit', v.toFixed(2)); else set45('netCreditDebit', v.toFixed(2));
+  }
+  const beView = (() => {
+    if (!breakeven) return null;
+    if (breakeven.status === 'needPop') return { tone: 'muted', text: 'Break-even fill: enter POP to solve' };
+    if (breakeven.measured) return { tone: 'muted', text: 'Break-even fill: EV is from measured history, which the fill price does not move' };
+    if (breakeven.status === 'none') return { tone: 'bad', text: `No fill gives EV ≥ 0${breakeven.pop ? ` at POP ${breakeven.pop}%` : ''}` };
+    if (breakeven.status === 'any') return { tone: 'good', text: 'EV ≥ 0 at any fill in range' };
+    const n = breakeven.net, cur = signedNet(ticketNet, cashType);
+    const txt = n < 0 ? `pay ≤ ${Math.abs(n).toFixed(2)} debit` : `receive ≥ ${n.toFixed(2)} credit`;
+    const gap = isFinite(cur) ? cur - n : null;                 // + = your fill is better than break-even
+    return { tone: gap == null ? 'muted' : gap >= 0 ? 'good' : 'bad', text: `EV = 0 at: ${txt}`,
+      gapText: gap == null ? '' : gap >= 0 ? `your fill clears it by ${gap.toFixed(2)}` : `your fill is ${Math.abs(gap).toFixed(2)} short`,
+      basis: breakeven.basis === 'sim' ? 'simulated managed trade, target held at the ticket\'s $ figure' : `POP ${breakeven.pop}% held` };
+  })();
 
   // ── Trade choices (Oct 2026) ──
   // Built from stratCompare (current + next two, each a full engine run). The
@@ -2767,6 +2858,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 fair {r.priceCheck.fair.toFixed(2)} · {r.priceCheck.ratio.toFixed(2)}× fair
               </span>
             )}
+            {beView && <BreakevenLine v={beView} onUse={breakeven && breakeven.status === 'ok' ? applyBreakevenNet : null} />}
           </div>
           {commUnitsNow > 0 && (
             <div data-testid="commission-cell" style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}
@@ -3226,6 +3318,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     : '#c9d1d9'
                 }}
               />
+              {beView && <BreakevenLine v={beView} onUse={breakeven && breakeven.status === 'ok' ? applyBreakevenNet : null} />}
             </div>
             <div>
               <label className="text-xs text-text-muted block mb-1">POP (%)</label>
@@ -3265,7 +3358,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               )}
             </div>
             <div>
-              <Inp label="Win amount ($)" field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+              <Inp label={!is0 && i45.winSource === 'model' ? 'Win amount ($) — model, curve peak' : 'Win amount ($)'} field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
               <PrefillChip payoffVal={sizingPay?.maxProfit} fieldVal={is0?i0.win:i45.win}
                 onFill={v=>is0?set0('win',v):set45('win',v)}/>
             </div>
@@ -3299,6 +3392,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 }}
               />
               {r.kellyDollar > 0 && <div style={{fontSize:11,color:'#a8b2be',marginTop:2}}>Adj Kelly $: {r.kellyDollar.toFixed(0)}</div>}
+              {!is0 && i45.riskSource === 'model' && (
+                <div data-testid="risk-model-note" style={{fontSize:11.5,color:'#58a6ff',marginTop:2,lineHeight:1.4}}>
+                  Model risk — the most the position can lose at the near expiry (the debit for a calendar; debit + strike gap for a wide diagonal). TWS margin impact should match; type it to override.
+                </div>
+              )}
               <PrefillChip payoffVal={sizingPay?.maxLoss} fieldVal={is0?i0.risk:i45.risk}
                 onFill={v=>is0?set0('risk',v):set45('risk',v)}/>
             </div>
@@ -4221,6 +4319,24 @@ function NeedNum({ label, value, onChange, suggest }) {
         </button>
       )}
     </label>
+  );
+}
+
+// One line: the fill at which EV = 0, how the current fill compares, and a button
+// that puts it in the net field. (Oct 2026.)
+function BreakevenLine({ v, onUse }) {
+  const col = v.tone === 'good' ? '#3fb950' : v.tone === 'bad' ? '#f85149' : '#8b949e';
+  return (
+    <span data-testid="breakeven-fill" title={v.basis ? 'Break-even fill from the ' + v.basis : undefined}
+      style={{ fontSize: 12.5, color: col, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 }}>
+      <span className="mono">{v.text}</span>
+      {v.gapText && <span style={{ color: '#a8b2be' }}>· {v.gapText}</span>}
+      {onUse && (
+        <button type="button" onClick={onUse}
+          style={{ padding: '1px 7px', borderRadius: 4, border: '1px solid #1f6feb55', background: '#0d1a2e', color: '#58a6ff',
+            fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>use</button>
+      )}
+    </span>
   );
 }
 
