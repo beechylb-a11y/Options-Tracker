@@ -59,12 +59,35 @@ function cached(cache, key, make) {
   if (!cache.has(key)) cache.set(key, make());
   return cache.get(key);
 }
+// Resolves to the parsed body, or { error } saying why there is none — a timeout, an
+// unreachable bridge, a web page instead of JSON. It used to resolve null for all of
+// them, so a slow bridge produced a blank scan with no reason. (Oct 2026.)
 function getJson(url, ms) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   return fetch(url, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
-    .then(r => r.json()).catch(() => null).finally(() => clearTimeout(t));
+    .then(async r => {
+      const txt = await r.text();
+      try { return JSON.parse(txt); }
+      catch (e) {
+        return { error: r.status === 404 || /Cannot GET/i.test(txt) ? 'bridge is an older version — pull and restart it'
+          : /ngrok/i.test(txt) ? 'ngrok returned a page instead of the bridge' : `bridge returned a web page (HTTP ${r.status})` };
+      }
+    })
+    .catch(e => ({ error: e.name === 'AbortError' ? `bridge took longer than ${Math.round(ms / 1000)} s` : 'bridge not reachable' }))
+    .finally(() => clearTimeout(t));
 }
+
+// Run `fn` over `items` with at most `n` in flight. The bridge has one TWS connection;
+// a whole group at once (seven tickers × five history requests) is what made it slow.
+async function pool(items, n, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}
+const SCAN_CONCURRENCY = 2;
 
 /** Pull the bridge's data for `underlyings` into a copy of `manualData` (typed values win). */
 export async function fetchScanData({ mode, underlyings, manualData = {}, bridgeUrl, cache }) {
@@ -76,10 +99,14 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
   const list = (underlyings || []).filter(Boolean);
   if (!bridgeUrl) return { mergedData, meta, pulledAt };
 
-  const market = await Promise.all(list.map(u =>
-    cached(cache, 'md:' + u, () => getJson(bridgeUrl + '/api/market-data?underlying=' + u, 20000)).then(data => ({ u, data }))));
+  const market = await pool(list, SCAN_CONCURRENCY, u =>
+    cached(cache, 'md:' + u, () => getJson(bridgeUrl + '/api/market-data?underlying=' + u, 60000)).then(data => ({ u, data })));
   market.forEach(({ u, data }) => {
-    if (!data || data.error) return;
+    if (!data || data.error) {
+      // Say why on the row instead of leaving it blank.
+      mergedData[u] = { ...(mergedData[u] || {}), _fetchError: (data && data.error) || 'no answer from the bridge' };
+      return;
+    }
     // Freshness is not an engine input; carry it to the tab separately.
     meta[u] = { isLive: !!data.isLive, label: data.dataTypeLabel || (data.isLive ? 'Live' : 'Last close'),
       asOf: data.asOf || data.timestamp || null, pulledAt };
@@ -113,11 +140,11 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
   if (is0) {
     // Straddle EM — the market-priced move, preferred over the VIX model.
     const today = tradingSession().yyyymmdd;
-    const st = await Promise.all(list.map(u => {
+    const st = await pool(list, SCAN_CONCURRENCY, u => {
       const spot = parseFloat(mergedData[u]?.price) || 0;
       return cached(cache, 'st:' + u, () => getJson(bridgeUrl + '/api/atm-straddle?underlying=' + u + '&expiry=' + today
-        + '&haircut=0.85' + (spot > 0 ? '&spot=' + spot : ''), 13000)).then(sd => ({ u, sd }));
-    }));
+        + '&haircut=0.85' + (spot > 0 ? '&spot=' + spot : ''), 30000)).then(sd => ({ u, sd }));
+    });
     st.forEach(({ u, sd }) => {
       if (sd && sd.source === 'straddle' && sd.expectedMove > 0 && mergedData[u]) {
         mergedData[u] = { ...mergedData[u], em: String(sd.expectedMove), emSource: 'straddle',
@@ -126,13 +153,14 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
     });
   } else {
     // The vol surface — ATM IV, IV rank, HV, term, skew, daily bars, VIX/VIX3M.
-    const vs = await Promise.all(list.map(u => {
+    const vs = await pool(list, SCAN_CONCURRENCY, u => {
       const spot = parseFloat(mergedData[u]?.price) || 0;
       return cached(cache, 'vs:' + u, () => getJson(bridgeUrl + '/api/vol-surface?underlying=' + u
-        + (spot > 0 ? '&spot=' + spot : ''), 45000)).then(v => ({ u, v }));
-    }));
+        + (spot > 0 ? '&spot=' + spot : ''), 90000)).then(v => ({ u, v }));
+    });
     vs.forEach(({ u, v }) => {
-      if (!v || v.error || !mergedData[u]) return;
+      if (!mergedData[u]) return;
+      if (!v || v.error) { mergedData[u] = { ...mergedData[u], _volError: (v && v.error) || 'no answer from the bridge' }; return; }
       const md = { ...mergedData[u] };
       VOL_SCAN_KEYS.forEach(k => {
         const x = v[k];
@@ -185,9 +213,10 @@ export function computeScan(mode, underlyings, data) {
       if (m0.vixTermRatio) vol.vixTermRatio = m0.vixTermRatio;
       if (m0._oldBridge) vol._oldBridge = true;
       if (m0._noDaily) vol._noDaily = true;
+      if (m0._volError) vol._volError = m0._volError;
     }
     const rowData = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
-    if (!inp.price) return { underlying, error: 'No price', result: null, data: rowData };
+    if (!inp.price) return { underlying, error: m0._fetchError ? 'Bridge: ' + m0._fetchError : 'No price from the bridge', result: null, data: rowData };
     try {
       const result = is0 ? calc0DTE({
         ...inp, gamStrike: 0, bankroll: 3000, startBR: 3000, risk: 0, maxLoss: 300, win: 0, maxOpen: 450,

@@ -1380,7 +1380,10 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
             </thead>
             <tbody>
               {[
-                { label: 'Strategy', render: r => r.result?.legStrat || r.result?.bestStrat || r.error || '--' },
+                { label: 'Strategy', render: r => r.error
+                    ? <span data-testid="scan-error" style={{ color: '#f85149', fontSize: 12.5 }}>{r.error}</span>
+                    : <>{r.result?.legStrat || r.result?.bestStrat || '--'}
+                        {r.data?._volError && <div data-testid="scan-vol-error" style={{ color: '#d29922', fontSize: 11.5, fontWeight: 400 }}>vol surface: {r.data._volError}</div>}</> },
                 { label: 'Setup score', render: r => {
                   const sc = r.result?.setupScore || 0;
                   const col = sc >= 85 ? '#3fb950' : sc >= 70 ? '#2f81f7' : sc >= 50 ? '#d29922' : '#f85149';

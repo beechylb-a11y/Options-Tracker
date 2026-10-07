@@ -360,7 +360,27 @@ function buildOptionContract(underlying, expiry, strike, right) {
 // useRTH 0 = include the overnight (Globex) session; formatDate 2 = epoch seconds,
 // which is timezone-proof (formatDate 1 comes back in TWS's LOGIN timezone, which
 // here is Melbourne, not New York). Defaults keep every existing caller unchanged.
+// ── Shared historical requests (Oct 2026) ──
+// IBKR treats identical historical requests within 15 seconds as a pacing violation
+// and never answers the duplicates — each then sat out the 8 s timeout. A scan sends
+// exactly that: every ticker asks for the same 5-day ES bars, and SPX, XSP and SPY
+// all ask for the same SPY bars, at the same moment. Identical requests now share
+// one in-flight call and its result for 20 s. Empty results are not kept.
+const HIST_SHARE_MS = 20000;
+const histShared = new Map();
 function getHistoricalBars(contract, duration, barSize, whatToShow = WhatToShow.TRADES, endDateTime = '', useRTH = 1, formatDate = 1) {
+  const key = JSON.stringify([contract && contract.symbol, contract && contract.secType, contract && contract.exchange,
+    contract && contract.lastTradeDateOrContractMonth, contract && contract.strike, contract && contract.right,
+    duration, barSize, whatToShow, endDateTime, useRTH, formatDate]);
+  const hit = histShared.get(key);
+  if (hit && Date.now() - hit.at < HIST_SHARE_MS) return hit.p.then(b => (Array.isArray(b) ? b.slice() : b));
+  const p = getHistoricalBarsOnce(contract, duration, barSize, whatToShow, endDateTime, useRTH, formatDate);
+  histShared.set(key, { p, at: Date.now() });
+  p.then(b => { if (!b || !b.length) histShared.delete(key); }, () => histShared.delete(key));
+  if (histShared.size > 500) { const now = Date.now(); for (const [k, v] of histShared) if (now - v.at > HIST_SHARE_MS) histShared.delete(k); }
+  return p.then(b => (Array.isArray(b) ? b.slice() : b));
+}
+function getHistoricalBarsOnce(contract, duration, barSize, whatToShow = WhatToShow.TRADES, endDateTime = '', useRTH = 1, formatDate = 1) {
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
     const bars = [];
