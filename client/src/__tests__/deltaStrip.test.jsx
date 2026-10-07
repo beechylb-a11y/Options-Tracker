@@ -30,6 +30,8 @@ const mount = (extra = {}, onLog = () => true) => render(
     strategyHistory={{}} toast={() => {}}
     initialState={{ i0: { ...base }, ...extra }} />);
 
+const greekCalls = () => global.fetch.mock.calls.filter(c => !/listed-strikes/.test(String(c[0]))).length;
+
 describe('delta strip', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -37,6 +39,8 @@ describe('delta strip', () => {
     localStorage.clear();
     localStorage.setItem('bridgeUrl', 'http://bridge.test');
     global.fetch = vi.fn(async (url) => {
+      // today's listed strikes (0DTE, Oct 2026) — none in this test
+      if (/listed-strikes/.test(String(url))) return { text: async () => JSON.stringify({ error: 'none' }) };
       const legs = JSON.parse(decodeURIComponent(String(url).split('&legs=')[1]));
       return { json: async () => ({ legs: legs.map(l => ({ ...greek(l.strike, l.right), qty: l.qty })),
         net: { delta: 1, theta: 5, gamma: 0.1, vega: 1, bid: 6.2, ask: 6.5 },
@@ -68,7 +72,7 @@ describe('delta strip', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use delta strikes' }));
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/on ticket: Delta ✓ confirmed/));
     // bracket call + the refetch for the new legs
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(greekCalls()).toBe(2));
     // New strikes clear the old fill (it priced the old strikes) — enter it again.
     expect(screen.getByTestId('verdict').textContent).toBe('Waiting on sizing');
     const set = (f, v) => fireEvent.change(document.querySelector(`[data-field="${f}"]`), { target: { value: v } });
@@ -87,7 +91,7 @@ describe('delta strip', () => {
     mount({ strikeMethod: { '0': 'delta', '45': 'delta' } });
     fireEvent.click(screen.getByText('fetch greeks'));
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/on ticket: Delta ✓ confirmed/));
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));   // greeks, bracket, refresh
+    await waitFor(() => expect(greekCalls()).toBe(3));   // greeks, bracket, refresh
     // after the refresh the check reads the new legs, all inside their bands
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/POP by delta/));
   });

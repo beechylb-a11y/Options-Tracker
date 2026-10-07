@@ -90,20 +90,75 @@ function fitIron(legs, L, ix) {
   return out;
 }
 
+// Butterfly shape: three legs of one right, one short body between two longs.
+// Returns { b, lo, hi, right } indices or null.
+function flyShape(legs) {
+  if (!Array.isArray(legs) || legs.length !== 3) return null;
+  const r = rightOf(legs[0]);
+  if (!r || legs.some(l => rightOf(l) !== r)) return null;
+  const shorts = legs.map((l, i) => (isShort(l) ? i : -1)).filter(i => i >= 0);
+  if (shorts.length !== 1) return null;
+  const b = shorts[0];
+  const longs = [0, 1, 2].filter(i => i !== b);
+  const [lo, hi] = legs[longs[0]].strike < legs[longs[1]].strike ? longs : [longs[1], longs[0]];
+  if (!(legs[lo].strike < legs[b].strike && legs[b].strike < legs[hi].strike)) return null;
+  return { b, lo, hi, right: r };
+}
+
+// A fly snapped leg by leg on a coarse chain loses its shape: AAPL 0DTE lists every
+// $2.50, so the engine's 334 / 2×335.5 / 338 asymmetric fly became 332.5/335/337.5 —
+// a plain fly. Fit body and both wings together, keeping which wing is wider (equal
+// stays equal), and move each as little as possible. (Oct 2026.)
+function fitFly(legs, L, ix) {
+  const list = L[ix.right];
+  if (!list || list.length < 3) return null;
+  const b0 = legs[ix.b].strike, wl0 = b0 - legs[ix.lo].strike, wu0 = legs[ix.hi].strike - b0;
+  const rel = Math.abs(wu0 - wl0) < EPS ? 0 : Math.sign(wu0 - wl0);
+  const maxW = w => Math.max(3 * w, w + 25);
+  let best = null;
+  neighbours(list, b0, 3).forEach(b => {
+    list.forEach(lo => {
+      const wl = b - lo;
+      if (!(wl > EPS) || wl > maxW(wl0)) return;
+      list.forEach(hi => {
+        const wu = hi - b;
+        if (!(wu > EPS) || wu > maxW(wu0)) return;
+        const r = Math.abs(wu - wl) < EPS ? 0 : Math.sign(wu - wl);
+        if (r !== rel) return;
+        const cost = Math.abs(b - b0) + Math.abs(wl - wl0) + Math.abs(wu - wu0);
+        if (!best || cost < best.cost - EPS) best = { cost, b, lo, hi };
+      });
+    });
+  });
+  if (!best) return null;
+  const out = legs.map(l => ({ ...l }));
+  out[ix.b].strike = best.b; out[ix.lo].strike = best.lo; out[ix.hi].strike = best.hi;
+  return out;
+}
+
 function fitEach(legs, L) {
   const out = legs.map(l => {
     const list = L[rightOf(l)];
     return list && list.length ? { ...l, strike: nearestListed(list, l.strike) } : { ...l };
   });
-  // Two legs of one right that were apart must stay apart: the long steps outward.
+  // Two legs of one right that were apart must stay apart: one of them steps outward —
+  // the long or the short, whichever leaves the pair nearer where it was built (the
+  // long on a tie). A $1-wide 335/336 call spread on a $2.50 chain becomes 335/337.5,
+  // not a deep-ITM 332.5/335. (Oct 2026.)
   for (let i = 0; i < out.length; i++) {
     for (let j = 0; j < out.length; j++) {
       if (i === j || rightOf(out[i]) !== rightOf(out[j]) || isShort(out[j]) || !isShort(out[i])) continue;
       if (Math.abs(legs[i].strike - legs[j].strike) < EPS || Math.abs(out[i].strike - out[j].strike) > EPS) continue;
       const list = L[rightOf(out[j])];
-      const up = legs[j].strike > legs[i].strike;
-      const next = up ? list.find(x => x > out[i].strike + EPS) : [...list].reverse().find(x => x < out[i].strike - EPS);
-      if (next != null) out[j].strike = next;
+      const up = legs[j].strike > legs[i].strike;          // the long sits above the short
+      const step = (k, dirUp) => dirUp ? list.find(x => x > k + EPS) : [...list].reverse().find(x => x < k - EPS);
+      const longNext = step(out[i].strike, up);             // long away from the short
+      const shortNext = step(out[j].strike, !up);           // short away from the long
+      const dist = (a, b) => Math.abs(a - legs[i].strike) + Math.abs(b - legs[j].strike);
+      const costLong = longNext != null ? dist(out[i].strike, longNext) : Infinity;
+      const costShort = shortNext != null ? dist(shortNext, out[j].strike) : Infinity;
+      if (costShort < costLong - EPS) out[i].strike = shortNext;
+      else if (longNext != null) out[j].strike = longNext;
     }
   }
   return out;
@@ -153,8 +208,12 @@ export function fitToListed(legs, listed) {
   const cover = chainCovers(legs, L);
   if (!cover.ok) return none(cover.why);
   const ix = ironShape(legs);
+  const fx = ix ? null : flyShape(legs);
   let out = null, equalWings = null;
-  if (ix) {
+  if (fx) {
+    out = fitFly(legs, L, fx);
+    if (!out) return none('no listed wings near these strikes keep the butterfly\'s shape');
+  } else if (ix) {
     // A condor / iron fly is fitted whole or not at all: snapping leg by leg is
     // what gives uneven wings.
     out = fitIron(legs, L, ix);

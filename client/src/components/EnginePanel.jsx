@@ -794,6 +794,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['0'] || null,
+          listedStrikes: listedNow,
           ...(over || {})
   });
 
@@ -803,7 +804,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const trendNow = volMeta && volMeta.trend && (!volMeta.und || volMeta.und === i45.underlying) ? volMeta.trend : null;
   // Listed strikes only while they are for this underlying (the expiry is checked
   // when they are fetched; a DTE change refetches).
-  const listedNow = !is0 && listedChain && listedChain.u === i45.underlying && (listedChain.C || listedChain.P)
+  // 0DTE (Oct 2026): today's expiry, same fit — stock chains are coarse (AAPL $2.50).
+  const listedNow = listedChain && listedChain.mode === (is0 ? '0' : '45')
+    && listedChain.u === (is0 ? i0.underlying : i45.underlying)
+    && (!is0 || listedChain.exp === tradingSession().yyyymmdd) && (listedChain.C || listedChain.P)
     ? { C: listedChain.C || [], P: listedChain.P || [] } : null;
   const mk45 = (over) => ({
           price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
@@ -925,33 +929,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     ? nearestExpiry(expList, todayYmd, addDaysYmd(todayYmd, Math.max(1, parseInt(i45.dte, 10) || 45)), 1) : null;
   // The listed strikes of that expiry (Oct 2026): far-dated chains thin out unevenly
   // (QQQ 20 Nov: puts every $1, calls every $5), and the engine fits to them.
+  // 0DTE fetches today's expiry for its own underlying (Oct 2026).
+  const listedExp = is0 ? todayYmd : (!isTimeSpread ? singleExp : null);
+  const listedUnd = is0 ? i0.underlying : i45.underlying;
   useEffect(() => {
-    if (is0 || isTimeSpread || !singleExp) return;
-    const key = i45.underlying + '|' + singleExp;
+    if (!listedExp || !listedUnd) return;
+    const mode = is0 ? '0' : '45';
+    const key = mode + '|' + listedUnd + '|' + listedExp;
     if (listedChain && listedChain.key === key) return;
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
     if (!bridgeUrl) return;
     // the old expiry's strikes must not fit this one while the new ones load
-    setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: null, loading: true });
+    setListedChain({ key, mode, u: listedUnd, exp: listedExp, C: null, P: null, err: null, loading: true });
     let live = true;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 35000);
-    fetch(bridgeUrl + '/api/listed-strikes?underlying=' + i45.underlying + '&expiry=' + singleExp,
+    fetch(bridgeUrl + '/api/listed-strikes?underlying=' + listedUnd + '&expiry=' + listedExp,
       { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
       .then(r => r.text()).then(txt => {
         let d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
         if (!live) return;
         const ok = d && !d.error && (Array.isArray(d.calls) || Array.isArray(d.puts)) && d.complete !== false;
-        setListedChain({ key, u: i45.underlying, exp: singleExp, C: ok ? d.calls || [] : null, P: ok ? d.puts || [] : null,
+        setListedChain({ key, mode, u: listedUnd, exp: listedExp, C: ok ? d.calls || [] : null, P: ok ? d.puts || [] : null,
           err: ok ? null : d && d.complete === false ? `TWS timed out listing strikes (${(d.puts || []).length} puts, ${(d.calls || []).length} calls arrived)`
             : (d && d.error) || 'bridge has no listed-strikes yet — pull and restart it' });
       })
-      .catch(() => { if (live) setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: 'bridge not reachable' }); })
+      .catch(() => { if (live) setListedChain({ key, mode, u: listedUnd, exp: listedExp, C: null, P: null, err: 'bridge not reachable' }); })
       .finally(() => clearTimeout(t));
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [is0, isTimeSpread, singleExp, i45.underlying]);
+  }, [is0, listedExp, listedUnd]);
   function pickSingle(e) {
     const d = dteBetween(todayYmd, e);
     if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
@@ -1099,7 +1107,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     let strikes = [];
     for (let k = 3; k >= -3; k--) strikes.push(+(center + k * strikeStep).toFixed(2));
     // 45DTE: the strikes this expiry actually lists for this right.
-    const lad = !is0 && listedNow && (listedNow[right] || []).length >= 5 ? listedLadder(listedNow[right], center, 3) : null;
+    const lad = listedNow && (listedNow[right] || []).length >= 5 ? listedLadder(listedNow[right], center, 3) : null;
     if (lad && lad.length) strikes = lad;
     const underlying = is0 ? i0.underlying : i45.underlying;
     const expiry = legExpiryOf(leg) || deriveExpiryYYYYMMDD();
@@ -1935,7 +1943,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const deltaByDefault = !!(r.vertVariants && vertPick !== 'em');
     if (autoApply && fetchedRows && fetchedRows.length && (strikeMethod[bag] === 'delta' || deltaByDefault) && strikesBuiltBy !== 'Manual') {
       const plan = deltaStrikePlan({ legs: fetchedLegs, strat: r.legStrat, horizon: deltaHorizon,
-        price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying, listed: is0 ? null : listedNow });
+        price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying, listed: listedNow });
       if (plan && plan.changed) { await applyDeltaStrikes({ plan, rows: fetchedRows, legs: fetchedLegs }); clearFillForNewStrikes(); }
       else if (plan) setDeltaApplied({ bag, strat: r.legStrat || '', map: (ovNow && ovNow.map) || {}, confirmed: true, at: new Date().toISOString() });
     }
@@ -2017,7 +2025,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const brackets = {};
         const req = [];
         plan0.moves.forEach(m => {
-          brackets[m.idx] = bracketStrikes(m.to, underlying, 2, !is0 && listedNow && (listedNow[m.right] || []).length >= 5 ? listedNow[m.right] : null);
+          brackets[m.idx] = bracketStrikes(m.to, underlying, 2, listedNow && (listedNow[m.right] || []).length >= 5 ? listedNow[m.right] : null);
           brackets[m.idx].forEach(k => {
             if (!req.some(q => q.strike === k && q.right === m.right)) req.push({ strike: k, right: m.right, qty: 1 });
           });
@@ -2042,7 +2050,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           if (Object.keys(shortStrikes).length === plan0.moves.length) {
             const p2 = deltaStrikePlan({ legs: legsNow, strat: r.legStrat, horizon: deltaHorizon,
               price: fv(secBag, 'price'), legGreeks: rowsNow, T: deltaT(),
-              underlying, shortStrikes, listed: is0 ? null : listedNow });
+              underlying, shortStrikes, listed: listedNow });
             if (p2) { plan = p2; confirmed = true; }
           }
         }
@@ -2875,6 +2883,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 )}
               </div>
             )}
+            {is0 && listedChain && listedChain.mode === '0' && (() => {
+              const note = listedStrikeNote(listedChain, todayYmd, r.legs, r.listedFit);
+              return note ? <div data-testid="listed-note-0dte" style={{marginTop:6,fontSize:12.5,color: r.listedFit && r.listedFit.skipped || listedChain.err ? '#d29922' : '#8b949e'}}>
+                {fmtExpiry(todayYmd)} · {note}</div> : null;
+            })()}
             {!is0 && !isTimeSpread && singleExp && (
               <SingleExpiryPicker today={todayYmd} list={expList} sel={singleExp} onPick={pickSingle}
                 source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'}

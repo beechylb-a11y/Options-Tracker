@@ -8,6 +8,7 @@ import { flyBand, BAND_THIN_PCT_OF_DAY } from './flyBand.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
+import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -989,6 +990,27 @@ export function calc0DTE(inputs) {
   // structure needs it. Credit verticals are untouched — their max profit is collected
   // when price stays AWAY from the strikes, so nothing is gained by crossing spot and
   // the existing OTM logic already governs them.
+  // ── Onto today's listed strikes (Oct 2026) ──
+  // The builders round to a fixed grid ($5 SPX, $1 ETFs, $0.50 stocks). Today's
+  // chain is coarser for most stocks — AAPL 0DTE lists every $2.50 — so the engine's
+  // 334 / 2×335.5 / 338 fly asked for two strikes TWS does not have. With the
+  // expiry's listed strikes (inputs.listedStrikes, from the bridge) every leg moves
+  // onto a real one: condors keep one wing width, flies keep their shape, verticals
+  // keep their legs apart. The verticals' alternative strike pairs are fitted too.
+  const listed0 = normListed(inputs.listedStrikes);
+  let listedFit = null;
+  if (listed0 && legs.length) {
+    const f = fitToListed(legs, listed0);
+    if (f.changed) { legs = f.legs; listedFit = { moves: f.moves, equalWings: f.equalWings }; }
+    else if (f.skipped) listedFit = { skipped: f.skipped };
+    if (vertVariants) {
+      vertVariants = vertVariants.map(v => {
+        const fv = fitToListed(v.legs, listed0);
+        return fv.changed ? { ...v, legs: fv.legs, width: Math.abs(fv.legs[1].strike - fv.legs[0].strike), listedMoved: true } : v;
+      });
+    }
+  }
+
   // ── User strike overrides (Aug 2026) — pure substitution, no derivation math ──
   // inputs.overrideStrikes: { [legIndex]: strike }, keyed by index into the legs
   // array AS BUILT ABOVE (dual-EM verticals therefore key 0..3 across both pairs).
@@ -2449,12 +2471,17 @@ export function calc0DTE(inputs) {
     legGreeks: inputs.legGreeks || null, pop, hoursLeft: hours, price });
   deltaCheck.warnings.forEach(w => warnings.push(w));
   deltaCheck.notices.forEach(n => notices.push(n));
+  // Listed strikes: what the fit did, and any hand-typed strike today's chain lacks.
+  const unlisted0 = listed0 ? unlistedLegs(legs, listed0) : [];
+  if (unlisted0.length) warnings.push(`Not listed for today's expiry: ${unlisted0.map(l => l.strike + (/put/i.test(l.label) ? 'P' : 'C')).join(', ')} — TWS cannot fill these strikes`);
+  if (listedFit && listedFit.skipped) notices.push(`Listed strikes not used (${listedFit.skipped}) — strikes stay on the standard grid; check them in TWS`);
+  else if (listedFit) notices.push(`Strikes fitted to today's listed chain (${listedFit.moves.map(m => m.from + '→' + m.to).join(', ')})${listedFit.equalWings ? ` — wings ${listedFit.equalWings} wide both sides` : ''}`);
   // The same structure with its shorts at the target delta — the alternative the panel
   // offers (Both) or applies (Delta). Estimated here; the panel confirms it against a
   // live bracket before applying. T only backs the IV fallback.
   const deltaPlan = deltaCheck.applicable && Array.isArray(inputs.legGreeks) && inputs.legGreeks.length
     ? deltaStrikePlan({ legs, strat: legStrat, horizon: '0dte', price, legGreeks: inputs.legGreeks,
-        T: (inputs.hoursToBell > 0 ? inputs.hoursToBell : (hours > 0 ? hours + 1 : 6.5)) / 8760, underlying })
+        T: (inputs.hoursToBell > 0 ? inputs.hoursToBell : (hours > 0 ? hours + 1 : 6.5)) / 8760, underlying, listed: listed0 })
     : null;
   if (onSwapped) warnings.push(`ES overnight High/Low entered swapped (High ${esOvernightHigh} < Low ${esOvernightLow}) — corrected to a ${overnightRange.toFixed(1)} pt range for scoring; fix the inputs`);
 
@@ -2671,7 +2698,7 @@ export function calc0DTE(inputs) {
     // Strategy
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
-    legs, engineLegs, strikeOrderWarning,
+    legs, engineLegs, strikeOrderWarning, listedFit, listedOk: !!listed0,
     vertVariants, vertVariant: vertVariantId, priceCheck, flyBand: flyBandR,
     deltaCheck, deltaPlan,
     eventsToday: _ev0.events, notices,
