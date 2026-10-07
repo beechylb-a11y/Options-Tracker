@@ -9,6 +9,7 @@ import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
+import { fetchSpreadProfile } from '../utils/replay';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
 import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE, positionValue } from '../engine/payoffCurve';
@@ -463,6 +464,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const commRateAcct = commissionRate(acfg);
   const init = initialState || null;
   const [overrideStrat, setOverrideStrat] = useState(init?.overrideStrat ?? null);
+  // Measured spread by ET half-hour for this exact structure. Not persisted with
+  // the tab: it is a research result about the market, not part of the ticket.
+  const [spreadProfile, setSpreadProfile] = useState(null);
+  const [spreadBusy, setSpreadBusy] = useState(false);
+  const [spreadErr, setSpreadErr] = useState(null);
   // Whole sessions AFTER today's before the structure expires. 0 = a true 0DTE;
   // 1 = tomorrow's expiry, which is what gets traded late in the session and which
   // the engine otherwise has no way to express. Feeds the accrual table ONLY — every
@@ -3993,6 +3999,101 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           </div>
           <div className="empty:hidden" style={tabShow('timing')}>
+          {/* When is this structure cheapest to cross? Measured, not assumed. */}
+          {r.payoff && Array.isArray(r.payoff.legs) && r.payoff.legs.length >= 2 && (
+            <div className="card">
+              <SectionLabel white info="Pulls per-leg BID and ASK bars for these exact strikes over the last few sessions, sums them into the combo spread, and reports the median by ET half-hour. The usual advice — wide at the open, tight mid-morning, widening into the close — is a claim about options markets in general; this is a measurement of the market you are actually trading. Needs the bridge and TWS running, and only works while the contracts are alive.">
+                Spread by time of day
+              </SectionLabel>
+              {(() => {
+                const legs = r.payoff.legs.map(l => ({
+                  strike: l.strike, right: l.type === 'put' ? 'P' : 'C',
+                  ratio: (l.side === 'sell' ? -1 : 1) * (l.qty || 1),
+                }));
+                const expiry = is0 ? deriveExpiryYYYYMMDD() : deriveExpiryYYYYMMDD();
+                const ncd = parseFloat(is0 ? i0.netCreditDebit : i45.netCreditDebit);
+                const run = async () => {
+                  let bridgeUrl = '';
+                  try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+                  if (!bridgeUrl) { setSpreadErr('Set the IBKR Bridge URL in Settings'); return; }
+                  setSpreadBusy(true); setSpreadErr(null);
+                  try {
+                    setSpreadProfile(await fetchSpreadProfile(bridgeUrl, {
+                      underlying: is0 ? i0.underlying : i45.underlying,
+                      expiry, legs, days: 5,
+                      refPrice: isFinite(ncd) ? Math.abs(ncd) : null,
+                    }));
+                  } catch (e) { setSpreadErr(e.message); setSpreadProfile(null); }
+                  finally { setSpreadBusy(false); }
+                };
+                const p = spreadProfile;
+                return (
+                  <>
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <button onClick={run} disabled={spreadBusy}
+                        className="text-[12px] px-2 py-0.5 rounded border border-bg-border text-text-muted hover:text-white hover:border-accent transition-colors disabled:opacity-50">
+                        {spreadBusy ? 'Measuring… (up to a minute)' : 'Measure last 5 sessions'}
+                      </button>
+                      {spreadErr && <span className="text-[12px] text-amber">{spreadErr}</span>}
+                      {p && <span className="text-[12px] text-text-faint">
+                        {p.sessions} session{p.sessions === 1 ? '' : 's'} · {expiry}
+                      </span>}
+                    </div>
+                    {p && (
+                      <>
+                        <div className="text-[12px] mb-2" style={{
+                          padding: '6px 8px', borderRadius: 4, background: '#0d1117',
+                          border: '1px solid #21262d',
+                          color: p.spreadRatio != null && p.spreadRatio < 0.7 ? '#3fb950' : '#c9d1d9'
+                        }}>
+                          Tightest <b>{p.tightest.slot} ET</b> at {p.tightest.medianSpread.toFixed(2)} wide ·
+                          widest <b>{p.widest.slot} ET</b> at {p.widest.medianSpread.toFixed(2)}.
+                          {p.saving > 0 && <> Entering in the tight window saves about{' '}
+                            <b className="mono">{p.saving.toFixed(2)}</b> per contract each way
+                            {p.tightest.pctOfTrade != null && <> ({(p.widest.pctOfTrade - p.tightest.pctOfTrade).toFixed(1)}% of the trade)</>}.</>}
+                          {p.spreadRatio != null && p.spreadRatio > 0.85 &&
+                            <> The day is flat though — timing is not where the money is here.</>}
+                        </div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-text-faint text-[12px] uppercase tracking-wider">
+                                <th className="text-left py-1 pr-2">ET</th>
+                                <th className="text-right py-1 pr-2">Median spread</th>
+                                <th className="text-right py-1 pr-2">Cost to cross</th>
+                                <th className="text-right py-1 pr-2">% of trade</th>
+                                <th className="text-right py-1 pl-2">Bars</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {p.rows.map(row => {
+                                const best = row.slot === p.tightest.slot, worst = row.slot === p.widest.slot;
+                                return (
+                                  <tr key={row.slot} style={{ borderTop: '1px solid #21262d',
+                                    color: best ? '#3fb950' : worst ? '#f85149' : undefined }}>
+                                    <td className="py-1 pr-2 mono">{row.slot}</td>
+                                    <td className="py-1 pr-2 text-right mono">{row.medianSpread.toFixed(3)}</td>
+                                    <td className="py-1 pr-2 text-right mono">{row.crossCost.toFixed(3)}</td>
+                                    <td className="py-1 pr-2 text-right mono">{row.pctOfTrade == null ? '--' : row.pctOfTrade + '%'}</td>
+                                    <td className="py-1 pl-2 text-right mono text-text-muted">{row.bars}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="text-[12px] text-text-faint mt-2">
+                          Median of the summed per-leg bid/ask, regular session only. Cost to cross is
+                          half the spread — what paying up costs one way.
+                        </div>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* When the value arrives — the time dimension of the payoff below */}
           {accrual && (
             <div className="card">

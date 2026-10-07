@@ -130,3 +130,27 @@ export function downloadPack(pack) {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// Spread by time of day for a structure, straight from the bridge.
+//
+// The pull is slow by design — one paced IBKR request per leg per side — so the
+// timeout is generous. A profile that gives up at ten seconds is a profile that
+// never exists. (Oct 2026.)
+export async function fetchSpreadProfile(bridgeUrl, { underlying, expiry, legs, days, barSize, refPrice }) {
+  const q = new URLSearchParams({
+    underlying, expiry, legs: legsParam(legs),
+    ...(days ? { days: String(days) } : {}),
+    ...(barSize ? { barSize } : {}),
+    ...(refPrice ? { refPrice: String(Math.abs(refPrice)) } : {}),
+  });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const r = await fetch(`${bridgeUrl}/api/spread-profile?${q}`, {
+      headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal,
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `bridge ${r.status}`);
+    return data;
+  } finally { clearTimeout(timer); }
+}

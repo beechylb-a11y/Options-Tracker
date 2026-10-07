@@ -8,7 +8,7 @@ import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
 import net from 'net';
 import { computeOvernight } from './esOvernight.js';
-import { parseLegs, composeCombo, summarise, geometry, legKey } from './replay.js';
+import { parseLegs, composeCombo, summarise, geometry, legKey, spreadProfile } from './replay.js';
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
   interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
@@ -932,6 +932,79 @@ app.get('/api/history', async (req, res) => {
 // IBKR serves historical data for an option only while the contract lives. Once it
 // expires the bars are gone, so this is a same-day / pre-expiry tool: pull the
 // replay when the trade closes, not next week.
+// ── Spread by time of day ─────────────────────────────────────────────────
+// GET /api/spread-profile?underlying=QQQ&expiry=20261120
+//     &legs=695P:1,705P:-1,805C:-1,815C:1[&days=5][&barSize=15 mins][&refPrice=2.60]
+//
+// Answers one question with data instead of folklore: for THESE strikes on THIS
+// underlying, when is the combo cheapest to cross? The received wisdom — wide at
+// the open, tight mid-morning, widening into the close — is a statement about
+// options markets in general. A 6-8% OTM monthly condor is its own market.
+//
+// Cheap in IBKR's terms: one request per leg per side covers the whole lookback,
+// so a four-leg structure over five sessions is eight requests, not forty.
+app.get('/api/spread-profile', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+
+    const underlying = (req.query.underlying || '').toUpperCase();
+    const expiry = String(req.query.expiry || '');
+    const barSize = req.query.barSize || '15 mins';
+    const days = Math.max(1, Math.min(10, parseInt(req.query.days || '5', 10)));
+    const refPrice = req.query.refPrice != null ? Math.abs(parseFloat(req.query.refPrice)) : null;
+    if (!contractOf(underlying)) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
+    if (!/^\d{8}$/.test(expiry)) return res.status(400).json({ error: 'expiry must be YYYYMMDD' });
+
+    let legs;
+    try { legs = parseLegs(req.query.legs); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    if (!legs.length) return res.status(400).json({ error: 'legs required, e.g. 695P:1,705P:-1,805C:-1,815C:1' });
+    if (legs.length > 6) return res.status(400).json({ error: 'at most 6 legs' });
+
+    const warnings = [];
+    const pace = () => new Promise(r => setTimeout(r, 1100));
+    const pull = async (contract, what, label) => {
+      const bars = await getHistoricalBars(contract, `${days} D`, barSize, what, '', 1, 2);
+      if (!bars.length) warnings.push(`${label} ${what}: no bars returned`);
+      await pace();
+      return bars;
+    };
+
+    const legBars = {};
+    for (const l of legs) {
+      const c = buildOptionContract(underlying, expiry, l.strike, l.right);
+      const k = legKey(l);
+      legBars[k] = { bid: await pull(c, WhatToShow.BID, k), ask: await pull(c, WhatToShow.ASK, k) };
+    }
+
+    // No underlying series here: the spread question does not need spot, and every
+    // request saved is a request IBKR's pacing limit does not have to absorb.
+    const { bars, dropped } = composeCombo(legs, legBars, []);
+    if (dropped) warnings.push(`${dropped} bars dropped — a leg was unquoted or crossed at those times`);
+    const profile = spreadProfile(bars, { refPrice });
+    if (!profile) {
+      return res.status(502).json({
+        error: 'No usable quotes. An expired contract, or a strike IBKR does not quote.',
+        warnings, legs, underlying, expiry, days
+      });
+    }
+
+    res.json({
+      underlying, expiry, days, barSize, refPrice,
+      legs: legs.map(l => ({ ...l, key: legKey(l) })),
+      ...profile,
+      dropped,
+      warnings: warnings.length ? warnings : undefined,
+      source: 'per-leg BID/ASK historical bars, summed by ratio; regular session only',
+      pulledAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[BRIDGE] spread-profile error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/trade-replay', async (req, res) => {
   try {
     await connectTWS();

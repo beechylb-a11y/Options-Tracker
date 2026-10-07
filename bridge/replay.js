@@ -142,3 +142,98 @@ export function summarise(legs, bars, opts = {}) {
     spotVsBodyExit: x.spot == null ? null : round2(x.spot - g.bodyStrike),
   };
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  SPREAD BY TIME OF DAY
+// ════════════════════════════════════════════════════════════════════════
+// A 45DTE entry lives or dies on the spread it crosses, and the received wisdom
+// about when spreads are tight — wide at the open, tighter mid-morning, widening
+// into the close — is a claim about options markets in general, not about the
+// strikes this account actually trades. Six-to-eight percent OTM monthlies on QQQ
+// are their own market. This measures it instead of assuming it. (Oct 2026.)
+
+// Median, not mean: spreads are right-skewed and one stale print should not move
+// the answer for a whole half-hour.
+export function median(xs) {
+  const a = xs.filter(Number.isFinite).slice().sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+const etFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour12: false,
+  hour: '2-digit', minute: '2-digit', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+// epoch seconds -> { slot: 'HH:MM' half-hour bucket, date: 'YYYY-MM-DD', mins }
+export function etSlot(epochSec) {
+  const p = Object.fromEntries(etFmt.formatToParts(new Date(epochSec * 1000)).map(x => [x.type, x.value]));
+  const h = p.hour === '24' ? 0 : Number(p.hour);
+  const m = Number(p.minute);
+  const slotMin = m < 30 ? 0 : 30;
+  return {
+    slot: `${String(h).padStart(2, '0')}:${slotMin === 0 ? '00' : '30'}`,
+    date: `${p.year}-${p.month}-${p.day}`,
+    mins: h * 60 + m,
+  };
+}
+
+// Group composed combo bars into ET half-hours.
+//
+// `refPrice` is the credit or debit being contemplated; given it, the spread is
+// also reported as a percentage of the trade, which is the number that decides
+// whether a window is worth waiting for. Without it the absolute spread still
+// tells you the shape.
+export function spreadProfile(bars, { refPrice = null, minBars = 2 } = {}) {
+  if (!Array.isArray(bars) || !bars.length) return null;
+  const buckets = new Map();
+  for (const b of bars) {
+    if (!Number.isFinite(b.spread) || b.spread < 0) continue;
+    const { slot, date } = etSlot(b.t);
+    // Only the regular session. Pre- and post-market quotes on an option are
+    // placeholders and would dominate the answer with noise.
+    const hh = Number(slot.slice(0, 2));
+    if (hh < 9 || hh > 15) continue;
+    if (!buckets.has(slot)) buckets.set(slot, { spreads: [], mids: [], days: new Set() });
+    const e = buckets.get(slot);
+    e.spreads.push(b.spread);
+    if (Number.isFinite(b.mid)) e.mids.push(b.mid);
+    e.days.add(date);
+  }
+
+  const rows = [...buckets.entries()]
+    .map(([slot, e]) => {
+      const s = median(e.spreads);
+      return {
+        slot,
+        bars: e.spreads.length,
+        days: e.days.size,
+        medianSpread: s == null ? null : Math.round(s * 1000) / 1000,
+        medianMid: (() => { const m = median(e.mids); return m == null ? null : Math.round(m * 1000) / 1000; })(),
+        // Half the spread is what crossing costs one way — the number you actually
+        // pay away by not working the order.
+        crossCost: s == null ? null : Math.round((s / 2) * 1000) / 1000,
+        pctOfTrade: (s != null && refPrice) ? Math.round(1000 * (s / 2) / Math.abs(refPrice)) / 10 : null,
+      };
+    })
+    .filter(r => r.medianSpread != null && r.bars >= minBars)
+    .sort((a, b) => (a.slot < b.slot ? -1 : 1));
+
+  if (!rows.length) return null;
+
+  const tightest = rows.reduce((a, r) => (r.medianSpread < a.medianSpread ? r : a), rows[0]);
+  const widest = rows.reduce((a, r) => (r.medianSpread > a.medianSpread ? r : a), rows[0]);
+  const allDays = new Set();
+  for (const e of buckets.values()) for (const d of e.days) allDays.add(d);
+
+  return {
+    rows, tightest, widest,
+    sessions: allDays.size,
+    // Worth acting on only if the best window actually beats the worst by enough to
+    // matter. A 10% difference on a 0.20 spread is a cent — not a reason to wait.
+    spreadRatio: widest.medianSpread > 0
+      ? Math.round(100 * tightest.medianSpread / widest.medianSpread) / 100 : null,
+    saving: Math.round((widest.medianSpread - tightest.medianSpread) / 2 * 1000) / 1000,
+  };
+}
