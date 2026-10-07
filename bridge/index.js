@@ -205,11 +205,21 @@ function getSnapshot(contract) {
       if (field === 7 || field === 73) data.low = value;
       if (field === 9 || field === 75) data.prevClose = value;
       if (field === 14 || field === 76) data.open = value;
+      // The request streams (snapshot=false), so tickSnapshotEnd never fires and every
+      // snapshot used to sit out the full 6 s timeout — three in parallel plus the
+      // history waits made /api/market-data take 22 s a ticker (Oct 2026). TWS sends
+      // the opening ticks in one burst: once a price and the close are in, give the
+      // stragglers (high/low/open) half a second and finish.
+      const hasPrice = (data.bid && data.ask) || data.last;
+      if (hasPrice && data.prevClose && !graceTimer) graceTimer = setTimeout(() => onTickEnd(reqId, true), 500);
     };
+    let graceTimer = null;
 
-    const onTickEnd = (id) => {
+    const onTickEnd = (id, early) => {
       if (id !== reqId || resolved) return;
       resolved = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      if (early) { try { ib.cancelMktData(reqId); } catch (e) {} }
       ib.removeListener(EventName.tickPrice, onTick);
       ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
       ib.removeListener(EventName.marketDataType, onMdType);
@@ -394,7 +404,10 @@ function getHistoricalBarsOnce(contract, duration, barSize, whatToShow = WhatToS
       // array: one junk row per chunk, inflating the count and making the reported date
       // range nonsense. Downstream parsers that require a leading yyyymmdd drop it
       // silently, which is exactly why it survived unnoticed.
-      if (typeof date === 'string' && date.startsWith('finished')) return;
+      // That row is also the ONLY end signal @stoqey/ib 1.5.x sends — it never emits
+      // historicalDataEnd for reqHistoricalData — so every request used to wait out the
+      // 8 s timeout. Finish on it (Oct 2026).
+      if (typeof date === 'string' && date.startsWith('finished')) { onEnd(id); return; }
       if (bars.length === 0) console.log('[BRIDGE] BAR DATA: date=' + date + ' o=' + open + ' h=' + high + ' l=' + low + ' c=' + close + ' v=' + volume);
       bars.push({ date, open, high, low, close, volume: volume || 0, count, WAP });
     };
