@@ -1,3 +1,4 @@
+import { fitToListed, normListed, nearestListed } from './listedStrikes.js';
 // ================================================================
 //  DELTA CROSS-CHECK AND DELTA STRIKES  (R-49, Oct 2026)
 // ================================================================
@@ -269,7 +270,7 @@ export function deltaCrossCheck({ legs, strat, horizon, legGreeks, pop, hoursLef
  * @returns null, or { legs, moves: [{ idx, label, right, from, to, target, curDelta, estDelta }],
  *          changed, basis }
  */
-export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, underlying, shortStrikes }) {
+export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, underlying, shortStrikes, listed }) {
   const spec = (DELTA_TARGETS[horizon] || {})[strat];
   if (!spec || !(price > 0) || !Array.isArray(legs) || !legs.length) return null;
   const step = strikeGrid(underlying);
@@ -332,6 +333,16 @@ export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, und
     });
   }
 
+  // Onto the expiry's listed strikes (Oct 2026): a delta short can land on a call
+  // the chain does not list, and condor wings must match for TWS to call it one.
+  if (normListed(listed)) {
+    const f = fitToListed(next, listed);
+    if (f.changed) {
+      f.legs.forEach((l, i) => { next[i].strike = l.strike; });
+      moves.forEach(m => { m.to = next[m.idx].strike; m.estDelta = (bsAbsDelta(price, m.to, m.v, m.right) || 0) * 100; });
+    }
+  }
+
   return {
     legs: next,
     moves: moves.map(({ v, tag, ...m }) => m),
@@ -341,7 +352,13 @@ export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, und
 }
 
 /** Bracket of strikes around an estimate, for the live-greeks confirmation. */
-export function bracketStrikes(k, underlying, n = 1) {
+export function bracketStrikes(k, underlying, n = 1, listedForRight = null) {
+  // With the listed chain for this right, the bracket is the listed strikes around k.
+  if (Array.isArray(listedForRight) && listedForRight.length) {
+    const L = [...listedForRight].sort((a, b) => a - b);
+    const c = nearestListed(L, k), i = L.indexOf(c);
+    return L.slice(Math.max(0, i - n), i + n + 1);
+  }
   const step = strikeGrid(underlying);
   const out = [];
   for (let j = -n; j <= n; j++) out.push(roundToGrid(k + j * step, step));

@@ -7,6 +7,7 @@ import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
+import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStrikes.js';
 
 // ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
 // front/back is the same ratio as VIX/VIX3M: calm markets sit near 0.85-0.92, above 1
@@ -208,6 +209,16 @@ export function calc45DTE(inputs) {
   // the map to the structure it was typed against. Applied BEFORE P(max loss)
   // reads the wings, so the tail runs on the substituted strikes. engineLegs
   // preserves the engine's suggestion for the UI and dual logging.
+  // ── Listed strikes for this expiry (Oct 2026) ──
+  // The grid above assumes every strike exists; real chains thin out (QQQ 20 Nov:
+  // puts every $1, calls every $5). With the expiry's listed strikes the legs move
+  // onto real ones, condor/iron-fly wings kept to one width TWS will recognise.
+  const listed45 = /calendar|diagonal/i.test(legStrat) ? null : normListed(inputs.listedStrikes);
+  let listedFit = null;
+  if (listed45 && legs.length) {
+    const f = fitToListed(legs, listed45);
+    if (f.changed) { legs = f.legs; listedFit = { moves: f.moves, equalWings: f.equalWings }; }
+  }
   const engineLegs = legs.map(l => ({ ...l }));
   const ovStrikes = inputs.overrideStrikes || null;
   let strikeOrderWarning = null;
@@ -231,6 +242,10 @@ export function calc45DTE(inputs) {
       }
     }
   }
+
+  // Hand edits (or a chain the builder did not know): say what TWS will not take.
+  const unlisted45 = listed45 ? unlistedLegs(legs, listed45) : [];
+  const wingsUneven45 = unequalWings(legs);
 
   // ── P(max loss): probability price settles in a max-loss tail by expiry ──
   // 45DTE version uses the full-DTE lognormal sigma (NOT the intraday 5.5h window
@@ -571,6 +586,9 @@ export function calc45DTE(inputs) {
   const _ev45 = eventRisk45DTE(nowET().dateISO, dte);
   _ev45.warnings.forEach(w => warnings.push(w));
   const notices = [..._ev45.notices];
+  if (unlisted45.length) warnings.push(`Not listed for this expiry: ${unlisted45.map(l => l.strike + (/put/i.test(l.label) ? 'P' : 'C')).join(', ')} — TWS cannot fill these strikes`);
+  if (wingsUneven45) warnings.push(`Wings differ (put ${wingsUneven45.put} / call ${wingsUneven45.call}) — TWS lists unequal wings as a custom combo, not an ${/butterfly/i.test(legStrat) ? 'iron butterfly' : 'iron condor'}`);
+  if (listedFit) notices.push(`Strikes fitted to the expiry's listed chain${listedFit.equalWings ? ` — wings ${listedFit.equalWings} wide both sides` : ''}`);
 
   // ── Delta cross-check and delta strikes (R-49, Oct 2026) — see calc0dte.js ──
   const deltaCheck = deltaCrossCheck({ legs, strat: legStrat, horizon: '45dte',
@@ -579,7 +597,7 @@ export function calc45DTE(inputs) {
   deltaCheck.notices.forEach(n => notices.push(n));
   const deltaPlan = deltaCheck.applicable && Array.isArray(inputs.legGreeks) && inputs.legGreeks.length
     ? deltaStrikePlan({ legs, strat: legStrat, horizon: '45dte', price, legGreeks: inputs.legGreeks,
-        T: (dte > 0 ? dte : 45) / 365, underlying })
+        T: (dte > 0 ? dte : 45) / 365, underlying, listed: listed45 })
     : null;
 
   let decision, decisionClass;
@@ -684,7 +702,7 @@ export function calc45DTE(inputs) {
     termDiff, termLabel, skew, termBias: termBiasEff, termRatio, termDerived: hasTerm, closeDte: closeDte45,
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
-    legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan,
+    legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan, listedFit, listedOk: !!listed45,
     eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,

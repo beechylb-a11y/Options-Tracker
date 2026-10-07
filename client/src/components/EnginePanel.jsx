@@ -7,6 +7,7 @@ import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
+import { listedLadder } from '../engine/listedStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
@@ -560,6 +561,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [calExp, setCalExp] = useState(init?.calExp ?? null);
   // Listed expiries from the bridge's /api/option-chain, per underlying.
   const [chainExp, setChainExp] = useState(null);
+  // Strikes listed for the ticket's 45DTE expiry, calls and puts apart: { key, C, P, err }.
+  const [listedChain, setListedChain] = useState(null);
   const [loggedSig, setLoggedSig] = useState(init?.loggedSig ?? null);
   const [logging, setLogging] = useState(false);
   const [logNote, setLogNote] = useState('');
@@ -795,6 +798,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // structure-comparison table can re-run the engine at a different strategy
   // without duplicating the input mapping.
   const trendNow = volMeta && volMeta.trend && (!volMeta.und || volMeta.und === i45.underlying) ? volMeta.trend : null;
+  // Listed strikes only while they are for this underlying (the expiry is checked
+  // when they are fetched; a DTE change refetches).
+  const listedNow = !is0 && listedChain && listedChain.u === i45.underlying && (listedChain.C || listedChain.P)
+    ? { C: listedChain.C || [], P: listedChain.P || [] } : null;
   const mk45 = (over) => ({
           price:fv(i45,'price'), ivr:fv(i45,'ivr'), iv:fv(i45,'iv'),
           hv:fv(i45,'hv'), vix:fv(i45,'vix'), ivFront:fv(i45,'ivFront'),
@@ -810,6 +817,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrategy: overrideStrat,
           overrideStrikes: overrideStrikes['45']?.map || null,
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
+          listedStrikes: listedNow,
           legGreeks: legGreeks && legGreeks.bag === '45' ? legGreeks.rows : null,
           closeDte: tsClose || null,
           curveModel,
@@ -847,7 +855,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -911,6 +919,34 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Picking another sets DTE to it, so the two never disagree.
   const singleExp = (!is0 && !isTimeSpread && expList.length)
     ? nearestExpiry(expList, todayYmd, addDaysYmd(todayYmd, Math.max(1, parseInt(i45.dte, 10) || 45)), 1) : null;
+  // The listed strikes of that expiry (Oct 2026): far-dated chains thin out unevenly
+  // (QQQ 20 Nov: puts every $1, calls every $5), and the engine fits to them.
+  useEffect(() => {
+    if (is0 || isTimeSpread || !singleExp) return;
+    const key = i45.underlying + '|' + singleExp;
+    if (listedChain && listedChain.key === key) return;
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) return;
+    // the old expiry's strikes must not fit this one while the new ones load
+    setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: null, loading: true });
+    let live = true;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20000);
+    fetch(bridgeUrl + '/api/listed-strikes?underlying=' + i45.underlying + '&expiry=' + singleExp,
+      { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+      .then(r => r.text()).then(txt => {
+        let d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
+        if (!live) return;
+        const ok = d && !d.error && (Array.isArray(d.calls) || Array.isArray(d.puts));
+        setListedChain({ key, u: i45.underlying, exp: singleExp, C: ok ? d.calls || [] : null, P: ok ? d.puts || [] : null,
+          err: ok ? null : (d && d.error) || 'bridge has no listed-strikes yet — pull and restart it' });
+      })
+      .catch(() => { if (live) setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: 'bridge not reachable' }); })
+      .finally(() => clearTimeout(t));
+    return () => { live = false; ctrl.abort(); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [is0, isTimeSpread, singleExp, i45.underlying]);
   function pickSingle(e) {
     const d = dteBetween(todayYmd, e);
     if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
@@ -1045,8 +1081,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (!leg) return;
     const right = (leg.label || '').toLowerCase().includes('put') ? 'P' : 'C';
     const center = leg.strike;
-    const strikes = [];
+    let strikes = [];
     for (let k = 3; k >= -3; k--) strikes.push(+(center + k * strikeStep).toFixed(2));
+    // 45DTE: the strikes this expiry actually lists for this right.
+    const lad = !is0 && listedNow ? listedLadder(listedNow[right], center, 3) : null;
+    if (lad && lad.length) strikes = lad;
     const underlying = is0 ? i0.underlying : i45.underlying;
     const expiry = legExpiryOf(leg) || deriveExpiryYYYYMMDD();
     const key = underlying + '|' + expiry + '|' + right + '|' + center;
@@ -1881,7 +1920,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const deltaByDefault = !!(r.vertVariants && vertPick !== 'em');
     if (autoApply && fetchedRows && fetchedRows.length && (strikeMethod[bag] === 'delta' || deltaByDefault) && strikesBuiltBy !== 'Manual') {
       const plan = deltaStrikePlan({ legs: fetchedLegs, strat: r.legStrat, horizon: deltaHorizon,
-        price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying });
+        price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying, listed: is0 ? null : listedNow });
       if (plan && plan.changed) { await applyDeltaStrikes({ plan, rows: fetchedRows, legs: fetchedLegs }); clearFillForNewStrikes(); }
       else if (plan) setDeltaApplied({ bag, strat: r.legStrat || '', map: (ovNow && ovNow.map) || {}, confirmed: true, at: new Date().toISOString() });
     }
@@ -1963,7 +2002,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const brackets = {};
         const req = [];
         plan0.moves.forEach(m => {
-          brackets[m.idx] = bracketStrikes(m.to, underlying, 2);
+          brackets[m.idx] = bracketStrikes(m.to, underlying, 2, !is0 && listedNow ? listedNow[m.right] : null);
           brackets[m.idx].forEach(k => {
             if (!req.some(q => q.strike === k && q.right === m.right)) req.push({ strike: k, right: m.right, qty: 1 });
           });
@@ -1988,7 +2027,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           if (Object.keys(shortStrikes).length === plan0.moves.length) {
             const p2 = deltaStrikePlan({ legs: legsNow, strat: r.legStrat, horizon: deltaHorizon,
               price: fv(secBag, 'price'), legGreeks: rowsNow, T: deltaT(),
-              underlying, shortStrikes });
+              underlying, shortStrikes, listed: is0 ? null : listedNow });
             if (p2) { plan = p2; confirmed = true; }
           }
         }
@@ -2823,7 +2862,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             )}
             {!is0 && !isTimeSpread && singleExp && (
               <SingleExpiryPicker today={todayYmd} list={expList} sel={singleExp} onPick={pickSingle}
-                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'} />
+                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'}
+                strikeNote={listedStrikeNote(listedChain, singleExp, r.legs, r.listedFit)} />
             )}
             {isTimeSpread && nearExp && (
               <ExpiryPicker today={todayYmd} list={expList} near={nearExp} far={farExp}
@@ -4379,7 +4419,30 @@ const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #303
 // Near (sold) and far (bought) expiries for a calendar or diagonal. Five choices
 // each, around the current pick; the far row only offers dates after the near.
 // 45DTE single-expiry structures: which listed expiry the ticket trades. (Oct 2026.)
-function SingleExpiryPicker({ today, list, sel, onPick, source }) {
+// "Strikes listed: puts every $1, calls every $5 near the shorts" — the spacing the
+// chain actually has where the ticket's shorts sit, for the picked expiry.
+function listedStrikeNote(lc, exp, legs, fit) {
+  if (!lc || lc.exp !== exp) return null;
+  if (lc.loading) return 'Loading listed strikes…';
+  if (lc.err) return `Listed strikes unavailable: ${lc.err}.`;
+  const gapNear = (list, k) => {
+    if (!Array.isArray(list) || list.length < 2 || !(k > 0)) return null;
+    const i = list.reduce((b, x, j) => (Math.abs(x - k) < Math.abs(list[b] - k) ? j : b), 0);
+    const g = [list[i + 1] - list[i], list[i] - list[i - 1]].filter(x => x > 0);
+    return g.length ? Math.max(...g) : null;
+  };
+  const shortOf = r => (legs || []).find(l => /short/i.test(l.label) && new RegExp(r === 'P' ? 'put' : 'call', 'i').test(l.label));
+  const parts = [];
+  [['P', 'puts'], ['C', 'calls']].forEach(([r, name]) => {
+    const sl = shortOf(r); const g = sl ? gapNear(lc[r], sl.strike) : null;
+    if (g) parts.push(`${name} every $${+g.toFixed(2)}`);
+  });
+  if (!parts.length) return 'Strikes from the listed chain.';
+  return `Strikes listed here: ${parts.join(', ')}`
+    + (fit ? ` — engine strikes fitted${fit.equalWings ? `, wings ${fit.equalWings} wide both sides` : ''}.` : '.');
+}
+
+function SingleExpiryPicker({ today, list, sel, onPick, source, strikeNote }) {
   const items = nearChoices(list, today, sel);
   return (
     <div data-testid="expiry-single" style={{marginTop:10,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',padding:'8px 12px',
@@ -4400,6 +4463,7 @@ function SingleExpiryPicker({ today, list, sel, onPick, source }) {
         {source === 'chain' ? 'Listed expiries from TWS.' : source === 'loading' ? 'Loading listed expiries from TWS…'
           : 'Weekly Fridays (holidays not checked) — TWS expiry list unavailable' + (source.startsWith('fallback:') ? `: ${source.slice(9)}.` : '.')}
       </span>
+      {strikeNote && <span data-testid="listed-strike-note" style={{fontSize:12,color:'#8b949e',flexBasis:'100%'}}>{strikeNote}</span>}
     </div>
   );
 }

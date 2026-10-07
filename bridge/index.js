@@ -1341,6 +1341,58 @@ app.get('/api/option-chain', async (req, res) => {
   }
 });
 
+// Strikes listed for ONE expiry, calls and puts apart (Oct 2026). The chain above is
+// the union over every expiry, which hides that e.g. QQQ 20 Nov lists puts every $1
+// but calls every $5 that far out. reqContractDetails with no strike returns every
+// contract of the expiry. Cached per NY day.
+const listedCache = {};
+function getListedStrikes(underlying, expiry) {
+  const key = underlying + ':' + expiry + ':' + nyToday();
+  if (listedCache[key]) return Promise.resolve(listedCache[key]);
+  const base = buildOptionContract(underlying, expiry, 0, 'C');
+  delete base.strike; delete base.right;
+  if (underlying === 'RUT') base.tradingClass = 'RUTW';
+  return new Promise((resolve) => {
+    const reqId = getReqId();
+    const C = new Set(), P = new Set();
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      ib.removeListener(EventName.contractDetails, onDet);
+      ib.removeListener(EventName.contractDetailsEnd, onEnd);
+      const out = { calls: [...C].sort((a, b) => a - b), puts: [...P].sort((a, b) => a - b) };
+      if (out.calls.length || out.puts.length) listedCache[key] = out;
+      resolve(out);
+    };
+    const onDet = (id, det) => {
+      if (id !== reqId || !det || !det.contract) return;
+      const k = Number(det.contract.strike), r = String(det.contract.right || '').toUpperCase();
+      if (!(k > 0)) return;
+      if (r.startsWith('C')) C.add(k); else if (r.startsWith('P')) P.add(k);
+    };
+    const onEnd = (id) => { if (id === reqId) finish(); };
+    ib.on(EventName.contractDetails, onDet);
+    ib.on(EventName.contractDetailsEnd, onEnd);
+    ib.reqContractDetails(reqId, base);
+    setTimeout(finish, 15000);
+  });
+}
+
+app.get('/api/listed-strikes', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const underlying = (req.query.underlying || 'SPX').toUpperCase();
+    const expiry = String(req.query.expiry || '');
+    if (!/^\d{8}$/.test(expiry)) return res.status(400).json({ error: 'expiry (YYYYMMDD) required' });
+    const out = await getListedStrikes(underlying, expiry);
+    if (!out.calls.length && !out.puts.length) return res.status(404).json({ error: `No listed strikes for ${underlying} ${expiry}` });
+    res.json({ underlying, expiry, ...out });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/vol-surface', async (req, res) => {
   try {
     await connectTWS();
