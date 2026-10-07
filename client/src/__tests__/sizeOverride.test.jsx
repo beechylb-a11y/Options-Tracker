@@ -23,11 +23,17 @@ const in45 = { price: 762, ivr: 45, iv: 20, hv: 16, vix: 18, ivFront: 19, ivBack
   bpr: 0, theta: 0, vega: 0, delta: 0, underlying: 'QQQ', outlook: 'neutral', overrideStrategy: 'Iron Condor - Normal' };
 
 describe('engine', () => {
-  it('45DTE reports the Kelly it sizes on (no NaN)', () => {
+  it('45DTE sizes on Sharpe × strategy adjusted Kelly, no VIX factor (no NaN)', () => {
     const r = calc45DTE(in45);
-    expect(Number.isFinite(r.rawKelly)).toBe(true);
-    expect(r.adjustedKelly).toBe(r.rawKelly);
-    expect(r.sizingModel).toBe('full');
+    expect(Number.isFinite(r.rawKelly) && r.rawKelly > 0).toBe(true);
+    expect(r.sizingModel).toBe('noVix');
+    expect(r.volFactor).toBe(1);
+    expect(r.stratModifier).toBe(0.95);                       // iron condor
+    expect(r.sharpeFactor).toBe(0.35);                        // EV ~$19 on $445: weak edge
+    expect(r.adjustedKelly).toBeCloseTo(r.rawKelly * 0.35 * 0.95, 10);
+    expect(r.kellyDollar).toBeCloseTo(r.adjustedKelly * 25000, 6);
+    // VIX does not move it
+    expect(calc45DTE({ ...in45, vix: 32 }).adjustedKelly).toBeCloseTo(r.adjustedKelly, 10);
   });
   it('takes your contracts and keeps Kelly’s', () => {
     const k = calc45DTE(in45);

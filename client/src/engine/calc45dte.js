@@ -483,7 +483,25 @@ export function calc45DTE(inputs) {
     : (risk / 2);
   const expectedWin = avgWinUsed > 0 ? avgWinUsed : win;
   const wlRatio = expectedLossPerLoss > 0 ? expectedWin / expectedLossPerLoss : 0;
-  const kelly = wlRatio > 0 ? Math.max(0, winP - (1 - winP) / wlRatio) : 0;
+  const rawKelly = wlRatio > 0 ? Math.max(0, winP - (1 - winP) / wlRatio) : 0;
+  // Adjusted Kelly (Oct 2026): the 0DTE Sharpe and strategy factors, but no VIX
+  // factor — a 45DTE premium seller is paid more when VIX is high, and the vol
+  // regime is already in the structure choice and the IV-rank criteria.
+  const sharpeProxy = risk > 0 ? ev / risk : 0;
+  const sharpeFactor = sharpeProxy > 0.30 ? 1.0 : sharpeProxy > 0.15 ? 0.75 : sharpeProxy > 0.05 ? 0.50 : sharpeProxy > 0 ? 0.35 : 0.25;
+  let stratModifier = 1.0, stratModReason = 'Standard';
+  if (legStrat.includes('Iron Condor')) { stratModifier = 0.95; stratModReason = 'Credit condor — gamma near shorts late on'; }
+  else if (legStrat === 'Iron butterfly') { stratModifier = 0.95; stratModReason = 'Iron fly — pin/gamma risk'; }
+  else if (legStrat === 'Credit spread') { stratModifier = 0.95; stratModReason = 'Credit spread — gamma near short'; }
+  else if (legStrat === 'Jade lizard') { stratModifier = 0.90; stratModReason = 'Jade lizard — naked put side'; }
+  else if (legStrat === 'Ratio spread') { stratModifier = 0.85; stratModReason = 'Ratio — uncovered short beyond the long'; }
+  else if (legStrat === 'Broken wing butterfly') { stratModifier = 0.92; stratModReason = 'BWB — fill/gamma'; }
+  else if (/Calendar|Diagonal/.test(legStrat)) { stratModifier = 0.90; stratModReason = 'Time spread — vega and gap risk'; }
+  else if (/butterfly/i.test(legStrat)) { stratModifier = 1.00; stratModReason = 'Butterfly — capped debit'; }
+  else if (/Bull call|Bear put/.test(legStrat)) { stratModifier = 1.00; stratModReason = 'Debit spread — capped risk'; }
+  const volFactor = 1.0;
+  const adjustedKelly = rawKelly * sharpeFactor * stratModifier;
+  const kelly = adjustedKelly;
   const bePop = (win + risk) > 0 ? risk / (win + risk) : 0;
   const kellyDollar = bankroll > 0 ? Math.min(kelly * bankroll, bankroll * 0.30) : 0;
   const popMargin = bePop > 0 && popFrac > 0 ? popFrac / bePop : 0;
@@ -497,10 +515,7 @@ export function calc45DTE(inputs) {
   const contracts = contractsOverride || kellyContracts;
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
-  // 45DTE sizes on full Kelly — no vol / Sharpe / strategy factor — so the card's
-  // raw and adjusted figures are the same number. (They were left undefined: NaN%.)
-  const rawKelly = kelly, adjustedKelly = kelly;
-  const sizingModel = 'full';
+  const sizingModel = 'noVix';
 
   // Greeks + Directional Edge
   let greeks = null;
@@ -715,7 +730,7 @@ export function calc45DTE(inputs) {
     eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
-    kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, rawKelly, adjustedKelly, sizingModel,
+    kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, rawKelly, adjustedKelly, sizingModel, volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     kellyContracts, contractsOverride,
     ev, evBasis,
     targetCredit, targetLabel,

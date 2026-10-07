@@ -2460,8 +2460,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<div class="section"><div class="section-title">Sizing (Sharpe-Adjusted Kelly)</div>' +
       '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
       '<div class="row"><span class="label">Adj Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
-      '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%' + (r.sizingModel === 'full' ? ' (45DTE: not adjusted)' : '') + '</span></div>' +
-      '<div class="row"><span class="label">Vol factor</span><span class="value white">' + (r.volFactor ? r.volFactor.toFixed(2) : '--') + '</span></div>' +
+      '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%</span></div>' +
+      '<div class="row"><span class="label">Vol factor</span><span class="value white">' + (r.sizingModel === 'noVix' ? 'not applied (45DTE)' : r.volFactor ? r.volFactor.toFixed(2) : '--') + '</span></div>' +
       '<div class="row"><span class="label">Sharpe factor</span><span class="value white">' + (r.sharpeFactor ? r.sharpeFactor.toFixed(2) : '--') + '</span></div>' +
       '<div class="row"><span class="label">EV / trade' + (r.evBasis ? ' <span style="opacity:0.6;font-size:9px">(' + (r.evBasis.mode==='measured'?'measured':'est') + ')</span>' : '') + '</span><span class="value ' + (r.ev > 0 ? 'green' : 'red') + '">$' + (r.ev ? r.ev.toFixed(0) : '0') + '</span></div>' +
       '<div class="row"><span class="label">POP margin</span><span class="value ' + (r.popMargin >= 1.5 ? 'green' : r.popMargin >= 1.0 ? 'amber' : 'red') + '">' + (r.popMargin ? r.popMargin.toFixed(2) : '--') + 'x</span></div>' +
@@ -4087,21 +4087,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk per strategy). Vol Factor: VIX <12 = 1.0, 12-18 = 0.75, 18-25 = 0.50, >25 = 0.25. Sharpe Factor: based on EV/risk ratio. Strategy Modifier: butterflies 1.0, IC/credit spreads 0.85, BWB 0.80, reversed condor 0.70. Adj Kelly $ = max recommended risk. Risk per contract turns red if it exceeds Kelly $. POP turns red if below breakeven POP.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 mb-3">
               <KV label="Contracts" value={r.contractsOverride ? `${r.contracts} (Kelly ${r.kellyContracts})` : r.contracts} cls={r.contractsOverride ? 'text-amber' : ''}/>
-              <KV label={r.sizingModel === 'full' ? 'Kelly $' : 'Adj Kelly $'} value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
+              <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
               <KV label="Raw Kelly" value={isFinite(r.rawKelly) ? `${(r.rawKelly*100).toFixed(1)}%` : '—'}/>
-              <KV label="Adjusted Kelly" value={r.sizingModel === 'full' ? 'not adjusted' : isFinite(r.adjustedKelly) ? `${(r.adjustedKelly*100).toFixed(1)}%` : '—'} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
+              <KV label="Adjusted Kelly" value={isFinite(r.adjustedKelly) ? `${(r.adjustedKelly*100).toFixed(1)}%` : '—'} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
             </div>
-            {r.sizingModel === 'full' && (
-              <div data-testid="sizing-full-note" style={{fontSize:13,color:'#a8b2be',margin:'0 0 12px'}}>
-                45DTE sizes on full Kelly: no vol, Sharpe or strategy factor is applied. Contracts are capped only by max loss and max open risk in Settings.
-              </div>
-            )}
             <div className="space-y-3">
-              {r.sizingModel !== 'full' && <>
-              <SpeedTape label="Vol factor" value={r.volFactor||0} min={0} max={1}
+              {r.sizingModel === 'noVix' ? (
+                <div data-testid="sizing-novix-note" style={{fontSize:13,color:'#a8b2be'}}>Vol factor — not applied on 45DTE (high VIX pays premium sellers; the vol regime is already in the structure choice)</div>
+              ) : <SpeedTape label="Vol factor" value={r.volFactor||0} min={0} max={1}
                 zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={r.volFactor?.toFixed(2)||'--'}
-                sublabel={r.volFactor>=1?'VIX <12':r.volFactor>=0.75?'VIX 12-18':r.volFactor>=0.50?'VIX 18-25':'VIX >25'} />
+                sublabel={r.volFactor>=1?'VIX <12':r.volFactor>=0.75?'VIX 12-18':r.volFactor>=0.50?'VIX 18-25':'VIX >25'} />}
               <SpeedTape label="Sharpe factor" value={r.sharpeFactor||0} min={0} max={1}
                 zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={`${r.sharpeFactor?.toFixed(2)||'--'} (${r.sharpeProxy?.toFixed(2)||'--'})`}
@@ -4110,7 +4106,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 zones={[{to:0.70,color:'#f85149'},{to:0.85,color:'#d29922'},{to:0.95,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={`${r.stratModifier?.toFixed(2)||'--'}`}
                 sublabel={r.stratModReason||''} />
-              </>}
               <SpeedTape label="POP margin" value={Math.min(r.popMargin||0, 2.5)} min={0} max={2.5}
                 zones={[{to:0.8,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:2.5,color:'#3fb950'}]}
                 display={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'}
