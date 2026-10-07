@@ -2125,7 +2125,10 @@ export function calc0DTE(inputs) {
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
   const halfC = Math.max(1, Math.floor(fullC / 2));
   const vixOvC = vixHigh ? Math.max(1, Math.floor(fullC * 0.5)) : fullC;
-  const contracts = setup === 'B Setup' ? halfC : (vixHigh ? vixOvC : fullC);
+  const kellyContracts = setup === 'B Setup' ? halfC : (vixHigh ? vixOvC : fullC);
+  // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
+  const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
+  const contracts = contractsOverride || kellyContracts;
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
 
@@ -2688,7 +2691,7 @@ export function calc0DTE(inputs) {
     pMaxLossBasis,
     // Kelly (Sharpe-adjusted)
     frictions,
-    kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, kellyContracts, contractsOverride, sizingModel: "adjusted",
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff

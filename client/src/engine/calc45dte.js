@@ -491,9 +491,16 @@ export function calc45DTE(inputs) {
   const riskCap = maxOpen > 0 ? Math.min(kelly * bankroll, maxLoss, maxOpen) : Math.min(kelly * bankroll, maxLoss);
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
   const halfC = Math.max(1, Math.floor(fullC / 2));
-  const contracts = setup === 'B Setup' ? halfC : fullC;
+  const kellyContracts = setup === 'B Setup' ? halfC : fullC;
+  // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
+  const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
+  const contracts = contractsOverride || kellyContracts;
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
+  // 45DTE sizes on full Kelly — no vol / Sharpe / strategy factor — so the card's
+  // raw and adjusted figures are the same number. (They were left undefined: NaN%.)
+  const rawKelly = kelly, adjustedKelly = kelly;
+  const sizingModel = 'full';
 
   // Greeks + Directional Edge
   let greeks = null;
@@ -708,7 +715,8 @@ export function calc45DTE(inputs) {
     eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
-    kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio,
+    kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, rawKelly, adjustedKelly, sizingModel,
+    kellyContracts, contractsOverride,
     ev, evBasis,
     targetCredit, targetLabel,
     fullC, halfC, contracts, maxRisk, tEff,

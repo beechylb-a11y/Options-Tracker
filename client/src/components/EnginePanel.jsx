@@ -493,6 +493,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // move to their target delta on Fetch Greeks unless an EM tile was picked by hand.
   // 'auto' (default) | 'em' (an EM tile was chosen) | 'delta' (the Delta tile was chosen).
   const [vertPick, setVertPick] = useState(init?.vertPick ?? 'auto');
+  // Contracts typed on the ticket, per horizon ({ '0': n, '45': n }); unset = Kelly's size.
+  const [sizeOv, setSizeOv] = useState(init?.sizeOv ?? {});
   // ── Strike method (R-49, Oct 2026) ──
   // 'em'    — expected-move strikes; deltas are only a cross-check.
   // 'delta' — short strikes placed at their target delta (applied after Fetch Greeks).
@@ -727,8 +729,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -791,6 +793,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           straddlePut: i0.straddlePut !== '' ? parseFloat(i0.straddlePut) : null,
           straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
           commissionPerContract: commRateAcct,
+          contractsOverride: sizeOv['0'] || null,
           ...(over || {})
   });
 
@@ -828,6 +831,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             upperAbsDelta: i45.upperWingDelta !== '' ? Math.abs(parseFloat(i45.upperWingDelta)) : null
           } : null,
           commissionPerContract: commRateAcct,
+          contractsOverride: sizeOv['45'] || null,
           ...(over || {})
   });
 
@@ -855,7 +859,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -2456,7 +2460,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<div class="section"><div class="section-title">Sizing (Sharpe-Adjusted Kelly)</div>' +
       '<div class="row"><span class="label">Contracts</span><span class="value white">' + r.contracts + '</span></div>' +
       '<div class="row"><span class="label">Adj Kelly $</span><span class="value ' + (r.kellyOverRisk ? 'red' : 'green') + '">$' + (r.kellyDollar ? r.kellyDollar.toFixed(0) : '0') + '</span></div>' +
-      '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%</span></div>' +
+      '<div class="row"><span class="label">Raw Kelly</span><span class="value white">' + (r.rawKelly ? (r.rawKelly*100).toFixed(1) : '0') + '%' + (r.sizingModel === 'full' ? ' (45DTE: not adjusted)' : '') + '</span></div>' +
       '<div class="row"><span class="label">Vol factor</span><span class="value white">' + (r.volFactor ? r.volFactor.toFixed(2) : '--') + '</span></div>' +
       '<div class="row"><span class="label">Sharpe factor</span><span class="value white">' + (r.sharpeFactor ? r.sharpeFactor.toFixed(2) : '--') + '</span></div>' +
       '<div class="row"><span class="label">EV / trade' + (r.evBasis ? ' <span style="opacity:0.6;font-size:9px">(' + (r.evBasis.mode==='measured'?'measured':'est') + ')</span>' : '') + '</span><span class="value ' + (r.ev > 0 ? 'green' : 'red') + '">$' + (r.ev ? r.ev.toFixed(0) : '0') + '</span></div>' +
@@ -3006,13 +3010,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           borderRadius:12,background:'#161b22',border:'1px solid #21262d'}}>
           <div style={{flex:'1 1 130px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
             <span style={EX_LBL}>Size</span>
-            {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : !(r.kellyDollar > 0) ? <>
-              <span className="mono" style={{fontSize:22,fontWeight:700,color:'#8b949e'}}>0 ct</span>
-              <span style={{fontSize:12.5,color:'#e3833c'}}>Kelly says no edge at this price — {r.contracts} ct is a floor, not a size</span>
-            </> : <>
-              <span className="mono" style={{fontSize:22,fontWeight:700,color: r.kellyOverRisk ? '#f85149' : '#e6edf3'}}>{r.contracts} ct</span>
-              <span style={{fontSize:12.5,color:'#a8b2be'}}>Kelly ${Math.round(r.kellyDollar || 0)}{r.kellyOverRisk ? ' · over risk cap' : ''}</span>
-            </>}
+            {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : <SizeInput
+              value={r.contracts} kellyC={r.kellyContracts ?? r.contracts} mine={!!r.contractsOverride}
+              noEdge={!(r.kellyDollar > 0)} kellyDollar={r.kellyDollar} overRisk={r.kellyOverRisk} riskEach={r.maxRisk && r.contracts ? r.maxRisk / r.contracts : 0}
+              onSet={n => setSizeOv(p => ({ ...p, [bag]: n > 0 ? n : null }))} />}
           </div>
           <div style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
             <span style={EX_LBL}>{cashType==='debit' ? 'Net debit' : 'Net credit'}{netIsTarget && <span title="Pre-filled from the engine's target — replace it with your fill; this number is logged."
@@ -4085,12 +4086,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           <div className="card">
             <SectionLabel white info="Position sizing using 4-factor adjusted Kelly: Raw Kelly × Vol Factor (VIX level) × Sharpe Factor (EV/risk edge) × Strategy Modifier (tail risk per strategy). Vol Factor: VIX <12 = 1.0, 12-18 = 0.75, 18-25 = 0.50, >25 = 0.25. Sharpe Factor: based on EV/risk ratio. Strategy Modifier: butterflies 1.0, IC/credit spreads 0.85, BWB 0.80, reversed condor 0.70. Adj Kelly $ = max recommended risk. Risk per contract turns red if it exceeds Kelly $. POP turns red if below breakeven POP.">Sizing (Sharpe-adjusted Kelly)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 mb-3">
-              <KV label="Contracts" value={r.contracts}/>
-              <KV label="Adj Kelly $" value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
-              <KV label="Raw Kelly" value={`${(r.rawKelly*100).toFixed(1)}%`}/>
-              <KV label="Adjusted Kelly" value={`${(r.adjustedKelly*100).toFixed(1)}%`} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
+              <KV label="Contracts" value={r.contractsOverride ? `${r.contracts} (Kelly ${r.kellyContracts})` : r.contracts} cls={r.contractsOverride ? 'text-amber' : ''}/>
+              <KV label={r.sizingModel === 'full' ? 'Kelly $' : 'Adj Kelly $'} value={`$${r.kellyDollar?.toFixed(0)||0}`} cls={r.kellyOverRisk?'text-red':'text-green'}/>
+              <KV label="Raw Kelly" value={isFinite(r.rawKelly) ? `${(r.rawKelly*100).toFixed(1)}%` : '—'}/>
+              <KV label="Adjusted Kelly" value={r.sizingModel === 'full' ? 'not adjusted' : isFinite(r.adjustedKelly) ? `${(r.adjustedKelly*100).toFixed(1)}%` : '—'} cls={r.adjustedKelly<r.rawKelly?'text-amber':''}/>
             </div>
+            {r.sizingModel === 'full' && (
+              <div data-testid="sizing-full-note" style={{fontSize:13,color:'#a8b2be',margin:'0 0 12px'}}>
+                45DTE sizes on full Kelly: no vol, Sharpe or strategy factor is applied. Contracts are capped only by max loss and max open risk in Settings.
+              </div>
+            )}
             <div className="space-y-3">
+              {r.sizingModel !== 'full' && <>
               <SpeedTape label="Vol factor" value={r.volFactor||0} min={0} max={1}
                 zones={[{to:0.25,color:'#f85149'},{to:0.50,color:'#d29922'},{to:0.75,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={r.volFactor?.toFixed(2)||'--'}
@@ -4103,6 +4110,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 zones={[{to:0.70,color:'#f85149'},{to:0.85,color:'#d29922'},{to:0.95,color:'#e3b341'},{to:1.0,color:'#3fb950'}]}
                 display={`${r.stratModifier?.toFixed(2)||'--'}`}
                 sublabel={r.stratModReason||''} />
+              </>}
               <SpeedTape label="POP margin" value={Math.min(r.popMargin||0, 2.5)} min={0} max={2.5}
                 zones={[{to:0.8,color:'#f85149'},{to:1.0,color:'#d29922'},{to:1.5,color:'#e3b341'},{to:2.5,color:'#3fb950'}]}
                 display={r.popMargin?`${r.popMargin.toFixed(2)}x`:'--'}
@@ -4420,6 +4428,41 @@ const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid #303
 // Near (sold) and far (bought) expiries for a calendar or diagonal. Five choices
 // each, around the current pick; the far row only offers dates after the near.
 // 45DTE single-expiry structures: which listed expiry the ticket trades. (Oct 2026.)
+// Contracts on the ticket (Oct 2026). Kelly picks the size; you can type your own,
+// and Kelly's stays beside it with a reset. Logging, commission and max risk all
+// follow what is in the box.
+function SizeInput({ value, kellyC, mine, noEdge, kellyDollar, overRisk, riskEach, onSet }) {
+  const [txt, setTxt] = useState(String(value));
+  useEffect(() => { setTxt(String(value)); }, [value]);
+  const commit = v => { const n = Math.floor(parseFloat(v)); if (n > 0) onSet(n === kellyC && !mine ? null : n); else setTxt(String(value)); };
+  const step = d => onSet(Math.max(1, value + d));
+  const btn = { width:28,height:32,borderRadius:7,border:'1px solid #30363d',background:'transparent',color:'#c9d1d9',fontSize:16,cursor:'pointer' };
+  const over = mine && value > kellyC;
+  return (
+    <>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <button type="button" aria-label="One fewer contract" style={btn} onClick={() => step(-1)}>−</button>
+        <input data-testid="size-input" type="number" min="1" step="1" aria-label="Contracts" value={txt}
+          onChange={e => setTxt(e.target.value)} onBlur={e => commit(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(e.target.value); }}
+          className="mono" style={{width:64,padding:'5px 8px',borderRadius:8,border:`1px solid ${mine ? '#d29922' : '#30363d'}`,background:'#0d1117',
+            color: over || overRisk ? '#f85149' : '#e6edf3',fontSize:20,fontWeight:700,outline:'none',textAlign:'center'}} />
+        <button type="button" aria-label="One more contract" style={btn} onClick={() => step(1)}>+</button>
+        <span className="mono" style={{fontSize:13,color:'#8b949e'}}>ct</span>
+      </div>
+      <span data-testid="size-kelly" style={{fontSize:12.5,color: noEdge ? '#e3833c' : '#a8b2be'}}>
+        {noEdge ? `Kelly says no edge at this price (${kellyC} ct is a floor)` : `Kelly ${kellyC} ct · $${Math.round(kellyDollar || 0)}`}
+        {overRisk ? ' · over risk cap' : ''}
+        {mine && <> · <button type="button" data-testid="size-reset" onClick={() => onSet(null)}
+          style={{padding:0,border:'none',background:'transparent',color:'#58a6ff',fontSize:12.5,textDecoration:'underline',cursor:'pointer'}}>use Kelly</button></>}
+      </span>
+      {over && riskEach > 0 && <span style={{fontSize:12.5,color:'#f85149'}}>
+        {value} ct risks ${Math.round(value * riskEach)} — above Kelly's ${Math.round(kellyC * riskEach)}
+      </span>}
+    </>
+  );
+}
+
 // "Strikes listed: puts every $1, calls every $5 near the shorts" — the spacing the
 // chain actually has where the ticket's shorts sit, for the picked expiry.
 function listedStrikeNote(lc, exp, legs, fit) {
