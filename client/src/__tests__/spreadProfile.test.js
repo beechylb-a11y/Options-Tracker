@@ -82,3 +82,42 @@ describe('spread profile', () => {
     expect(spreadProfile(null)).toBeNull();
   });
 });
+
+/* The leg shapes the two engines hand over. The spread panel was gated on the 0DTE
+   shape alone, so on a 45DTE ticket — the engine it was built for — the card never
+   rendered at all. These pin the conversion both ways. */
+describe('structure legs from either engine', () => {
+  // 0DTE: payoff.legs
+  const zeroDte = [
+    { strike: 695, type: 'put', side: 'buy', qty: 1 },
+    { strike: 705, type: 'put', side: 'sell', qty: 1 },
+    { strike: 805, type: 'call', side: 'sell', qty: 1 },
+    { strike: 815, type: 'call', side: 'buy', qty: 1 },
+  ];
+  // 45DTE: payCurve.cl
+  const fortyFive = [
+    { strike: 695, right: 'P', sign: 1, qty: 1 },
+    { strike: 705, right: 'P', sign: -1, qty: 1 },
+    { strike: 805, right: 'C', sign: -1, qty: 1 },
+    { strike: 815, right: 'C', sign: 1, qty: 1 },
+  ];
+  const from0 = l => ({ strike: l.strike, right: l.type === 'put' ? 'P' : 'C',
+    ratio: (l.side === 'sell' ? -1 : 1) * (l.qty || 1) });
+  const from45 = l => ({ strike: l.strike, right: l.right, ratio: (l.sign || 1) * (l.qty || 1) });
+
+  it('produces the same condor from both shapes', () => {
+    expect(zeroDte.map(from0)).toEqual(fortyFive.map(from45));
+  });
+
+  it('keeps the short legs short, which is what signs the credit', () => {
+    const legs = fortyFive.map(from45);
+    expect(legs.filter(l => l.ratio < 0).map(l => l.strike)).toEqual([705, 805]);
+    // Net quantity zero: a condor is four legs that cancel, not a naked position.
+    expect(legs.reduce((a, l) => a + l.ratio, 0)).toBe(0);
+  });
+
+  it('carries a x2 body through as a ratio of two', () => {
+    expect(from0({ strike: 770, type: 'call', side: 'sell', qty: 2 }).ratio).toBe(-2);
+    expect(from45({ strike: 770, right: 'C', sign: -1, qty: 2 }).ratio).toBe(-2);
+  });
+});

@@ -1606,6 +1606,33 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // spread) — the engine's capture fractions already model the 21-DTE exit, so
   // feeding it the at-close numbers would discount the trade twice. Only offered
   // once the ticket carries a real fill; a model-priced curve is a picture, not a fill.
+  // Legs for anything that prices the STRUCTURE rather than the ticket — the spread
+  // profile today. The two engines describe their legs differently: 0DTE returns
+  // payoff.legs ({type, side, qty}) while 45DTE builds payCurve.cl ({right, sign,
+  // qty}). Gating on payoff.legs alone meant the spread profile could never appear
+  // on a 45DTE ticket, which is the engine it was asked for. (Oct 2026.)
+  const structureLegs = (() => {
+    if (is0 && r.payoff && Array.isArray(r.payoff.legs) && r.payoff.legs.length >= 2) {
+      return r.payoff.legs.map(l => ({
+        strike: l.strike, right: l.type === 'put' ? 'P' : 'C',
+        ratio: (l.side === 'sell' ? -1 : 1) * (l.qty || 1),
+      }));
+    }
+    if (!is0 && payCurve && Array.isArray(payCurve.cl) && payCurve.cl.length >= 2) {
+      // A calendar's legs sit in different expiries, so there is no single chain to
+      // measure and the profile would silently price the wrong contract.
+      if (isTimeSpread) return null;
+      return payCurve.cl.map(l => ({
+        strike: l.strike, right: l.right, ratio: (l.sign || 1) * (l.qty || 1),
+      }));
+    }
+    return null;
+  })();
+  // The expiry those legs actually trade in: the listed one the ticket resolved to,
+  // not a date computed from the DTE input, which can miss the real chain by a day.
+  const structureExpiry = (!is0 && singleExp) ? String(singleExp).replace(/-/g, '')
+    : deriveExpiryYYYYMMDD();
+
   const pay45 = payCurve && payCurve.netSource === 'ticket' ? payCurve.atExpiry : null;
   const sizingPay = r.payoff || pay45;
 
@@ -4000,17 +4027,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
           <div className="empty:hidden" style={tabShow('timing')}>
           {/* When is this structure cheapest to cross? Measured, not assumed. */}
-          {r.payoff && Array.isArray(r.payoff.legs) && r.payoff.legs.length >= 2 && (
+          {structureLegs && (
             <div className="card">
               <SectionLabel white info="Pulls per-leg BID and ASK bars for these exact strikes over the last few sessions, sums them into the combo spread, and reports the median by ET half-hour. The usual advice — wide at the open, tight mid-morning, widening into the close — is a claim about options markets in general; this is a measurement of the market you are actually trading. Needs the bridge and TWS running, and only works while the contracts are alive.">
                 Spread by time of day
               </SectionLabel>
               {(() => {
-                const legs = r.payoff.legs.map(l => ({
-                  strike: l.strike, right: l.type === 'put' ? 'P' : 'C',
-                  ratio: (l.side === 'sell' ? -1 : 1) * (l.qty || 1),
-                }));
-                const expiry = is0 ? deriveExpiryYYYYMMDD() : deriveExpiryYYYYMMDD();
+                const legs = structureLegs;
+                const expiry = structureExpiry;
                 const ncd = parseFloat(is0 ? i0.netCreditDebit : i45.netCreditDebit);
                 const run = async () => {
                   let bridgeUrl = '';
