@@ -5032,7 +5032,7 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
   const S = { fontFamily: 'DM Sans,system-ui,sans-serif' };
   return (
     <svg data-testid="price-map" viewBox={`0 0 ${W} 170`} width="100%" role="img"
-      aria-label={`${underlying || 'Price'} ${Math.round(price)}; strikes ${ks.join(', ')}${bes.length ? '; breakevens ' + bes.map(Math.round).join(' and ') : ''}${hasEM ? `; expected move ±${em.toFixed(0)}` : ''}`}>
+      aria-label={`${underlying || 'Price'} ${Math.round(price)}; strikes ${ks.join(', ')}${bes.length ? '; breakevens ' + bes.map(Math.round).join(' and ') : ''}${hasEM ? `; expected move ±${em.toFixed(em < 10 ? 1 : 0)} (${(price - em).toFixed(price < 1000 ? 1 : 0)} to ${(price + em).toFixed(price < 1000 ? 1 : 0)})` : ''}`}>
       {cells}
       {profitMid != null && <text x={profitMid} y="43.5" fill="#e6ffed" fontSize="12" fontWeight="600" textAnchor="middle"
         stroke="#0b3d1a" strokeWidth="3" paintOrder="stroke" style={S}>Max profit {money(maxP)}</text>}
@@ -5056,12 +5056,34 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
         </text>
       ))}
 
-      {hasEM && (
-        <g>
-          <rect x={X(price - em)} y="74" width={X(price + em) - X(price - em)} height="18" rx="9" fill="#58a6ff" fillOpacity="0.16" stroke="#58a6ff" strokeOpacity="0.5" />
-          <text x={X(price - em) + 10} y="87" fill="#9ecbff" fontSize="11" style={S}>{emLabel} ±{em.toFixed(0)}</text>
-        </g>
-      )}
+      {hasEM && (() => {
+        // EM edges (Oct 2026): a line at each end of the expected move with its price,
+        // so where the move is likely to stop reads straight off the map.
+        const dp = em < 10 ? 1 : 0;
+        const eLo = price - em, eHi = price + em;
+        const xs = [{ v: eLo, x: X(eLo), side: -1 }, { v: eHi, x: X(eHi), side: 1 }];
+        const clash = x => Math.abs(x - pxX) < pillW / 2 + 26;
+        return (
+          <g data-testid="em-edges">
+            {xs.map(e => (
+              <line key={'l' + e.side} x1={e.x} y1="24" x2={e.x} y2="140" stroke="#58a6ff" strokeOpacity="0.75" strokeWidth="1.25" strokeDasharray="2 3" />
+            ))}
+            <rect x={X(eLo)} y="74" width={X(eHi) - X(eLo)} height="18" rx="9" fill="#58a6ff" fillOpacity="0.16" stroke="#58a6ff" strokeOpacity="0.5" />
+            <text x={X(eLo) + 10} y="87" fill="#9ecbff" fontSize="11" style={S}>{emLabel} ±{em.toFixed(dp)}</text>
+            {xs.map(e => {
+              const near = clash(e.x);
+              return (
+                <text key={'t' + e.side} data-testid={e.side < 0 ? 'em-low' : 'em-high'}
+                  x={near ? e.x + e.side * 4 : e.x} y="143" fill="#9ecbff" fontSize="10.5" fontWeight="600"
+                  textAnchor={near ? (e.side < 0 ? 'end' : 'start') : 'middle'}
+                  stroke="#0d1117" strokeWidth="3" paintOrder="stroke" style={T}>
+                  {e.v.toFixed(price < 1000 ? 1 : 0)}
+                </text>
+              );
+            })}
+          </g>
+        );
+      })()}
 
       {high > 0 && low > 0 && high >= low && (
         <g>
