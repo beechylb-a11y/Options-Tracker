@@ -2,7 +2,7 @@
    and calls every $5 out there; the engine's $1-grid condor asked for unlisted calls
    and, fixed by hand, had unequal wings — which TWS books as a custom combo. */
 import { describe, it, expect } from 'vitest';
-import { fitToListed, unlistedLegs, unequalWings, listedLadder } from '../engine/listedStrikes';
+import { fitToListed, unlistedLegs, unequalWings, listedLadder, chainCovers } from '../engine/listedStrikes';
 import { bracketStrikes } from '../engine/deltaStrikes';
 import { calc45DTE } from '../engine/calc45dte';
 
@@ -48,6 +48,31 @@ describe('fitToListed', () => {
     const f = fitToListed(v, QQQ);
     expect(f.legs[0].strike).toBe(810);
     expect(f.legs[1].strike).toBe(815);               // 813 → 815, not onto the short
+  });
+
+  it('ignores a short or truncated chain instead of collapsing the condor (825/825)', () => {
+    // what reached the app on 7 Oct: no puts, a stub of calls
+    const bad = { P: [], C: [825] };
+    const f = fitToListed(ic(706, 717, 807, 818), bad);
+    expect(f.changed).toBe(false);
+    expect(f.legs.map(l => l.strike)).toEqual([706, 717, 807, 818]);
+    expect(f.skipped).toMatch(/only 0 puts/);
+    // calls that stop short of the legs
+    const cut = { P: QQQ.P, C: range(700, 810, 1) };
+    expect(chainCovers(ic(706, 717, 807, 818), cut).ok).toBe(true);   // within one span: still usable
+    const cut2 = { P: QQQ.P, C: range(700, 760, 1) };
+    expect(chainCovers(ic(706, 717, 807, 818), cut2).ok).toBe(false);
+    expect(fitToListed(ic(706, 717, 807, 818), cut2).changed).toBe(false);
+    expect(unlistedLegs(ic(706, 717, 807, 818), cut2)).toEqual([]);   // no false alarms off a bad list
+  });
+
+  it('never puts a short and its long on one strike', () => {
+    const sparse = { P: range(600, 780, 1), C: [700, 750, 800, 825, 830, 835] };
+    const f = fitToListed(ic(706, 717, 807, 818), sparse);
+    const k = f.legs.map(l => l.strike);
+    expect(k[3]).toBeGreaterThan(k[2]);
+    expect(k[1]).toBeGreaterThan(k[0]);
+    expect(k[1] - k[0]).toBe(k[3] - k[2]);
   });
 
   it('does nothing without a chain', () => {

@@ -932,15 +932,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: null, loading: true });
     let live = true;
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 20000);
+    const t = setTimeout(() => ctrl.abort(), 35000);
     fetch(bridgeUrl + '/api/listed-strikes?underlying=' + i45.underlying + '&expiry=' + singleExp,
       { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
       .then(r => r.text()).then(txt => {
         let d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
         if (!live) return;
-        const ok = d && !d.error && (Array.isArray(d.calls) || Array.isArray(d.puts));
+        const ok = d && !d.error && (Array.isArray(d.calls) || Array.isArray(d.puts)) && d.complete !== false;
         setListedChain({ key, u: i45.underlying, exp: singleExp, C: ok ? d.calls || [] : null, P: ok ? d.puts || [] : null,
-          err: ok ? null : (d && d.error) || 'bridge has no listed-strikes yet — pull and restart it' });
+          err: ok ? null : d && d.complete === false ? `TWS timed out listing strikes (${(d.puts || []).length} puts, ${(d.calls || []).length} calls arrived)`
+            : (d && d.error) || 'bridge has no listed-strikes yet — pull and restart it' });
       })
       .catch(() => { if (live) setListedChain({ key, u: i45.underlying, exp: singleExp, C: null, P: null, err: 'bridge not reachable' }); })
       .finally(() => clearTimeout(t));
@@ -1084,7 +1085,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     let strikes = [];
     for (let k = 3; k >= -3; k--) strikes.push(+(center + k * strikeStep).toFixed(2));
     // 45DTE: the strikes this expiry actually lists for this right.
-    const lad = !is0 && listedNow ? listedLadder(listedNow[right], center, 3) : null;
+    const lad = !is0 && listedNow && (listedNow[right] || []).length >= 5 ? listedLadder(listedNow[right], center, 3) : null;
     if (lad && lad.length) strikes = lad;
     const underlying = is0 ? i0.underlying : i45.underlying;
     const expiry = legExpiryOf(leg) || deriveExpiryYYYYMMDD();
@@ -2002,7 +2003,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const brackets = {};
         const req = [];
         plan0.moves.forEach(m => {
-          brackets[m.idx] = bracketStrikes(m.to, underlying, 2, !is0 && listedNow ? listedNow[m.right] : null);
+          brackets[m.idx] = bracketStrikes(m.to, underlying, 2, !is0 && listedNow && (listedNow[m.right] || []).length >= 5 ? listedNow[m.right] : null);
           brackets[m.idx].forEach(k => {
             if (!req.some(q => q.strike === k && q.right === m.right)) req.push({ strike: k, right: m.right, qty: 1 });
           });
@@ -4437,9 +4438,11 @@ function listedStrikeNote(lc, exp, legs, fit) {
     const sl = shortOf(r); const g = sl ? gapNear(lc[r], sl.strike) : null;
     if (g) parts.push(`${name} every $${+g.toFixed(2)}`);
   });
-  if (!parts.length) return 'Strikes from the listed chain.';
+  const count = r => { const l = lc[r] || []; return l.length ? `${l.length} ${r === 'P' ? 'puts' : 'calls'} ${l[0]}–${l[l.length - 1]}` : `0 ${r === 'P' ? 'puts' : 'calls'}`; };
+  if (fit && fit.skipped) return `Listed strikes not used: ${fit.skipped} (TWS sent ${count('P')}, ${count('C')}). Standard grid shown — check strikes in TWS.`;
+  if (!parts.length) return `Listed strikes: ${count('P')}, ${count('C')}.`;
   return `Strikes listed here: ${parts.join(', ')}`
-    + (fit ? ` — engine strikes fitted${fit.equalWings ? `, wings ${fit.equalWings} wide both sides` : ''}.` : '.');
+    + (fit && fit.moves ? ` — engine strikes fitted${fit.equalWings ? `, wings ${fit.equalWings} wide both sides` : ''}.` : '.');
 }
 
 function SingleExpiryPicker({ today, list, sel, onPick, source, strikeNote }) {

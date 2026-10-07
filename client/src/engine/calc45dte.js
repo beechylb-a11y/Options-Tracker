@@ -218,6 +218,7 @@ export function calc45DTE(inputs) {
   if (listed45 && legs.length) {
     const f = fitToListed(legs, listed45);
     if (f.changed) { legs = f.legs; listedFit = { moves: f.moves, equalWings: f.equalWings }; }
+    else if (f.skipped) listedFit = { skipped: f.skipped };
   }
   const engineLegs = legs.map(l => ({ ...l }));
   const ovStrikes = inputs.overrideStrikes || null;
@@ -588,7 +589,8 @@ export function calc45DTE(inputs) {
   const notices = [..._ev45.notices];
   if (unlisted45.length) warnings.push(`Not listed for this expiry: ${unlisted45.map(l => l.strike + (/put/i.test(l.label) ? 'P' : 'C')).join(', ')} — TWS cannot fill these strikes`);
   if (wingsUneven45) warnings.push(`Wings differ (put ${wingsUneven45.put} / call ${wingsUneven45.call}) — TWS lists unequal wings as a custom combo, not an ${/butterfly/i.test(legStrat) ? 'iron butterfly' : 'iron condor'}`);
-  if (listedFit) notices.push(`Strikes fitted to the expiry's listed chain${listedFit.equalWings ? ` — wings ${listedFit.equalWings} wide both sides` : ''}`);
+  if (listedFit && listedFit.skipped) notices.push(`Listed strikes not used (${listedFit.skipped}) — strikes stay on the standard grid; check them in TWS`);
+  else if (listedFit) notices.push(`Strikes fitted to the expiry's listed chain${listedFit.equalWings ? ` — wings ${listedFit.equalWings} wide both sides` : ''}`);
 
   // ── Delta cross-check and delta strikes (R-49, Oct 2026) — see calc0dte.js ──
   const deltaCheck = deltaCrossCheck({ legs, strat: legStrat, horizon: '45dte',

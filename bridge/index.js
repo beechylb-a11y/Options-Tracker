@@ -1355,26 +1355,30 @@ function getListedStrikes(underlying, expiry) {
   return new Promise((resolve) => {
     const reqId = getReqId();
     const C = new Set(), P = new Set();
-    let done = false;
-    const finish = () => {
+    let done = false, rows = 0;
+    // complete = TWS said contractDetailsEnd. A timeout returns what arrived but is
+    // never cached, and the app will not fit strikes to it.
+    const finish = (complete) => {
       if (done) return; done = true;
       ib.removeListener(EventName.contractDetails, onDet);
       ib.removeListener(EventName.contractDetailsEnd, onEnd);
-      const out = { calls: [...C].sort((a, b) => a - b), puts: [...P].sort((a, b) => a - b) };
-      if (out.calls.length || out.puts.length) listedCache[key] = out;
+      const out = { calls: [...C].sort((a, b) => a - b), puts: [...P].sort((a, b) => a - b), complete: !!complete, rows };
+      if (complete && out.calls.length && out.puts.length) listedCache[key] = out;
+      console.log(`[BRIDGE] listed ${underlying} ${expiry}: ${rows} contracts, ${out.puts.length} puts, ${out.calls.length} calls${complete ? '' : ' (TIMED OUT)'}`);
       resolve(out);
     };
     const onDet = (id, det) => {
       if (id !== reqId || !det || !det.contract) return;
+      rows++;
       const k = Number(det.contract.strike), r = String(det.contract.right || '').toUpperCase();
       if (!(k > 0)) return;
       if (r.startsWith('C')) C.add(k); else if (r.startsWith('P')) P.add(k);
     };
-    const onEnd = (id) => { if (id === reqId) finish(); };
+    const onEnd = (id) => { if (id === reqId) finish(true); };
     ib.on(EventName.contractDetails, onDet);
     ib.on(EventName.contractDetailsEnd, onEnd);
     ib.reqContractDetails(reqId, base);
-    setTimeout(finish, 15000);
+    setTimeout(() => finish(false), 30000);
   });
 }
 

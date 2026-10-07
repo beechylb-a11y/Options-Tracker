@@ -110,6 +110,37 @@ function fitEach(legs, L) {
 }
 
 /**
+ * Is this chain believable for these legs? A short or truncated reply from the
+ * bridge (a timeout, a TWS hiccup) once left a condor with both calls on 825.
+ * Each right the legs use needs a real list that spans the legs' strikes.
+ */
+export function chainCovers(legs, listed) {
+  const L = normListed(listed);
+  if (!L) return { ok: false, why: 'no listed strikes' };
+  for (const r of ['P', 'C']) {
+    const ks = (legs || []).filter(l => rightOf(l) === r).map(l => +l.strike).filter(k => k > 0);
+    if (!ks.length) continue;
+    const list = L[r], name = r === 'P' ? 'puts' : 'calls';
+    if (list.length < 5) return { ok: false, why: `only ${list.length} ${name} came back` };
+    const lo = Math.min(...ks), hi = Math.max(...ks);
+    const span = Math.max(hi - lo, 1);
+    if (list[0] > lo + span || list[list.length - 1] < hi - span) {
+      return { ok: false, why: `${name} listed ${list[0]}–${list[list.length - 1]} do not reach ${lo}–${hi}` };
+    }
+  }
+  return { ok: true, why: null };
+}
+
+/** Two legs of one right that were apart now share a strike. */
+function collapsed(before, after) {
+  for (let i = 0; i < after.length; i++) for (let j = i + 1; j < after.length; j++) {
+    if (rightOf(after[i]) !== rightOf(after[j])) continue;
+    if (Math.abs(before[i].strike - before[j].strike) > EPS && Math.abs(after[i].strike - after[j].strike) < EPS) return true;
+  }
+  return false;
+}
+
+/**
  * @param legs    [{ label, strike }]
  * @param listed  { C:[...], P:[...] } for the ticket's expiry
  * @returns { legs, changed, moves:[{ idx, label, from, to }], equalWings } — legs
@@ -117,23 +148,31 @@ function fitEach(legs, L) {
  */
 export function fitToListed(legs, listed) {
   const L = normListed(listed);
-  if (!L || !Array.isArray(legs) || !legs.length) return { legs: legs || [], changed: false, moves: [], equalWings: null };
+  const none = (skipped = null) => ({ legs: legs || [], changed: false, moves: [], equalWings: null, skipped });
+  if (!L || !Array.isArray(legs) || !legs.length) return none();
+  const cover = chainCovers(legs, L);
+  if (!cover.ok) return none(cover.why);
   const ix = ironShape(legs);
   let out = null, equalWings = null;
-  if (ix && L.P.length && L.C.length) {
+  if (ix) {
+    // A condor / iron fly is fitted whole or not at all: snapping leg by leg is
+    // what gives uneven wings.
     out = fitIron(legs, L, ix);
-    if (out) equalWings = out[ix.sp].strike - out[ix.lp].strike;
+    if (!out) return none('no wing width is listed on both sides near these strikes');
+    equalWings = out[ix.sp].strike - out[ix.lp].strike;
+  } else {
+    out = fitEach(legs, L);
   }
-  if (!out) out = fitEach(legs, L);
+  if (collapsed(legs, out)) return none('fitting would put two legs on one strike');
   const moves = [];
   out.forEach((l, i) => { if (Math.abs(l.strike - legs[i].strike) > EPS) moves.push({ idx: i, label: l.label, from: legs[i].strike, to: l.strike }); });
-  return { legs: out, changed: moves.length > 0, moves, equalWings };
+  return { legs: out, changed: moves.length > 0, moves, equalWings, skipped: null };
 }
 
 /** Legs whose strike is not listed for their right — for a warning on hand edits. */
 export function unlistedLegs(legs, listed) {
   const L = normListed(listed);
-  if (!L || !Array.isArray(legs)) return [];
+  if (!L || !Array.isArray(legs) || !chainCovers(legs, L).ok) return [];
   return legs.filter(l => { const list = L[rightOf(l)]; return list && list.length && !has(list, l.strike); });
 }
 
