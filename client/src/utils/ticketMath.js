@@ -210,7 +210,7 @@ export function loadPlan(ts) {
   try { const s = localStorage.getItem(PLAN_KEY(ts)); return s ? JSON.parse(s) : null; } catch (e) { return null; }
 }
 
-export function planText(pos, rows, stopPct) {
+export function planText(pos, rows, stopPct, closeBy = null) {
   const lines = rows.map((r, i) => {
     const p = targetToPrice(pos, r.pct);
     return `  T${i + 1}: ${r.qty}x @ ${p.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (+${r.pct}% ${pos.basis === 'entry' ? 'on entry' : 'of max profit'}, +$${pnlAt(pos, p, r.qty).toFixed(0)})`;
@@ -218,6 +218,9 @@ export function planText(pos, rows, stopPct) {
   if (stopPct) {
     const sp = stopToPrice(pos, stopPct);
     lines.push(`  Stop: all @ ${sp.toFixed(2)} ${pos.isCredit ? 'db' : 'cr'} (lose ${Math.abs(stopPct)}% of entry, ${pnlAt(pos, sp, 1).toFixed(0)}/ct)`);
+  }
+  if (closeBy && closeBy.closeDte) {
+    lines.push(`  Close by: ${closeBy.closeDte} DTE${closeBy.closeLeg ? ' on the ' + closeBy.closeLeg : ''}${closeBy.date ? ` (${closeBy.date})` : ''}, whatever the P&L`);
   }
   return '--- Exit plan ---\n' + lines.join('\n');
 }

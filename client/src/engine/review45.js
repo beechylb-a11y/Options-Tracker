@@ -201,13 +201,13 @@ export function reviewOpen45(p) {
 
   if (pace === 'target') {
     act('take-profit', 'green', `Take profit — at ${Math.round((progress || 1) * rule.target)}% vs the ${rule.target}% target`);
-    W.push(`tastylive manages ${strategy} at ${out.metrics.targetLabel}; the rest of the curve pays less per day of risk.`);
+    W.push(`${strategy} is managed at ${out.metrics.targetLabel}; the rest of the curve pays less per day of risk.`);
     S.push(`Close all ${qtyOpen} at about ${mark != null ? Math.abs(mark).toFixed(2) : 'the mid'} ${isCredit ? 'debit' : 'credit'}.`);
   } else if (stopHit) {
     act('close', 'red', `Stop hit — down ${Math.round(-pnlShare / Math.abs(ncd) * 100)}% of the ${isCredit ? 'credit' : 'debit'}`);
     W.push(`Your stop guide is ${stopPct}% of the ${isCredit ? 'credit' : 'debit'} (${isCredit ? 'buy back at ' : 'close at '}${out.metrics.stopPrice.toFixed(2)}).`);
     S.push(`Close all ${qtyOpen} at about ${mark != null ? Math.abs(mark).toFixed(2) : 'the mid'} ${isCredit ? 'debit' : 'credit'}.`);
-    if (SHORT_PREMIUM.includes(fam) && dte > closeDte) S.push(`Or roll out in time ${rollCredit} — tastylive found rolling beat stopping on 45-DTE short premium.`);
+    if (SHORT_PREMIUM.includes(fam) && dte > closeDte) S.push(`Or roll out in time ${rollCredit} — on 45-DTE short premium, rolling has beaten stopping out.`);
   } else if (dte <= closeDte) {
     const tested = testedShorts.length > 0;
     if (SHORT_PREMIUM.includes(fam) && !tested && (pnlShare || 0) >= 0) {
@@ -219,7 +219,7 @@ export function reviewOpen45(p) {
     }
     W.push(fam === 'time'
       ? `Calendars and diagonals close at ${closeDte} DTE on the front leg; after that the front leg’s gamma runs the trade.`
-      : `Inside ${closeDte} DTE gamma accelerates — tastylive’s research found the biggest losers there, and a time stop beat any P&L stop.`);
+      : `Inside ${closeDte} DTE gamma accelerates — the biggest losers come from there, and a time stop has beaten any P&L stop.`);
   } else if (SHORT_PREMIUM.includes(fam) && testedShorts.length) {
     const t = testedShorts[0];
     const other = t.right === 'P' ? callShort : putShort;
@@ -239,7 +239,7 @@ export function reviewOpen45(p) {
       act('roll-out', 'amber', `Tested at ${t.strike}${t.right} — roll out in time`);
       W.push(`The short ${t.strike}${t.right} is ${t.itm ? 'in the money' : 'tested'}${t.absDelta != null ? ` (${Math.round(t.absDelta * 100)}Δ)` : ''} with ${dte} days left.`);
       S.push(`Roll the spread to the next ~45-DTE expiry at the same strikes, ${rollCredit}.`);
-      S.push('tastylive rolls while the short leg still has more extrinsic value than the long — earlier is easier.');
+      S.push('Roll while the short leg still has more extrinsic value than the long — earlier is easier.');
     }
   } else if (fam === 'debitVertical' && pnlShare != null && pnlShare <= -0.5 * Math.abs(ncd) && fit < 0) {
     act('close', 'red', 'Thesis broken — half the debit gone and the trend is against you');

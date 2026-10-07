@@ -27,7 +27,7 @@ const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d',
 const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
-export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onPlan, engine = '0DTE', commRate, strategy,
+export default function ProfitTaker({ ncd, win, contracts, kelly = null, underlying, legs, onPlan, engine = '0DTE', commRate, strategy,
   tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte }) {
   const is0 = !/45/.test(engine);
   // Per-strategy target and basis (Oct 2026): tastylive's numbers, not one 50% for all.
@@ -35,7 +35,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
   // 25–50% of MAX PROFIT instead of the % return on the debit.
   const baseRule = exitRuleFor(engine, strategy);
   const rule = tastyFly ? { ...baseRule, basis: 'max', target: 25, chips: [25, 35, 50],
-    why: 'tastylive long-fly guidance: 25–50% of max profit' } : baseRule;
+    why: 'long fly: 25–50% of max profit' } : baseRule;
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
     qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying,
@@ -72,11 +72,13 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
   const effRows = split ? rows : [{ qty, pct: Number(target.pct) || 0 }];
   const stop = stopPct !== '' && isFinite(parseFloat(stopPct)) ? snap(stopToPrice(pos, parseFloat(stopPct)), tick) : null;
 
+  // The close-by DTE (45DTE) travels with the plan, so the logged notes carry it.
+  const closeBy = !is0 ? (closeDteIn || rule.closeDte || null) : null;
   useEffect(() => {
     onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)),
-      basis: pos.basis });
+      basis: pos.basis, closeDte: closeBy, closeLeg: closeBy ? (rule.closeLeg || null) : null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(effRows), stopPct, pos.basis]);
+  }, [JSON.stringify(effRows), stopPct, pos.basis, closeBy, rule.closeLeg]);
 
   const closeSide = pos.isCredit ? 'db' : 'cr';
   const basisWord = pos.isCredit ? 'on entry' : pos.basis === 'max' ? 'of max profit' : is0 ? 'on entry' : 'of the debit';
@@ -129,7 +131,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         <span style={{ background: '#0d2818', color: '#3fb950', borderRadius: 4, padding: '1px 7px', fontSize: 12, fontWeight: 700 }}>BUY</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>Profit taker</span>
         <span className="mono" style={{ fontSize: 12.5, color: '#c9d1d9' }}>
-          {qty} ct <span style={{ color: '#8b949e' }}>(Kelly)</span> @ {entry.toFixed(2)} {pos.isCredit ? 'cr' : 'db'}
+          {qty} ct <span style={{ color: '#8b949e' }}>{kelly == null || Number(kelly) === qty ? '(Kelly)' : `(your size · Kelly ${kelly})`}</span> @ {entry.toFixed(2)} {pos.isCredit ? 'cr' : 'db'}
         </span>
         <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>
           · max {win > 0 ? `$${win.toFixed(0)}/ct` : '—'}{capPct != null && win > 0 ? ` = ${pctStr(capPct)} ${basisWord}` : ''}
@@ -150,9 +152,9 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         </div>
         {tastyFly !== null && onTastyFly && (
           <button type="button" data-testid="tasty-fly-toggle-pt" onClick={() => onTastyFly(!tastyFly)}
-            title="tastylive's long-fly guidance: take 25–50% of MAX PROFIT, not a % of the debit"
+            title="Long-fly targets: take 25–50% of MAX PROFIT, not a % of the debit"
             style={{ ...btn(!!tastyFly), marginTop: 6, borderColor: tastyFly ? '#2f81f7' : '#30363d', color: tastyFly ? '#58a6ff' : '#a8b2be', background: tastyFly ? '#0d1a2b' : 'transparent' }}>
-            {tastyFly ? '✓ ' : ''}tastylive targets: 25–50% of max
+            {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
           </button>
         )}
         {(rule.why || !is0) && (
@@ -216,7 +218,7 @@ export default function ProfitTaker({ ncd, win, contracts, underlying, legs, onP
         <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>No Win amount entered, so the max-profit cap isn't known.</div>
       )}
       <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>
-        Log trade writes this into the notes and pre-loads the Sell ticket.
+        This plan is saved by the one Log trade button: targets, stop and close-by go into the trade's notes, and the Sell ticket is pre-loaded on this device.
       </div>
       <TicketHelp kind="buy" />
     </div>

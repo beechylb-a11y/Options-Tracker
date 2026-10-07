@@ -167,36 +167,36 @@ const R45 = (target, chips, why, extra = {}) => ({ target, basis: 'max', chips, 
 const R0 = (target, chips, why, extra = {}) => ({ target, basis: 'entry', chips, why, ...extra });
 export const EXIT_RULES = {
   '45DTE': {
-    'Iron Condor - Normal':  R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll the untested side if tested'),
-    'Chicken condor':        R45(50, [25, 50, 75], 'tastylive: 50% of max profit'),
-    'Credit spread':         R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
-    'Bull put spread':       R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
-    'Bear call spread':      R45(50, [25, 50, 75], 'tastylive: 50% of max profit; roll out for a credit if tested'),
-    'Jade lizard':           R45(50, [25, 50, 75], 'tastylive gives no number — managed like a strangle (50%)'),
-    'Iron butterfly':        R45(25, [15, 25, 50], 'tastylive manages straddles/iron flies at 25%, not 50%'),
-    'Standard butterfly':    R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; losers not managed'),
-    'Asymmetric butterfly':  R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit (long fly)'),
-    'Broken wing butterfly': R45(50, [25, 50, 75], 'tastylive: 50% of max profit (25% for an early exit)'),
-    'Ratio spread':          R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit'),
-    'Bull call spread':      R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
-    'Bear put spread':       R45(50, [25, 50, 75], 'tastylive: 50% of max profit; losers not managed'),
+    'Iron Condor - Normal':  R45(50, [25, 50, 75], '50% of max profit; roll the untested side if tested'),
+    'Chicken condor':        R45(50, [25, 50, 75], '50% of max profit'),
+    'Credit spread':         R45(50, [25, 50, 75], '50% of max profit; roll out for a credit if tested'),
+    'Bull put spread':       R45(50, [25, 50, 75], '50% of max profit; roll out for a credit if tested'),
+    'Bear call spread':      R45(50, [25, 50, 75], '50% of max profit; roll out for a credit if tested'),
+    'Jade lizard':           R45(50, [25, 50, 75], 'managed like a strangle: 50% of max profit'),
+    'Iron butterfly':        R45(25, [15, 25, 50], 'iron flies close at 25% of max profit, not 50%'),
+    'Standard butterfly':    R45(25, [25, 35, 50], '25–50% of max profit; losers not managed'),
+    'Asymmetric butterfly':  R45(25, [25, 35, 50], '25–50% of max profit (long fly)'),
+    'Broken wing butterfly': R45(50, [25, 50, 75], '50% of max profit (25% for an early exit)'),
+    'Ratio spread':          R45(25, [25, 35, 50], '25–50% of max profit'),
+    'Bull call spread':      R45(50, [25, 50, 75], '50% of max profit; losers not managed'),
+    'Bear put spread':       R45(50, [25, 50, 75], '50% of max profit; losers not managed'),
     // Time spreads close on the FRONT leg at 7 DTE, not 21: a calendar earns most of
     // its money in the near leg's last weeks, and at 21 DTE its own 25%-of-debit
     // target is usually out of reach. closeOptions = the toggle on chart/Profit Taker.
-    'Calendar spread':       R45(25, [10, 15, 25], 'tastylive: 10–25% of the DEBIT, usually 25%; don\'t wait for more',
+    'Calendar spread':       R45(25, [10, 15, 25], '10–25% of the DEBIT, usually 25%; don\'t wait for more',
                                { basis: 'entry', closeDte: 7, closeOptions: [7, 21], closeLeg: 'front leg' }),
-    'Diagonal spread':       R45(25, [25, 35, 50], 'tastylive: 25–50% of max profit; roll the short down if tested',
+    'Diagonal spread':       R45(25, [25, 35, 50], '25–50% of max profit; roll the short down if tested',
                                { closeDte: 7, closeOptions: [7, 21], closeLeg: 'front leg' }),
-    'Long Condor - Reversed':R45(50, [25, 50, 75], 'no tastylive guidance (long-gamma debit) — app default'),
+    'Long Condor - Reversed':R45(50, [25, 50, 75], 'long-gamma debit — app default'),
   },
   '0DTE': {
     // tastylive 0DTE research: short premium managed at 15–25% beat holding; manage in
     // the first half of the day; never sell premium in the last 30 minutes.
-    'Iron Condor - Normal':  R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
-    'Chicken condor':        R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
-    'Iron butterfly':        R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
-    'Bull put spread':       R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
-    'Bear call spread':      R0(25, [15, 25, 50], 'tastylive 0DTE: close short premium at 15–25%'),
+    'Iron Condor - Normal':  R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
+    'Chicken condor':        R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
+    'Iron butterfly':        R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
+    'Bull put spread':       R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
+    'Bear call spread':      R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
   },
 };
 // Rule for a strategy; anything unlisted keeps the engine's historic default

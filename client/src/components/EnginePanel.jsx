@@ -1067,6 +1067,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       + String(base.getDate()).padStart(2, '0');
   }
 
+  // 45DTE close-by line for the logged exit plan: N DTE on the (front) expiry and the
+  // calendar date that falls on.
+  function planCloseBy() {
+    if (is0 || !exitPlan || !exitPlan.closeDte) return null;
+    const exp = isTimeSpread ? nearExp : singleExp;
+    const ymd = exp ? addDaysYmd(exp, -exitPlan.closeDte) : null;
+    return { closeDte: exitPlan.closeDte, closeLeg: exitPlan.closeLeg || null,
+      date: ymd ? `${fmtExpiry(ymd)} ${ymd.slice(0, 4)}` : null };
+  }
+
   // ── Strike ladder popover (phase 2) ──
   // One ladder open at a time: { idx, right, center, strikes[7, high→low],
   // loading, error, rows: { strike → greeks|null } }. The fetch lives HERE, not
@@ -1526,7 +1536,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (tick > 0) out.push({ pnl: tick, label: `ticket +${pct}%${useMax || rule.basis === 'max' ? ' of max' : ' on entry'}`, color: '#3fb950' });
     if (flyTastyOk && tastyFly) [25, 50].forEach(p => {
       const v = r.payoff.maxProfit * p / 100;
-      if (!out.some(o => Math.abs(o.pnl - v) < 1)) out.push({ pnl: v, label: `tastylive ${p}% of max`, color: '#58a6ff' });
+      if (!out.some(o => Math.abs(o.pnl - v) < 1)) out.push({ pnl: v, label: `${p}% of max`, color: '#58a6ff' });
     });
     return out;
   })();
@@ -2644,7 +2654,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const planPos = normalisePosition({ qty: r.contracts, qtyOpen: r.contracts, entryPrice: isFinite(ncdSigned) ? ncdSigned : ncdNow,
       maxProfit: fv(inp, 'win') ? r.contracts * fv(inp, 'win') : '', basis: (exitPlan && exitPlan.basis) || exitRuleFor(is0 ? '0DTE' : '45DTE', effectiveStrat).basis });
     const planBlock = (exitPlan && exitPlan.rows?.length && ncdNow)
-      ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct) : '';
+      ? '\n\n' + planText(planPos, exitPlan.rows, exitPlan.stopPct, planCloseBy()) : '';
     const expiriesLine = isTimeSpread && nearExp && farExp
       ? `Expiries: sell ${fmtExpiry(nearExp)} ${nearExp.slice(0, 4)} (${dteBetween(todayYmd, nearExp)}d) / buy ${fmtExpiry(farExp)} ${farExp.slice(0, 4)} (${dteBetween(todayYmd, farExp)}d)\n`
       : '';
@@ -3737,7 +3747,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
             <ProfitTaker ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
               contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
-              engine={is0 ? '0DTE' : '45DTE'} kelly={r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
+              engine={is0 ? '0DTE' : '45DTE'} kelly={r.kellyContracts ?? r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
               tastyFly={flyTastyOk ? tastyFly : null} onTastyFly={setTastyFly}
               closeDte={!is0 ? (r.closeDte || null) : null} onCloseDte={setTsClose} />
           )}
@@ -4057,10 +4067,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               {flyTastyOk && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 6px' }}>
                   <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)}
-                    title="tastylive's long-fly guidance: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                    title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
                     style={{ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
                       border: '1px solid ' + (tastyFly ? '#2f81f7' : '#30363d'), background: tastyFly ? '#0d1a2b' : 'transparent', color: tastyFly ? '#58a6ff' : '#c9d1d9' }}>
-                    {tastyFly ? '✓ ' : ''}tastylive targets: 25–50% of max
+                    {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
                   </button>
                   {r.payoff.maxProfit > 0 && isFinite(signedNet(ticketNet, cashType)) && (
                     <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>

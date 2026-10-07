@@ -71,7 +71,7 @@ const STRATEGIES = [
     setup: 'RM 75-100% EM, strong compression/pinning, flat VWAP, rich VIX gap.',
     profit: 'Price pins as close as possible to the central short strike within breakevens.',
     risk: 'Any move away from the body strike. Higher risk than IC due to ATM shorts.',
-    manage: 'Close at 25% (tastylive manages straddles/iron flies at 25, not 50): 45DTE by 21 DTE; 0DTE at 15–25%, in the first half of the day.',
+    manage: 'Close at 25% (iron flies are managed at 25, not 50): 45DTE by 21 DTE; 0DTE at 15–25%, in the first half of the day.',
     greeks: 'Delta-neutral, very short gamma, maximum theta at body, short vega',
     tags: ['neutral', 'credit', 'defined risk']
   },
@@ -121,7 +121,7 @@ const STRATEGIES = [
     setup: 'IVR 10-30, contango term structure, neutral outlook, low skew.',
     profit: 'Price stays near the strike. Front month decays faster than back month.',
     risk: 'Large directional move or backwardation (front IV rising vs back).',
-    manage: 'Close at 10–25% of the DEBIT (tastylive, usually 25%) — waiting for more invites the move that hurts it. Max loss = debit; not managed. Under the 21-DTE rule (on the front leg) the target is often out of reach — see Payoff over time.',
+    manage: 'Close at 10–25% of the DEBIT (usually 25%) — waiting for more invites the move that hurts it. Max loss = debit; not managed. Under the 21-DTE rule (on the front leg) the target is often out of reach — see Payoff over time.',
     greeks: 'Near delta-neutral, positive theta differential, long vega (back month)',
     tags: ['neutral', 'debit', '45dte']
   },
@@ -141,7 +141,7 @@ const STRATEGIES = [
     setup: 'IVR > 40, elevated skew, bullish-neutral. Total credit > call spread width.',
     profit: 'Price stays above short put. Total credit exceeds call spread width (no upside risk).',
     risk: 'Price drops below short put. Upside risk eliminated if credit > call width.',
-    manage: 'Close at 50% of the credit (tastylive gives no number — managed like a strangle), or at 21 DTE. Roll to a later expiry if a short strike is approached.',
+    manage: 'Close at 50% of the credit (managed like a strangle), or at 21 DTE. Roll to a later expiry if a short strike is approached.',
     greeks: 'Positive delta, short gamma, long theta, short vega',
     tags: ['bullish', 'credit', '45dte']
   },
@@ -167,10 +167,10 @@ const RULES = [
     'For 45DTE: check IVR ≥ 20 before selling premium; IVR < 20 = debit trades only',
   ]},
   { category: 'Exit rules', rules: [
-    '0DTE short premium (condors, iron flies, credit spreads): close at 15–25% of max profit — unmanaged 0DTE short premium tends to lose (tastylive)',
+    '0DTE short premium (condors, iron flies, credit spreads): close at 15–25% of max profit — unmanaged 0DTE short premium tends to lose',
     '0DTE: manage in the first half of the day; never sell 0DTE premium in the last 30 minutes',
     '0DTE debit (flies, BWBs, debit spreads): Profit Taker target, % return on entry',
-    '45DTE: close everything by 21 DTE whatever the P&L — the biggest losses come inside 21 DTE (tastylive)',
+    '45DTE: close everything by 21 DTE whatever the P&L — the biggest losses come inside 21 DTE',
     '45DTE credit (condors, credit spreads, jade lizard): close at 50% of max profit; iron flies at 25%',
     '45DTE debit: verticals and BWBs 50% of max profit; flies, ratios and diagonals 25–50%',
     '45DTE calendars: 10–25% of the DEBIT, usually 25% — not of max profit',
