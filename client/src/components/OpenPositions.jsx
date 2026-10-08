@@ -14,7 +14,32 @@ function stopOf(r) {
   const pct = plan && plan.stopPct !== '' && plan.stopPct != null ? Math.abs(parseFloat(plan.stopPct)) : STOP_LOSS_PCT;
   if (!isFinite(pct) || pct <= 0) return null;
   const price = stopToPrice(pos, pct);
-  return { pct, price, side: pos.isCredit ? 'db' : 'cr', loss: pnlAt(pos, price, pos.qtyOpen || 1), guide: !plan || plan.stopPct === '' || plan.stopPct == null };
+  // Contracts the stop applies to: what is open, or — for an order still resting —
+  // everything that will be open once it fills. (Was qtyOpen || 1: a working 5-lot
+  // showed the loss on one contract.)
+  const qtyOpen = Number(pos.qtyOpen) || 0, qtyAll = Number(pos.qty) || Number(r.qty) || 1;
+  const qty = qtyOpen > 0 ? qtyOpen : qtyAll;
+  return { pct, price, isCredit: pos.isCredit, side: pos.isCredit ? 'db' : 'cr', qty, ifFilled: !(qtyOpen > 0),
+    loss: pnlAt(pos, price, qty), guide: !plan || plan.stopPct === '' || plan.stopPct == null };
+}
+
+// What you got (or asked for): "cr 5.81" / "db 1.07"; a resting order shows its limit.
+function entryOf(r) {
+  const pos = normalisePosition(r);
+  const e = Math.abs(pos.ncd || 0);
+  if (!(e > 0)) return null;
+  return { side: pos.isCredit ? 'cr' : 'db', price: e };
+}
+
+// The trading session the trade belongs to, and the moment it was logged on YOUR clock.
+// The server files a trade by its New York session (an after-close log rolls to the
+// next one), and showed the ET time beside it: logged 14:14 in Melbourne read
+// "2026-10-08 23:14". (Oct 2026.)
+function openedOf(r) {
+  const at = r.timestamp ? new Date(r.timestamp) : null;
+  const local = at && !isNaN(at) ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+  const localDay = at && !isNaN(at) ? at.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
+  return { session: r.entryDate || '', local, localDay, et: r.entryTime || '' };
 }
 
 // Open and partially-closed positions, each expandable to its tranches.
@@ -33,7 +58,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [err, setErr] = useState(null);
   const [ticket, setTicket] = useState(null);   // { row, tab } — the SELL ticket in play
   const [reload, setReload] = useState(0);
-  const [reconciling, setReconciling] = useState(false);
+  const [reconciling, setReconciling] = useState(false);   // true = all working, or one row
   const [cancelling, setCancelling] = useState(null);
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
 
@@ -62,6 +87,15 @@ export default function OpenPositions({ authenticated, account, compact = false,
 
   // The ticket ref IS the 1-based Decisions row, which is what the status route
   // addresses, so no lookup is needed.
+  // Row click (Oct 2026): an order still resting goes to the fill screen for that
+  // one ticket; anything filled goes to its Sell ticket. A part-filled order has
+  // contracts still to come, so it goes to fills too (its Sell button stays).
+  const isWaiting = r => r.status === STATUS.WORKING || r.status === STATUS.PART_FILLED;
+  function openRow(r) {
+    if (isWaiting(r)) setReconciling(r);
+    else setTicket({ row: r, tab: 'close' });
+  }
+
   async function cancelTicket(r) {
     if (!window.confirm(`Mark the ${r.underlying} ${r.strategy} order cancelled? Nothing filled, so no trade is recorded.`)) return;
     setCancelling(r.ticketRef);
@@ -169,8 +203,9 @@ export default function OpenPositions({ authenticated, account, compact = false,
               <th className="text-left py-2 pr-2">Position</th>
               {!compact && <th className="text-left py-2 pr-2">Legs</th>}
               <th className="text-right py-2 pr-2">Open / Qty</th>
+              <th className="text-right py-2 pr-2" title="Net credit or debit per contract; for an order not yet filled, the limit it was sent at">Entry</th>
               <th className="text-right py-2 pr-2">Risk live</th>
-              <th className="text-right py-2 pr-2" title={`Stop: the plan saved at entry, otherwise the ${STOP_LOSS_PCT}%-of-premium guide (credit: buy back at 2× the credit; debit: close when it is worth nothing)`}>Stop</th>
+              <th className="text-right py-2 pr-2" title={`Stop: the plan saved at entry, otherwise the ${STOP_LOSS_PCT}%-of-premium guide (credit: buy back at 2× the credit; debit: close when it is worth nothing). The loss is for all contracts.`}>Stop</th>
               {!compact && <th className="text-right py-2 pr-2">Avg exit</th>}
               <th className="text-right py-2 pr-2">Banked</th>
               <th className="text-left py-2 pl-2">Status</th>
@@ -188,13 +223,20 @@ export default function OpenPositions({ authenticated, account, compact = false,
                 ? 0 : Math.max(0, n(r.qty) - n(r.qtyFilled));
               return (
                 <React.Fragment key={r.ticketRef}>
-                  <tr
-                    onClick={() => expandable && setOpen(o => ({ ...o, [r.ticketRef]: !o[r.ticketRef] }))}
-                    style={{ borderTop: '1px solid #21262d', cursor: expandable ? 'pointer' : 'default' }}
-                    title={expandable ? (isOpen ? 'Hide tranches' : `Show ${r.closes.length} tranche${r.closes.length > 1 ? 's' : ''}`) : ''}>
-                    <td className="py-2 pr-2 text-text-muted">{r.entryDate} <span className="text-text-faint">{r.entryTime}</span></td>
+                  <tr data-testid="op-row" data-status={r.status}
+                    onClick={() => openRow(r)}
+                    className="op-row"
+                    style={{ borderTop: '1px solid #21262d', cursor: 'pointer' }}
+                    title={isWaiting(r) ? 'Order not filled yet — click to enter the fills' : 'Click to open the Sell ticket'}>
+                    {(() => { const o = openedOf(r); return (
+                      <td className="py-2 pr-2 text-text-muted" style={{ whiteSpace: 'nowrap' }}
+                        title={`Session ${o.session}${o.et ? ` · ${o.et} New York` : ''}${o.local ? ` · logged ${o.localDay} ${o.local} your time` : ''}`}>
+                        {o.session} <span className="text-text-faint">{o.local || o.et}</span>
+                      </td>); })()}
                     <td className="py-2 pr-2">
-                      {expandable && <span className="text-text-faint">{isOpen ? '▾ ' : '▸ '}</span>}
+                      {expandable && <span className="text-text-faint" role="button" data-testid="op-tranches"
+                        title={isOpen ? 'Hide tranches' : `Show ${r.closes.length} tranche${r.closes.length > 1 ? 's' : ''}`}
+                        onClick={e => { e.stopPropagation(); setOpen(o => ({ ...o, [r.ticketRef]: !o[r.ticketRef] })); }}>{isOpen ? '▾ ' : '▸ '}</span>}
                       <b>{r.underlying}</b> <span className="text-text-muted">{r.strategy}</span>
                     </td>
                     {!compact && <td className="py-2 pr-2 mono text-text-muted">{r.legs}</td>}
@@ -206,6 +248,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
                         </span>
                       )}
                     </td>
+                    {(() => { const en = entryOf(r); return (
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-entry" style={{ whiteSpace: 'nowrap', color: en ? (en.side === 'cr' ? '#3fb950' : '#e3b341') : '#8b949e' }}>
+                        {en ? <>{isWaiting(r) && <span className="text-text-faint">lmt </span>}{en.side} {en.price.toFixed(2)}</> : '—'}
+                      </td>); })()}
                     <td className="py-2 pr-2 text-right mono">
                       ${liveRisk.toFixed(0)}
                       {resting > 0 && (
@@ -217,8 +263,8 @@ export default function OpenPositions({ authenticated, account, compact = false,
                     </td>
                     {(() => { const st = stopOf(r); return (
                       <td className="py-2 pr-2 text-right mono" data-testid="op-stop" style={{ color: st ? '#f85149' : '#8b949e', whiteSpace: 'nowrap' }}
-                        title={st ? `${st.pct}% of the ${st.side === 'db' ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}` : 'No entry price on the ticket'}>
-                        {st ? <>@{st.price.toFixed(2)} {st.side} <span className="text-text-muted">{money(st.loss)}</span></> : '—'}
+                        title={st ? `Stop: ${st.isCredit ? 'buy the spread back' : 'sell it'} at ${st.price.toFixed(2)} — ${st.pct}% of the ${st.isCredit ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}; ${money(st.loss)} on ${st.qty} contract${st.qty === 1 ? '' : 's'}${st.ifFilled ? ' once filled' : ''}` : 'No entry price on the ticket'}>
+                        {st ? <><span className="text-text-faint">{st.isCredit ? 'buy back ' : 'sell '}</span>@{st.price.toFixed(2)} <span className="text-text-muted">{money(st.loss)}</span></> : '—'}
                       </td>); })()}
                     {!compact && <td className="py-2 pr-2 text-right mono text-text-muted">{r.avgExit === '' ? '—' : r.avgExit}</td>}
                     <td className={'py-2 pr-2 text-right mono ' + (n(r.realisedPnl) >= 0 ? 'win' : 'loss')}>
@@ -259,6 +305,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       <td className="py-1.5 pr-2 text-right mono text-[12px]">{c.qtyClosed}</td>
                       <td className="py-1.5 pr-2 text-right mono text-[12px] text-text-muted">@ {c.closePrice}</td>
                       <td></td>
+                      <td></td>
                       {!compact && <td className="py-1.5 pr-2"></td>}
                       <td className={'py-1.5 pr-2 text-right mono text-[12px] ' + (c.pnl >= 0 ? 'win' : 'loss')}>{money(c.pnl)}</td>
                       <td className="py-1.5 pl-2"></td>
@@ -277,7 +324,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
           onDone={() => { setTicket(null); setReload(x => x + 1); }} />
       )}
       {reconciling && (
-        <FillReconcile positions={rows} account={account}
+        <FillReconcile positions={reconciling === true ? rows : [reconciling]} account={account}
           onClose={() => setReconciling(false)}
           onDone={() => setReload(x => x + 1)} />
       )}
