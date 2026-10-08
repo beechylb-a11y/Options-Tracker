@@ -2882,10 +2882,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   : 'Composite edge score: setup quality blended with Kelly, vol, Sharpe, POP margin and EV per unit of risk. The same number ranks the trade tabs.'} />
               <div style={{display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
                 <span style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:vTone.color}}>Engine verdict</span>
-                <span data-testid="verdict" style={{fontSize:30,fontWeight:700,lineHeight:1.08,color:'#fff',letterSpacing:'-0.01em'}}>{verdict.word}</span>
+                {/* The instrument at headline size (Oct 2026): with several tabs open the
+                    verdict read the same on every one until the small print was found. */}
+                <span style={{display:'flex',alignItems:'baseline',gap:12,flexWrap:'wrap'}}>
+                  <span data-testid="verdict-ticker" title={`${secBag.underlying}${fv(secBag,'price') ? ' @ ' + fv(secBag,'price') : ''}`}
+                    style={{fontSize:30,fontWeight:800,lineHeight:1.08,color:'#79c0ff',letterSpacing:'0.01em',
+                      paddingRight:12,borderRight:'2px solid #30363d'}}>{secBag.underlying}</span>
+                  <span data-testid="verdict" style={{fontSize:30,fontWeight:700,lineHeight:1.08,color:'#fff',letterSpacing:'-0.01em'}}>{verdict.word}</span>
+                </span>
                 <span style={{fontSize:15,color:'#e6edf3',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                   {r.hardBlocker ? <span style={{color:'#a8b2be'}}>{verdict.sub}</span> : <>
-                    <span>{secBag.underlying} · {effectiveStrat}{missingInputs ? '' : <> · <span className="mono">{r.contracts}</span>x</>}</span>
+                    <span>{fv(secBag,'price') ? <span className="mono" style={{color:'#a8b2be'}}>@ {fv(secBag,'price')} · </span> : null}{effectiveStrat}{missingInputs ? '' : <> · <span className="mono">{r.contracts}</span>x</>}</span>
                     {(() => {
                       const net = parseFloat(ticketNet);
                       const hasNet = !isNaN(net) && net !== 0;
