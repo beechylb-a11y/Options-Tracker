@@ -174,3 +174,39 @@ export function fillPayload(ticket, tr, { qty, price, notes } = {}) {
     notes: notes || (tr.match === 'partial' ? 'Partial strike match — confirmed by hand' : ''),
   };
 }
+
+// A fill typed by hand (Oct 2026): for an order that filled on a day the app never
+// pulled TWS (the executions call only sees today's), or one filled away from TWS.
+// Same row as a reconciled fill. The id is unique per entry, so it can never collide
+// with a TWS fill id; the note says it was typed, so a review can tell the two apart.
+// price is per contract and unsigned; side ('cr' | 'db') signs it like the ticket.
+export function ticketSide(ticket) {
+  const lim = num(ticket && ticket.limitPrice);
+  const ent = num(ticket && (ticket.entryPrice ?? ticket.netCreditDebit));
+  const v = lim != null && lim !== 0 ? lim : ent;
+  return v != null && v < 0 ? 'db' : 'cr';
+}
+export function manualFillPayload(ticket, { qty, price, side, date, time, notes } = {}, now = Date.now()) {
+  const q = num(qty), p = num(price);
+  if (!(q > 0) || p == null || !(Math.abs(p) > 0)) return null;
+  const sd = side === 'db' || side === 'cr' ? side : ticketSide(ticket);
+  return {
+    fillId: `MANUAL-${ticket.ticketRef}-${now}`,
+    ticketRef: ticket.ticketRef,
+    ticketTimestamp: ticket.timestamp || '',
+    engine: ticket.engine || '',
+    underlying: ticket.underlying || '',
+    strategy: ticket.strategy || '',
+    fillDate: date || '',
+    fillTime: time || '',
+    qtyFilled: q,
+    qtyOrdered: num(ticket.qty) || 0,
+    fillPrice: +(sd === 'db' ? -Math.abs(p) : Math.abs(p)).toFixed(4),
+    limitPrice: ticket.limitPrice ?? '',
+    midAtSend: ticket.midAtSend ?? '',
+    feesUsd: '',
+    orderRef: '',
+    account: ticket.account || '',
+    notes: notes || 'Entered by hand',
+  };
+}

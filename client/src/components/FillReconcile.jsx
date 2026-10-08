@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
-import { comboTranches, matchTranches, fillPayload } from '../utils/fillMatch';
+import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide } from '../utils/fillMatch';
 import { fillStats } from '../engine/fills';
 
 // Reconcile working orders against what TWS actually filled.
@@ -32,6 +32,8 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
   // tranche so one TWS fill can never be written against two tickets at once.
   const [pick, setPick] = useState({});
   const [result, setResult] = useState(null);
+  // Fills typed by hand, per ticket: { [ticketRef]: { qty, price, side, date, time } }.
+  const [manual, setManual] = useState({});
 
   // Only tickets that are still waiting on contracts can take an entry fill. A
   // fully filled position has nothing to reconcile, and offering it invites a
@@ -74,6 +76,18 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
   const matched = useMemo(() => matchTranches(waiting, tranches, seen), [waiting, tranches, seen]);
 
   const chosen = Object.entries(pick).filter(([, v]) => v && v.ref);
+  // A hand entry counts once it has a quantity inside what is still resting and a price.
+  const outstandingOf = ref => { const r = matched.rows.find(x => String(x.ticket.ticketRef) === String(ref)); return r ? r.outstanding : 0; };
+  const manualReady = Object.entries(manual).filter(([ref, m]) => {
+    const q = n(m.qty), p = n(m.price);
+    return q > 0 && q <= outstandingOf(ref) && p != null && Math.abs(p) > 0;
+  });
+  const nWrite = chosen.length + manualReady.length;
+  const openManual = t => setManual(m => ({ ...m, [t.ticketRef]: m[t.ticketRef] || {
+    qty: String(outstandingOf(t.ticketRef) || ''), price: t.limitPrice !== '' && t.limitPrice != null ? String(Math.abs(n(t.limitPrice)) || '') : '',
+    side: ticketSide(t), date: new Date().toISOString().slice(0, 10), time: '' } }));
+  const editManual = (ref, patch) => setManual(m => ({ ...m, [ref]: { ...m[ref], ...patch } }));
+  const dropManual = ref => setManual(m => { const x = { ...m }; delete x[ref]; return x; });
 
   async function write() {
     setPhase('writing');
@@ -87,6 +101,17 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
         wrote.push({ key, ref: v.ref, qty: res.qtyFilledTotal, remaining: res.qtyRemaining });
       } catch (e) {
         failed.push({ key, ref: v.ref, error: /already recorded/i.test(e.message) ? 'already recorded' : e.message });
+      }
+    }
+    for (const [ref, m] of manualReady) {
+      const ticket = waiting.find(p => String(p.ticketRef) === String(ref));
+      const payload = ticket ? manualFillPayload(ticket, m) : null;
+      if (!payload) continue;
+      try {
+        const res = await api.addFill(payload);
+        wrote.push({ key: 'manual-' + ref, ref, qty: res.qtyFilledTotal, remaining: res.qtyRemaining, manual: true });
+      } catch (e) {
+        failed.push({ key: 'manual-' + ref, ref, error: e.message });
       }
     }
     setResult({ wrote, failed });
@@ -110,7 +135,7 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3' }}>Reconcile entry fills</div>
             <div style={{ fontSize: 12.5, color: '#a8b2be', marginTop: 4 }}>
-              Today's TWS executions, grouped back into the combos that were sent. Tick what belongs to which ticket — nothing is written until you confirm.
+              Today's TWS executions, grouped back into the combos that were sent. Tick what belongs to which ticket, or enter a fill by hand if it filled another day — nothing is written until you confirm.
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#a8b2be', cursor: 'pointer', fontSize: 18 }}>×</button>
@@ -132,7 +157,7 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
                 : 'Nothing was written.'}
               {result.wrote.map(w => (
                 <div key={w.key} className="mono" style={{ fontSize: 12.5, color: '#a8b2be', marginTop: 4 }}>
-                  ticket {w.ref} — {w.qty} filled{w.remaining !== '' && w.remaining != null ? `, ${w.remaining} still resting` : ''}
+                  ticket {w.ref} — {w.qty} filled{w.remaining !== '' && w.remaining != null ? `, ${w.remaining} still resting` : ''}{w.manual ? ' (by hand)' : ''}
                 </div>
               ))}
             </div>
@@ -172,6 +197,40 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
                           Nothing in today's executions matches these strikes.
                         </td></tr>
                       )}
+                      {/* By hand (Oct 2026): TWS only reports today's executions, so an
+                          order that filled on another day, or away from TWS, is typed here. */}
+                      <tr><td colSpan={7} style={{ ...CELL, paddingTop: 2 }}>
+                        {!manual[ticket.ticketRef] ? (
+                          <button type="button" data-testid="manual-open" onClick={() => openManual(ticket)} disabled={phase === 'writing'}
+                            style={{ padding: 0, border: 'none', background: 'none', color: '#58a6ff', fontSize: 12.5, textDecoration: 'underline', cursor: 'pointer' }}>
+                            Enter a fill by hand
+                          </button>
+                        ) : (() => {
+                          const m = manual[ticket.ticketRef];
+                          const q = n(m.qty), over = q > outstanding;
+                          const pill = on => ({ padding: '3px 8px', borderRadius: 5, fontSize: 12, cursor: 'pointer',
+                            border: `1px solid ${on ? '#58a6ff' : '#30363d'}`, background: on ? '#58a6ff22' : 'transparent', color: on ? '#e6edf3' : '#a8b2be' });
+                          return (
+                            <div data-testid="manual-row" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 10px',
+                              borderRadius: 8, background: '#0d1a2e', border: '1px solid #1f6feb55' }}>
+                              <span style={{ color: '#a8b2be', fontSize: 12.5 }}>By hand:</span>
+                              <input style={{ ...inp, width: 52 }} value={m.qty} onChange={e => editManual(ticket.ticketRef, { qty: e.target.value })} aria-label="Contracts filled (by hand)" />
+                              <span style={{ color: '#8b949e', fontSize: 12.5 }}>ct @</span>
+                              <input style={inp} value={m.price} onChange={e => editManual(ticket.ticketRef, { price: e.target.value })} aria-label="Fill price per contract (by hand)" placeholder="5.75" />
+                              <button type="button" style={pill(m.side === 'cr')} onClick={() => editManual(ticket.ticketRef, { side: 'cr' })}>credit</button>
+                              <button type="button" style={pill(m.side === 'db')} onClick={() => editManual(ticket.ticketRef, { side: 'db' })}>debit</button>
+                              <input type="date" style={{ ...inp, width: 130 }} value={m.date} onChange={e => editManual(ticket.ticketRef, { date: e.target.value })} aria-label="Fill date" />
+                              <input style={{ ...inp, width: 64 }} value={m.time} onChange={e => editManual(ticket.ticketRef, { time: e.target.value })} aria-label="Fill time (optional)" placeholder="hh:mm" />
+                              <button type="button" onClick={() => dropManual(ticket.ticketRef)}
+                                style={{ padding: 0, border: 'none', background: 'none', color: '#8b949e', fontSize: 12.5, cursor: 'pointer' }}>remove</button>
+                              <span style={{ flexBasis: '100%', fontSize: 12, color: over ? '#d29922' : '#8b949e' }}>
+                                {over ? `Only ${outstanding} still resting on this ticket.`
+                                  : 'Net per contract for the whole combo, as TWS shows it. Time is optional. Saved as typed by hand.'}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td></tr>
                       {candidates.map(c => {
                         const sel = pick[c.key];
                         const mine = sel && String(sel.ref) === String(ticket.ticketRef);
@@ -245,14 +304,14 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
             )}
 
             <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={write} disabled={!chosen.length || phase === 'writing'}
+              <button onClick={write} disabled={!nWrite || phase === 'writing'} data-testid="record-fills"
                 style={{
                   padding: '9px 16px', borderRadius: 8, border: 'none', fontSize: 13.5, fontWeight: 700,
-                  background: chosen.length ? '#238636' : '#1c2128', color: chosen.length ? '#fff' : '#8b949e',
-                  cursor: chosen.length && phase !== 'writing' ? 'pointer' : 'default',
+                  background: nWrite ? '#238636' : '#1c2128', color: nWrite ? '#fff' : '#8b949e',
+                  cursor: nWrite && phase !== 'writing' ? 'pointer' : 'default',
                 }}>
                 {phase === 'writing' ? 'Recording…'
-                  : chosen.length ? `Record ${chosen.length} fill${chosen.length === 1 ? '' : 's'}` : 'Record fills'}
+                  : nWrite ? `Record ${nWrite} fill${nWrite === 1 ? '' : 's'}` : 'Record fills'}
               </button>
               <button onClick={pull} disabled={phase === 'writing'}
                 style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>
