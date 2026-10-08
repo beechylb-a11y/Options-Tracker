@@ -131,6 +131,86 @@ if (WING != null && DEBIT != null) {
   console.log(`is an upper bound on how often this works, not an estimate of profit.`);
 }
 
+// ── Sweep: wing width × exit time ────────────────────────────────────────────
+// The point of this sweep is NOT to find the highest hit rate. A narrower band always
+// hits less and a later exit always hits more, and neither fact tells you what to trade.
+// What it reports instead is what the structure is WORTH at the exit, because that is
+// the number a quote has to beat.
+//
+// Two corrections that the headline P&L above does not make:
+//
+//   1. A fly at its body before expiry is worth LESS than its intrinsic — price can
+//      still leave. Using the expiry payoff at a 15:45 price overstates what you could
+//      actually sell it for, and the error grows the earlier you exit. So the value at
+//      each exit is computed with the time still to run, not as if it were 16:00.
+//   2. Wider wings cost more. Comparing wing widths at one fixed debit is meaningless,
+//      so each cell reports fair value and its share of the wing width, which IS
+//      comparable across widths.
+//
+// Remaining volatility is scaled from the sample's own measured sigma by √time, so it
+// comes from your data rather than from an assumption about QQQ.
+if (args.includes('--sweep')) {
+  // Robust sigma over the entry→exit window: the median of |move| is 0.6745σ for a
+  // normal, and unlike a standard deviation it is not dragged around by the 17-point day.
+  const sigWindow = moves[Math.floor(0.5 * (moves.length - 1))] / 0.6745;
+  const toMin = s => (+s.slice(0, 2)) * 60 + (+s.slice(3, 5));
+  const entryMin = toMin(ENTRY), closeMin = 16 * 60;
+  const windowMin = toMin(EXIT) - entryMin;
+
+  // E[max(0, W − |Y|)] for Y ~ N(m, s), by Simpson. Deterministic, so the table does
+  // not wobble between runs the way a Monte Carlo one would.
+  const flyValue = (m, W, s) => {
+    if (s <= 1e-9) return Math.max(0, W - Math.abs(m));
+    const n = 200, a = -W, b = W, h = (b - a) / n;
+    const f = y => (W - Math.abs(y)) * Math.exp(-((y - m) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+    let acc = f(a) + f(b);
+    for (let i = 1; i < n; i++) acc += f(a + i * h) * (i % 2 ? 4 : 2);
+    return acc * h / 3;
+  };
+
+  const EXITS = ['13:00', '14:00', '14:30', '15:00', '15:30', '15:45', '15:55'];
+  const WINGS = [2, 3, 4, 5, 6];
+
+  // Hit rate by exit needs the price AT that exit, so re-walk the sessions.
+  console.log(`\n\nSWEEP — measured σ over ${ENTRY}→${EXIT} is ${sigWindow.toFixed(2)} pts\n`);
+  console.log(`Band ±${half} hit rate by exit time`);
+  const exitRows = {};
+  for (const ex of EXITS) {
+    const rs = [];
+    for (const [day, bars] of sessions) {
+      const a = bars.get(ENTRY), z = bars.get(ex);
+      if (a != null && z != null) rs.push(z - a);
+    }
+    if (!rs.length) continue;
+    exitRows[ex] = rs;
+    const h = rs.filter(m => Math.abs(m) <= half).length;
+    console.log(`  ${ex}  ${String(h).padStart(3)}/${String(rs.length).padStart(3)}  ${(100 * h / rs.length).toFixed(1).padStart(5)}%`);
+  }
+
+  console.log(`\nFly fair value AT EXIT — body at the ${ENTRY} price. This is the breakeven debit:`);
+  console.log(`pay less than the number in the cell and you have an edge, pay more and you do not.\n`);
+  console.log('  wing │ ' + EXITS.map(e => e.padStart(7)).join(' ') + '   (share of wing width)');
+  console.log('  ─────┼' + '─'.repeat(EXITS.length * 8 + 24));
+  for (const W of WINGS) {
+    const cells = [], shares = [];
+    for (const ex of EXITS) {
+      const rs = exitRows[ex];
+      if (!rs) { cells.push('     — '); continue; }
+      const remain = Math.max(0, closeMin - toMin(ex));
+      const s = sigWindow * Math.sqrt(remain / Math.max(1, windowMin));
+      const fv = rs.reduce((acc, m) => acc + flyValue(m, W, s), 0) / rs.length;
+      cells.push(fv.toFixed(2).padStart(7));
+      shares.push(Math.round(100 * fv / W));
+    }
+    const mid = shares.length ? `${Math.min(...shares)}–${Math.max(...shares)}%` : '';
+    console.log(`  ±${String(W).padEnd(3)} │ ` + cells.join(' ') + `   ${mid}`);
+  }
+  console.log(`\n  Later exits are worth more here only because less time remains for price to`);
+  console.log(`  leave the body — that is decay you collect, not a better trade. What decides`);
+  console.log(`  it is the gap between these numbers and the quote you can actually fill.`);
+  console.log(`  Note 15:55 ≈ expiry: holding QQQ that late risks assignment on ITM shorts.`);
+}
+
 // ── Month by month, to see whether it is stable or one good stretch ──────────
 const byMonth = new Map();
 for (const r of rows) {

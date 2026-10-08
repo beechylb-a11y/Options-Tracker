@@ -8,3 +8,4 @@ client/dist/
 # temp objects get renamed here instead of deleted. Safe to remove from Finder.
 _to_delete/
 patchwork/
+Claude outputs/
