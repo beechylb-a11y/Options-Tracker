@@ -2665,7 +2665,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     } else {
       lines.push(`Signals: IVR ${r.ivrBand||'--'} · IV/HV ${r.ivhvRatio?r.ivhvRatio.toFixed(2):'--'} · Regime ${r.regime}`);
     }
-    if (r.greeks) lines.push(`Survivability: ${r.greeks.thetaPaid ? 'Decay cost' : 'Theta edge'} ${r.greeks.tEdge.toFixed(2)} (${r.greeks.tEdgeSignal}) · Gamma ${r.greeks.gRisk.toFixed(2)}${r.greeks.thetaPaid ? ' · PAYS decay' : ''}`);
+    // 0DTE greeks carry tEdge/gRisk; 45DTE carries the move-vs-decay edge ratio. This
+    // line read the 0DTE fields on both, so every 45DTE log with greeks threw before
+    // writing anything — the Log button did nothing. (Oct 2026.)
+    const g = r.greeks, f2 = v => (typeof v === 'number' && isFinite(v) ? v.toFixed(2) : '--');
+    if (g && is0) lines.push(`Survivability: ${g.thetaPaid ? 'Decay cost' : 'Theta edge'} ${f2(g.tEdge)} (${g.tEdgeSignal || '--'}) · Gamma ${f2(g.gRisk)}${g.thetaPaid ? ' · PAYS decay' : ''}`);
+    else if (g) lines.push(`Move vs decay: ${f2(g.edgeRatio)} (${g.edgeSignal || '--'}${g.edgePhase ? ', ' + g.edgePhase : ''}) over ${g.daysToExit ?? '--'} days to exit${g.thetaPaid ? ' · PAYS decay' : ''}`);
     if (r.warnings?.length) lines.push(`Warnings: ${r.warnings.join('; ')}`);
     return lines.filter(Boolean).join('\n');
   }
@@ -2691,7 +2696,17 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const ticketSig = `${effectiveStrat}|${r.legs.map(l => l.strike).join('/')}|${r.contracts}|${ticketNet}`;
   const isLogged = !!loggedAt && loggedSig === ticketSig;
 
+  // Anything that throws while building the row used to vanish into the click handler
+  // and the button just did nothing. Say so instead, and leave the note open.
   function confirmLog() {
+    try { confirmLogInner(); }
+    catch (e) {
+      console.error('Log trade failed:', e);
+      setLogging(false);
+      notify('Log trade failed before anything was written: ' + (e && e.message ? e.message : e) + ' — nothing was saved.');
+    }
+  }
+  function confirmLogInner() {
     const inp = is0 ? i0 : i45;
     const engineSummary = buildTradeSummary();
     // One timestamp for the row AND the saved exit plan — it is the key the Sell
