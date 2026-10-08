@@ -261,7 +261,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       {/* Every number above is history. This is the only thing on the Dashboard
           that is still live, so it sits directly under them. (Sep 2026.) */}
       <div className="mb-6">
-        <OpenPositions authenticated={authenticated} account={account} compact />
+        <OpenPositions authenticated={authenticated} account={account} compact maxOpenRisk={maxOpenRisk} />
       </div>
 
       {/* KPI Cards - Row 2: secondary metrics + risk (smaller, muted) */}

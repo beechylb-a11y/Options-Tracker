@@ -74,7 +74,8 @@ export const TABS = {
     ['engine_strikes', 'Engine Strikes'], ['vwap_anchored', 'VWAP Anchored'], ['vwap_roll30', 'VWAP Roll30'],
     ['vwap_roll30_prior', 'VWAP Roll30 Prior'], ['vwap_acceptance', 'VWAP Acceptance'],
     ['vwap_trend', 'VWAP Trend'], ['vwap_dist_em', 'VWAP Dist EM'],
-    ['strike_method', 'Strike Method'], ['short_deltas', 'Short Deltas'], ['implied_pop', 'Implied POP']]) },
+    ['strike_method', 'Strike Method'], ['short_deltas', 'Short Deltas'], ['implied_pop', 'Implied POP'],
+    ['limit_price', 'Limit Price'], ['order_ref', 'Order Ref'], ['working_since', 'Working Since']]) },
   Journal: { table: 'journal', cols: C([
     ['date', 'Date'], ['day_pnl', 'Day P&L'], ['trades_count', 'Trades Count'], ['win_count', 'Win Count'],
     ['loss_count', 'Loss Count'], ['notes', 'Notes'], ['week_number', 'Week Number']]) },
@@ -84,13 +85,22 @@ export const TABS = {
     ['close_date', 'Close Date'], ['qty_closed', 'Qty Closed'], ['qty_remaining', 'Qty Remaining'],
     ['close_price', 'Close Price'], ['pnl_usd', 'P&L ($)'], ['fees_usd', 'Fees ($)'], ['account', 'Account'],
     ['notes', 'Notes']]) },
+  Fills: { table: 'fills', cols: C([
+    ['fill_id', 'Fill ID'], ['ticket_ref', 'Ticket Ref'], ['ticket_timestamp', 'Ticket Timestamp'],
+    ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'],
+    ['fill_date', 'Fill Date'], ['fill_time', 'Fill Time'], ['qty_filled', 'Qty Filled'],
+    ['qty_remaining', 'Qty Remaining'], ['fill_price', 'Fill Price'], ['limit_price', 'Limit Price'],
+    ['mid_at_send', 'Mid At Send'], ['fees_usd', 'Fees ($)'], ['order_ref', 'Order Ref'],
+    ['account', 'Account'], ['notes', 'Notes']]) },
   TradeLog: { table: 'trade_log', cols: C([
     ['ticket_ref', 'Ticket Ref'], ['entry_date', 'Entry Date'], ['entry_time', 'Entry Time'],
     ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'], ['legs', 'Legs'],
     ['qty', 'Qty'], ['entry_price', 'Entry Price'], ['max_risk', 'Max Risk'], ['max_profit', 'Max Profit'],
     ['ev', 'EV'], ['confidence', 'Confidence'], ['qty_closed', 'Qty Closed'], ['qty_open', 'Qty Open'],
     ['avg_exit', 'Avg Exit'], ['realised_pnl', 'Realised P&L'], ['r_multiple', 'R Multiple'],
-    ['status', 'Status'], ['tranches', 'Tranches'], ['last_close', 'Last Close'], ['account', 'Account']]) }
+    ['status', 'Status'], ['tranches', 'Tranches'], ['last_close', 'Last Close'], ['account', 'Account'],
+    ['limit_price', 'Limit'], ['qty_filled', 'Qty Filled'], ['avg_entry', 'Avg Entry'],
+    ['entry_slippage', 'Entry Slippage']]) }
 };
 
 const qi = (s) => '"' + String(s).replace(/"/g, '""') + '"';
@@ -722,7 +732,15 @@ export async function logDecision(decision) {
     // -- BB-BD: strike method (R-49, Oct 2026) --
     decision.strikeMethod ?? '',     // BB 'EM' | 'Delta' | 'Delta (estimated)' | 'Manual'
     decision.shortDeltas ?? '',      // BC e.g. "6650P 16Δ / 6760C 14Δ" at log time
-    decision.impliedPop ?? ''        // BD % — 1 − Σ short |Δ|, credit structures only
+    decision.impliedPop ?? '',       // BD % — 1 − Σ short |Δ|, credit structures only
+    // -- BE-BG: a WORKED order (Oct 2026) --
+    // A limit here is the one thing that distinguishes a ticket whose order was
+    // merely sent from the thousands of legacy rows logged as already done. The
+    // trade log reads it to decide whether to wait for fills or assume them, so it
+    // must be written when — and only when — the order was resting.
+    decision.limitPrice ?? '',       // BE signed per contract, as asked
+    decision.orderRef ?? '',         // BF TWS order ref, when there is one
+    decision.workingSince ?? ''      // BG ISO moment the order went in
   ];
   await appendRows('Decisions', [row]);
   return row;
@@ -825,7 +843,7 @@ export function etSessionParts(iso) {
   return { date, time };
 }
 
-export function projectTradeLog(decRows, closeRows) {
+export function projectTradeLog(decRows, closeRows, fillRows) {
   const H = decRows[0] || [];
   const ix = name => H.indexOf(name);
   const c = {
@@ -838,6 +856,7 @@ export function projectTradeLog(decRows, closeRows) {
     // recorded straight onto the Decisions row and has no tranche to derive from.
     closeDate: ix('Close Date'), closePrice: ix('Close Price'),
     actualPnl: ix('Actual P&L'),
+    limit: ix('Limit Price'),
   };
   // tranches grouped by ticket ref (Closes col B)
   const byTicket = new Map();
@@ -845,6 +864,13 @@ export function projectTradeLog(decRows, closeRows) {
     const k = String(r[1]);
     if (!byTicket.has(k)) byTicket.set(k, []);
     byTicket.get(k).push(r);
+  }
+  // entry fills, same shape (Fills col B)
+  const fillsByTicket = new Map();
+  for (const r of (fillRows || []).slice(1)) {
+    const k = String(r[1]);
+    if (!fillsByTicket.has(k)) fillsByTicket.set(k, []);
+    fillsByTicket.get(k).push(r);
   }
   const num = v => { const n = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return isFinite(n) ? n : null; };
   const out = [];
@@ -861,13 +887,53 @@ export function projectTradeLog(decRows, closeRows) {
     const maxRisk = num(d[c.risk]);
     const ts = String(d[c.ts] || '');
     const et = etSessionParts(ts);
+
+    // ── Entry side (Oct 2026) ──
+    // Fills columns: 8 qty, 10 price, 12 mid. A ticket with NO fill rows predates
+    // the Fills table and was logged as already done, so its filled quantity is its
+    // whole quantity. Reading it as a working order instead would invent a
+    // commitment that was never pending and put phantom exposure on the dashboard.
+    const fl = fillsByTicket.get(String(ref)) || [];
+    const hasFills = fl.length > 0;
+    // No fill rows is ambiguous: either a legacy ticket logged as already done, or
+    // an order sent moments ago with nothing back yet. Nothing in Fills can tell
+    // them apart. The decision row can — a working order carries the limit it was
+    // sent at, and no legacy row ever did. Absent that, assume filled, because
+    // inventing a pending commitment is the more damaging error of the two.
+    const wasWorked = c.limit >= 0 && String(d[c.limit] ?? '').trim() !== '';
+    const tracksFills = hasFills || wasWorked;
+    const qtyFilled = tracksFills
+      ? fl.reduce((a, r) => a + (num(r[8]) || 0), 0)
+      : qty;
+    const fillNotional = fl.reduce((a, r) => a + (num(r[8]) || 0) * (num(r[10]) || 0), 0);
+    const avgEntry = (hasFills && qtyFilled > 0) ? +(fillNotional / qtyFilled).toFixed(4) : null;
+    // A working order is not an open position, however the exit side reads.
+    const withMid = fl.filter(r => num(r[12]) != null);
+    const midQty = withMid.reduce((a, r) => a + (num(r[8]) || 0), 0);
+    const midNotional = withMid.reduce((a, r) => a + (num(r[8]) || 0) * num(r[12]), 0);
+    const avgMid = midQty > 0 ? midNotional / midQty : null;
+    // Signed so worse always means less money to you, on either side of the trade.
+    const entrySlip = (avgMid != null && avgEntry != null) ? +(avgMid - avgEntry).toFixed(4) : null;
+
     let status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qty ? 'Closed' : 'Partial');
+    // The entry side is read FIRST: a position cannot be part-closed before it is
+    // filled, and `Partial` already meant part-CLOSED, which left nothing to call a
+    // part-filled order.
+    if (tracksFills) {
+      if (qtyFilled <= 0) status = 'Working';
+      else if (qtyFilled < qty) status = 'Part filled';
+      else status = qtyClosed <= 0 ? 'Open' : (qtyClosed >= qtyFilled ? 'Closed' : 'Part closed');
+    }
 
     // A ticket the Decisions row already calls Closed, with no tranche rows, is
     // pre-tranche history. Without this it projects as Open — and forty finished
     // trades reappearing as live positions, carrying their full max risk into the
     // "risk live" total, is worse than having no trade log at all. (Sep 2026.)
     const decStatus = String(d[c.status] ?? '').trim();
+    // A worked order that was pulled before anything filled. Without this it reads
+    // as Working for ever and keeps counting its risk as committed — the one state
+    // where leaving the ticket alone is actively misleading.
+    if (/^cancel/i.test(decStatus) && qtyFilled <= 0) status = 'Cancelled';
     if (!tr.length && /^(closed|expired|stopped\s*out)$/i.test(decStatus)) {
       qtyClosed = qty;
       pnl = num(d[c.actualPnl]) || 0;
@@ -888,7 +954,8 @@ export function projectTradeLog(decRows, closeRows) {
       c.ev >= 0 ? (d[c.ev] ?? '') : '',
       c.conf >= 0 ? (d[c.conf] ?? '') : '',
       qtyClosed,
-      Math.max(0, qty - qtyClosed),
+      // Open is what is FILLED and not yet closed — never what was merely ordered.
+      Math.max(0, (tracksFills ? qtyFilled : qty) - qtyClosed),
       // Legacy rows often have a P&L but no close price; a blank reads honestly,
       // a 0.0000 reads as "closed at zero".
       (qtyClosed > 0 && notional > 0) ? +(notional / qtyClosed).toFixed(4) : '',
@@ -900,7 +967,11 @@ export function projectTradeLog(decRows, closeRows) {
       status,
       tr.length,
       lastClose,
-      d[c.acct] ?? ''
+      d[c.acct] ?? '',
+      c.limit >= 0 ? (d[c.limit] ?? '') : '',
+      tracksFills ? qtyFilled : '',
+      avgEntry == null ? '' : avgEntry,
+      entrySlip == null ? '' : entrySlip
     ]);
   }
   return out;
@@ -909,8 +980,8 @@ export function projectTradeLog(decRows, closeRows) {
 // Overwrite the table with the projection. The only thing that keeps the three
 // tables from drifting apart.
 export async function rebuildTradeLog() {
-  const [decRows, closeRows] = await Promise.all([getDecisions(), getCloses()]);
-  const rows = projectTradeLog(decRows, closeRows);
+  const [decRows, closeRows, fillRows] = await Promise.all([getDecisions(), getCloses(), getFills()]);
+  const rows = projectTradeLog(decRows, closeRows, fillRows);
   await replaceData('TradeLog', rows);
   return rows.length;
 }
@@ -922,8 +993,8 @@ export async function getTradeLog() {
 // Open and partially-closed positions, each with its tranches attached. This is
 // what the UI needs and it is derived, never stored.
 export async function getOpenPositions() {
-  const [decRows, closeRows] = await Promise.all([getDecisions(), getCloses()]);
-  const rows = projectTradeLog(decRows, closeRows);
+  const [decRows, closeRows, fillRows] = await Promise.all([getDecisions(), getCloses(), getFills()]);
+  const rows = projectTradeLog(decRows, closeRows, fillRows);
   const byTicket = new Map();
   for (const r of closeRows.slice(1)) {
     const k = String(r[1]);
@@ -936,9 +1007,10 @@ export async function getOpenPositions() {
   }
   const K = ['ticketRef','entryDate','entryTime','engine','underlying','strategy','legs',
     'qty','entryPrice','maxRisk','maxProfit','ev','confidence','qtyClosed','qtyOpen',
-    'avgExit','realisedPnl','rMultiple','status','tranches','lastClose','account'];
+    'avgExit','realisedPnl','rMultiple','status','tranches','lastClose','account',
+    'limitPrice','qtyFilled','avgEntry','entrySlippage'];
   return rows
-    .filter(r => r[18] !== 'Closed')
+    .filter(r => r[18] !== 'Closed' && r[18] !== 'Cancelled')
     .map(r => {
       const o = {}; K.forEach((k, i) => { o[k] = r[i]; });
       o.closes = byTicket.get(String(r[0])) || [];
@@ -954,6 +1026,32 @@ export async function getOpenPositions() {
 // ════════════════════════════════════════════════════════════════════════
 export async function getCloses() {
   return readTab('Closes');
+}
+
+// Entry fills — the mirror of Closes. A logged trade used to be assumed filled;
+// these rows are what actually came back, one per piece. (Oct 2026.)
+export async function getFills() {
+  return readTab('Fills');
+}
+
+export async function getFillsForTicket(ticketRef) {
+  const rows = await getFills();
+  const h = rows[0] || [];
+  return rows.slice(1)
+    .filter(r => String(r[1]) === String(ticketRef))
+    .map(r => Object.fromEntries(h.map((k, i) => [k, r[i] ?? ''])));
+}
+
+export async function appendFill(f) {
+  const row = [
+    f.fillId || ('F' + Date.now()),
+    f.ticketRef, f.ticketTimestamp || '', f.engine || '', f.underlying || '', f.strategy || '',
+    f.fillDate || '', f.fillTime || '', f.qtyFilled, f.qtyRemaining,
+    f.fillPrice, f.limitPrice ?? '', f.midAtSend ?? '', f.feesUsd ?? '',
+    f.orderRef || '', f.account || '', f.notes || ''
+  ];
+  await appendRows('Fills', [row]);
+  return row;
 }
 
 // Every tranche recorded against one ticket, oldest first.

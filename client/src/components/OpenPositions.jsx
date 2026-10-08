@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { exposure, STATUS } from '../engine/fills';
 import OrderTicket from './OrderTicket';
+import FillReconcile from './FillReconcile';
 import { normalisePosition, stopToPrice, pnlAt, loadPlan } from '../utils/ticketMath';
 import { STOP_LOSS_PCT } from '../engine/data';
 
@@ -24,13 +26,28 @@ function stopOf(r) {
 // (Sep 2026.)
 //
 // compact — Dashboard mode: totals plus one line per position, no tranche detail.
-export default function OpenPositions({ authenticated, account, compact = false }) {
+export default function OpenPositions({ authenticated, account, compact = false, maxOpenRisk = null }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [ticket, setTicket] = useState(null);   // { row, tab } — the SELL ticket in play
   const [reload, setReload] = useState(0);
+  const [reconciling, setReconciling] = useState(false);
+  const [cancelling, setCancelling] = useState(null);
+  const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
+
+  // The cap is a property of the account, not of the page that happens to be
+  // showing positions. The Dashboard already has it and passes it; everywhere else
+  // it is fetched here rather than threaded through three components. (Oct 2026.)
+  useEffect(() => {
+    if (!authenticated || maxOpenRisk != null) return;
+    let dead = false;
+    api.getStats(account)
+      .then(d => { if (!dead) setCap(Number(d?.config?.maxOpenRisk) || null); })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, [authenticated, account, maxOpenRisk]);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -43,13 +60,33 @@ export default function OpenPositions({ authenticated, account, compact = false 
     return () => { dead = true; };
   }, [authenticated, account, reload]);
 
+  // The ticket ref IS the 1-based Decisions row, which is what the status route
+  // addresses, so no lookup is needed.
+  async function cancelTicket(r) {
+    if (!window.confirm(`Mark the ${r.underlying} ${r.strategy} order cancelled? Nothing filled, so no trade is recorded.`)) return;
+    setCancelling(r.ticketRef);
+    try {
+      await api.updateTicketStatus(r.ticketRef, 'Cancelled');
+      setReload(x => x + 1);
+    } catch (e) {
+      setErr('Could not cancel: ' + e.message);
+    } finally { setCancelling(null); }
+  }
+
   const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
   // Risk still live is the OPEN portion only — the closed contracts cannot lose
   // any more, and counting them would overstate exposure on every partial.
   const openRisk = rows.reduce((a, r) =>
     a + (n(r.qty) > 0 ? n(r.maxRisk) * (n(r.qtyOpen) / n(r.qty)) : 0), 0);
   const realised = rows.reduce((a, r) => a + n(r.realisedPnl), 0);
-  const partials = rows.filter(r => r.status === 'Partial').length;
+  const partials = rows.filter(r => r.status === 'Partial' || r.status === STATUS.PART_CLOSED).length;
+  // Money at risk and money committed are different questions, and only one of
+  // them is urgent. A resting order can fill at any moment, so it counts against
+  // the cap in full — but folding it into one number would hide the difference.
+  // (Oct 2026.)
+  const exp = exposure(rows, { maxOpenRisk: maxOpenRisk != null ? maxOpenRisk : cap });
+  // Anything still waiting on contracts is what the reconcile button is for.
+  const working = rows.filter(r => r.status === STATUS.WORKING || r.status === STATUS.PART_FILLED);
 
   if (loading) return <div className="card"><div className="text-text-muted text-sm">Loading open positions…</div></div>;
   if (err) return <div className="card"><div className="text-red text-sm">Open positions: {err}</div></div>;
@@ -65,12 +102,19 @@ export default function OpenPositions({ authenticated, account, compact = false 
     );
   }
 
-  const Pill = ({ s }) => (
-    <span className="badge" style={{
-      background: s === 'Partial' ? '#1f1a0d' : '#0d1a2e',
-      color: s === 'Partial' ? '#d29922' : '#2f81f7'
-    }}>{s}</span>
-  );
+  // Four colours for five states. Amber is "not all the way through" on either side
+  // of the trade; purple marks a ticket that is not a position yet at all, because
+  // reading a resting order as open is the mistake this whole table exists to stop.
+  const PILL = {
+    [STATUS.WORKING]: ['#1c1333', '#bc8cff'],
+    [STATUS.PART_FILLED]: ['#1f1a0d', '#d29922'],
+    [STATUS.PART_CLOSED]: ['#1f1a0d', '#d29922'],
+    Partial: ['#1f1a0d', '#d29922'],
+  };
+  const Pill = ({ s }) => {
+    const [bg, color] = PILL[s] || ['#0d1a2e', '#2f81f7'];
+    return <span className="badge" style={{ background: bg, color }}>{s}</span>;
+  };
   const money = v => (n(v) >= 0 ? '+$' : '−$') + Math.abs(n(v)).toFixed(0);
 
   return (
@@ -85,9 +129,34 @@ export default function OpenPositions({ authenticated, account, compact = false 
         <span className="text-sm mono" style={{ display: 'flex', gap: 16 }}>
           <span><span className="text-text-muted">Risk live </span>
             <b>${openRisk.toFixed(0)}</b></span>
+          {exp.working > 0 && (
+            <span title={`${exp.workingCount} order${exp.workingCount === 1 ? '' : 's'} resting. `
+              + `If every one fills, committed risk is $${exp.committed.toFixed(0)}`
+              + (exp.cap ? ` against a $${exp.cap} cap.` : '.')}>
+              <span className="text-text-muted">Working </span>
+              <b style={{ color: exp.overIfFilled ? '#d29922' : undefined }}>
+                ${exp.working.toFixed(0)}
+              </b>
+            </span>
+          )}
+          {exp.cap && exp.overIfFilled && (
+            <span style={{ color: exp.overNow ? '#f85149' : '#d29922' }}>
+              {exp.overNow
+                ? `over the $${exp.cap} cap now`
+                : `$${exp.committed.toFixed(0)} if all fill · cap $${exp.cap}`}
+            </span>
+          )}
           {realised !== 0 && (
             <span><span className="text-text-muted">Banked </span>
               <b className={realised >= 0 ? 'win' : 'loss'}>{money(realised)}</b></span>
+          )}
+          {!compact && working.length > 0 && (
+            <button onClick={() => setReconciling(true)}
+              title="Pull today's TWS executions and match them to these working orders — nothing is written until you confirm"
+              className="text-[12px] px-2 py-0.5 rounded"
+              style={{ border: '1px solid #8957e5', color: '#bc8cff', background: 'transparent', cursor: 'pointer' }}>
+              Reconcile fills
+            </button>
           )}
         </span>
       </div>
@@ -113,6 +182,10 @@ export default function OpenPositions({ authenticated, account, compact = false 
               const isOpen = !!open[r.ticketRef];
               const liveRisk = n(r.qty) > 0 ? n(r.maxRisk) * (n(r.qtyOpen) / n(r.qty)) : 0;
               const expandable = !compact && (r.closes || []).length > 0;
+              // Contracts ordered and not yet in. Blank qtyFilled means a legacy
+              // ticket that never tracked fills, so nothing is resting.
+              const resting = r.qtyFilled === '' || r.qtyFilled == null
+                ? 0 : Math.max(0, n(r.qty) - n(r.qtyFilled));
               return (
                 <React.Fragment key={r.ticketRef}>
                   <tr
@@ -127,8 +200,21 @@ export default function OpenPositions({ authenticated, account, compact = false 
                     {!compact && <td className="py-2 pr-2 mono text-text-muted">{r.legs}</td>}
                     <td className="py-2 pr-2 text-right mono">
                       <b>{r.qtyOpen}</b><span className="text-text-muted"> / {r.qty}</span>
+                      {resting > 0 && (
+                        <span style={{ color: '#bc8cff' }} title={`${resting} contract${resting === 1 ? '' : 's'} still resting at ${r.limitPrice || 'the limit'}`}>
+                          {' '}+{resting}
+                        </span>
+                      )}
                     </td>
-                    <td className="py-2 pr-2 text-right mono">${liveRisk.toFixed(0)}</td>
+                    <td className="py-2 pr-2 text-right mono">
+                      ${liveRisk.toFixed(0)}
+                      {resting > 0 && (
+                        <span style={{ color: '#bc8cff', fontSize: 11.5 }}
+                          title="Risk committed but not yet carried — it lands the moment the rest fills">
+                          {' '}+{(n(r.qty) > 0 ? n(r.maxRisk) * (resting / n(r.qty)) : 0).toFixed(0)}
+                        </span>
+                      )}
+                    </td>
                     {(() => { const st = stopOf(r); return (
                       <td className="py-2 pr-2 text-right mono" data-testid="op-stop" style={{ color: st ? '#f85149' : '#8b949e', whiteSpace: 'nowrap' }}
                         title={st ? `${st.pct}% of the ${st.side === 'db' ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}` : 'No entry price on the ticket'}>
@@ -140,11 +226,23 @@ export default function OpenPositions({ authenticated, account, compact = false 
                     </td>
                     <td className="py-2 pl-2"><Pill s={r.status} /></td>
                     <td className="py-2 pl-2 text-right" style={{ whiteSpace: 'nowrap' }}>
+                      {/* A working order has nothing to sell. Cancelling it is the
+                          only action that makes sense, and without it the committed
+                          risk never clears. (Oct 2026.) */}
+                      {r.status === STATUS.WORKING ? (
+                        <button onClick={e => { e.stopPropagation(); cancelTicket(r); }}
+                          title="Mark this order cancelled — it stops counting against the open-risk cap"
+                          className="text-[12px] px-2 py-0.5 rounded"
+                          style={{ border: '1px solid #8957e5', color: '#bc8cff', background: 'transparent', cursor: 'pointer' }}>
+                          {cancelling === r.ticketRef ? 'Cancelling…' : 'Cancel'}
+                        </button>
+                      ) : (
                       <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'close' }); }}
                         title="Sell ticket — close in tranches"
                         className="text-[12px] px-2 py-0.5 rounded"
                         style={{ border: '1px solid #da3633', color: '#f85149', background: 'transparent', cursor: 'pointer' }}>Sell</button>
-                      {/45/.test(r.engine || '') && (
+                      )}
+                      {r.status !== STATUS.WORKING && /45/.test(r.engine || '') && (
                         <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'roll' }); }}
                           title="Roll — close old legs, open new ones as one combo"
                           className="text-[12px] px-2 py-0.5 rounded ml-1"
@@ -177,6 +275,11 @@ export default function OpenPositions({ authenticated, account, compact = false 
         <OrderTicket position={ticket.row} initialTab={ticket.tab}
           onClose={() => setTicket(null)}
           onDone={() => { setTicket(null); setReload(x => x + 1); }} />
+      )}
+      {reconciling && (
+        <FillReconcile positions={rows} account={account}
+          onClose={() => setReconciling(false)}
+          onDone={() => setReload(x => x + 1)} />
       )}
     </div>
   );

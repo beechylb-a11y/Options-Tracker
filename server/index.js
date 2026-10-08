@@ -17,6 +17,7 @@ import {
   updateTrackerStrategy, updateTradesStrategy,
   closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
+  getFills, getFillsForTicket, appendFill,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
   getClosesList
 } from './db.js';
@@ -600,6 +601,56 @@ app.get('/api/closes', requireAuth, async (req, res) => {
     const acct = req.query.account;
     res.json((acct && acct !== 'all' ? out.filter(o => o.Account === acct) : out).reverse());
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Entry fills ───────────────────────────────────────────────────────────
+// The mirror of /api/closes. A logged trade used to be assumed filled; these are
+// the pieces that actually came back, each carrying what was asked for alongside
+// what was got. (Oct 2026.)
+app.get('/api/fills', requireAuth, async (req, res) => {
+  try {
+    const rows = await getFills();
+    const headers = rows[0] || [];
+    const out = rows.slice(1).map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+    const acct = req.query.account;
+    const ticket = req.query.ticketRef;
+    let list = acct && acct !== 'all' ? out.filter(o => o.Account === acct) : out;
+    if (ticket) list = list.filter(o => String(o['Ticket Ref']) === String(ticket));
+    res.json(list.reverse());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/fills', requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.ticketRef) return res.status(400).json({ error: 'ticketRef required' });
+    const qty = Number(b.qtyFilled);
+    if (!(qty > 0)) return res.status(400).json({ error: 'qtyFilled must be greater than zero' });
+    if (b.fillPrice == null || b.fillPrice === '' || !isFinite(Number(b.fillPrice))) {
+      return res.status(400).json({ error: 'fillPrice required' });
+    }
+    // What is left to fill is derived here, not trusted from the client: the client
+    // may be looking at a stale ticket, and a wrong remaining quantity would make
+    // the position read as open when contracts are still resting.
+    const prior = await getFillsForTicket(b.ticketRef);
+    const already = prior.reduce((a, f) => a + (Number(f['Qty Filled']) || 0), 0);
+    const ordered = Number(b.qtyOrdered) || 0;
+    const remaining = ordered > 0 ? Math.max(0, ordered - already - qty) : '';
+
+    const row = await appendFill({ ...b, qtyFilled: qty, qtyRemaining: remaining });
+    let logRows = null;
+    try { logRows = await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); }
+    res.json({ ok: true, row, priorFills: prior.length, qtyFilledTotal: already + qty,
+      qtyRemaining: remaining, tradeLogRows: logRows });
+  } catch (err) {
+    // The reconcile button sends a fill id built from the TWS execution, so running
+    // it twice over the same fills lands here rather than double-counting the entry.
+    // A duplicate is a no-op the caller should be told about, not a failure.
+    if (err.code === '23505' || /duplicate key|fills_fill_id_key/i.test(err.message)) {
+      return res.status(409).json({ error: 'That fill is already recorded', duplicate: true });
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Open and partially-closed positions with their tranches attached.

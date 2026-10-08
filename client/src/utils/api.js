@@ -126,6 +126,18 @@ export const api = {
   getCloses: (account) => fetchJSON(`/api/closes${account && account !== 'all' ? '?account=' + account : ''}`),
   getOpenPositions: (account) => fetchJSON(`/api/positions/open${account && account !== 'all' ? '?account=' + account : ''}`),
 
+  // Entry fills — the mirror of the closes. One row per piece that actually came
+  // back, so a part-filled order is a fact rather than an assumption. (Oct 2026.)
+  getFills: (account, ticketRef) => {
+    const q = [];
+    if (account && account !== 'all') q.push('account=' + encodeURIComponent(account));
+    if (ticketRef) q.push('ticketRef=' + encodeURIComponent(ticketRef));
+    return fetchJSON('/api/fills' + (q.length ? '?' + q.join('&') : ''));
+  },
+  addFill: (fill) => fetchJSON('/api/fills', {
+    method: 'POST', body: JSON.stringify(fill)
+  }),
+
   // Decisions
   logDecision: (data) => fetchJSON('/api/decisions', {
     method: 'POST', body: JSON.stringify(data)

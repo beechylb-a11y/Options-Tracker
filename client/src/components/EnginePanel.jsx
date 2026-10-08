@@ -574,6 +574,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [loggedSig, setLoggedSig] = useState(init?.loggedSig ?? null);
   const [logging, setLogging] = useState(false);
   const [logNote, setLogNote] = useState('');
+  // Logging a trade used to mean asserting it was filled. A 45DTE multi-leg order
+  // rests — sometimes all day, sometimes never — so the ticket can be written as a
+  // WORKING order instead: the limit that was sent, and nothing claimed about the
+  // fill until the fills come back. Deliberately off by default, because the
+  // overwhelming case is a trade that already went on. (Oct 2026.)
+  const [workingOrder, setWorkingOrder] = useState(false);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -2676,6 +2682,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       return;
     }
     setLogNote('');
+    setWorkingOrder(false);   // an explicit choice each time, never a sticky one
     setLogNoteOpen(true);
   }
   // Fingerprint of what is on the ticket right now. Compared against the one captured
@@ -2775,7 +2782,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // morning the latter is the expiry that has already expired. Close dates
       // elsewhere in the app deliberately keep the UTC date: a close looks BACK at the
       // session that just ended, which is the one the UTC date already names.
-      expiryDate: is0 ? tradingSession().dateISO : isoFromYmd(deriveExpiryYYYYMMDD())
+      expiryDate: is0 ? tradingSession().dateISO : isoFromYmd(deriveExpiryYYYYMMDD()),
+      // A working order: the limit that was SENT, and the moment it went in. The
+      // limit is the one thing that tells the trade log to wait for fills instead of
+      // assuming them, so it is written only when the order is actually resting —
+      // and the net above stays what was ASKED until a fill replaces it.
+      limitPrice: workingOrder ? (isFinite(ncdSigned) ? ncdSigned : ncdNow) : '',
+      workingSince: workingOrder ? logTs : '',
+      orderRef: ''
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -3151,7 +3165,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           </div>
         {logNoteOpen && (
-          <div style={{flexBasis:'100%',display:'flex',gap:6,alignItems:'center',maxWidth:640}}>
+          <div style={{flexBasis:'100%',display:'flex',flexWrap:'wrap',gap:6,alignItems:'center',maxWidth:720}}>
+            <label data-testid="log-working" title="Record this as a resting order rather than a position. The limit above is written as what you ASKED; nothing is claimed about the fill until you reconcile the fills from TWS. Its risk still counts in full against the open-risk cap, shown separately."
+              style={{flexBasis:'100%',display:'flex',alignItems:'center',gap:7,fontSize:12.5,
+                color: workingOrder ? '#bc8cff' : '#a8b2be',cursor:'pointer'}}>
+              <input type="checkbox" checked={workingOrder} onChange={e=>setWorkingOrder(e.target.checked)} />
+              Order sent, not filled yet
+              {workingOrder && <span className="mono" style={{color:'#8b949e'}}>
+                — resting at {ticketNet === '' ? '—' : ticketNet}; reconcile the fills from Open positions when it fills
+              </span>}
+            </label>
             <input autoFocus type="text" value={logNote}
               onChange={e=>setLogNote(e.target.value)}
               onKeyDown={e=>{ if (e.key==='Enter') { e.preventDefault(); confirmLog(); } else if (e.key==='Escape') { setLogNoteOpen(false); } }}
