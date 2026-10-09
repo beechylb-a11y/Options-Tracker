@@ -2815,13 +2815,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const expiriesLine = isTimeSpread && nearExp && farExp
       ? `Expiries: sell ${fmtExpiry(nearExp)} ${nearExp.slice(0, 4)} (${dteBetween(todayYmd, nearExp)}d) / buy ${fmtExpiry(farExp)} ${farExp.slice(0, 4)} (${dteBetween(todayYmd, farExp)}d)\n`
       : '';
-    // Legs with side, right and expiry (Oct 2026), so the 45DTE check-up can find the
-    // position when TWS has no match (the Wing Strikes column is strikes only).
-    // A 45DTE expiry here is the one PLANNED from the DTE unless the chain set it.
-    const legsLine = !is0 && r.legs && r.legs.length ? 'Legs: ' + r.legs.map(l => {
+    // Legs with side, right and expiry (Oct 2026), so the 45DTE check-up and the
+    // Portfolio Risk page can find the position when TWS has no match (the Wing
+    // Strikes column is strikes only). 0DTE legs expire in today's session; a 45DTE
+    // expiry here is the one PLANNED from the DTE unless the chain set it.
+    const legsLine = r.legs && r.legs.length ? 'Legs: ' + r.legs.map(l => {
       const lb = String(l.label || '').toLowerCase();
       const q = (/short|sell/.test(lb) ? -1 : 1) * (/x2\b/.test(lb) ? 2 : 1);
-      return `${q > 0 ? '+' : '-'}${Math.abs(q)} ${l.strike}${lb.includes('put') ? 'P' : 'C'} ${legExpiryOf(l) || deriveExpiryYYYYMMDD()}`;
+      return `${q > 0 ? '+' : '-'}${Math.abs(q)} ${l.strike}${lb.includes('put') ? 'P' : 'C'} ${legExpiryOf(l) || (is0 ? tradingSession().yyyymmdd : deriveExpiryYYYYMMDD())}`;
     }).join(' / ') + '\n' : '';
     const fullNotes = expiriesLine + legsLine + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
