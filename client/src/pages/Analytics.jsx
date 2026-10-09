@@ -10,6 +10,7 @@ import { assumedCapture0 } from '../engine/calc0dte';
 import { assumedCapture45 } from '../engine/calc45dte';
 import { EXIT_RULES } from '../engine/data';
 import { shadowSummary } from '../engine/shadow';
+import { calibrate, headlines, DIMENSIONS, MIN_N, SOLID_N } from '../engine/calibration';
 import { settleShadows } from '../utils/shadowSettle';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
@@ -180,8 +181,10 @@ function ShadowVerdicts({ account }) {
           {!rows.length && <tr><td colSpan={5} className="py-3 text-text-muted">Nothing recorded yet. A verdict is kept once a ticket has sat unchanged for 20 seconds.</td></tr>}
         </tbody>
       </table>
+      {rows.length > 0 && <Calibration rows={rows} />}
       {rows.length > 0 && (
         <div style={{ overflowX: 'auto' }}>
+          <div className="font-semibold mt-6 mb-2">Recent verdicts</div>
           <table className="w-full text-sm">
             <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
               <th className="text-left py-1.5">Session</th><th className="text-left">Ticket</th><th className="text-left">Verdict</th>
@@ -208,6 +211,75 @@ function ShadowVerdicts({ account }) {
           <div className="text-text-faint text-xs mt-2">* entry priced at the model's fair value — no fill was typed on the ticket.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Calibration (Oct 2026, learning loop step 2): settled verdicts grouped by what the
+// engine said, in R (P&L ÷ max loss) with 95% intervals and a plain read per group.
+function Calibration({ rows }) {
+  const [dim, setDim] = useState('blocker');
+  const [engine, setEngine] = useState(null);
+  const [entry, setEntry] = useState(null);
+  const filter = { engine, entry };
+  const groups = useMemo(() => calibrate(rows, dim, filter), [rows, dim, engine, entry]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const h = useMemo(() => headlines(rows, filter), [rows, engine, entry]);                  // eslint-disable-line react-hooks/exhaustive-deps
+  const pill = on => `text-xs px-2.5 py-1 rounded border ${on ? 'border-accent text-text bg-accent/20' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`;
+  const r2 = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
+  const toneCls = t => t === 'good' ? 'win' : t === 'bad' ? 'loss' : 'text-text-muted';
+  return (
+    <div data-testid="calibration" className="mt-2">
+      <div className="font-semibold mb-1">Calibration</div>
+      <div className="text-text-muted text-xs mb-3" style={{ maxWidth: 760 }}>
+        What each part of the engine's judgement went on to make, held to expiry. R = P&amp;L ÷ the trade's max loss, so different
+        underlyings compare on one scale. Ranges are 95% intervals; under {MIN_N} settled a group is not read, and under {SOLID_N} it is marked early.
+      </div>
+      <div className="text-sm mb-3" data-testid="calibration-headline">
+        {h.blocked && h.allowed
+          ? <>Blocked trades averaged <b className={h.blocked.R < 0 ? 'win' : 'loss'}>{r2(h.blocked.R)}</b> over {h.blocked.n};
+              trades the engine allowed averaged <b className={h.allowed.R >= 0 ? 'win' : 'loss'}>{r2(h.allowed.R)}</b> over {h.allowed.n}.
+              {h.blocked.R < h.allowed.R ? ' The blocks are, on the whole, removing the worse trades.' : ' The blocks are not yet removing worse trades than the ones allowed.'}</>
+          : <span className="text-text-muted">Once blocked and allowed verdicts have both settled, the comparison shows here.</span>}
+        {h.edgeMonotone != null && <> {h.edgeMonotone
+          ? <span> Higher edge-score bands are doing better, as they should.</span>
+          : <span className="loss"> Higher edge-score bands are not doing better — the score is not sorting outcomes yet.</span>}</>}
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-2 items-center">
+        <span className="text-xs text-text-faint mr-1">Group by</span>
+        {Object.entries(DIMENSIONS).map(([k, d]) => <button key={k} className={pill(dim === k)} onClick={() => setDim(k)}>{d.label}</button>)}
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-3 items-center">
+        <span className="text-xs text-text-faint mr-1">Engine</span>
+        {[[null, 'All'], ['0DTE', '0DTE'], ['45DTE', '45DTE']].map(([v, l]) => <button key={l} className={pill(engine === v)} onClick={() => setEngine(v)}>{l}</button>)}
+        <span className="text-xs text-text-faint ml-3 mr-1">Entry</span>
+        {[[null, 'All'], ['ticket', 'Typed fills only']].map(([v, l]) => <button key={l} className={pill(entry === v)} onClick={() => setEntry(v)}>{l}</button>)}
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="w-full text-sm" data-testid="calibration-table">
+          <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
+            <th className="text-left py-1.5">{DIMENSIONS[dim].label}</th><th className="text-right">Settled / recorded</th>
+            <th className="text-right">Win rate</th><th className="text-right">Avg R (95%)</th><th className="text-right">Avg $/ct</th>
+            <th className="text-right">Total $/ct</th><th className="text-left pl-4">Read</th></tr></thead>
+          <tbody>
+            {groups.map(g => (
+              <tr key={g.key} style={{ borderTop: '1px solid #21262d' }}>
+                <td className="py-1.5">{g.key}</td>
+                <td className="text-right mono">{g.n} / {g.recorded}</td>
+                <td className="text-right mono">{g.winRate ? `${(g.winRate.p * 100).toFixed(0)}%` : '—'}
+                  {g.winRate && g.n >= 2 && <span className="text-text-faint"> ({(g.winRate.lo * 100).toFixed(0)}–{(g.winRate.hi * 100).toFixed(0)})</span>}</td>
+                <td className={'text-right mono ' + (g.R ? (g.R.m >= 0 ? 'win' : 'loss') : '')}>{g.R ? r2(g.R.m) : '—'}
+                  {g.R && g.R.lo != null && <span className="text-text-faint"> ({r2(g.R.lo)} to {r2(g.R.hi)})</span>}</td>
+                <td className="text-right mono">{g.pnl ? money(g.pnl.m) : '—'}</td>
+                <td className={'text-right mono ' + (g.total >= 0 ? 'win' : 'loss')}>{g.n ? money(g.total) : '—'}</td>
+                <td className={'pl-4 ' + toneCls(g.read.tone)}>{g.read.text}</td>
+              </tr>
+            ))}
+            {!groups.length && <tr><td colSpan={7} className="py-3 text-text-muted">
+              {dim === 'blocker' ? 'No blocked verdicts recorded yet.' : 'Nothing recorded on this dimension yet.'}</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
