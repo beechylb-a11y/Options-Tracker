@@ -10,7 +10,7 @@ const base = {
   vwapRoll30: '7410', vwapRoll30Prior: '7409', vwapAccept: '0.5', em: '38', atr5: '6.5', atr2h: '22', atr: '61',
   vix: '15.8', vix1d: '12.9', esOvernightHigh: '7430', esOvernightLow: '7388', esClose: '7415',
   priorDayClose: '7398', cashOpen: '7400', esEM: '40', hours: '3.5',
-  theta: '38', delta: '-4', gamma: '-0.2', emSource: 'straddle', straddleCall: '21.5', straddlePut: '20.8', straddleHaircut: '1.2533',
+  theta: '250', delta: '-4', gamma: '-0.2', emSource: 'straddle', straddleCall: '21.5', straddlePut: '20.8', straddleHaircut: '1.2533',
   bankroll: 25000, startBR: 25000, maxLoss: 600, maxOpen: 900,
   netCreditDebit: '1.20', win: '120', risk: '880', pop: '80',
 };

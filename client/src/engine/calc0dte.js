@@ -228,6 +228,55 @@ export function assumedCapture0(s) {
   return { winCap: 0.40, lossCap: 0.60 }; // sensible default
 }
 
+// ── Gamma move cost (Oct 2026) ─────────────────────────────────────────────
+// Was |Γ|·ATR ÷ |Θ|. That ratio has units of 1/points, so it scaled with the price
+// of the underlying: the same condor read 0.04 on SPX and 0.40 on XSP, and the block
+// at 1.20 fired on QQQ, SPY and stocks while SPX could never reach it.
+//
+// The scale-free version is what a typical day's move actually costs a short-gamma
+// position, in days of the decay it collects: ½·|Γ|·σ² ÷ |Θ|, with σ the realised
+// one-day move in points. Θ itself is ½·σ_implied²·Γ, so this reads as
+// (realised move ÷ implied move)². 1.0 is breakeven: price is moving exactly as
+// much as the options are paying for. ATR is a high-low range: for a random walk the
+// expected range is 2·√(2/π) ≈ 1.6 standard deviations, hence the divisor.
+// Checked against logged TWS greeks (Sep–Oct 2026): ½·|Γ|·(implied daily move)² ÷ |Θ|
+// ran 0.2–1.7 across SPX, SPY, XSP and QQQ — the same order on every underlying,
+// where the old ratio read 0.12 on the SPX fly and 1.5 on the SPY one.
+export const ATR_PER_SD = 1.6;
+export const MOVE_COST_BANDS = { low: 0.8, moderate: 1.25, block: 2.0 };
+export function gammaMoveCost(gamma, theta, atr) {
+  const th = Math.abs(Number(theta) || 0), g = Number(gamma) || 0, a = Number(atr) || 0;
+  if (!(th > 0) || !(a > 0) || g === 0) return null;
+  const sd = a / ATR_PER_SD;
+  return { cost: 0.5 * Math.abs(g) * sd * sd / th, sd, short: g < 0 };
+}
+
+// What to do when short gamma costs more than the decay pays (Oct 2026). Honest
+// about what does NOT help: moving strikes or trading smaller scales gamma and
+// theta together, so the ratio stays put.
+export const LONG_GAMMA_STRATS = ['Bull call spread', 'Bear put spread', 'Long Condor - Reversed'];
+export function gammaFixFor({ cost, sd, atr, blocked, underlying, legStrat }) {
+  const ratio = Math.sqrt(cost);
+  const more = Math.round((ratio - 1) * 100);
+  const pts = v => (v >= 10 ? v.toFixed(0) : v.toFixed(2));
+  return {
+    cost, ratio, blocked,
+    headline: `A typical day's move costs ${cost.toFixed(1)} days of the decay this ${legStrat || 'trade'} collects`,
+    why: `${underlying || 'Price'} has been moving about ${pts(sd)} pts a day (ATR ${pts(atr)} ÷ ${ATR_PER_SD}), `
+      + (more > 0 ? `about ${more}% more than the options are pricing` : 'about what the options are pricing')
+      + '. Short gamma loses when price moves more than the premium pays for.',
+    // Far past any realistic ratio usually means greeks that do not belong together
+    // (stale, single-leg, or typed), not a market moving 10x its implied range.
+    suspect: cost > 6,
+    notFixes: 'Moving the short strikes further out, or trading fewer contracts, does not change this — gamma and decay shrink together, so only the dollars at stake change.',
+    steps: [
+      { kind: 'switch', text: 'Switch to a structure that gains from movement (long gamma): a debit spread or a reversed condor.' },
+      { kind: 'wait', text: `Wait, then Fetch Greeks again — once IV lifts or the range settles, this falls back under ${MOVE_COST_BANDS.moderate}.` },
+      { kind: 'manage', text: 'If you take it anyway: smaller size, bank the first profit target, and keep the stop — a normal day is working against you.' },
+    ],
+  };
+}
+
 export function calc0DTE(inputs) {
   const { price, high, low, vwap5, vwap5_30, vwapRoll30, vwapRoll30Prior, vwapAccept,
     atr, em, atr5, atr2h, gamStrike,
@@ -1668,17 +1717,18 @@ export function calc0DTE(inputs) {
   // branch on the SIGN, which is the thing that decides whether gamma is a bill or a
   // hedge. (Sep 2026 — same class as the Aug display fix a few hundred lines down.)
   if (hasGreeks && gamma !== 0 && thetaAbs > 0 && atr > 0) {
-    const gMag = Math.abs(gamma) * atr / thetaAbs;
+    const gMag = gammaMoveCost(gamma, thetaAbs, atr).cost;   // scale-free (Oct 2026)
+    const B = MOVE_COST_BANDS;
     if (gamma < 0) {
       // Short gamma: a move against the body costs more the further it goes.
-      if (gMag > 1.20) structScore = Math.max(0, structScore - 15);
-      else if (gMag > 0.70) structScore = Math.max(0, structScore - 5);
-      else if (gMag < 0.30) structScore = Math.min(100, structScore + 5);
+      if (gMag > B.block) structScore = Math.max(0, structScore - 15);
+      else if (gMag > B.moderate) structScore = Math.max(0, structScore - 5);
+      else if (gMag < B.low) structScore = Math.min(100, structScore + 5);
     } else if (isReversed || thetaPaid) {
-      // Long gamma, and paying for it: convexity is the only thing buying back what
-      // theta takes, so more of it is the point.
-      if (gMag > 1.20) structScore = Math.min(100, structScore + 10);
-      else if (gMag > 0.70) structScore = Math.min(100, structScore + 5);
+      // Long gamma, and paying for it: a typical move earning back more than a day's
+      // decay is the point of owning convexity.
+      if (gMag > B.block) structScore = Math.min(100, structScore + 10);
+      else if (gMag > B.moderate) structScore = Math.min(100, structScore + 5);
     }
   }
   const structGrade = structScore >= 80 ? 'Excellent' : structScore >= 60 ? 'Good' : structScore >= 40 ? 'Fair' : 'Poor';
@@ -2175,7 +2225,10 @@ export function calc0DTE(inputs) {
   if (hasGreeks && atr > 0) {
     const absDelta = Math.abs(delta);
     const tEdge = absDelta * atr > 0 ? thetaAbs / (absDelta * atr) : 0;
-    const gRisk = thetaAbs > 0 ? (gamma * atr) / thetaAbs : 0;
+    // Signed move cost (Oct 2026): negative = short gamma. See gammaMoveCost above.
+    const _mc = gammaMoveCost(gamma, thetaAbs, atr);
+    const gRisk = _mc ? (gamma < 0 ? -_mc.cost : _mc.cost) : 0;
+    const moveSD = _mc ? _mc.sd : atr / ATR_PER_SD;
     // Every band below reads gRisk as a magnitude, but gamma is SIGNED and a long fly
     // or condor is SHORT gamma at the body — exactly where whipsaw hurts. A negative
     // gRisk therefore sailed through `gRisk < 0.30` and came back "low — Safe to hold —
@@ -2236,17 +2289,18 @@ export function calc0DTE(inputs) {
       : 'Decay dwarfs the directional risk on offer — check delta and theta are for the same structure';
 
     // Gamma risk interpretation
-    let gRiskSignal = gMag < 0.30 ? 'low' : gMag < 0.70 ? 'moderate' : gMag < 1.20 ? 'elevated' : 'high';
-    let gRiskAction = gMag < 0.30 ? 'Safe to hold — minimal whipsaw risk'
-      : gMag < 0.70 ? 'Acceptable — watch if IV spikes'
-      : gMag < 1.20 ? 'Reduce size or tighten profit target'
-      : 'Avoid or exit — gamma cliff risk';
+    const MB = MOVE_COST_BANDS;
+    let gRiskSignal = gMag < MB.low ? 'low' : gMag < MB.moderate ? 'near breakeven' : gMag < MB.block ? 'elevated' : 'high';
+    let gRiskAction = gMag < MB.low ? 'A typical move costs less than a day of decay — safe to hold'
+      : gMag < MB.moderate ? 'A typical move costs about a day of decay — watch if the range widens'
+      : gMag < MB.block ? 'Price is moving more than the options pay for — reduce size or tighten the profit target'
+      : 'A typical move costs two or more days of decay — avoid or exit';
     if (gShort) {
       gRiskSignal = `${gRiskSignal} · short gamma`;
-      gRiskAction = gMag < 0.30 ? 'Short gamma, but small against the decay collected — holdable'
-        : gMag < 0.70 ? 'Short gamma — a move against the body costs more the further it goes'
-        : gMag < 1.20 ? 'Short gamma is biting — reduce size or tighten the profit target'
-        : 'Short gamma cliff — a fast move past the body outruns every hour of decay left';
+      gRiskAction = gMag < MB.low ? 'Short gamma, but a typical move costs less than the decay collected — holdable'
+        : gMag < MB.moderate ? 'Short gamma near breakeven — a normal day\'s move costs about what decay pays'
+        : gMag < MB.block ? 'Short gamma is biting — price is moving more than the options are pricing'
+        : 'Short gamma cliff — a typical move costs two or more days of decay';
     }
 
     // Max tolerable move interpretation
@@ -2274,16 +2328,16 @@ export function calc0DTE(inputs) {
         : tEdge < 0.15 ? 'Decay costs a modest share of the move you need'
         : tEdge < 0.30 ? 'Paying meaningfully for time — the move has to arrive soon'
         : 'Decay bill rivals the directional risk — this has to move now or not at all';
-      gRiskSignal = gRisk < 0.30 ? 'thin' : gRisk < 0.70 ? 'moderate' : gRisk < 1.20 ? 'strong' : 'very strong';
-      gRiskAction = gRisk < 0.30 ? 'Little convexity to offset the decay being paid'
-        : gRisk < 0.70 ? 'Some gamma working against the decay bill'
+      gRiskSignal = gRisk < MB.low ? 'thin' : gRisk < MB.moderate ? 'moderate' : gRisk < MB.block ? 'strong' : 'very strong';
+      gRiskAction = gRisk < MB.low ? 'A typical move earns back less than a day of the decay paid'
+        : gRisk < MB.moderate ? 'A typical move roughly pays the day\'s decay'
         : 'Gamma is buying back the decay — this is what you paid for';
       dsSignal = 'n/a';
       dsAction = 'No theta cushion — the position pays decay, so there is no move it can absorb for free';
     }
 
     // Sweet spot check — defined for decay collection only.
-    const sweetSpot = !thetaPaid && tEdge >= 0.15 && tEdge <= 0.40 && gMag < 0.70 && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
+    const sweetSpot = !thetaPaid && tEdge >= 0.15 && tEdge <= 0.40 && gMag < MOVE_COST_BANDS.low && Math.abs(delta) >= 5 && Math.abs(delta) <= 15;
 
     // ── Directional Edge Framework ──
     // Measures whether price movement or time decay will dominate
@@ -2362,7 +2416,7 @@ export function calc0DTE(inputs) {
       edgePhase = 'neutral';
     }
 
-    greeks = { tEdge, tEdgeFlat, gRisk, gMag, gShort, dsMax, dsRaw, dsCapped, beDist, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
+    greeks = { tEdge, tEdgeFlat, gRisk, gMag, gShort, moveSD, dsMax, dsRaw, dsCapped, beDist, dsATR, tEdgeSignal, tEdgeAction, gRiskSignal, gRiskAction, dsSignal, dsAction, sweetSpot, thetaPaid, thetaAbs,
       // Directional Edge
       directionalGain, thetaPressure, edgeRatio, edgeThreshold, edgeSignal, edgeAction, edgePhase,
       remainingMove, isCreditStrat, isDebitDir, isBflyCondor
@@ -2410,8 +2464,13 @@ export function calc0DTE(inputs) {
   // saying the gate still had it wrong; this is that note being paid off. (Sep 2026.)
   // ...and only when SHORT gamma. Long gamma of the same magnitude is the convexity
   // you bought, not a hazard, so blocking on it would refuse the trade for succeeding.
-  if (greeks && !greeks.thetaPaid && greeks.gShort && greeks.gMag > 1.20) {
-    blockers.push('Gamma risk too high');
+  // Scale-free since Oct 2026: blocks when a typical day's move costs two or more
+  // days of the decay collected — realised movement running ~40% above implied.
+  let gammaFix = null;
+  if (greeks && !greeks.thetaPaid && greeks.gShort && greeks.gMag > MOVE_COST_BANDS.moderate) {
+    const blocked = greeks.gMag > MOVE_COST_BANDS.block;
+    if (blocked) blockers.push('Gamma risk too high');
+    gammaFix = gammaFixFor({ cost: greeks.gMag, sd: greeks.moveSD, atr, blocked, underlying, legStrat });
   }
   if (frictions && frictions.signal === 'prohibitive') {
     warnings.push(`Frictions ${(frictions.pct * 100).toFixed(0)}% of max profit `
@@ -2695,6 +2754,7 @@ export function calc0DTE(inputs) {
   else { decision = 'Trade'; decisionClass = 'go'; }
 
   return {
+    gammaFix,
     // Signals
     vixGap, vixGrade, vixImplic, emVIX, emV1D, gapBandIdx,
     dirScore, dirLabel, aboveVWAP, vwapDiff,

@@ -1444,11 +1444,28 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const openInputsAct = { label: 'Open inputs', onClick: () => setDrawerTab('inputs') };
   const needs = [];
   if (hasBlocker) needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker, actions: [autoFillAct, openInputsAct] });
+  // Short gamma costing more than the decay pays (Oct 2026): say what it means, what
+  // does and does not help, and offer the long-gamma structures the engine rates.
+  const gf = is0 ? r.gammaFix : null;
+  const gammaActs = () => {
+    const lg = (r.ratings || []).filter(x => ['Bull call spread', 'Bear put spread', 'Long Condor - Reversed'].includes(x.name)
+      && x.rating !== 'POOR' && x.name !== effectiveStrat).slice(0, 2);
+    return [
+      ...lg.map(x => ({ label: `Switch to ${x.name}`, onClick: () => switchStructure(x.name), primary: true })),
+      { label: 'Fetch greeks again', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…' },
+    ];
+  };
   blockers.forEach((b, i) => {
+    if (gf && gf.blocked && /^Gamma risk too high/.test(b)) {
+      needs.push({ key: 'gamma', tone: 'bad', title: 'Gamma risk too high — ' + gf.headline.charAt(0).toLowerCase() + gf.headline.slice(1),
+        detail: gf.why, fix: gf, actions: gammaActs() });
+      return;
+    }
     const [title, detail] = splitMsg(b);
     needs.push({ key: 'blk' + i, tone: 'bad', title, detail,
       net: /net (credit|debit)/i.test(b), actions: [openInputsAct] });
   });
+  if (gf && !gf.blocked) needs.push({ key: 'gamma', tone: 'warn', title: gf.headline, detail: gf.why, fix: gf, actions: gammaActs() });
   if (missingInputs && !hasBlocker) needs.push({ key: 'size', tone: 'warn', sizing: true,
     title: 'Enter sizing from your broker preview',
     detail: 'Edge score, EV and Kelly size wait on win, risk and POP.' });
@@ -2379,11 +2396,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     var greeksHtml = '';
     if (g) {
       var teCol = g.tEdge >= 0.15 ? 'green' : g.tEdge >= 0.05 ? 'amber' : 'red';
-      var grCol = g.gRisk < 0.30 ? 'green' : g.gRisk < 0.70 ? 'amber' : 'red';
+      var grCol = g.gMag < 0.80 ? 'green' : g.gMag < 1.25 ? 'amber' : 'red';
       var dsCol = g.dsATR > 0.50 ? 'green' : g.dsATR > 0.25 ? 'amber' : 'red';
       greeksHtml = '<div class="section"><div class="section-title">Trade Survivability</div>' +
         '<div class="row"><span class="label">Theta Edge</span><span class="value ' + teCol + '">' + g.tEdge.toFixed(3) + ' \u2014 ' + g.tEdgeSignal + '</span></div>' +
-        '<div class="row"><span class="label">Gamma Risk</span><span class="value ' + grCol + '">' + g.gRisk.toFixed(3) + ' \u2014 ' + g.gRiskSignal + '</span></div>' +
+        '<div class="row"><span class="label">Move cost (days of decay)</span><span class="value ' + grCol + '">' + g.gMag.toFixed(2) + ' \u2014 ' + g.gRiskSignal + '</span></div>' +
         '<div class="row"><span class="label">Max tolerable move</span><span class="value ' + dsCol + '">' + g.dsMax.toFixed(1) + ' pts (' + (g.dsATR * 100).toFixed(0) + '% ATR) \u2014 ' + g.dsSignal + '</span></div>' +
         (g.sweetSpot ? '<div style="margin-top:6px;font-size:11px;color:#3fb950;font-weight:600">\uD83C\uDFAF SWEET SPOT</div>' : '') +
         '</div>';
@@ -3058,6 +3075,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <div style={{flex:'1 1 280px',minWidth:0,display:'flex',flexDirection:'column',gap:3}}>
                 <span style={{fontSize:14.5,fontWeight:600,color:'#fff'}}>{n.resolved ? 'Done — ' : ''}{n.title}</span>
                 {n.detail && <span style={{fontSize:13,lineHeight:1.45,color:'#a8b2be'}}>{n.detail}</span>}
+                {n.fix && (
+                  <div data-testid="gamma-fix" style={{marginTop:4,fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
+                    {n.fix.suspect && <div style={{color:'#e3b341',marginBottom:4}}>
+                      A number this large usually means the greeks are stale, for one leg, or typed by hand — fetch greeks again before acting on it.</div>}
+                    <ol style={{margin:'2px 0 4px 18px',padding:0,listStyle:'decimal'}}>
+                      {n.fix.steps.map(st => <li key={st.kind}>{st.text}</li>)}
+                    </ol>
+                    <span style={{color:'#8b949e'}}>{n.fix.notFixes}</span>
+                  </div>
+                )}
               </div>
               {n.net && (
                 <NeedNum label={cashType==='debit' ? 'Net debit' : 'Net credit'} value={ticketNet}
@@ -4418,7 +4445,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {is0 && r.greeks && (
             <div className="card">
               <div className="flex items-center justify-between mb-2">
-                <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Gamma Risk = how fast delta changes vs theta (< 0.70 safe). Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates. SIGNED THETA: if the position PAYS decay (negative theta - a long butterfly before the body is reached, a debit spread) every gauge inverts. Theta Edge becomes Decay Cost and small is good, Gamma Risk becomes Gamma Offset and large is good, Max Tolerable Move disappears because there is no theta cushion to consume, and Edge Ratio wants to be HIGH whatever the strategy name says - only the move can pay the decay bill.">Trade survivability</SectionLabel>
+                <SectionLabel white info="Three survivability gauges plus Directional Edge. Theta Edge = theta earned per unit of directional risk (0.15-0.40 sweet spot). Move cost = what a typical day's move (ATR ÷ 1.6) costs a short-gamma position, in days of the decay it collects: ½·|Γ|·move² ÷ |Θ|. Under 0.8 decay wins; about 1 is breakeven (price moving as much as the options price in); over 2 blocks. Max Tolerable Move = furthest price can move before theta consumed. Directional Edge = remaining expected move × delta vs remaining theta. For credit strategies, lower Edge Ratio is better (theta dominates). For debit strategies, higher is better (move dominates). Butterfly strategies transition through three phases: Approach (need movement to body), Transition (balanced), Collection (theta collecting). Thresholds tighten through the day as gamma accelerates. SIGNED THETA: if the position PAYS decay (negative theta - a long butterfly before the body is reached, a debit spread) every gauge inverts. Theta Edge becomes Decay Cost and small is good, Move cost becomes Move earns and large is good, Max Tolerable Move disappears because there is no theta cushion to consume, and Edge Ratio wants to be HIGH whatever the strategy name says - only the move can pay the decay bill.">Trade survivability</SectionLabel>
                 {r.greeks.sweetSpot && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#0d1f0d',color:'#3fb950'}}>🎯 SWEET SPOT</span>}
               </div>
               <div className="space-y-3">
@@ -4432,11 +4459,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     : [{to:0.05,color:'#f85149'},{to:0.15,color:'#d29922'},{to:0.30,color:'#e3b341'},{to:0.6,color:'#3fb950'}]}
                   display={r.greeks.tEdge.toFixed(3)}
                   sublabel={r.greeks.tEdgeSignal + ' — ' + r.greeks.tEdgeAction} />
-                <SpeedTape label={r.greeks.thetaPaid ? 'Gamma offset (Γ × ATR ÷ |Θ|)' : 'Gamma Risk (Γ × ATR ÷ Θ)'} value={Math.min(r.greeks.gRisk, 1.5)} min={0} max={1.5}
+                <SpeedTape label={r.greeks.thetaPaid ? 'Move earns (days of decay)' : 'Move cost (days of decay)'} value={Math.min(r.greeks.gMag, 3)} min={0} max={3}
                   zones={r.greeks.thetaPaid
-                    ? [{to:0.30,color:'#f85149'},{to:0.70,color:'#d29922'},{to:1.20,color:'#e3b341'},{to:1.5,color:'#3fb950'}]
-                    : [{to:0.30,color:'#3fb950'},{to:0.70,color:'#e3b341'},{to:1.20,color:'#d29922'},{to:1.5,color:'#f85149'}]}
-                  display={r.greeks.gRisk.toFixed(3)}
+                    ? [{to:0.80,color:'#f85149'},{to:1.25,color:'#d29922'},{to:2.0,color:'#e3b341'},{to:3,color:'#3fb950'}]
+                    : [{to:0.80,color:'#3fb950'},{to:1.25,color:'#e3b341'},{to:2.0,color:'#d29922'},{to:3,color:'#f85149'}]}
+                  display={r.greeks.gMag.toFixed(2) + 'd'}
                   sublabel={r.greeks.gRiskSignal + ' — ' + r.greeks.gRiskAction} />
                 {r.greeks.thetaPaid ? (
                   <div className="text-[12px] text-[#a8b2be]" style={{padding:'6px 8px',borderRadius:4,background:'#0d1117',border:'1px solid #21262d'}}>
