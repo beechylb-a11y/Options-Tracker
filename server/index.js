@@ -15,7 +15,7 @@ import {
   appendJournalEntry, getJournal,
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
-  closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol,
+  closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol, editDecision,
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
   getFills, getFillsForTicket, appendFill,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
@@ -1013,6 +1013,27 @@ app.put('/api/decisions/:rowIndex/notes', requireAuth, async (req, res) => {
     const { notes } = req.body;
     await updateTradeNotes(rowIndex, notes);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Correct a logged ticket (Oct 2026): contracts, strikes, entry price, limit, max
+// risk/profit, strategy name. Changes are noted on the ticket; the trade log is
+// rebuilt so the open-positions table shows the corrected numbers straight away.
+app.put('/api/decisions/:rowIndex/edit', requireAuth, async (req, res) => {
+  try {
+    const rowIndex = parseInt(req.params.rowIndex);
+    if (isNaN(rowIndex) || rowIndex < 2) return res.status(400).json({ error: 'Invalid row index' });
+    const b = req.body || {};
+    if (b.contracts !== undefined && !(Number(b.contracts) > 0)) return res.status(400).json({ error: 'Contracts must be more than zero' });
+    for (const k of ['netCreditDebit', 'limitPrice', 'maxRisk', 'maxProfit']) {
+      if (b[k] !== undefined && b[k] !== '' && !isFinite(Number(b[k]))) return res.status(400).json({ error: `${k} must be a number` });
+    }
+    const result = await editDecision(rowIndex, b);
+    let logRows = null;
+    if (result.changed.length) { try { logRows = await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); } }
+    res.json({ ok: true, ...result, tradeLogRows: logRows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

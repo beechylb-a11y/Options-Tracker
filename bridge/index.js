@@ -1440,6 +1440,9 @@ app.get('/api/option-chain', async (req, res) => {
     res.json({
       underlying, tradingClass: chain.tradingClass || null, today,
       expirations: chain.expirations.filter(e => e > today && e <= limit),
+      // Today's included (Oct 2026): the 0DTE ticket asks "does this expire today?",
+      // and single stocks mostly do not (TSLA, AAPL: weeklies, not dailies).
+      expirationsAll: chain.expirations.filter(e => e >= today && e <= limit),
       strikes: chain.strikes
     });
   } catch (e) {

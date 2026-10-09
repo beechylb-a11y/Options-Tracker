@@ -140,6 +140,20 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
   if (is0) {
     // Straddle EM — the market-priced move, preferred over the VIX model.
     const today = tradingSession().yyyymmdd;
+    // Does anything expire today? (Oct 2026.) Most single stocks list weeklies, not
+    // dailies, and a 0DTE scan used to rank a TSLA setup on a day TSLA had no expiry.
+    const oc = await pool(list, SCAN_CONCURRENCY, u =>
+      cached(cache, 'oc:' + u, () => getJson(bridgeUrl + '/api/option-chain?underlying=' + u, 20000)).then(d => ({ u, d })));
+    oc.forEach(({ u, d }) => {
+      if (!d || d.error || !mergedData[u]) return;
+      const all = Array.isArray(d.expirationsAll) ? d.expirationsAll : null;
+      const list0 = all || (Array.isArray(d.expirations) ? d.expirations : null);
+      if (!list0) return;
+      const known = all || (d.today && today > d.today);   // an old bridge on the same day cannot tell
+      if (!list0.includes(today) && known) {
+        mergedData[u] = { ...mergedData[u], _noExpiryToday: true, _nextExpiry: list0.find(e => e > today) || '' };
+      }
+    });
     const st = await pool(list, SCAN_CONCURRENCY, u => {
       const spot = parseFloat(mergedData[u]?.price) || 0;
       return cached(cache, 'st:' + u, () => getJson(bridgeUrl + '/api/atm-straddle?underlying=' + u + '&expiry=' + today
@@ -216,6 +230,12 @@ export function computeScan(mode, underlyings, data) {
       if (m0._volError) vol._volError = m0._volError;
     }
     const rowData = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
+    if (is0 && m0._noExpiryToday) {
+      const nx = String(m0._nextExpiry || '');
+      const nice = nx.length === 8 ? new Date(+nx.slice(0, 4), +nx.slice(4, 6) - 1, +nx.slice(6, 8))
+        .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+      return { underlying, error: `No expiry today${nice ? ` — next ${nice}` : ''}`, noExpiryToday: true, result: null, data: rowData };
+    }
     if (!inp.price) return { underlying, error: m0._fetchError ? 'Bridge: ' + m0._fetchError : 'No price from the bridge', result: null, data: rowData };
     try {
       const result = is0 ? calc0DTE({

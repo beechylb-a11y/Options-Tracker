@@ -1230,6 +1230,45 @@ export async function updateTradeNotes(rowIndex, notes) {
   await setCells('Decisions', rowIndex, 25, [notes]);
 }
 
+// ================================================================
+//  EDIT A LOGGED TICKET -- correct what was entered wrong (Oct 2026)
+//  Only the fields the trade log is built from, never the engine's own record
+//  (scores, greeks, market snapshot): those describe the moment of the decision
+//  and correcting them would rewrite history. Each change is appended to the
+//  ticket's Trade Notes as "Edited <iso>: field old -> new", so a review can see
+//  that the row was corrected and from what.
+// ================================================================
+export const EDITABLE_DECISION_FIELDS = {
+  underlying: 'Underlying', strategy: 'Strategy', contracts: 'Contracts', wingStrikes: 'Wing Strikes',
+  netCreditDebit: 'Net Debit/Credit', limitPrice: 'Limit Price', maxRisk: 'Max Risk', maxProfit: 'Max Profit',
+};
+export async function editDecision(rowIndex, patch, now = new Date()) {
+  const { table, cols } = T('Decisions');
+  const keys = Object.keys(patch || {}).filter(k => EDITABLE_DECISION_FIELDS[k]);
+  if (!keys.length) return { changed: [] };
+  const colOf = h => cols.findIndex(c => c.header === h);
+  const { rows } = await q(`select * from options.${qi(table)} where row_no = $1`, [rowIndex]);
+  if (!rows.length) throw new Error('No logged ticket at row ' + rowIndex);
+  const cur = rows[0];
+  const changed = [];
+  for (const k of keys) {
+    const ix = colOf(EDITABLE_DECISION_FIELDS[k]);
+    if (ix < 0) continue;
+    const before = cur[cols[ix].col] == null ? '' : String(cur[cols[ix].col]);
+    const after = patch[k] == null ? '' : String(patch[k]).trim();
+    if (before === after) continue;
+    await setCells('Decisions', rowIndex, ix, [after]);
+    changed.push({ field: k, before, after });
+  }
+  if (changed.length) {
+    const nIx = colOf('Trade Notes');
+    const prev = cur[cols[nIx].col] ? String(cur[cols[nIx].col]) : '';
+    const line = `Edited ${now.toISOString()}: ` + changed.map(c => `${EDITABLE_DECISION_FIELDS[c.field]} ${c.before || '(blank)'} -> ${c.after || '(blank)'}`).join('; ');
+    await setCells('Decisions', rowIndex, nIx, [prev ? prev + '\n' + line : line]);
+  }
+  return { changed };
+}
+
 export async function updateTradeStatus(rowIndex, status) {
   // Column V = Status (index 21)
   await setCells('Decisions', rowIndex, 21, [status]);

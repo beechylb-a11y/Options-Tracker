@@ -6,7 +6,7 @@ import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_4
 import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
-import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
+import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStrikes.js';
 
 // ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
@@ -149,8 +149,7 @@ export function calc45DTE(inputs) {
   const closeDte45 = inputs.closeDte > 0 ? inputs.closeDte : exitRuleFor('45DTE', legStrat).closeDte;
 
   // Strike engine
-  const strikeStep45 = ['SPX', 'NDX', 'RUT'].includes(String(underlying || '').toUpperCase()) ? 5
-    : ['SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(String(underlying || '').toUpperCase()) ? 1 : 0.5;
+  const strikeStep45 = strikeGrid(underlying, price);
   let legs = [], strikeLine = '';
   if (hasPrice && em45 > 0) {
     const p = price;
@@ -225,7 +224,8 @@ export function calc45DTE(inputs) {
   let strikeOrderWarning = null;
   if (ovStrikes && legs.length > 0
       && (!inputs.overrideStrikesStrat || inputs.overrideStrikesStrat === legStrat)) {
-    const Rov = n => Math.round(n / strikeStep45) * strikeStep45;   // same increment the builder uses
+    const tStep45 = typedStrikeStep(underlying, price);              // typed strikes: finest listed increment
+    const Rov = n => Math.round(n / tStep45) * tStep45;
     legs = legs.map((l, i) => {
       const v = ovStrikes[i];
       // An absent/unparseable override falls back to the engine strike — never NaN.

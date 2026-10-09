@@ -7,7 +7,7 @@ import { blendCapture, stopLossFrac } from './capture.js';
 import { flyBand, BAND_THIN_PCT_OF_DAY } from './flyBand.js';
 import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
-import { deltaCrossCheck, deltaStrikePlan } from './deltaStrikes.js';
+import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
@@ -588,7 +588,9 @@ export function calc0DTE(inputs) {
   let distMult = 1.0;
   if (hasComp) { if (comp < 0.50) distMult = 0.8; else if (comp > 0.80) distMult = 1.25; }
   let D = baseDistance * distMult;
-  const roundTo = (underlying === 'SPX' || underlying === 'RUT') ? 5 : (underlying === 'SPY' || underlying === 'QQQ' || underlying === 'IWM' || underlying === 'XSP') ? 1 : 0.5;
+  // Shared with the delta plan and the panel (Oct 2026): stocks round to a strike
+  // that exists ($5 above $25) rather than $0.50, until the listed chain refines it.
+  const roundTo = strikeGrid(underlying, price);
   if (D > 0 && D < roundTo * 2) D = roundTo * 2;
   const R = n => roundTo > 0 ? Math.round(n / roundTo) * roundTo : Math.round(n * 2) / 2;
   const leg = (label, strike) => ({ label, strike: R(strike) });
@@ -1029,7 +1031,8 @@ export function calc0DTE(inputs) {
     legs = legs.map((l, i) => {
       const v = ovStrikes[i];
       // An absent/unparseable override falls back to the engine strike — never NaN.
-      const k = (typeof v === 'number' && isFinite(v) && v > 0) ? R(v) : null;
+      const tStep = typedStrikeStep(underlying, price);
+      const k = (typeof v === 'number' && isFinite(v) && v > 0) ? Math.round(v / tStep) * tStep : null;
       return k != null ? { ...l, strike: k } : l;
     });
     // Structure-order check: edited strikes must keep the engine's relative
@@ -2372,6 +2375,17 @@ export function calc0DTE(inputs) {
   const missingSize = win <= 0 || risk <= 0 || popFrac <= 0;
   let hardBlocker = '';
   if (!hasPrice) hardBlocker = 'Enter underlying price to generate a decision';
+  // No expiry today (Oct 2026): most single stocks list weeklies, not dailies, so a
+  // "0DTE" TSLA ticket on a Thursday priced an option that does not exist. The panel
+  // and the scan pass inputs.noExpiryToday from the listed chain.
+  const noExp = inputs.noExpiryToday;
+  if (noExp) {
+    const nx = noExp.next ? String(noExp.next) : '';
+    const nice = nx.length === 8 ? new Date(+nx.slice(0, 4), +nx.slice(4, 6) - 1, +nx.slice(6, 8))
+      .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    hardBlocker = `No ${underlying} options expire today, so there is no 0DTE trade`
+      + (nice ? ` — next expiry ${nice}` : '') + '. Use the 45DTE engine or wait for an expiry day.';
+  }
 
   // Both of these read a collected-decay position. Inverted for a paying one - a low
   // tEdge means time is cheap, and high gamma is the compensation you bought.

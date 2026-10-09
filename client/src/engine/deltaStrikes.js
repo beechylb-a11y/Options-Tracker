@@ -99,10 +99,25 @@ export function calibrateV(S, K, absDelta, right, v0 = null) {
 // Same increments the 0DTE builder rounds to. The 45DTE builder rounds everything to
 // 0.5, which is not a real SPX strike — delta strikes go to the real grid because the
 // bracket check has to ask TWS about strikes that exist.
-export function strikeGrid(underlying) {
+export function strikeGrid(underlying, price) {
   const u = String(underlying || '').toUpperCase();
   if (u === 'SPX' || u === 'RUT' || u === 'NDX') return 5;
   if (['SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(u)) return 1;
+  // Single stocks (Oct 2026). This is only the fallback for when the expiry's listed
+  // strikes are not to hand, and $0.50 is listed on almost no stock: TSLA at 430
+  // trades $2.50 and $5 strikes. Multiples of 5 exist on nearly every chain above
+  // $25, so a coarse strike that exists beats a fine one that does not.
+  const p = Number(price) || 0;
+  if (p >= 1000) return 10;
+  if (p >= 25) return 5;
+  if (p > 0) return 1;
+  return 0.5;
+}
+// A strike YOU type is kept to the finest increment a chain lists ($0.50 on stocks):
+// the coarse fallback grid above is for the engine's guesses, not your edits.
+export function typedStrikeStep(underlying, price) {
+  const u = String(underlying || '').toUpperCase();
+  if (['SPX', 'RUT', 'NDX', 'SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(u)) return strikeGrid(u, price);
   return 0.5;
 }
 const roundToGrid = (k, step) => Math.round(k / step) * step;
@@ -273,7 +288,7 @@ export function deltaCrossCheck({ legs, strat, horizon, legGreeks, pop, hoursLef
 export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, underlying, shortStrikes, listed }) {
   const spec = (DELTA_TARGETS[horizon] || {})[strat];
   if (!spec || !(price > 0) || !Array.isArray(legs) || !legs.length) return null;
-  const step = strikeGrid(underlying);
+  const step = strikeGrid(underlying, price);
   const parsed = legs.map(parseLeg);
   const shortsP = parsed.filter(p => p.short && p.right);
 
@@ -352,14 +367,14 @@ export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, und
 }
 
 /** Bracket of strikes around an estimate, for the live-greeks confirmation. */
-export function bracketStrikes(k, underlying, n = 1, listedForRight = null) {
+export function bracketStrikes(k, underlying, n = 1, listedForRight = null, price = k) {
   // With the listed chain for this right, the bracket is the listed strikes around k.
   if (Array.isArray(listedForRight) && listedForRight.length) {
     const L = [...listedForRight].sort((a, b) => a - b);
     const c = nearestListed(L, k), i = L.indexOf(c);
     return L.slice(Math.max(0, i - n), i + n + 1);
   }
-  const step = strikeGrid(underlying);
+  const step = strikeGrid(underlying, price);
   const out = [];
   for (let j = -n; j <= n; j++) out.push(roundToGrid(k + j * step, step));
   return out;

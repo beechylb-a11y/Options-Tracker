@@ -6,7 +6,7 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
-import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary } from '../engine/deltaStrikes';
+import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { fetchSpreadProfile } from '../utils/replay';
@@ -765,6 +765,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const vwapScaled = is0 && i0.underlying === 'SPX';
   const vwapFromIWM = is0 && i0.underlying === 'RUT';
 
+  // Does anything expire today? (Oct 2026.) From the listed chain: true, false, or
+  // null when unknown (no bridge, or an older bridge on the same New York day, whose
+  // list leaves today out). Only a definite false blocks the 0DTE ticket.
+  const today0 = tradingSession().yyyymmdd;
+  const chain0 = is0 && chainExp && chainExp.underlying === i0.underlying && Array.isArray(chainExp.list) ? chainExp : null;
+  const expiryToday = !chain0 ? null
+    : (chain0.all || chain0.list).includes(today0) ? true
+    : (chain0.all || (chain0.today && today0 > chain0.today)) ? false : null;
+  const nextExpiry0 = expiryToday === false ? ((chain0.all || chain0.list).find(e => e > today0) || null) : null;
+
   // The 0DTE argument object, built once so the what-if toggle can re-run the whole
   // engine at the OTHER vol estimate without duplicating twenty input mappings.
   const mk0 = (over) => ({
@@ -806,6 +816,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['0'] || null,
+          noExpiryToday: expiryToday === false ? { next: nextExpiry0 } : null,
           listedStrikes: listedNow,
           ...(over || {})
   });
@@ -875,7 +886,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -920,11 +931,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // ── Per-leg strike editing (Zone 1b chips) ──
   // The strike increment mirrors calc0dte's roundTo; the 45DTE builder rounds
   // every strike to 0.5, so that is its increment.
-  const strikeStep = is0
-    ? ((i0.underlying === 'SPX' || i0.underlying === 'RUT') ? 5
-      : ['SPY', 'QQQ', 'IWM', 'XSP'].includes(i0.underlying) ? 1 : 0.5)
-    : (['SPX', 'NDX', 'RUT'].includes(i45.underlying) ? 5
-      : ['SPY', 'QQQ', 'IWM', 'XSP', 'DIA'].includes(i45.underlying) ? 1 : 0.5);
+  const strikeStep = is0 ? strikeGrid(i0.underlying, fv(i0, 'price')) : strikeGrid(i45.underlying, fv(i45, 'price'));
 
   // ── Time spreads: two expiries (Oct 2026) ──
   // A calendar or diagonal is a near (sold) and a far (bought) expiry. The engine
@@ -942,7 +949,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // The listed strikes of that expiry (Oct 2026): far-dated chains thin out unevenly
   // (QQQ 20 Nov: puts every $1, calls every $5), and the engine fits to them.
   // 0DTE fetches today's expiry for its own underlying (Oct 2026).
-  const listedExp = is0 ? todayYmd : (!isTimeSpread ? singleExp : null);
+  const listedExp = is0 ? (expiryToday === false ? null : todayYmd) : (!isTimeSpread ? singleExp : null);
   const listedUnd = is0 ? i0.underlying : i45.underlying;
   useEffect(() => {
     if (!listedExp || !listedUnd) return;
@@ -997,16 +1004,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
   }
   function pickFar(e) { setCalExp({ near: nearExp, far: e }); }
+  // Listed expiries for the ticket's underlying — 45DTE picks from them, and 0DTE
+  // asks whether anything expires today at all (Oct 2026).
+  const chainUnd = is0 ? i0.underlying : i45.underlying;
   useEffect(() => {
-    if (is0) return;
-    if (chainExp && chainExp.underlying === i45.underlying) return;
+    if (chainExp && chainExp.underlying === chainUnd) return;
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
-    if (!bridgeUrl) { setChainExp({ underlying: i45.underlying, list: null, err: 'no bridge' }); return; }
+    if (!bridgeUrl) { setChainExp({ underlying: chainUnd, list: null, err: 'no bridge' }); return; }
     let live = true;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 12000);
-    fetch(bridgeUrl + '/api/option-chain?underlying=' + i45.underlying, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+    fetch(bridgeUrl + '/api/option-chain?underlying=' + chainUnd, { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
       // Read the body as text first: an older bridge without this endpoint (or an
       // ngrok error page) answers with HTML, and JSON.parse on that surfaced as
       // "Unexpected token '<'". Say what actually happened instead. (Oct 2026.)
@@ -1023,13 +1032,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         }
         return d;
       })
-      .then(d => { if (live) setChainExp({ underlying: i45.underlying, list: Array.isArray(d.expirations) ? d.expirations : null, err: d.error || null }); })
-      .catch(e => { if (live) setChainExp({ underlying: i45.underlying, list: null,
+      .then(d => { if (live) setChainExp({ underlying: chainUnd, list: Array.isArray(d.expirations) ? d.expirations : null,
+        all: Array.isArray(d.expirationsAll) ? d.expirationsAll : null, today: d.today || null, err: d.error || null }); })
+      .catch(e => { if (live) setChainExp({ underlying: chainUnd, list: null,
         err: e.name === 'AbortError' ? 'bridge timed out' : e.friendly ? e.message : 'bridge not reachable' }); })
       .finally(() => clearTimeout(t));
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [is0, i45.underlying]);
+  }, [is0, chainUnd]);
   const editedCount = (Array.isArray(r.engineLegs) && r.engineLegs.length === r.legs.length)
     ? r.legs.reduce((n, l, i) => n + (l.strike !== r.engineLegs[i].strike ? 1 : 0), 0)
     : 0;
@@ -1040,7 +1050,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const cur = r.legs?.[idx]?.strike;
     if (eng == null || cur == null) return;
     const v = parseFloat(rawVal);
-    const next = (isFinite(v) && v > 0) ? Math.round(v / strikeStep) * strikeStep : eng;
+    const tStep = typedStrikeStep(is0 ? i0.underlying : i45.underlying, fv(is0 ? i0 : i45, 'price'));
+    const next = (isFinite(v) && v > 0) ? Math.round(v / tStep) * tStep : eng;
     if (next === cur) return;
     setOverrideStrikes(prev => {
       const keep = (prev[bag] && prev[bag].strat === (r.legStrat || '')) ? { ...prev[bag].map } : {};

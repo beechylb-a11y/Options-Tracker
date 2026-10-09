@@ -3,6 +3,7 @@ import { api } from '../utils/api';
 import { exposure, STATUS } from '../engine/fills';
 import OrderTicket from './OrderTicket';
 import FillReconcile from './FillReconcile';
+import EditTicketModal from './EditTicketModal';
 import { normalisePosition, stopToPrice, pnlAt, loadPlan } from '../utils/ticketMath';
 import { STOP_LOSS_PCT } from '../engine/data';
 
@@ -60,6 +61,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [reload, setReload] = useState(0);
   const [reconciling, setReconciling] = useState(false);   // true = all working, or one row
   const [cancelling, setCancelling] = useState(null);
+  const [editing, setEditing] = useState(null);   // the row being corrected
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
 
   // The cap is a property of the account, not of the page that happens to be
@@ -275,6 +277,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       {/* A working order has nothing to sell. Cancelling it is the
                           only action that makes sense, and without it the committed
                           risk never clears. (Oct 2026.) */}
+                      <button onClick={e => { e.stopPropagation(); setEditing(r); }} data-testid="op-edit"
+                        title="Correct what was logged — contracts, strikes, entry price, limit, max risk/profit"
+                        className="text-[12px] px-2 py-0.5 rounded mr-1"
+                        style={{ border: '1px solid #30363d', color: '#a8b2be', background: 'transparent', cursor: 'pointer' }}>Edit</button>
                       {r.status === STATUS.WORKING ? (
                         <button onClick={e => { e.stopPropagation(); cancelTicket(r); }}
                           title="Mark this order cancelled — it stops counting against the open-risk cap"
@@ -322,6 +328,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
         <OrderTicket position={ticket.row} initialTab={ticket.tab}
           onClose={() => setTicket(null)}
           onDone={() => { setTicket(null); setReload(x => x + 1); }} />
+      )}
+      {editing && (
+        <EditTicketModal position={editing} onClose={() => setEditing(null)}
+          onDone={() => { setEditing(null); setReload(x => x + 1); }} />
       )}
       {reconciling && (
         <FillReconcile positions={reconciling === true ? rows : [reconciling]} account={account}
