@@ -9,6 +9,7 @@ import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
 import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig } from '../engine/shadow';
+import { defaultHalfSpread } from '../engine/managed';
 import { api } from '../utils/api';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { fetchSpreadProfile } from '../utils/replay';
@@ -1438,9 +1439,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (!legs.length || !(price > 0)) return null;
     const expiry = is0 ? tradingSession().yyyymmdd : (singleExp || deriveExpiryYYYYMMDD());
     const typed = signedNet(ticketNet, cashType);
-    const entryNet = Number.isFinite(typed) && typed !== 0 ? typed
-      : is0 ? fairNet0(legs, price, r.emRemaining || (r.pMaxLossBasis && r.pMaxLossBasis.sigma) || 0)
+    // Half the combo spread (step 3): the live combo quote when greeks were fetched,
+    // otherwise a per-leg estimate. A model-priced entry pays it on the way in; a
+    // managed exit pays it again on the way out.
+    const cb = parseFloat(secBag.comboBid), ca = parseFloat(secBag.comboAsk);
+    const halfSpread = Number.isFinite(cb) && Number.isFinite(ca) && ca >= cb ? Math.round((ca - cb) / 2 * 100) / 100
+      : defaultHalfSpread(legs, secBag.underlying, price);
+    const fair = is0 ? fairNet0(legs, price, r.emRemaining || (r.pMaxLossBasis && r.pMaxLossBasis.sigma) || 0)
       : fairNet45(legs, price, fv(i45, 'iv'), fv(i45, 'dte') || 45, i45.underlying);
+    const entryNet = Number.isFinite(typed) && typed !== 0 ? typed
+      : fair != null ? Math.round((fair - halfSpread) * 100) / 100 : null;
     const strategy = effectiveStrat || r.legStrat || '';
     const ses = tradingSession();
     const v = {
@@ -1453,10 +1461,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       entryNet: entryNet != null && Number.isFinite(entryNet) ? entryNet : null,
       entrySource: Number.isFinite(typed) && typed !== 0 ? 'ticket' : 'model',
       win: fv(secBag, 'win') || null, risk: fv(secBag, 'risk') || null, pop: fv(secBag, 'pop') || null,
+      entryHalfSpread: halfSpread,
       pMaxLoss: r.pMaxLoss != null ? +r.pMaxLoss.toFixed(4) : null,
       moveCost: r.greeks && Number.isFinite(r.greeks.gMag) && is0 ? +r.greeks.gMag.toFixed(3) : null,
       inputs: is0
-        ? { em: fv(i0, 'em'), emSource: i0.emSource || null, vix: fv(i0, 'vix'), vix1d: fv(i0, 'vix1d'), atr: fv(i0, 'atr'), hours: ses.hoursToBell ?? null,
+        ? { em: fv(i0, 'em'), sdLeft: r.emRemaining || null, emSource: i0.emSource || null, vix: fv(i0, 'vix'), vix1d: fv(i0, 'vix1d'), atr: fv(i0, 'atr'), hours: ses.hoursToBell ?? null,
             delta: fv(i0, 'delta'), gamma: fv(i0, 'gamma'), theta: fv(i0, 'theta'), regime: r.regime || null, dir: r.dirLabel || null }
         : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null },
       decisionTs: extra.decisionTs || null,

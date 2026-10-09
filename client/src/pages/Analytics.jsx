@@ -11,6 +11,7 @@ import { assumedCapture45 } from '../engine/calc45dte';
 import { EXIT_RULES } from '../engine/data';
 import { shadowSummary } from '../engine/shadow';
 import { calibrate, headlines, DIMENSIONS, MIN_N, SOLID_N } from '../engine/calibration';
+import { suggestions as suggestFrom, SUGGEST_N } from '../engine/suggest';
 import { settleShadows } from '../utils/shadowSettle';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
@@ -153,9 +154,9 @@ function ShadowVerdicts({ account }) {
         <div>
           <div className="font-semibold">Engine verdicts</div>
           <div className="text-text-muted text-xs mt-0.5" style={{ maxWidth: 720 }}>
-            Every verdict the engine reached on a ticket, including the ones not taken, settled held-to-expiry against the
-            underlying's close. Entry is your typed fill when there was one, otherwise the model's fair price — no spread or
-            commission yet, so model-priced rows flatter slightly.
+            Every verdict the engine reached on a ticket, including the ones not taken, settled two ways: a managed exit along the day's
+            actual path, and held to expiry against the close. Entry is your typed fill when there was one, otherwise the model's fair
+            price less half the combo spread; commission is taken off both outcomes.
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -188,7 +189,7 @@ function ShadowVerdicts({ account }) {
           <table className="w-full text-sm">
             <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
               <th className="text-left py-1.5">Session</th><th className="text-left">Ticket</th><th className="text-left">Verdict</th>
-              <th className="text-right">EV</th><th className="text-right">Entry</th><th className="text-right">Close</th><th className="text-right">Held to expiry</th></tr></thead>
+              <th className="text-right">EV</th><th className="text-right">Entry</th><th className="text-right">Managed exit</th><th className="text-right">Close</th><th className="text-right">Held to expiry</th></tr></thead>
             <tbody>
               {rows.slice(0, 60).map(r => {
                 const e = Number(r.entry_net), p = Number(r.pnl_per_ct);
@@ -200,6 +201,9 @@ function ShadowVerdicts({ account }) {
                     <td className="text-right mono">{r.ev == null ? '—' : money(Number(r.ev))}</td>
                     <td className="text-right mono" title={r.entry_source === 'model' ? 'Model fair price' : 'Your typed fill'}>
                       {Number.isFinite(e) ? `${e >= 0 ? 'cr' : 'db'} ${Math.abs(e).toFixed(2)}${r.entry_source === 'model' ? '*' : ''}` : '—'}</td>
+                    <td className={'text-right mono ' + (r.managed_at ? (Number(r.pnl_managed) >= 0 ? 'win' : 'loss') : 'text-text-faint')}
+                      title={r.managed_at ? `${r.exit_reason} at ${r.exit_at}` : ''}>
+                      {r.managed_at ? <>{money(Number(r.pnl_managed))} <span className="text-text-faint">{r.exit_reason}</span></> : 'pending'}</td>
                     <td className="text-right mono text-text-muted">{r.settle_price == null ? '—' : Number(r.settle_price).toFixed(2)}</td>
                     <td className={'text-right mono ' + (r.settled_at && Number.isFinite(p) ? (p >= 0 ? 'win' : 'loss') : 'text-text-faint')}>
                       {r.settled_at && Number.isFinite(p) ? money(p) : 'pending'}</td>
@@ -215,15 +219,45 @@ function ShadowVerdicts({ account }) {
   );
 }
 
+// Suggested changes (Oct 2026, step 3): proposals with their evidence, never applied
+// automatically. Thresholds must win on the latest third of verdicts after being
+// chosen on the earlier two-thirds.
+function SuggestionsCard({ sg }) {
+  return (
+    <div data-testid="suggestions" className="mb-4 rounded-lg border border-bg-border p-3" style={{ background: '#0d1117' }}>
+      <div className="font-semibold text-sm mb-1">Suggested changes</div>
+      <div className="text-text-muted text-xs mb-2">
+        Proposed from settled verdicts and checked out of sample. Nothing changes until you ask for it — tell Claude which one to apply.
+      </div>
+      {sg.suggestions.length ? sg.suggestions.map(x => (
+        <div key={x.id} className="py-1.5" style={{ borderTop: '1px solid #21262d' }}>
+          <span className={x.tone === 'change' ? 'loss font-semibold' : 'win font-semibold'}>{x.tone === 'change' ? 'Change · ' : 'Keep · '}</span>
+          <b>{x.title}</b>
+          <div className="text-xs text-text-muted mt-0.5">{x.evidence}</div>
+        </div>
+      )) : <div className="text-xs text-text-muted">None yet — {sg.settled} verdicts settled.</div>}
+      {sg.waiting.length > 0 && (
+        <div className="text-xs text-text-faint mt-2">
+          Waiting for {SUGGEST_N} settled: {sg.waiting.map(w => `${w.what} ${w.n}/${SUGGEST_N}`).join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Calibration (Oct 2026, learning loop step 2): settled verdicts grouped by what the
 // engine said, in R (P&L ÷ max loss) with 95% intervals and a plain read per group.
 function Calibration({ rows }) {
   const [dim, setDim] = useState('blocker');
   const [engine, setEngine] = useState(null);
   const [entry, setEntry] = useState(null);
-  const filter = { engine, entry };
-  const groups = useMemo(() => calibrate(rows, dim, filter), [rows, dim, engine, entry]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const h = useMemo(() => headlines(rows, filter), [rows, engine, entry]);                  // eslint-disable-line react-hooks/exhaustive-deps
+  // Managed (target / stop / planned time, after spread and commission) is how the
+  // trades are run; held to expiry is kept for comparison. (Step 3, Oct 2026.)
+  const [outcome, setOutcome] = useState('managed');
+  const filter = { engine, entry, outcome };
+  const groups = useMemo(() => calibrate(rows, dim, filter), [rows, dim, engine, entry, outcome]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const h = useMemo(() => headlines(rows, filter), [rows, engine, entry, outcome]);                  // eslint-disable-line react-hooks/exhaustive-deps
+  const sg = useMemo(() => suggestFrom(rows, { outcome }), [rows, outcome]);
   const pill = on => `text-xs px-2.5 py-1 rounded border ${on ? 'border-accent text-text bg-accent/20' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`;
   const r2 = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
   const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
@@ -232,7 +266,9 @@ function Calibration({ rows }) {
     <div data-testid="calibration" className="mt-2">
       <div className="font-semibold mb-1">Calibration</div>
       <div className="text-text-muted text-xs mb-3" style={{ maxWidth: 760 }}>
-        What each part of the engine's judgement went on to make, held to expiry. R = P&amp;L ÷ the trade's max loss, so different
+        What each part of the engine's judgement went on to make. Managed exit = the strategy's profit target, the 100%-of-premium
+        stop or the planned time (0DTE 15:00 on 5-minute bars; 45DTE the planned close on daily closes), after spread and commission;
+        held to expiry is shown for comparison. R = P&amp;L ÷ the trade's max loss, so different
         underlyings compare on one scale. Ranges are 95% intervals; under {MIN_N} settled a group is not read, and under {SOLID_N} it is marked early.
       </div>
       <div className="text-sm mb-3" data-testid="calibration-headline">
@@ -252,10 +288,13 @@ function Calibration({ rows }) {
       <div className="flex flex-wrap gap-1.5 mb-3 items-center">
         <span className="text-xs text-text-faint mr-1">Engine</span>
         {[[null, 'All'], ['0DTE', '0DTE'], ['45DTE', '45DTE']].map(([v, l]) => <button key={l} className={pill(engine === v)} onClick={() => setEngine(v)}>{l}</button>)}
+        <span className="text-xs text-text-faint ml-3 mr-1">Outcome</span>
+        {[['managed', 'Managed exit'], ['held', 'Held to expiry']].map(([v, l]) => <button key={v} className={pill(outcome === v)} onClick={() => setOutcome(v)}>{l}</button>)}
         <span className="text-xs text-text-faint ml-3 mr-1">Entry</span>
         {[[null, 'All'], ['ticket', 'Typed fills only']].map(([v, l]) => <button key={l} className={pill(entry === v)} onClick={() => setEntry(v)}>{l}</button>)}
       </div>
       <div style={{ overflowX: 'auto' }}>
+        <SuggestionsCard sg={sg} />
         <table className="w-full text-sm" data-testid="calibration-table">
           <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
             <th className="text-left py-1.5">{DIMENSIONS[dim].label}</th><th className="text-right">Settled / recorded</th>

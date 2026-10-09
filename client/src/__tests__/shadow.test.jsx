@@ -61,7 +61,8 @@ describe('settle pass', () => {
     global.fetch = vi.fn(async () => ({ text: async () => JSON.stringify({ bars: [{ date: '20261008', close: 760 }] }) }));
     const res = await settleShadows('acct', { bridgeUrl: 'http://bridge', now: new Date('2026-10-09T15:00:00Z') });
     expect(res.settled).toBe(1);
-    expect(settled).toEqual([{ id: 1, settleDate: '20261008', settlePrice: 760, pnlPerCt: 581, source: 'close' }]);
+    // held to expiry, less the entry commission (4 legs × $0.65; nothing to pay at expiry)
+    expect(settled).toEqual([{ id: 1, settleDate: '20261008', settlePrice: 760, pnlPerCt: 578.4, commission: 2.6, source: 'close-net' }]);
   });
 });
 

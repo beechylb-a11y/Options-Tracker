@@ -1463,7 +1463,7 @@ export async function getDocumentUrl(fileId, userToken) {
 // ================================================================
 const SHADOW_COLS = ['account', 'engine', 'session_date', 'underlying', 'strategy', 'legs', 'expiry', 'spot', 'category',
   'verdict', 'blockers', 'edge_score', 'ev', 'kelly_usd', 'contracts', 'entry_net', 'entry_source', 'win', 'risk', 'pop',
-  'p_max_loss', 'move_cost', 'inputs', 'decision_ts'];
+  'p_max_loss', 'move_cost', 'inputs', 'decision_ts', 'entry_half_spread'];
 const camel = c => c.replace(/_([a-z])/g, (_, x) => x.toUpperCase());
 export async function upsertShadow(v) {
   if (!v || !v.sig || !v.engine || !v.underlying || !v.expiry || !v.sessionDate || !Array.isArray(v.legs) || !v.legs.length) {
@@ -1488,20 +1488,31 @@ export async function upsertShadow(v) {
 export async function listShadow({ account, unsettled, limit } = {}) {
   const where = [], args = [];
   if (account && account !== 'all') { args.push(account); where.push(`account = $${args.length}`); }
-  if (unsettled) where.push('settled_at is null');
+  if (unsettled) where.push('(settled_at is null or managed_at is null)');
   args.push(Math.min(5000, Number(limit) || 1000));
   const { rows } = await q(`select * from options.shadow_verdicts ${where.length ? 'where ' + where.join(' and ') : ''}
     order by session_date desc, last_seen desc limit $${args.length}`, args);
   return rows;
 }
+// Two outcomes, settled independently: held to expiry (settled_at) and managed
+// (managed_at). Each is written once.
 export async function settleShadow(items) {
   let n = 0;
   for (const it of items || []) {
-    if (!it || !it.id || !Number.isFinite(Number(it.settlePrice)) || !Number.isFinite(Number(it.pnlPerCt))) continue;
-    const r = await q(`update options.shadow_verdicts set settle_date = $2, settle_price = $3, pnl_per_ct = $4,
-      settle_source = $5, settled_at = now() where id = $1 and settled_at is null`,
-      [it.id, it.settleDate || null, Number(it.settlePrice), Number(it.pnlPerCt), it.source || 'close']);
-    n += r.rowCount || 0;
+    if (!it || !it.id) continue;
+    if (Number.isFinite(Number(it.settlePrice)) && Number.isFinite(Number(it.pnlPerCt))) {
+      const r = await q(`update options.shadow_verdicts set settle_date = $2, settle_price = $3, pnl_per_ct = $4,
+        settle_source = $5, commission = coalesce(commission, $6), settled_at = now() where id = $1 and settled_at is null`,
+        [it.id, it.settleDate || null, Number(it.settlePrice), Number(it.pnlPerCt), it.source || 'close',
+         Number.isFinite(Number(it.commission)) ? Number(it.commission) : null]);
+      n += r.rowCount || 0;
+    }
+    if (it.managed && Number.isFinite(Number(it.managed.pnl))) {
+      const r = await q(`update options.shadow_verdicts set pnl_managed = $2, exit_reason = $3, exit_at = $4,
+        managed_at = now() where id = $1 and managed_at is null`,
+        [it.id, Number(it.managed.pnl), it.managed.reason || null, it.managed.at || null]);
+      n += r.rowCount || 0;
+    }
   }
   return n;
 }

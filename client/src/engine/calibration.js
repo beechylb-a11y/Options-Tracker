@@ -28,10 +28,12 @@ export function maxLossPerCt(legs, entryNet) {
   return worst < 0 ? -worst : null;
 }
 
-/** One settled row → { r, pnl, R, win } or null. */
-export function outcomeOf(row) {
-  if (!row || !row.settled_at) return null;
-  const pnl = Number(row.pnl_per_ct);
+/** One settled row → { r, pnl, R, win } or null. mode 'managed' (default) or 'held'. */
+export function outcomeOf(row, mode = 'held') {
+  if (!row) return null;
+  const managed = mode === 'managed';
+  if (managed ? !row.managed_at : !row.settled_at) return null;
+  const pnl = Number(managed ? row.pnl_managed : row.pnl_per_ct);
   if (!Number.isFinite(pnl)) return null;
   const risk = maxLossPerCt(Array.isArray(row.legs) ? row.legs : [], Number(row.entry_net));
   return { row, pnl, R: risk ? pnl / risk : null, win: pnl > 0 };
@@ -95,7 +97,7 @@ export function calibrate(rows, dim, filter = {}) {
       if (!groups.has(k)) groups.set(k, { key: k, recorded: 0, out: [] });
       const g = groups.get(k);
       g.recorded++;
-      const o = outcomeOf(r);
+      const o = outcomeOf(r, filter.outcome);
       if (o) g.out.push(o);
     }
   }
@@ -135,7 +137,7 @@ export function headlines(rows, filter = {}) {
   const get = k => cat.find(g => g.key === k);
   const allowedOut = (rows || []).filter(r => (r.category === 'taken' || r.category === 'trade')
     && (!filter.engine || r.engine === filter.engine) && (!filter.entry || r.entry_source === filter.entry))
-    .map(outcomeOf).filter(Boolean);
+    .map(r => outcomeOf(r, filter.outcome)).filter(Boolean);
   const allowedR = meanCI(allowedOut.map(o => o.R).filter(Number.isFinite));
   const blocked = get('Blocked');
   const edge = calibrate(rows, 'edge', filter).filter(g => g.n >= MIN_N && g.R);

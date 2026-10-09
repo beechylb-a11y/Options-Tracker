@@ -65,6 +65,7 @@ describe('screen', () => {
     const { default: Analytics } = await import('../pages/Analytics');
     render(<Analytics authenticated account="acct" accounts={[]} />);
     fireEvent.click(await screen.findByText('Engine verdicts', { selector: 'button' }));
+    fireEvent.click(await screen.findByText('Held to expiry', { selector: 'button' }));
     const table = await screen.findByTestId('calibration-table');
     expect(table.textContent).toMatch(/Gamma risk too high/);
     expect(table.textContent).toMatch(/doing its job/);
