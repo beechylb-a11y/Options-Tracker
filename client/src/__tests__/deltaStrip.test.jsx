@@ -30,7 +30,7 @@ const mount = (extra = {}, onLog = () => true) => render(
     strategyHistory={{}} toast={() => {}}
     initialState={{ i0: { ...base }, ...extra }} />);
 
-const greekCalls = () => global.fetch.mock.calls.filter(c => !/listed-strikes/.test(String(c[0]))).length;
+const greekCalls = () => global.fetch.mock.calls.filter(c => !/listed-strikes|option-chain/.test(String(c[0]))).length;
 
 describe('delta strip', () => {
   beforeEach(() => {
@@ -41,6 +41,8 @@ describe('delta strip', () => {
     global.fetch = vi.fn(async (url) => {
       // today's listed strikes (0DTE, Oct 2026) — none in this test
       if (/listed-strikes/.test(String(url))) return { text: async () => JSON.stringify({ error: 'none' }) };
+      // the expiry list (0DTE asks whether anything expires today, Oct 2026) — unknown here
+      if (/option-chain/.test(String(url))) return { status: 200, text: async () => JSON.stringify({ error: 'none' }) };
       const legs = JSON.parse(decodeURIComponent(String(url).split('&legs=')[1]));
       return { json: async () => ({ legs: legs.map(l => ({ ...greek(l.strike, l.right), qty: l.qty })),
         net: { delta: 1, theta: 5, gamma: 0.1, vega: 1, bid: 6.2, ask: 6.5 },
