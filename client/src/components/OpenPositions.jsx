@@ -8,7 +8,14 @@ import { normalisePosition, stopToPrice, pnlAt, loadPlan } from '../utils/ticket
 import { STOP_LOSS_PCT } from '../engine/data';
 
 // Stop line for an open position: the plan saved at entry, else the 100% guide.
-function stopOf(r) {
+// What was actually got: the fills' average entry when fills are recorded, else the
+// ticket's entry (Oct 2026 — the row showed the asked 5.81 after a 2.50 fill).
+const gotEntry = r => {
+  const a = parseFloat(r.avgEntry);
+  return Number(r.qtyFilled) > 0 && Number.isFinite(a) && a !== 0 ? { ...r, entryPrice: a } : r;
+};
+function stopOf(r0) {
+  const r = gotEntry(r0);
   const pos = normalisePosition(r);
   if (!(Math.abs(pos.ncd || 0) > 0)) return null;
   const plan = r.timestamp ? loadPlan(r.timestamp) : null;
@@ -26,10 +33,12 @@ function stopOf(r) {
 
 // What you got (or asked for): "cr 5.81" / "db 1.07"; a resting order shows its limit.
 function entryOf(r) {
-  const pos = normalisePosition(r);
+  const filled = gotEntry(r) !== r;
+  const pos = normalisePosition(gotEntry(r));
   const e = Math.abs(pos.ncd || 0);
   if (!(e > 0)) return null;
-  return { side: pos.isCredit ? 'cr' : 'db', price: e };
+  const asked = parseFloat(r.limitPrice);
+  return { side: pos.isCredit ? 'cr' : 'db', price: e, filled, asked: filled && Number.isFinite(asked) ? Math.abs(asked) : null };
 }
 
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
@@ -251,7 +260,8 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       )}
                     </td>
                     {(() => { const en = entryOf(r); return (
-                      <td className="py-2 pr-2 text-right mono" data-testid="op-entry" style={{ whiteSpace: 'nowrap', color: en ? (en.side === 'cr' ? '#3fb950' : '#e3b341') : '#8b949e' }}>
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-entry" style={{ whiteSpace: 'nowrap', color: en ? (en.side === 'cr' ? '#3fb950' : '#e3b341') : '#8b949e' }}
+                        title={en && en.filled ? `Average of the recorded fills${en.asked != null ? ` (asked ${en.asked.toFixed(2)})` : ''} — Edit to correct a fill` : 'Entry as logged'}>
                         {en ? <>{isWaiting(r) && <span className="text-text-faint">lmt </span>}{en.side} {en.price.toFixed(2)}</> : '—'}
                       </td>); })()}
                     <td className="py-2 pr-2 text-right mono">

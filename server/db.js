@@ -1269,6 +1269,61 @@ export async function editDecision(rowIndex, patch, now = new Date()) {
   return { changed };
 }
 
+// ================================================================
+//  CORRECT / REMOVE AN ENTRY FILL (Oct 2026)
+//  A fill typed by hand at 2.50 instead of 5.50 set the trade's average entry for
+//  good. Fills can now be corrected or removed; each change is noted on the ticket
+//  (Trade Notes) and every fill's running Qty Remaining is recomputed in order.
+// ================================================================
+async function noteOnTicket(ticketRef, line) {
+  const { table, cols } = T('Decisions');
+  const nIx = cols.findIndex(c => c.header === 'Trade Notes');
+  const { rows } = await q(`select ${qi(cols[nIx].col)} as n from options.${qi(table)} where row_no = $1`, [Number(ticketRef)]);
+  if (!rows.length) return;
+  const prev = rows[0].n ? String(rows[0].n) : '';
+  await setCells('Decisions', Number(ticketRef), nIx, [prev ? prev + '\n' + line : line]);
+}
+async function recomputeRemaining(ticketRef) {
+  const { rows: dec } = await q(`select contracts from options.decisions where row_no = $1`, [Number(ticketRef)]);
+  const ordered = dec.length ? Number(dec[0].contracts) || 0 : 0;
+  const { rows } = await q(`select row_no, qty_filled from options.fills where ticket_ref::text = $1 order by row_no`, [String(ticketRef)]);
+  let done = 0;
+  for (const r of rows) {
+    done += Number(r.qty_filled) || 0;
+    const rem = ordered > 0 ? Math.max(0, ordered - done) : null;
+    await q(`update options.fills set qty_remaining = $1 where row_no = $2`, [rem == null ? null : String(rem), r.row_no]);
+  }
+}
+export async function editFill(fillId, patch, now = new Date()) {
+  const { rows } = await q(`select * from options.fills where fill_id = $1`, [String(fillId)]);
+  if (!rows.length) throw new Error('No fill ' + fillId);
+  const f = rows[0];
+  const map = { qtyFilled: 'qty_filled', fillPrice: 'fill_price', fillDate: 'fill_date', fillTime: 'fill_time' };
+  const changed = [];
+  for (const [k, col] of Object.entries(map)) {
+    if (patch[k] === undefined) continue;
+    const before = f[col] == null ? '' : String(f[col]);
+    const after = patch[k] == null ? '' : String(patch[k]).trim();
+    if (before === after) continue;
+    await q(`update options.fills set ${qi(col)} = $1 where fill_id = $2`, [after === '' ? null : after, String(fillId)]);
+    changed.push(`${k} ${before || '(blank)'} -> ${after || '(blank)'}`);
+  }
+  if (changed.length) {
+    await recomputeRemaining(f.ticket_ref);
+    await noteOnTicket(f.ticket_ref, `Edited fill ${fillId} ${now.toISOString()}: ${changed.join('; ')}`);
+  }
+  return { changed, ticketRef: f.ticket_ref };
+}
+export async function deleteFill(fillId, now = new Date()) {
+  const { rows } = await q(`select row_no, ticket_ref, qty_filled, fill_price from options.fills where fill_id = $1`, [String(fillId)]);
+  if (!rows.length) throw new Error('No fill ' + fillId);
+  const f = rows[0];
+  await deleteRowShift('Fills', f.row_no);
+  await recomputeRemaining(f.ticket_ref);
+  await noteOnTicket(f.ticket_ref, `Removed fill ${fillId} ${now.toISOString()}: ${f.qty_filled} @ ${f.fill_price}`);
+  return { ticketRef: f.ticket_ref };
+}
+
 export async function updateTradeStatus(rowIndex, status) {
   // Column V = Status (index 21)
   await setCells('Decisions', rowIndex, 21, [status]);

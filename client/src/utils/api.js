@@ -163,6 +163,9 @@ export const api = {
   updateTicketNotes: (rowIndex, notes) => fetchJSON(`/api/decisions/${rowIndex}/notes`, {
     method: 'PUT', body: JSON.stringify({ notes })
   }),
+  editFill: (fillId, patch) => fetchJSON(`/api/fills/${encodeURIComponent(fillId)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }),
+  deleteFill: (fillId) => fetchJSON(`/api/fills/${encodeURIComponent(fillId)}`, { method: 'DELETE' }),
   editTicket: (rowIndex, patch) => fetchJSON(`/api/decisions/${rowIndex}/edit`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }),
   updateTicketStatus: (rowIndex, status) => fetchJSON(`/api/decisions/${rowIndex}/status`, {

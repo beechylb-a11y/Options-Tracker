@@ -15,7 +15,7 @@ import {
   appendJournalEntry, getJournal,
   calculateStats,
   updateTrackerStrategy, updateTradesStrategy,
-  closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol, editDecision,
+  closeTradeTicket, updateTradeNotes, updateTradeStatus, backfillDecisionVol, editDecision, editFill, deleteFill,
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
   getFills, getFillsForTicket, appendFill,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
@@ -617,6 +617,25 @@ app.get('/api/fills', requireAuth, async (req, res) => {
     let list = acct && acct !== 'all' ? out.filter(o => o.Account === acct) : out;
     if (ticket) list = list.filter(o => String(o['Ticket Ref']) === String(ticket));
     res.json(list.reverse());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Correct or remove an entry fill (Oct 2026); the trade log is rebuilt either way.
+app.put('/api/fills/:fillId', requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (b.qtyFilled !== undefined && !(Number(b.qtyFilled) > 0)) return res.status(400).json({ error: 'Quantity must be more than zero' });
+    if (b.fillPrice !== undefined && !isFinite(Number(b.fillPrice))) return res.status(400).json({ error: 'Price must be a number' });
+    const r = await editFill(req.params.fillId, b);
+    if (r.changed.length) { try { await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); } }
+    res.json({ ok: true, ...r });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete('/api/fills/:fillId', requireAuth, async (req, res) => {
+  try {
+    const r = await deleteFill(req.params.fillId);
+    try { await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); }
+    res.json({ ok: true, ...r });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
