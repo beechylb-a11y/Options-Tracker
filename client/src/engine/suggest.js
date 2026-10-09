@@ -12,6 +12,7 @@
 
 import { calibrate, outcomeOf } from './calibration.js';
 import { MOVE_COST_BANDS } from './calc0dte.js';
+import { STRATEGY_CASH_TYPE } from './data.js';
 
 export const SUGGEST_N = 30;
 const MIN_SIDE = 10;               // allowed trades needed in each half to judge a threshold
@@ -76,7 +77,38 @@ export function suggestions(rows, { outcome = 'managed' } = {}) {
       evidence: `On the latest third, tickets at ${t.best}+ made ${fmtR(t.test.best.R)} total (${t.test.best.n}) against ${fmtR(t.test.current.R)} for all of them (${t.test.current.n}).` });
   } else waiting.push({ what: 'Minimum edge score', n: scored.length });
 
-  // 4. EV model direction.
+  // 4. A minimum IV rank for selling premium (Oct 2026).
+  //
+  // Every short-premium rule in the tastylive/Sosnoff material is conditioned on IV
+  // rank — above 20 for a vertical, above 30 for most, above 30–50 for condors and
+  // strangles. The engine already SCORES IV rank (25 setup points) and warns below
+  // 25, but nothing stops a sale into cheap vol: the QQQ condor of 8 Oct went on at
+  // IVR 26.9 and scored 54/100 Moderate.
+  //
+  // Whether that threshold is right HERE is not something a video can settle, so it
+  // is not hard-coded as a gate. It is registered as a candidate and tested the same
+  // way every other threshold is — fitted on the earlier two-thirds, made to prove
+  // itself on the latest third, against today's behaviour of no floor at all.
+  const creditSales = settled.filter(o => {
+    if (o.row.engine !== '45DTE') return false;
+    const ivr = Number((o.row.inputs || {}).ivr);
+    if (!Number.isFinite(ivr) || ivr <= 0) return false;
+    const strat = String(o.row.strategy || '');
+    return STRATEGY_CASH_TYPE[strat] === 'credit'
+      || /condor|credit spread|jade|iron butterfly|short strangle|short put|bull put|bear call/i.test(strat);
+  });
+  if (creditSales.length >= SUGGEST_N) {
+    const t = thresholdTest(creditSales, { candidates: [0, 20, 25, 30, 35, 40, 50], current: 0,
+      allow: (r, th) => Number((r.inputs || {}).ivr) >= th });
+    if (t && t.best > 0 && t.test.best.R > t.test.current.R) out.push({ id: 'ivr', tone: 'change',
+      title: `Pass on selling premium below IV rank ${t.best}`,
+      evidence: `On the latest third, credit structures entered at IVR ${t.best}+ made ${fmtR(t.test.best.R)} total `
+        + `(${t.test.best.n} trades) against ${fmtR(t.test.current.R)} for all of them (${t.test.current.n}).` });
+    else if (t) out.push({ id: 'ivr', tone: 'keep', title: 'No IV rank floor is earning its place',
+      evidence: `Across ${creditSales.length} credit sales, no minimum IV rank beat taking them all on the latest third.` });
+  } else waiting.push({ what: 'Minimum IV rank for credit structures', n: creditSales.length });
+
+  // 5. EV model direction.
   const ev = g => calibrate(rows, 'ev', { outcome }).find(x => x.key === g);
   const neg = ev('EV ≤ 0'), pos = ev('EV > 0');
   if (neg && neg.n >= SUGGEST_N && neg.R && neg.R.lo > 0) out.push({ id: 'ev-neg', tone: 'change', title: 'The EV model is too pessimistic',

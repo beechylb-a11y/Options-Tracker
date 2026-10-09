@@ -161,6 +161,11 @@ export const DELTA_TARGETS = {
     'Bull call spread':     { mode: 'short', pop: null, shorts: { C: { t: 30, lo: 20, hi: 40 } } },
     'Bear put spread':      { mode: 'short', pop: null, shorts: { P: { t: 30, lo: 20, hi: 40 } } },
     'Ratio spread':         { mode: 'short', pop: null, shorts: { C: { t: 25, lo: 18, hi: 32 } } },
+    // Naked shorts (Oct 2026). mode 'short' because there is no wing to carry along —
+    // the short IS the position. 16Δ a side is the tastylive strangle; a lone short
+    // put is placed a little closer, 20Δ, since it has no call side paying for it.
+    'Short strangle':       { mode: 'short', pop: 'credit', shorts: { P: { t: 16, lo: 10, hi: 25 }, C: { t: 16, lo: 10, hi: 25 } } },
+    'Short put':            { mode: 'short', pop: 'credit', shorts: { P: { t: 20, lo: 16, hi: 30 } } },
   },
 };
 

@@ -2,7 +2,7 @@
 //  45DTE CALCULATION ENGINE
 //  Pure functions — no DOM access.
 // ================================================================
-import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor } from './data.js';
+import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor, UNDEFINED_RISK } from './data.js';
 import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
@@ -144,6 +144,10 @@ export function calc45DTE(inputs) {
   // Override: if caller specifies a strategy, use that for legs
   const overrideStrategy = inputs.overrideStrategy || null;
   const legStrat = overrideStrategy || bestStrat;
+  // No floor under the loss: see UNDEFINED_RISK in data.js. Everything downstream
+  // that divides by a max loss has to be told, because the number it would use is
+  // one the structure does not have. (Oct 2026.)
+  const riskUndefined = UNDEFINED_RISK.has(legStrat);
   // Planned exit: closeDte days before the (near) expiry — 21 by the playbook, 7 on
   // the front leg for calendars/diagonals (EXIT_RULES); inputs.closeDte overrides.
   const closeDte45 = inputs.closeDte > 0 ? inputs.closeDte : exitRuleFor('45DTE', legStrat).closeDte;
@@ -194,6 +198,12 @@ export function calc45DTE(inputs) {
       legs = isBull
         ? [leg('Long call (back month)',R(p)),leg('Short call (front month)',R(p+sd50))]
         : [leg('Long put (back month)',R(p)),leg('Short put (front month)',R(p-sd50))];
+    } else if (legStrat === 'Short strangle') {
+      // 16Δ a side is roughly the 1-SD strike, which is what sd80 approximates here;
+      // the delta method moves both shorts precisely when greeks are available.
+      legs = [leg('Short put',p-sd80),leg('Short call',p+sd80)];
+    } else if (legStrat === 'Short put') {
+      legs = [leg('Short put',p-sd80)];
     } else if (legStrat === 'Ratio spread') {
       legs = [leg('Long call',p),leg('Short call x2',p+sd50)];
     } else if (legStrat === 'Standard butterfly') {
@@ -261,7 +271,12 @@ export function calc45DTE(inputs) {
   let pMaxLoss = null, pMaxLossLow = null, pMaxLossHigh = null;
   let pMaxLossModel = null, pMaxLossDelta = null, pMaxLossSource = null;
   const DEBIT_MID_RISK = ['Long Condor - Reversed','Calendar spread','Diagonal spread'];
-  if (legs.length > 0 && price > 0 && iv > 0 && dte > 0 && !DEBIT_MID_RISK.includes(legStrat)) {
+  // `riskUndefined` is excluded, not handled: P(max loss) is P(price reaches the
+  // outermost strike), and on a naked short the loss does not stop there — it starts
+  // there. Computing it would put a reassuring small percentage next to the one
+  // structure that can lose without limit. Nothing about the existing calculation
+  // changes for any other strategy.
+  if (legs.length > 0 && price > 0 && iv > 0 && dte > 0 && !DEBIT_MID_RISK.includes(legStrat) && !riskUndefined) {
     const strikes = legs.map(l => l.strike);
     const lowerWing = Math.min(...strikes);
     const upperWing = Math.max(...strikes);
@@ -509,10 +524,19 @@ export function calc45DTE(inputs) {
   const riskCap = maxOpen > 0 ? Math.min(kelly * bankroll, maxLoss, maxOpen) : Math.min(kelly * bankroll, maxLoss);
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
   const halfC = Math.max(1, Math.floor(fullC / 2));
-  const kellyContracts = setup === 'B Setup' ? halfC : fullC;
+  // Kelly's size, EXCEPT where there is no max loss to divide by. `fullC` above is
+  // riskCap / risk, and on a naked short `risk` is whatever got typed into the box —
+  // a margin figure, a guess, a stale number from the last ticket. Dividing a cap by
+  // it produces a contract count with the authority of arithmetic and the content of
+  // nothing. So the engine declines to produce one, and the ticket says why. The
+  // user types a size or there is no size. (Oct 2026.)
+  const kellyContracts = riskUndefined ? null : (setup === 'B Setup' ? halfC : fullC);
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
-  const contracts = contractsOverride || kellyContracts;
+  const contracts = contractsOverride || kellyContracts || (riskUndefined ? 0 : 1);
+  // Risk at the stated size is still reported for a naked short, but it is the loss
+  // if the typed `risk` happens to be right, not a maximum. `riskUndefined` travels
+  // with it so nothing downstream can present it as a cap.
   const maxRisk = contracts * risk;
   const kellyOverRisk = risk > 0 && kellyDollar > 0 && risk > kellyDollar;
   const sizingModel = 'noVix';
@@ -580,6 +604,11 @@ export function calc45DTE(inputs) {
   else if (termBiasEff === 'backwardation') hardBlocker = 'Backwardation — avoid naked short premium';
 
   if (hasGreeks && tEff > 0 && tEff < 0.005) blockers.push('Theta efficiency too low');
+  if (riskUndefined) {
+    warnings.push(legStrat === 'Short strangle'
+      ? 'Short strangle — the call side has no maximum loss. The engine will not size this: enter your own contract count against the margin TWS shows.'
+      : 'Short put — loss runs to (strike − credit) on assignment, which is far larger than any wing. The engine will not size this: enter your own contract count.');
+  }
   if (vix > 25) warnings.push('VIX >25 — reduce size');
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
@@ -644,7 +673,7 @@ export function calc45DTE(inputs) {
   // Premium axis (name-based; calc45 has no net credit/debit input): sellers want
   // RICH vol, buyers want CHEAP vol. 'Iron butterfly' is a credit seller; the plain
   // /butterfly/ flies are debit buyers — order the tests so iron is caught first.
-  const isCreditSell = /Iron Condor|Iron butterfly|Credit spread|Jade lizard/i.test(legStrat);
+  const isCreditSell = /Iron Condor|Iron butterfly|Credit spread|Jade lizard|Short strangle|Short put/i.test(legStrat);
   const isDebitBuy = /Broken wing|Asymmetric|Standard butterfly|Calendar|Diagonal|Bull call|Bear put|Ratio/i.test(legStrat);
 
   // ── edgeGate: positive expectancy, EV normalised by CAPITAL AT RISK ──
@@ -737,6 +766,7 @@ export function calc45DTE(inputs) {
     fullC, halfC, contracts, maxRisk, tEff,
     greeks, sdRange, deltaGuide: DELTA_GUIDE,
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
+    riskUndefined,
     tradeConfidence, confidenceTier, confidenceDriver, confConflicts,
     behaviour: MARKET_BEHAVIOUR_45DTE[legStrat] || '',
     outlook, trend: trend || null, vixTermRatio: vixTermRatio || null

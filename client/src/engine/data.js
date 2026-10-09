@@ -87,8 +87,25 @@ export const STRATS_45DTE = [
   'Iron Condor - Normal', 'Credit spread', 'Calendar spread',
   'Diagonal spread', 'Broken wing butterfly', 'Jade lizard',
   'Ratio spread', 'Bull call spread', 'Bear put spread',
-  'Iron butterfly', 'Standard butterfly'
+  'Iron butterfly', 'Standard butterfly',
+  // Naked short premium (Oct 2026). Added because they are the two structures the
+  // tastylive/Sosnoff material rates highest, and the engine could not express them
+  // at all. They are gated hard — see UNDEFINED_RISK.
+  'Short strangle', 'Short put'
 ];
+
+// ── Structures whose loss has no floor ────────────────────────────────────
+// Every other strategy here has an arithmetic max loss: a width, or a debit. These
+// two do not. A short put loses down to zero (strike − credit: finite, but enormous);
+// a short strangle adds a call side with no ceiling at all.
+//
+// That matters because the whole sizing chain — Kelly, the risk cap, the contract
+// count — is a function of `risk`, the max loss per contract. Hand it a number for a
+// structure that has none and it sizes confidently off a fiction. So the engine
+// refuses: it returns no contract count for these, and withholds P(max loss) rather
+// than computing it, because the strikes are not where the loss is. You size them by
+// hand, with the margin number in front of you. (Oct 2026.)
+export const UNDEFINED_RISK = new Set(['Short strangle', 'Short put']);
 
 // ── Profit locus (Jul 2026) ──
 // WHERE a structure makes its money, which is not the same question as what shape
@@ -118,6 +135,8 @@ export const PROFIT_LOCUS = {
   'Diagonal spread':         'pin',
   'Jade lizard':             'range',
   'Ratio spread':            'range',
+  'Short strangle':          'range',
+  'Short put':               'range',
 };
 
 // Single source of truth for whether a strategy is a net CREDIT (you collect
@@ -131,6 +150,8 @@ export const STRATEGY_CASH_TYPE = {
   'Credit spread':          'credit',
   'Chicken condor':         'credit',
   'Jade lizard':            'credit',
+  'Short strangle':         'credit',
+  'Short put':              'credit',
   'Standard butterfly':     'debit',
   'Asymmetric butterfly':   'debit',
   'Long Condor - Reversed': 'debit',
@@ -188,6 +209,11 @@ export const EXIT_RULES = {
     'Diagonal spread':       R45(25, [25, 35, 50], '25–50% of max profit; roll the short down if tested',
                                { closeDte: 7, closeOptions: [7, 21], closeLeg: 'front leg' }),
     'Long Condor - Reversed':R45(50, [25, 50, 75], 'long-gamma debit — app default'),
+    // Naked shorts are managed like any other credit structure — 50% of max profit,
+    // out by 21 DTE — because max profit IS the credit, and the credit is known. It
+    // is only the LOSS side that has no number.
+    'Short strangle':        R45(50, [25, 50, 75], '50% of max profit; roll the untested side in when one side is tested'),
+    'Short put':             R45(50, [25, 50, 75], '50% of max profit; roll down and out for a credit if the short is breached'),
   },
   '0DTE': {
     // tastylive 0DTE research: short premium managed at 15–25% beat holding; manage in
@@ -264,7 +290,9 @@ export const MARKET_BEHAVIOUR_45DTE = {
   'Bull call spread':       'Price trends upward toward or beyond the short call before theta erodes the debit.',
   'Bear put spread':        'Price trends downward toward or beyond the short put before theta erodes the debit.',
   'Iron butterfly':         'Price remains near the body strike. IV falls. Time decay works inside breakevens.',
-  'Standard butterfly':     'Price gradually moves toward the body strike and stays near it. Low realised vol.'
+  'Standard butterfly':     'Price gradually moves toward the body strike and stays near it. Low realised vol.',
+  'Short strangle':         'Price stays between the shorts. IV contracts. Nothing caps the loss if it does not.',
+  'Short put':              'Price stays above the short. IV contracts. Assignment below it, at strike minus credit.'
 };
 
 // ── Settlement class (0DTE) ──
@@ -316,7 +344,9 @@ export const DELTA_GUIDE = [
   { strat: 'Ratio spread',             range: '50Δ long, 2x 25Δ short', note: 'ATM/OTM' },
   { strat: 'Bull call / Bear put',     range: '50Δ long, 30Δ short',    note: 'ITM to OTM' },
   { strat: 'Iron butterfly',           range: 'ATM short, 1 SD wings',   note: 'Max credit at center' },
-  { strat: 'Standard butterfly',       range: 'ATM body, ±1 SD wings',  note: 'Pin trade' }
+  { strat: 'Standard butterfly',       range: 'ATM body, ±1 SD wings',  note: 'Pin trade' },
+  { strat: 'Short strangle',           range: '16Δ put and call',       note: 'Undefined risk — size by hand' },
+  { strat: 'Short put',                range: '16-30Δ, 20Δ default',    note: 'Undefined risk — size by hand' }
 ];
 
 export const UNDERLYING_LIST = [
