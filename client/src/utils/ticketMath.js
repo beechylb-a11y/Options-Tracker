@@ -34,6 +34,57 @@ export function snap(price, tick = 0.01) {
 
 export function defaultTick() { return 0.01; }
 
+// What was GOT, not what was asked (Oct 2026). A ticket logs the price it was sent
+// at; once fills are recorded the position's entry is their average (avgEntry from
+// /api/open-positions, or the caller's own average of the Fills rows). The QQQ
+// 699/709/805/815 condor was logged at 5.81 and filled at 2.50 — the Sell ticket
+// still priced its 50% target off 5.81 (buy back at 2.79, a LOSS shown as +52%).
+//
+// Max profit / max risk move with the fill too. For the shapes where they follow
+// from the strikes and the net — credit condors and iron flies, verticals — they are
+// recomputed; otherwise both shift one-for-one with the change in net (true of any
+// single-expiry structure: its expiry payoff is intrinsic + net). Idempotent: a row
+// already converted is returned as is.
+export function withEntryFill(row, fill = null) {
+  if (!row || row._entryFromFills) return row;
+  const avg = num(fill && fill.avgEntry != null ? fill.avgEntry : row.avgEntry);
+  const qf = num(fill && fill.qtyFilled != null ? fill.qtyFilled : row.qtyFilled);
+  if (!(qf > 0) || avg == null || avg === 0) return row;
+  const pick = (...ks) => { for (const k of ks) if (row[k] !== undefined && row[k] !== '' && row[k] !== null) return row[k]; return ''; };
+  const asked = num(pick('entryPrice', 'Net Debit/Credit', 'netCreditDebit'));
+  const qty = num(pick('qty', 'Contracts', 'Qty')) || qf;
+  const strat = String(pick('strategy', 'Strategy'));
+  const ks = [...new Set(String(pick('legs', 'Wing Strikes')).split(/[\/,]/).map(x => parseFloat(x)).filter(x => isFinite(x) && x > 0))].sort((a, b) => a - b);
+  let mp = num(pick('maxProfit', 'Max Profit')), mr = num(pick('maxRisk', 'Max Risk'));
+  const per = MULT * qty, c = Math.abs(avg);
+  if (avg > 0 && ks.length === 4 && /iron condor|iron butterfly|iron fly|chicken condor/i.test(strat)) {
+    const w = Math.max(ks[1] - ks[0], ks[3] - ks[2]);
+    if (w > c) { mp = c * per; mr = (w - c) * per; }
+  } else if (ks.length === 2 && /put spread|call spread|vertical/i.test(strat)) {
+    const w = ks[1] - ks[0];
+    if (w > c) { mp = (avg > 0 ? c : w - c) * per; mr = (avg > 0 ? w - c : c) * per; }
+  } else if (asked != null && Math.sign(asked) === Math.sign(avg)) {
+    const d = (avg - asked) * per;
+    if (mp != null && mp + d > 0) mp = mp + d;
+    if (mr != null && mr - d > 0) mr = mr - d;
+  }
+  const out = { ...row, entryPrice: avg, askedEntry: asked, _entryFromFills: true };
+  if (mp != null) { out.maxProfit = +mp.toFixed(2); if ('Max Profit' in row) out['Max Profit'] = out.maxProfit; }
+  if (mr != null) { out.maxRisk = +mr.toFixed(2); if ('Max Risk' in row) out['Max Risk'] = out.maxRisk; }
+  if ('Net Debit/Credit' in row) out['Net Debit/Credit'] = avg;
+  return out;
+}
+
+/** Quantity-weighted average of Fills rows (sheet headers), signed like the ticket. */
+export function avgOfFills(fills) {
+  let q = 0, v = 0;
+  for (const f of fills || []) {
+    const qq = num(f['Qty Filled'] ?? f.qtyFilled), p = num(f['Fill Price'] ?? f.fillPrice);
+    if (qq > 0 && p != null) { q += qq; v += qq * p; }
+  }
+  return q > 0 ? { avgEntry: +(v / q).toFixed(4), qtyFilled: q } : null;
+}
+
 // Normalise whatever the caller holds — a Journal decision row (sheet headers), an
 // OpenPositions row (camelCase), or the engine's live inputs — into one shape.
 export function normalisePosition(src = {}) {

@@ -4,16 +4,15 @@ import { exposure, STATUS } from '../engine/fills';
 import OrderTicket from './OrderTicket';
 import FillReconcile from './FillReconcile';
 import EditTicketModal from './EditTicketModal';
-import { normalisePosition, stopToPrice, pnlAt, loadPlan } from '../utils/ticketMath';
+import { normalisePosition, stopToPrice, pnlAt, loadPlan, withEntryFill } from '../utils/ticketMath';
 import { STOP_LOSS_PCT } from '../engine/data';
 
 // Stop line for an open position: the plan saved at entry, else the 100% guide.
 // What was actually got: the fills' average entry when fills are recorded, else the
-// ticket's entry (Oct 2026 — the row showed the asked 5.81 after a 2.50 fill).
-const gotEntry = r => {
-  const a = parseFloat(r.avgEntry);
-  return Number(r.qtyFilled) > 0 && Number.isFinite(a) && a !== 0 ? { ...r, entryPrice: a } : r;
-};
+// ticket's entry (Oct 2026 — the row showed the asked 5.81 after a 2.50 fill). Rows
+// are converted once on load, so the Sell/Roll ticket, the stop, live risk and the
+// exposure all read the fill too (withEntryFill also restates max profit / risk).
+const gotEntry = withEntryFill;
 function stopOf(r0) {
   const r = gotEntry(r0);
   const pos = normalisePosition(r);
@@ -33,7 +32,7 @@ function stopOf(r0) {
 
 // What you got (or asked for): "cr 5.81" / "db 1.07"; a resting order shows its limit.
 function entryOf(r) {
-  const filled = gotEntry(r) !== r;
+  const filled = !!gotEntry(r)._entryFromFills;
   const pos = normalisePosition(gotEntry(r));
   const e = Math.abs(pos.ncd || 0);
   if (!(e > 0)) return null;
@@ -90,7 +89,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
     let dead = false;
     setLoading(true);
     api.getOpenPositions(account)
-      .then(d => { if (!dead) { setRows(Array.isArray(d) ? d : []); setErr(null); } })
+      .then(d => { if (!dead) { setRows(Array.isArray(d) ? d.map(withEntryFill) : []); setErr(null); } })
       .catch(e => { if (!dead) setErr(e.message); })
       .finally(() => { if (!dead) setLoading(false); });
     return () => { dead = true; };

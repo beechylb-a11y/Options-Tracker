@@ -6,7 +6,7 @@ import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import { lastSessionDate } from '../engine/session';
 import {
-  normalisePosition, targetToPrice, priceToTarget, pnlAt, ibkrLines,
+  normalisePosition, withEntryFill, avgOfFills, targetToPrice, priceToTarget, pnlAt, ibkrLines,
   ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
 } from '../utils/ticketMath';
 import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
@@ -36,7 +36,43 @@ const lbl = { fontSize: 11.5, color: '#a8b2be', display: 'block', marginBottom: 
 const MANUAL_ACCOUNT_PREFIXES = ['papertrade'];
 
 
-export default function OrderTicket({ position, onClose, onDone, initialTab }) {
+// The ticket prices off what was GOT (Oct 2026). OpenPositions rows arrive converted;
+// a Journal / Decision Engine row does not carry the fills, so they are looked up
+// here before the ticket is built — its ladder and stop are seeded from the entry
+// at mount, so building it on the asked price first would leave them wrong.
+export default function OrderTicket(props) {
+  const { position } = props;
+  const ready = !position || position._entryFromFills || position.avgEntry != null && position.avgEntry !== '';
+  const [resolved, setResolved] = useState(() => (ready ? withEntryFill(position) : null));
+  useEffect(() => {
+    if (ready) { setResolved(withEntryFill(position)); return; }
+    let live = true;
+    const p0 = normalisePosition(position);
+    const done = row => { if (live) setResolved(row); };
+    if (!p0.ticketRef) { done(position); return; }
+    let req;
+    try { req = api.getFills(p0.account || undefined, p0.ticketRef); } catch (e) { done(position); return; }
+    Promise.resolve(req)
+      .then(rows => {
+        const mine = (Array.isArray(rows) ? rows : []).filter(f => String(f['Ticket Ref'] ?? f.ticketRef) === String(p0.ticketRef));
+        const a = avgOfFills(mine);
+        done(a ? withEntryFill(position, a) : position);
+      })
+      .catch(() => done(position));
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [position]);
+  if (!resolved) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={props.onClose}>
+        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 20, color: '#a8b2be', fontSize: 13 }}>Loading the fills…</div>
+      </div>
+    );
+  }
+  return <OrderTicketBody {...props} position={resolved} />;
+}
+
+function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // A plan saved at entry carries its basis (e.g. a 0DTE fly planned on tastylive's
   // % of max profit); price its tranches on the same basis it was planned on.
   const pos = useMemo(() => {
