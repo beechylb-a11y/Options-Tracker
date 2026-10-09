@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { settleShadows } from '../utils/shadowSettle';
 import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
@@ -193,6 +194,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   }
   // A ticket whose underlying changes class (typing QQQ into an SPX ticket) moves to
   // that group; the screen follows it.
+  // Settle shadow verdicts whose expiry has passed (Oct 2026) — quietly, once per
+  // visit, when the bridge is set. Analytics shows the results.
+  useEffect(() => {
+    if (!authenticated) return;
+    const t = setTimeout(() => { settleShadows(account).catch(() => {}); }, 8000);
+    return () => clearTimeout(t);
+  }, [authenticated, account]);
   useEffect(() => {
     const t = tabs.find(x => x.id === activeId);
     if (t && groupOfTab(t) !== activeGroup && activeTab == null) setActiveGroup(groupOfTab(t));

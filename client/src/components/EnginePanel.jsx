@@ -8,6 +8,8 @@ import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../en
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
+import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig } from '../engine/shadow';
+import { api } from '../utils/api';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
 import { fetchSpreadProfile } from '../utils/replay';
 import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/commission';
@@ -1423,6 +1425,61 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     : verdict.tone === 'warn'
       ? { color: '#d29922', bg: 'linear-gradient(180deg,#1f1a0d 0%,#16130b 100%)', border: '#9e6a03' }
       : { color: dcColor, bg: `linear-gradient(180deg,${dcBg} 0%,#0d1117 140%)`, border: dcBorder };
+
+  // ── Shadow verdicts (Oct 2026) ──
+  // Every verdict this ticket settles on — taken, skipped, passed or blocked — is kept
+  // and later settled against the close, so the gates can be judged by what they
+  // stopped. Recorded once the ticket has sat unchanged for 20 s (a verdict looked at,
+  // not one passed through while typing); one row per session, strikes and expiry.
+  function shadowPayload(extra = {}) {
+    if (hasBlocker || isTimeSpread || !r.legs || !r.legs.length) return null;
+    const legs = shadowLegs(r.legs);
+    const price = fv(secBag, 'price');
+    if (!legs.length || !(price > 0)) return null;
+    const expiry = is0 ? tradingSession().yyyymmdd : (singleExp || deriveExpiryYYYYMMDD());
+    const typed = signedNet(ticketNet, cashType);
+    const entryNet = Number.isFinite(typed) && typed !== 0 ? typed
+      : is0 ? fairNet0(legs, price, r.emRemaining || (r.pMaxLossBasis && r.pMaxLossBasis.sigma) || 0)
+      : fairNet45(legs, price, fv(i45, 'iv'), fv(i45, 'dte') || 45, i45.underlying);
+    const strategy = effectiveStrat || r.legStrat || '';
+    const ses = tradingSession();
+    const v = {
+      account: accountConfig?.id || '', engine: is0 ? '0DTE' : '45DTE', sessionDate: ses.dateISO,
+      underlying: secBag.underlying, strategy, legs, expiry, spot: price,
+      category: categoryOf({ blockers, verdictWord: verdict.word, missingInputs, logged: !!extra.logged }),
+      verdict: verdict.word, blockers: blockers.join('; ') || null,
+      edgeScore: compositeScore ?? null, ev: r.ev != null ? Math.round(r.ev) : null,
+      kellyUsd: r.kellyDollar != null ? Math.round(r.kellyDollar) : null, contracts: Number.isFinite(r.contracts) ? Math.round(r.contracts) : null,
+      entryNet: entryNet != null && Number.isFinite(entryNet) ? entryNet : null,
+      entrySource: Number.isFinite(typed) && typed !== 0 ? 'ticket' : 'model',
+      win: fv(secBag, 'win') || null, risk: fv(secBag, 'risk') || null, pop: fv(secBag, 'pop') || null,
+      pMaxLoss: r.pMaxLoss != null ? +r.pMaxLoss.toFixed(4) : null,
+      moveCost: r.greeks && Number.isFinite(r.greeks.gMag) && is0 ? +r.greeks.gMag.toFixed(3) : null,
+      inputs: is0
+        ? { em: fv(i0, 'em'), emSource: i0.emSource || null, vix: fv(i0, 'vix'), vix1d: fv(i0, 'vix1d'), atr: fv(i0, 'atr'), hours: ses.hoursToBell ?? null,
+            delta: fv(i0, 'delta'), gamma: fv(i0, 'gamma'), theta: fv(i0, 'theta'), regime: r.regime || null, dir: r.dirLabel || null }
+        : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null },
+      decisionTs: extra.decisionTs || null,
+    };
+    v.sig = shadowSig({ sessionDate: v.sessionDate, engine: v.engine, underlying: v.underlying, strategy, legs, expiry, account: v.account });
+    return v;
+  }
+  const shadowRef = useRef({ key: null, timer: null });
+  const shadowNow = shadowPayload();
+  const shadowKey = shadowNow ? JSON.stringify([shadowNow.sig, shadowNow.category, shadowNow.verdict, shadowNow.entryNet, shadowNow.ev]) : null;
+  useEffect(() => {
+    const st = shadowRef.current;
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+    if (!shadowKey || shadowKey === st.key || !api.recordShadow) return;
+    st.timer = setTimeout(() => {
+      const v = shadowPayload();
+      if (!v) return;
+      st.key = shadowKey;
+      api.recordShadow(v).catch(() => { st.key = null; });   // best effort; never in the way of trading
+    }, 20000);
+    return () => { if (st.timer) { clearTimeout(st.timer); st.timer = null; } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shadowKey]);
 
   // Needs you: only things a person has to act on, each carrying its own control.
   const session = tradingSession();
@@ -2840,6 +2897,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         // the sheet to have said yes, not merely the absence of a no.
         if (ok !== true) return;
         if (exitPlan && exitPlan.rows?.length) savePlan(logTs, { ...exitPlan, openAtSave: r.contracts });
+        try { const sv = shadowPayload({ logged: true, decisionTs: logTs }); if (sv && api.recordShadow) api.recordShadow(sv).catch(() => {}); } catch (e) { /* best effort */ }
         setLoggedAt(Date.now());
         setLoggedSig(sigAtLog);
       })

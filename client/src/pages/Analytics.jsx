@@ -9,6 +9,8 @@ import { blendCapture, CAPTURE_K } from '../engine/capture';
 import { assumedCapture0 } from '../engine/calc0dte';
 import { assumedCapture45 } from '../engine/calc45dte';
 import { EXIT_RULES } from '../engine/data';
+import { shadowSummary } from '../engine/shadow';
+import { settleShadows } from '../utils/shadowSettle';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
@@ -85,6 +87,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
     { id: 'decay', label: 'DTE analysis', icon: Calendar },
     { id: 'rolling', label: 'Rolling stats', icon: Activity },
     { id: 'capture', label: 'Capture', icon: Layers },
+    { id: 'verdicts', label: 'Engine verdicts', icon: Activity },
   ];
 
   return (
@@ -111,6 +114,100 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
       {section === 'decay' && <DTEAnalysis closed={closed} />}
       {section === 'rolling' && <RollingStats closed={closed} />}
       {section === 'capture' && <CaptureTracker account={account} />}
+      {section === 'verdicts' && <ShadowVerdicts account={account} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  ENGINE VERDICTS (Oct 2026)
+//  Every verdict the engine reached — taken, skipped, passed, blocked — and what
+//  it would have made held to expiry. Step 1 of the learning loop: the evidence.
+//  Calibration by blocker and score band comes next, once outcomes accumulate.
+// ═══════════════════════════════════════════
+const CAT_LABEL = { taken: 'Taken', trade: 'Engine said trade, not taken', pass: 'Engine said pass', blocked: 'Blocked', unsized: 'Not sized' };
+function ShadowVerdicts({ account }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  const [settling, setSettling] = useState(false);
+  const [note, setNote] = useState('');
+  const load = () => api.getShadow(account).then(d => { setRows(Array.isArray(d) ? d : []); setErr(null); }).catch(e => setErr(e.message));
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [account]);
+  async function settle() {
+    setSettling(true); setNote('');
+    const res = await settleShadows(account);
+    setNote(res.error === 'no bridge' ? `${res.pending} waiting — set the bridge URL to settle against the close.`
+      : res.error ? `Settle failed: ${res.error}`
+      : `${res.settled} settled${res.pending ? ` · ${res.pending} still waiting for a close` : ''}.`);
+    setSettling(false);
+    load();
+  }
+  if (err) return <div className="card text-loss text-sm">{err}</div>;
+  if (!rows) return <div className="card text-text-muted text-sm">Loading…</div>;
+  const sum = shadowSummary(rows);
+  const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
+  return (
+    <div className="card" data-testid="shadow-verdicts">
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div>
+          <div className="font-semibold">Engine verdicts</div>
+          <div className="text-text-muted text-xs mt-0.5" style={{ maxWidth: 720 }}>
+            Every verdict the engine reached on a ticket, including the ones not taken, settled held-to-expiry against the
+            underlying's close. Entry is your typed fill when there was one, otherwise the model's fair price — no spread or
+            commission yet, so model-priced rows flatter slightly.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {note && <span className="text-xs text-text-muted">{note}</span>}
+          <button onClick={settle} disabled={settling} className="text-xs px-3 py-1.5 rounded border border-bg-border hover:bg-bg-hover">
+            {settling ? 'Settling…' : 'Settle expired'}</button>
+        </div>
+      </div>
+      <table className="w-full text-sm mb-4" data-testid="shadow-summary">
+        <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
+          <th className="text-left py-1.5">Verdict</th><th className="text-right">Recorded</th><th className="text-right">Settled</th>
+          <th className="text-right">Win rate</th><th className="text-right">Avg / contract</th></tr></thead>
+        <tbody>
+          {['taken', 'trade', 'pass', 'blocked', 'unsized'].filter(k => sum[k]).map(k => (
+            <tr key={k} style={{ borderTop: '1px solid #21262d' }}>
+              <td className="py-1.5">{CAT_LABEL[k]}</td>
+              <td className="text-right mono">{sum[k].n}</td>
+              <td className="text-right mono">{sum[k].settled}</td>
+              <td className="text-right mono">{sum[k].winRate == null ? '—' : (sum[k].winRate * 100).toFixed(0) + '%'}</td>
+              <td className={'text-right mono ' + (sum[k].avg == null ? '' : sum[k].avg >= 0 ? 'win' : 'loss')}>{sum[k].avg == null ? '—' : money(sum[k].avg)}</td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={5} className="py-3 text-text-muted">Nothing recorded yet. A verdict is kept once a ticket has sat unchanged for 20 seconds.</td></tr>}
+        </tbody>
+      </table>
+      {rows.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="w-full text-sm">
+            <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
+              <th className="text-left py-1.5">Session</th><th className="text-left">Ticket</th><th className="text-left">Verdict</th>
+              <th className="text-right">EV</th><th className="text-right">Entry</th><th className="text-right">Close</th><th className="text-right">Held to expiry</th></tr></thead>
+            <tbody>
+              {rows.slice(0, 60).map(r => {
+                const e = Number(r.entry_net), p = Number(r.pnl_per_ct);
+                return (
+                  <tr key={r.id} style={{ borderTop: '1px solid #21262d' }}>
+                    <td className="py-1.5 text-text-muted mono">{r.session_date}</td>
+                    <td><b>{r.underlying}</b> <span className="text-text-muted">{r.engine} · {r.strategy}</span></td>
+                    <td title={r.blockers || ''}>{CAT_LABEL[r.category] || r.category}{r.blockers ? <span className="text-text-faint"> · {String(r.blockers).split(';')[0]}</span> : ''}</td>
+                    <td className="text-right mono">{r.ev == null ? '—' : money(Number(r.ev))}</td>
+                    <td className="text-right mono" title={r.entry_source === 'model' ? 'Model fair price' : 'Your typed fill'}>
+                      {Number.isFinite(e) ? `${e >= 0 ? 'cr' : 'db'} ${Math.abs(e).toFixed(2)}${r.entry_source === 'model' ? '*' : ''}` : '—'}</td>
+                    <td className="text-right mono text-text-muted">{r.settle_price == null ? '—' : Number(r.settle_price).toFixed(2)}</td>
+                    <td className={'text-right mono ' + (r.settled_at && Number.isFinite(p) ? (p >= 0 ? 'win' : 'loss') : 'text-text-faint')}>
+                      {r.settled_at && Number.isFinite(p) ? money(p) : 'pending'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="text-text-faint text-xs mt-2">* entry priced at the model's fair value — no fill was typed on the ticket.</div>
+        </div>
+      )}
     </div>
   );
 }

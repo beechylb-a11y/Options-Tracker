@@ -163,6 +163,9 @@ export const api = {
   updateTicketNotes: (rowIndex, notes) => fetchJSON(`/api/decisions/${rowIndex}/notes`, {
     method: 'PUT', body: JSON.stringify({ notes })
   }),
+  recordShadow: (v) => fetchJSON('/api/shadow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(v) }),
+  getShadow: (account, { unsettled } = {}) => fetchJSON('/api/shadow?' + [account && account !== 'all' ? 'account=' + encodeURIComponent(account) : '', unsettled ? 'unsettled=1' : ''].filter(Boolean).join('&')),
+  settleShadow: (items) => fetchJSON('/api/shadow/settle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }),
   editFill: (fillId, patch) => fetchJSON(`/api/fills/${encodeURIComponent(fillId)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }),
   deleteFill: (fillId) => fetchJSON(`/api/fills/${encodeURIComponent(fillId)}`, { method: 'DELETE' }),

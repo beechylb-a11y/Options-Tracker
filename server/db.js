@@ -1454,3 +1454,54 @@ export async function getDocumentUrl(fileId, userToken) {
   const url = `${SUPABASE_URL()}/storage/v1${data.signedURL || data.signedUrl}`;
   return { webViewLink: url, webContentLink: url };
 }
+
+
+// ================================================================
+//  SHADOW VERDICTS (Oct 2026) — every verdict the engine reaches, and what it
+//  would have made. One row per session / ticket / strikes; a later look the same
+//  day updates it, and once a ticket is taken it stays taken.
+// ================================================================
+const SHADOW_COLS = ['account', 'engine', 'session_date', 'underlying', 'strategy', 'legs', 'expiry', 'spot', 'category',
+  'verdict', 'blockers', 'edge_score', 'ev', 'kelly_usd', 'contracts', 'entry_net', 'entry_source', 'win', 'risk', 'pop',
+  'p_max_loss', 'move_cost', 'inputs', 'decision_ts'];
+const camel = c => c.replace(/_([a-z])/g, (_, x) => x.toUpperCase());
+export async function upsertShadow(v) {
+  if (!v || !v.sig || !v.engine || !v.underlying || !v.expiry || !v.sessionDate || !Array.isArray(v.legs) || !v.legs.length) {
+    throw new Error('sig, engine, underlying, expiry, sessionDate and legs are required');
+  }
+  const vals = SHADOW_COLS.map(c => {
+    const x = v[camel(c)];
+    if (x === undefined || x === '' || (typeof x === 'number' && !Number.isFinite(x))) return null;
+    return (c === 'legs' || c === 'inputs') ? JSON.stringify(x) : x;
+  });
+  const cols = ['sig', ...SHADOW_COLS];
+  const ph = cols.map((_, i) => '$' + (i + 1)).join(', ');
+  // A taken ticket stays taken; otherwise the latest look of the day wins.
+  const upd = SHADOW_COLS.filter(c => c !== 'session_date').map(c => c === 'category'
+    ? `category = case when options.shadow_verdicts.category = 'taken' then 'taken' else excluded.category end`
+    : c === 'decision_ts' ? `decision_ts = coalesce(excluded.decision_ts, options.shadow_verdicts.decision_ts)`
+    : `${c} = excluded.${c}`).join(', ');
+  const { rows } = await q(`insert into options.shadow_verdicts (${cols.join(', ')}) values (${ph})
+    on conflict (sig) do update set ${upd}, last_seen = now() returning id, category`, [v.sig, ...vals]);
+  return rows[0];
+}
+export async function listShadow({ account, unsettled, limit } = {}) {
+  const where = [], args = [];
+  if (account && account !== 'all') { args.push(account); where.push(`account = $${args.length}`); }
+  if (unsettled) where.push('settled_at is null');
+  args.push(Math.min(5000, Number(limit) || 1000));
+  const { rows } = await q(`select * from options.shadow_verdicts ${where.length ? 'where ' + where.join(' and ') : ''}
+    order by session_date desc, last_seen desc limit $${args.length}`, args);
+  return rows;
+}
+export async function settleShadow(items) {
+  let n = 0;
+  for (const it of items || []) {
+    if (!it || !it.id || !Number.isFinite(Number(it.settlePrice)) || !Number.isFinite(Number(it.pnlPerCt))) continue;
+    const r = await q(`update options.shadow_verdicts set settle_date = $2, settle_price = $3, pnl_per_ct = $4,
+      settle_source = $5, settled_at = now() where id = $1 and settled_at is null`,
+      [it.id, it.settleDate || null, Number(it.settlePrice), Number(it.pnlPerCt), it.source || 'close']);
+    n += r.rowCount || 0;
+  }
+  return n;
+}

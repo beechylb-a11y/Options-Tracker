@@ -19,7 +19,7 @@ import {
   getTradeLog, rebuildTradeLog, getOpenPositions, getCloses,
   getFills, getFillsForTicket, appendFill,
   uploadDocument, listDocuments, deleteDocument, getDocumentUrl,
-  getClosesList
+  getClosesList, upsertShadow, listShadow, settleShadow
 } from './db.js';
 import { pnlFromFills, commissionRate } from '../client/src/utils/commission.js';
 import { captureStats } from '../client/src/engine/capture.js';
@@ -637,6 +637,20 @@ app.delete('/api/fills/:fillId', requireAuth, async (req, res) => {
     try { await rebuildTradeLog(); } catch (e) { console.log('[TRADELOG]', e.message); }
     res.json({ ok: true, ...r });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Shadow verdicts (Oct 2026): every engine verdict, settled later against the close.
+app.post('/api/shadow', requireAuth, async (req, res) => {
+  try { res.json({ ok: true, ...(await upsertShadow(req.body || {})) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+app.get('/api/shadow', requireAuth, async (req, res) => {
+  try { res.json(await listShadow({ account: req.query.account, unsettled: req.query.unsettled === '1', limit: req.query.limit })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/shadow/settle', requireAuth, async (req, res) => {
+  try { res.json({ ok: true, settled: await settleShadow((req.body || {}).items) }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/fills', requireAuth, async (req, res) => {
