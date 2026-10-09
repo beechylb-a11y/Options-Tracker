@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { comboTranches, matchTranches, execWhen, fillIdFor, fillPayload } from '../utils/fillMatch';
+import { comboTranches, matchTranches, execWhen, fillIdFor, fillPayload, positionForTicket } from '../utils/fillMatch';
 
 // A SPY 759/763/768 fly, one lot, bought as a debit: buy 1 × 759, sell 2 × 763,
 // buy 1 × 768. Leg prices chosen so the net is a clean 1.11 debit.
@@ -142,5 +142,49 @@ describe('fillPayload', () => {
     const p = fillPayload(ticket(), tr, { qty: 2, price: -1.09 });
     expect(p.qtyFilled).toBe(2);
     expect(p.fillPrice).toBeCloseTo(-1.09, 4);
+  });
+});
+
+// An order typed into TWS itself reaches the bridge's API client with orderId 0, and
+// every leg has its own execId — the old key split the condor into four one-leg
+// tranches, none a full match. (Oct 2026.)
+describe('orders placed in TWS (orderId 0)', () => {
+  const leg = (strike, right, side, price, extra = {}) => ({ execId: 'x' + strike, orderId: 0, permId: 913, time: '20261008 10:05:31 US/Eastern',
+    symbol: 'QQQ', secType: 'OPT', side, qty: 5, price, strike, right, expiry: '20261120', ...extra });
+  const condor = [leg(699, 'P', 'BOT', 5.30), leg(709, 'P', 'SLD', 6.60), leg(805, 'C', 'SLD', 3.30), leg(815, 'C', 'BOT', 2.10)];
+  const tk = { ticketRef: 54, underlying: 'QQQ', legs: '699 / 709 / 805 / 815', qty: 5, qtyFilled: 0, limitPrice: 2.5 };
+
+  it('groups the legs on the permanent order id', () => {
+    const ts = comboTranches(condor);
+    expect(ts).toHaveLength(1);
+    expect(ts[0].lots).toBe(5);
+    expect(ts[0].netPrice).toBeCloseTo(2.5, 4);
+    expect(matchTranches([tk], ts).rows[0].candidates[0].match).toBe('full');
+  });
+  it('without a permId, the contract at that moment stands in for the order', () => {
+    const ts = comboTranches(condor.map(e => ({ ...e, permId: undefined })));
+    expect(ts).toHaveLength(1);
+    expect(ts[0].strikes).toEqual([699, 709, 805, 815]);
+  });
+  it('legs a second apart are still one fill; a repeated leg starts the next tranche', () => {
+    const split = condor.map((e, i) => (i >= 2 ? { ...e, time: '20261008 10:05:32 US/Eastern' } : e));
+    expect(comboTranches(split)).toHaveLength(1);
+    const twice = [...condor, ...condor.map(e => ({ ...e, execId: e.execId + 'b', time: '20261008 10:05:32 US/Eastern' }))];
+    expect(comboTranches(twice)).toHaveLength(2);
+  });
+});
+
+describe('positionForTicket', () => {
+  const structs = [
+    { underlying: 'QQQ', expiries: ['20261120'], strikes: [699, 709, 805, 815], contracts: 5, netCreditDebit: 2.44 },
+    { underlying: 'SPY', expiries: ['20261017'], strikes: [759, 763, 768], contracts: 1, netCreditDebit: -1.11 },
+  ];
+  it('finds the position with the same underlying and strikes', () => {
+    expect(positionForTicket({ underlying: 'QQQ', legs: '699 / 709 / 805 / 815' }, structs)).toMatchObject({ qty: 5, price: 2.44, side: 'cr' });
+    expect(positionForTicket({ underlying: 'SPY', legs: '759 / 763 / 768' }, structs)).toMatchObject({ qty: 1, price: 1.11, side: 'db' });
+  });
+  it('a different strike set is not this ticket', () => {
+    expect(positionForTicket({ underlying: 'QQQ', legs: '700 / 709 / 805 / 815' }, structs)).toBeNull();
+    expect(positionForTicket({ underlying: 'QQQ', legs: '' }, structs)).toBeNull();
   });
 });

@@ -38,7 +38,7 @@ describe('reconcile screen, by hand', () => {
 
   it('records a typed fill when TWS has nothing', async () => {
     render(<FillReconcile positions={[condor]} account="paper" onClose={() => {}} onDone={() => {}} />);
-    await screen.findByText(/Nothing in today's executions/);
+    await screen.findByText(/TWS returned no executions/);
     expect(screen.getByTestId('record-fills').disabled).toBe(true);
     fireEvent.click(screen.getByTestId('manual-open'));
     expect(screen.getByLabelText('Contracts filled (by hand)').value).toBe('5');
@@ -65,3 +65,33 @@ describe('reconcile screen, by hand', () => {
     expect(added[0]).toMatchObject({ qtyFilled: 5, fillPrice: 5.81 });
   });
 });
+
+describe('reconcile screen, from the TWS position (Oct 2026)', () => {
+  beforeEach(() => {
+    added.length = 0;
+    localStorage.setItem('bridgeUrl', 'http://bridge');
+    global.fetch = vi.fn(url => {
+      if (/\/api\/positions/.test(url)) return Promise.resolve({ ok: true, json: () => Promise.resolve({ structures: [
+        { underlying: 'QQQ', expiries: ['20261120'], strikes: [699, 709, 805, 815], contracts: 5, netCreditDebit: 2.44 },
+        { underlying: 'QQQ', expiries: ['20261120'], strikes: [700, 710, 800, 810], contracts: 2, netCreditDebit: 2.1 },
+      ] }) });
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ fills: [] })) });
+    });
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it('asks TWS for everything it holds, and offers the position as the fill', async () => {
+    render(<FillReconcile positions={[condor]} account="paper" onClose={() => {}} onDone={() => {}} />);
+    await screen.findByTestId('position-offer');
+    expect(global.fetch.mock.calls[0][0]).toMatch(/\/api\/executions\?all=1$/);
+    expect(screen.getByTestId('position-offer').textContent).toMatch(/2\.44 credit/);
+    fireEvent.click(screen.getByTestId('position-use'));
+    expect(screen.getByLabelText('Contracts filled (by hand)').value).toBe('5');
+    expect(screen.getByLabelText('Fill price per contract (by hand)').value).toBe('2.44');
+    fireEvent.click(screen.getByTestId('record-fills'));
+    await waitFor(() => expect(added.length).toBe(1));
+    expect(added[0]).toMatchObject({ ticketRef: 54, qtyFilled: 5, fillPrice: 2.44 });
+    expect(added[0].notes).toMatch(/TWS position/);
+  });
+});
+

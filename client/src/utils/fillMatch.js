@@ -33,13 +33,38 @@ export function execWhen(time) {
 }
 
 // One tranche = the leg executions of a single combo fill. IB reports the legs of
-// one partial fill under the same order id at the same second, so that pair is the
+// one partial fill under the same order at the same moment, so order + time is the
 // grouping key. Two tranches of the same order stay separate rows, which is the
 // whole point of the Fills table.
+//
+// WHICH ORDER (Oct 2026). An order placed in TWS itself — not by this app — comes
+// back to the bridge's API client with orderId 0. The old key then fell back to
+// the execution id, which is unique per LEG, so a four-leg condor would arrive as
+// four one-leg "tranches", none a full match for the ticket's strikes. The order's
+// permanent id is the same on every leg whoever placed it; failing that, the
+// contract (symbol + expiry) at that moment stands in for the order.
+export function orderKeyOf(e) {
+  const oid = Number(e && e.orderId);
+  if (oid > 0) return String(oid);
+  const pid = Number(e && e.permId);
+  if (pid > 0) return 'P' + pid;
+  return 'C' + String(e && e.symbol || '?').toUpperCase() + '-' + String(e && e.expiry || '').slice(0, 8);
+}
 export function trancheOf(e) {
   const w = execWhen(e.time);
-  return `${e.orderId || e.execId || '?'}@${w.key}`;
+  return `${orderKeyOf(e)}@${w.key}`;
 }
+
+// Seconds since an arbitrary origin, from the TWS stamp — only ever differenced.
+const secsOf = time => {
+  const m = /^(\d{4})(\d{2})(\d{2})[\s\-T]*(\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(time || '').trim());
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 1000 : null;
+};
+const legIdOf = e => `${e.strike}|${String(e.right || '').toUpperCase()}|${String(e.expiry || '').slice(0, 8)}`;
+// Legs of one combo fill can straddle a second boundary. A leg joins the open
+// tranche of its order when it is within this many seconds of it and that tranche
+// does not already hold the same contract (a repeat means the next partial fill).
+const TRANCHE_GAP_S = 2;
 
 /**
  * Group leg executions into combo tranches.
@@ -49,15 +74,26 @@ export function trancheOf(e) {
  * a credit — the same signing the Decisions row and the Fills table use.
  */
 export function comboTranches(executions) {
-  const byTranche = new Map();
+  const clean = [];
   for (const e of executions || []) {
     if (e.secType && e.secType !== 'OPT') continue;
     const qty = Math.abs(num(e.qty) || 0);
     const price = num(e.price);
     if (!(qty > 0) || price == null) continue;
-    const k = trancheOf(e);
-    if (!byTranche.has(k)) byTranche.set(k, []);
-    byTranche.get(k).push({ ...e, qty, price });
+    clean.push({ ...e, qty, price, _ok: orderKeyOf(e), _s: secsOf(e.time) });
+  }
+  clean.sort((a, b) => a._ok.localeCompare(b._ok) || (a._s ?? 0) - (b._s ?? 0));
+  const byTranche = new Map();
+  let cur = null;
+  for (const e of clean) {
+    const fits = cur && cur.ok === e._ok && e._s != null && cur.s != null
+      && e._s - cur.s <= TRANCHE_GAP_S && !cur.ids.has(legIdOf(e));
+    if (!fits) {
+      cur = { ok: e._ok, s: e._s, ids: new Set(), key: trancheOf(e) };
+      byTranche.set(cur.key, []);
+    }
+    cur.ids.add(legIdOf(e));
+    byTranche.get(cur.key).push(e);
   }
   const out = [];
   for (const [key, legs] of byTranche) {
@@ -72,6 +108,7 @@ export function comboTranches(executions) {
     out.push({
       key,
       orderId: legs[0].orderId ?? null,
+      permId: legs[0].permId ?? null,
       orderRef: legs[0].orderRef || '',
       account: legs[0].account || '',
       underlying: symOf(legs[0].symbol),
@@ -209,4 +246,26 @@ export function manualFillPayload(ticket, { qty, price, side, date, time, notes 
     account: ticket.account || '',
     notes: notes || 'Entered by hand',
   };
+}
+
+// The ticket's position as TWS holds it now (Oct 2026). TWS keeps only the current
+// session's executions, so an order that filled yesterday has nothing to reconcile
+// against — but the position is still there, with IB's average cost per leg. Same
+// underlying and the same strike set as the ticket = this ticket's fill. The price is
+// IB's average cost, which includes commission, so it reads a cent or so worse than
+// the fill itself; it is offered as a hand entry the user confirms, never written
+// on its own. structures: /api/positions' structures.
+export function positionForTicket(ticket, structures) {
+  const want = [...new Set(parseStrikes(ticket && (ticket.legs ?? ticket.strikes)))].sort((a, b) => a - b);
+  if (!want.length) return null;
+  for (const st of structures || []) {
+    if (symOf(st.underlying) !== symOf(ticket.underlying)) continue;
+    const ks = [...new Set((st.strikes || []).map(Number))].sort((a, b) => a - b);
+    if (ks.length !== want.length || ks.some((k, i) => Math.abs(k - want[i]) > 1e-6)) continue;
+    const net = num(st.netCreditDebit);
+    const qty = num(st.contracts);
+    if (net == null || !(Math.abs(net) > 0) || !(qty > 0)) continue;
+    return { qty, price: Math.abs(net), side: net >= 0 ? 'cr' : 'db', expiry: (st.expiries || [st.expiry]).filter(Boolean).join('/') };
+  }
+  return null;
 }

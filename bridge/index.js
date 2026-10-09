@@ -1668,6 +1668,9 @@ app.get('/api/executions', async (req, res) => {
           price: execution.price,
           avgPrice: execution.avgPrice,
           orderId: execution.orderId,
+          // Same on every leg of one order whoever placed it. orderId is 0 for an
+          // order entered in TWS by hand, so the app groups combo legs on this.
+          permId: execution.permId || 0,
           orderRef: execution.orderRef || '',
           // Option details
           strike: contract.strike || 0,
@@ -1704,11 +1707,20 @@ app.get('/api/executions', async (req, res) => {
       ib.on(EventName.execDetailsEnd, onEnd);
       ib.on(EventName.commissionReport, onComm);
 
-      // Request executions — empty filter gets all for today
-      // Request executions — empty filter gets all for today
-      const today = new Date();
-      const timeStr = today.getFullYear() + ('0'+(today.getMonth()+1)).slice(-2) + ('0'+today.getDate()).slice(-2) + '-00:00:00';
-      const filter = { clientId: 0, acctCode: '', time: timeStr, symbol: '', secType: '', exchange: '', side: '' };
+      // The old filter was "midnight today" by THIS computer's clock — in Melbourne
+      // that is already tomorrow's date for the whole US session. Unless TWS reads
+      // the filter in Melbourne time, that asks for executions after a moment that
+      // has not happened yet, and the reconcile screen came back empty for a QQQ
+      // condor that had filled (Oct 2026).
+      //   default  — from 05:00 on the current NEW YORK date. Whichever timezone TWS
+      //              reads it in (UTC, New York or Melbourne), that is before the
+      //              session opens, so the whole US day is in.
+      //   ?all=1   — no filter: everything TWS still holds (the reconcile screen, for
+      //              an order sent one evening that filled the next session).
+      //   ?since=yyyymmdd-hh:mm:ss — as given.
+      const since = /^\d{8}-\d{2}:\d{2}:\d{2}$/.test(String(req.query.since || '')) ? String(req.query.since)
+        : req.query.all ? '' : nyToday() + '-05:00:00';
+      const filter = { clientId: 0, acctCode: '', time: since, symbol: '', secType: '', exchange: '', side: '' };
       ib.reqExecutions(reqId, filter);
     });
 
@@ -1722,7 +1734,7 @@ app.get('/api/executions', async (req, res) => {
     // Group by orderId to get net positions
     const orderGroups = {};
     merged.forEach(e => {
-      const key = e.orderId || e.execId;
+      const key = e.orderId || e.permId || e.execId;
       if (!orderGroups[key]) orderGroups[key] = { fills: [], symbol: e.symbol, side: e.side, totalQty: 0, totalCommission: 0, realizedPnl: 0 };
       orderGroups[key].fills.push(e);
       orderGroups[key].totalQty += e.qty;

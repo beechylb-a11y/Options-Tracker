@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
-import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide } from '../utils/fillMatch';
+import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide, positionForTicket } from '../utils/fillMatch';
 import { fillStats } from '../engine/fills';
 
 // Reconcile working orders against what TWS actually filled.
@@ -34,6 +34,10 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
   const [result, setResult] = useState(null);
   // Fills typed by hand, per ticket: { [ticketRef]: { qty, price, side, date, time } }.
   const [manual, setManual] = useState({});
+  // How many executions TWS sent back, and the positions it holds — so an empty
+  // screen can say why, and a fill from an earlier session can come off the position.
+  const [execCount, setExecCount] = useState(null);
+  const [twsStructures, setTwsStructures] = useState([]);
 
   // Only tickets that are still waiting on contracts can take an entry fill. A
   // fully filled position has nothing to reconcile, and offering it invites a
@@ -52,12 +56,18 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
     if (!bridgeUrl) { setErr('Set the IBKR Bridge URL in Settings first — reconciling needs the TWS executions.'); setPhase('review'); return; }
     try {
-      const r = await fetch(bridgeUrl + '/api/executions', { headers: { 'ngrok-skip-browser-warning': '1' } });
+      // all=1: everything TWS still holds, not just "today" by some clock (Oct 2026).
+      const r = await fetch(bridgeUrl + '/api/executions?all=1', { headers: { 'ngrok-skip-browser-warning': '1' } });
       const txt = await r.text();
       let data;
       try { data = JSON.parse(txt); } catch (e) { throw new Error('the bridge returned a web page, not JSON — check the URL and that the bridge is running'); }
       if (!r.ok) throw new Error(data.error || `bridge ${r.status}`);
       setTranches(comboTranches(data.fills || []));
+      setExecCount((data.fills || []).length);
+      // Best effort: the positions, for fills TWS no longer lists.
+      fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } })
+        .then(x => x.json()).then(d => setTwsStructures(Array.isArray(d && d.structures) ? d.structures : []))
+        .catch(() => setTwsStructures([]));
       // Fills already recorded, so a second run shows them as done rather than
       // offering them again.
       const existing = await api.getFills(account).catch(() => []);
@@ -135,13 +145,13 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3' }}>Reconcile entry fills</div>
             <div style={{ fontSize: 12.5, color: '#a8b2be', marginTop: 4 }}>
-              Today's TWS executions, grouped back into the combos that were sent. Tick what belongs to which ticket, or enter a fill by hand if it filled another day — nothing is written until you confirm.
+              TWS executions (all it still holds — usually the current session), grouped back into the combos that were sent. Tick what belongs to which ticket, or enter a fill by hand if it filled another day — nothing is written until you confirm.
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#a8b2be', cursor: 'pointer', fontSize: 18 }}>×</button>
         </div>
 
-        {phase === 'pull' && <div style={{ color: '#a8b2be', fontSize: 13 }}>Asking TWS for today's executions…</div>}
+        {phase === 'pull' && <div style={{ color: '#a8b2be', fontSize: 13 }}>Asking TWS for its executions…</div>}
 
         {err && (
           <div style={{ background: '#2d0f11', border: '1px solid #6e2427', borderRadius: 8, padding: '8px 12px', color: '#f85149', fontSize: 12.5, marginBottom: 12 }}>
@@ -194,9 +204,38 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
                       </tr>
                       {!candidates.length && (
                         <tr><td colSpan={7} style={{ ...CELL, color: '#8b949e' }}>
-                          Nothing in today's executions matches these strikes.
+                          {execCount === 0
+                            ? 'TWS returned no executions — it keeps only the current session\'s, so an earlier fill has to come from the position or by hand.'
+                            : `Nothing in the ${execCount ?? ''} executions TWS returned matches these strikes.`}
                         </td></tr>
                       )}
+                      {(() => {
+                        // The position TWS holds at these strikes, offered as the fill when
+                        // no execution matches in full (Oct 2026).
+                        if (candidates.some(c => c.match === 'full') || manual[ticket.ticketRef]) return null;
+                        const pos = positionForTicket(ticket, twsStructures);
+                        if (!pos) return null;
+                        const q = Math.min(pos.qty, outstanding);
+                        return (
+                          <tr><td colSpan={7} style={{ ...CELL, paddingTop: 2 }}>
+                            <div data-testid="position-offer" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 10px',
+                              borderRadius: 8, background: '#0f2417', border: '1px solid #23863655', fontSize: 12.5, color: '#c9d1d9' }}>
+                              <span>
+                                TWS holds <b className="mono">{pos.qty}</b> at these strikes{pos.expiry ? ` (${pos.expiry})` : ''}, average{' '}
+                                <b className="mono">{pos.price.toFixed(2)} {pos.side === 'cr' ? 'credit' : 'debit'}</b>
+                                <span style={{ color: '#8b949e' }}> — IB's average cost, commission included</span>
+                              </span>
+                              <button type="button" data-testid="position-use" disabled={phase === 'writing' || !(q > 0)}
+                                onClick={() => setManual(m => ({ ...m, [ticket.ticketRef]: { qty: String(q), price: String(pos.price), side: pos.side,
+                                  date: new Date().toISOString().slice(0, 10), time: '', notes: 'From the TWS position (IB average cost, commission included)' } }))}
+                                style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid #238636', background: '#23863622', color: '#3fb950', fontSize: 12.5, cursor: 'pointer' }}>
+                                Use as the fill
+                              </button>
+                              <span style={{ flexBasis: '100%', fontSize: 12, color: '#8b949e' }}>Fills the entry below for you to check — set the date it filled; nothing is written until you confirm.</span>
+                            </div>
+                          </td></tr>
+                        );
+                      })()}
                       {/* By hand (Oct 2026): TWS only reports today's executions, so an
                           order that filled on another day, or away from TWS, is typed here. */}
                       <tr><td colSpan={7} style={{ ...CELL, paddingTop: 2 }}>
