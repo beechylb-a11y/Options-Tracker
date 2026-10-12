@@ -16,6 +16,23 @@ function erf(x) {
 }
 
 /** Engine legs ({ label, strike }) → [{ strike, right, qty }] with qty signed (+ long). */
+/**
+ * Why a ticket cannot be recorded as a verdict — or '' when it can.
+ *
+ * WHY THIS EXISTS. Capture was silent in both directions: a ticket that did not
+ * qualify said nothing, and a POST that failed was swallowed by a bare .catch. Three
+ * tickets were left open on 12 Oct expecting to be recorded and none were, and there
+ * was no way to find out why from inside the app. A reason string is the smallest
+ * thing that makes the gap visible. (Oct 2026.)
+ */
+export function whyNoShadow({ hardBlocker, isTimeSpread, legs, price }) {
+  if (hardBlocker) return `the ticket still has a blocker — ${hardBlocker}`;
+  if (isTimeSpread) return 'calendars and diagonals are not recorded: settling them needs a second expiry the loop cannot price';
+  if (!legs || !legs.length) return 'the ticket has no legs yet';
+  if (!(price > 0)) return 'there is no underlying price on the ticket';
+  return '';
+}
+
 export function shadowLegs(legs) {
   return (legs || []).map(l => {
     const lb = String(l.label || '').toLowerCase();

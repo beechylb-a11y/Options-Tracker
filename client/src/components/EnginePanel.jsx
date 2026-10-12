@@ -8,7 +8,7 @@ import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../en
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
-import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig } from '../engine/shadow';
+import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig, whyNoShadow } from '../engine/shadow';
 import { defaultHalfSpread } from '../engine/managed';
 import { api } from '../utils/api';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
@@ -1476,16 +1476,34 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const shadowRef = useRef({ key: null, timer: null });
   const shadowNow = shadowPayload();
   const shadowKey = shadowNow ? JSON.stringify([shadowNow.sig, shadowNow.category, shadowNow.verdict, shadowNow.entryNet, shadowNow.ev]) : null;
+  // What the verdict record is doing, so the ticket can say so. Three tickets were
+  // left open on 12 Oct expecting to be recorded, none were, and the app gave no way
+  // to find out why — the auto-capture below swallowed every error and a ticket that
+  // did not qualify said nothing at all. (Oct 2026.)
+  const [shadowSave, setShadowSave] = useState({ state: 'idle', at: null, msg: '' });
+  const shadowWhyNot = whyNoShadow({ hardBlocker: r.hardBlocker, isTimeSpread, legs: r.legs, price: fv(secBag, 'price') });
+  async function recordVerdict(manual) {
+    const v = shadowPayload({ decisionTs: new Date().toISOString() });
+    if (!v) { setShadowSave({ state: 'error', at: Date.now(), msg: shadowWhyNot || 'the ticket is not complete enough to record' }); return false; }
+    setShadowSave(s => ({ ...s, state: 'saving' }));
+    try {
+      await api.recordShadow(v);
+      shadowRef.current.key = shadowKey;
+      setShadowSave({ state: 'saved', at: Date.now(), msg: manual ? 'saved for review' : 'recorded' });
+      return true;
+    } catch (e) {
+      // NOT swallowed. A verdict that failed to record is the one thing the learning
+      // loop cannot recover later, so it is said out loud on the ticket.
+      shadowRef.current.key = null;
+      setShadowSave({ state: 'error', at: Date.now(), msg: e.message || 'the server did not accept it' });
+      return false;
+    }
+  }
   useEffect(() => {
     const st = shadowRef.current;
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (!shadowKey || shadowKey === st.key || !api.recordShadow) return;
-    st.timer = setTimeout(() => {
-      const v = shadowPayload();
-      if (!v) return;
-      st.key = shadowKey;
-      api.recordShadow(v).catch(() => { st.key = null; });   // best effort; never in the way of trading
-    }, 20000);
+    st.timer = setTimeout(() => { recordVerdict(false); }, 20000);
     return () => { if (st.timer) { clearTimeout(st.timer); st.timer = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shadowKey]);
@@ -2907,7 +2925,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         // the sheet to have said yes, not merely the absence of a no.
         if (ok !== true) return;
         if (exitPlan && exitPlan.rows?.length) savePlan(logTs, { ...exitPlan, openAtSave: r.contracts });
-        try { const sv = shadowPayload({ logged: true, decisionTs: logTs }); if (sv && api.recordShadow) api.recordShadow(sv).catch(() => {}); } catch (e) { /* best effort */ }
+        // Mark the verdict taken. Still best-effort — a failure here must never cost
+        // you the trade you just logged — but it is no longer silent: the ticket says
+        // so, and Save for review will write it on a second attempt.
+        try {
+          const sv = shadowPayload({ logged: true, decisionTs: logTs });
+          if (sv && api.recordShadow) api.recordShadow(sv)
+            .then(() => setShadowSave({ state: 'saved', at: Date.now(), msg: 'recorded as taken' }))
+            .catch(err => setShadowSave({ state: 'error', at: Date.now(), msg: err.message || 'the server did not accept it' }));
+        } catch (e) { /* best effort */ }
         setLoggedAt(Date.now());
         setLoggedSig(sigAtLog);
       })
@@ -3290,7 +3316,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <button onClick={() => setOverrideStrat(null)} style={EX_GHOST}>Clear override</button>
               )}
               <button onClick={handlePrint} style={EX_GHOST}>Print summary</button>
+              {/* Save for review (Oct 2026). The 20-second auto-capture is a
+                  convenience, not a guarantee: it needs the ticket to settle, the
+                  POST to succeed, and the page to stay put. This is the one that
+                  can be relied on, and it reports what happened either way. */}
+              <button data-testid="save-review" onClick={() => recordVerdict(true)}
+                disabled={!!shadowWhyNot || shadowSave.state === 'saving'}
+                title={shadowWhyNot
+                  ? `Cannot record this ticket: ${shadowWhyNot}`
+                  : 'Record this verdict now, so the learning loop judges it later whether or not you trade it'}
+                style={{ ...EX_GHOST, cursor: shadowWhyNot ? 'not-allowed' : 'pointer',
+                  opacity: shadowWhyNot ? 0.5 : 1,
+                  borderColor: shadowSave.state === 'saved' ? '#238636' : shadowSave.state === 'error' ? '#6e2427' : undefined,
+                  color: shadowSave.state === 'saved' ? '#3fb950' : shadowSave.state === 'error' ? '#f85149' : undefined }}>
+                {shadowSave.state === 'saving' ? 'Saving…'
+                  : shadowSave.state === 'saved' ? '✓ Saved for review'
+                  : 'Save for review'}
+              </button>
             </div>
+            {(shadowWhyNot || shadowSave.state === 'error') && (
+              <span data-testid="save-review-why" style={{ fontSize: 12, color: shadowSave.state === 'error' ? '#f85149' : '#8b949e' }}>
+                {shadowSave.state === 'error' ? `Not recorded — ${shadowSave.msg}` : `Not recorded: ${shadowWhyNot}`}
+              </span>
+            )}
           </div>
         {logNoteOpen && (
           <div style={{flexBasis:'100%',display:'flex',flexWrap:'wrap',gap:6,alignItems:'center',maxWidth:720}}>
