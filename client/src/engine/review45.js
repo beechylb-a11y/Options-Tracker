@@ -182,6 +182,9 @@ export function reviewOpen45(p) {
     progress: progress != null ? +progress.toFixed(2) : null,
     pctOfMax: pctOfMax != null ? +pctOfMax.toFixed(2) : null,
     attribution, pace, ivChange, shortVega, trendFit: fit, events, shorts,
+    // Needed by the strip to find the break-evens, and by the roll planner to say
+    // what a roll would do to them. (Oct 2026.)
+    ncd: isFinite(ncd) ? +ncd.toFixed(4) : null, isCredit,
     targetLabel: `${rule.target}% of ${rule.basis === 'entry' ? 'the debit' : 'max profit'}`,
   };
   // Stop guide: lose 100% of the entry premium (credit: buy back at 2×; debit: worth nothing).

@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { reviewOpen45, ymdOfIso } from '../engine/review45';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../utils/positionMatch';
+import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
 import { tradingSession, sessionDateOf } from '../engine/session';
 
 // ── Open 45DTE check-up (Oct 2026) ──
@@ -110,7 +111,50 @@ export default function Checkup45({ tickets, openPositions }) {
       }
       const review = reviewOpen45({ strategy: t.strategy, legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, now,
         trend: vs.trend || null, underlying: t.underlying });
-      out.push({ t, legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend, spot: now.spot });
+
+      // "Short to roughly 25-30 delta" left the reader to find the strike. When a roll
+      // is the action, ask the chain which LISTED strike that actually is, and quote
+      // the pair — including what buying the old one back costs, so the credit is the
+      // net and not the gross. Two extra calls, only for a ticket that needs them.
+      let roll = null;
+      if (review.action === 'roll-untested' && legs && now.spot > 0) {
+        try {
+          const sh = (review.metrics.shorts || []);
+          const testedS = sh.find(x => x.tested);
+          const oldShort = sh.find(x => !x.tested && x.untested);
+          const right = oldShort && oldShort.right;
+          const wing = right ? legs.filter(l => l.qty > 0 && l.right === right)
+            .sort((a, b) => Math.abs(a.strike - oldShort.strike) - Math.abs(b.strike - oldShort.strike))[0] : null;
+          const keepWidth = wing ? Math.abs(wing.strike - oldShort.strike) : 0;
+          const exp = oldShort ? oldShort.expiry : null;
+          if (right && keepWidth > 0 && exp) {
+            const ls = await getJson(bridgeUrl + '/api/listed-strikes?underlying=' + t.underlying + '&expiry=' + exp, 30000);
+            const listed = ls && !ls.error ? (right === 'C' ? ls.calls : ls.puts) : null;
+            const cands = rollCandidates({ listed, spot: now.spot, right, keepWidth, oldShort: oldShort.strike });
+            if (cands.length) {
+              // Candidates, their wings, and the pair being replaced — one request.
+              const want = [...new Set([...cands, ...cands.map(k => right === 'C' ? k + keepWidth : k - keepWidth),
+                oldShort.strike, wing.strike])].sort((a, b) => a - b);
+              const q = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + exp
+                + '&legs=' + encodeURIComponent(JSON.stringify(want.map(k => ({ strike: k, right, qty: 1, expiry: exp })))), 40000);
+              if (q && !q.error && Array.isArray(q.legs)) {
+                const mid = gl => (gl && gl.bid != null && gl.ask != null) ? (gl.bid + gl.ask) / 2 : (gl ? gl.optPrice : null);
+                const quoted = want.map((k, i) => {
+                  const gl = q.legs[i] && q.legs[i].greeks;
+                  return { strike: k, right, delta: gl ? gl.delta : null, bid: gl ? gl.bid : null, ask: gl ? gl.ask : null, optPrice: gl ? gl.optPrice : null, _mid: mid(gl) };
+                });
+                const oS = quoted.find(x => x.strike === oldShort.strike), oL = quoted.find(x => x.strike === wing.strike);
+                const closeOld = (oS && oS._mid != null && oL && oL._mid != null) ? +(oS._mid - oL._mid).toFixed(2) : null;
+                roll = planRoll({ quoted: quoted.filter(x => cands.includes(x.strike) || want.includes(x.strike)),
+                  keepWidth, right, spot: now.spot, ncd: review.metrics.ncd,
+                  oldShort: oldShort.strike, oldLong: wing.strike,
+                  testedShort: testedS ? testedS.strike : null, closeOld });
+              }
+            }
+          }
+        } catch (e) { roll = null; }   // a roll suggestion is a convenience, never a blocker
+      }
+      out.push({ t, legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend, spot: now.spot, roll });
     }
     setRows({ list: out, posErr });
     setRanAt(new Date());
@@ -153,7 +197,7 @@ export default function Checkup45({ tickets, openPositions }) {
 
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
-  const { t, review: rv, legs, source, note, quoteErr, trend, spot } = row;
+  const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll } = row;
   const m = rv.metrics || {};
   const tone = TONE[rv.tone] || TONE.grey;
   const label = ACTION_LABEL[rv.action] || rv.action;
@@ -175,7 +219,8 @@ function CheckupCard({ row }) {
           <Attribution a={m.attribution} />
         </div>
       )}
-      {rv.action !== 'unknown' && legs && spot > 0 && <StrikeStrip legs={legs} spot={spot} shorts={m.shorts || []} />}
+      {rv.action !== 'unknown' && legs && spot > 0 && <StrikeStrip legs={legs} spot={spot} shorts={m.shorts || []} ncd={m.ncd} />}
+      {roll && <RollPlan roll={roll} />}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
         {m.dte != null && <Chip label="DTE" val={m.dte} tone={m.daysToClose <= 5 ? 'amber' : null}
@@ -288,31 +333,88 @@ function Attribution({ a }) {
 }
 
 // Strikes against spot: shorts red (amber when pressured, filled when tested), longs blue.
-function StrikeStrip({ legs, spot, shorts }) {
-  const ks = legs.map(l => l.strike).concat(spot);
-  const lo = Math.min(...ks), hi = Math.max(...ks);
-  const pad = Math.max((hi - lo) * 0.12, spot * 0.004);
-  const a = lo - pad, b = hi + pad, X = v => ((v - a) / (b - a)) * 100;
+// The roll the card recommends, as a pair of strikes and a price — and what it
+// costs. A roll described only as "for extra credit" reads as free money. It is a
+// trade: cushion on the side under pressure, bought with room on the side that was
+// winning. Both halves, or neither. (Oct 2026.)
+function RollPlan({ roll }) {
+  const r = roll;
+  const side = r.right === 'C' ? 'call' : 'put';
+  const good = r.worthIt === true;
+  return (
+    <div data-testid="roll-plan" style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8,
+      background: '#161b22', border: '1px solid #30363d' }}>
+      <div style={{ fontSize: 13, color: '#e6edf3' }}>
+        Roll the {side} spread to{' '}
+        <b className="mono">{r.shortStrike}/{r.longStrike}</b>{' '}
+        <span className="mono" style={{ color: '#8b949e' }}>({Math.round(r.delta * 100)}Δ)</span>
+        {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? '#3fb950' : '#f85149' }}>
+          {r.net >= 0 ? '+' : ''}{r.net.toFixed(2)}</b></>}
+        {r.closeCost != null && <span style={{ color: '#8b949e' }}> (net of {r.closeCost.toFixed(2)} to close the old pair)</span>}
+      </div>
+      {r.cushionGained != null && r.roomGiven != null && (
+        <div style={{ marginTop: 6, fontSize: 12.5, color: good ? '#3fb950' : '#d29922' }}>
+          Buys <b className="mono">{r.cushionGained.toFixed(2)}</b> of cushion on the tested side;
+          gives up <b className="mono">{r.roomGiven.toFixed(2)}</b> on this one
+          {r.breakevenBefore != null && <span style={{ color: '#8b949e' }} className="mono">
+            {' '}(break-even {Math.round(r.breakevenBefore)} → {Math.round(r.breakevenAfter)})</span>}.
+        </div>
+      )}
+      {r.distanceToNewShort != null && (
+        <div style={{ marginTop: 4, fontSize: 12, color: '#8b949e' }}>
+          The new short sits <span className="mono">{r.distanceToNewShort.toFixed(0)}</span> from price.
+          {!good && ' Worth it only if you think the move continues — it is not free credit.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StrikeStrip({ legs, spot, shorts, ncd }) {
+  // Strikes alone never said where price sat among them, nor where the trade stops
+  // making money. Both come from one pure geometry now (engine/positionPlan), so the
+  // band and the markers cannot drift apart. (Oct 2026.)
   const sh = k => shorts.find(s => s.strike === k.strike && s.right === k.right);
+  const tested = (shorts || []).find(s => s.tested);
+  const strip = positionStrip({ legs, spot, ncd, testedStrike: tested ? tested.strike : null });
   const uniq = [];
   legs.forEach(l => { if (!uniq.some(u => u.strike === l.strike && u.right === l.right)) uniq.push(l); });
+  if (!strip) {
+    return <div data-testid="strike-strip" style={{ fontSize: 12, color: '#8b949e', marginTop: 12 }}>
+      Entry price not logged — no break-even band.</div>;
+  }
+  const X = v => strip.at(v) * 100;
   return (
-    <div data-testid="strike-strip" style={{ position: 'relative', height: 40, marginTop: 12 }}>
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 18, height: 2, background: '#30363d' }} />
+    <div data-testid="strike-strip" style={{ position: 'relative', height: 56, marginTop: 14 }}>
+      {strip.zone && (
+        <div title={`Break-even ${strip.zone.from} to ${strip.zone.to} — profitable at expiry between them`}
+          style={{ position: 'absolute', left: `${strip.zone.x0 * 100}%`, width: `${(strip.zone.x1 - strip.zone.x0) * 100}%`,
+            top: 15, height: 14, background: 'rgba(63,185,80,0.14)', border: '1px solid rgba(63,185,80,0.45)', borderRadius: 3 }} />
+      )}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 21, height: 2, background: '#30363d' }} />
+      {strip.breakevens.map((b, i) => (
+        <div key={'be' + i} title={`Break-even ${b.value}`}
+          style={{ position: 'absolute', left: `${b.x * 100}%`, top: 15, transform: 'translateX(-50%)' }}>
+          <div style={{ width: 1, height: 14, background: '#3fb950', opacity: 0.85 }} />
+          <div className="mono" style={{ fontSize: 10, color: '#3fb950', position: 'absolute', top: 15,
+            left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{Math.round(b.value)}</div>
+        </div>
+      ))}
       {uniq.map((l, i) => {
-        const s = sh(l);
-        const c = l.qty < 0 ? (s && s.tested ? '#f85149' : s && s.pressured ? '#d29922' : '#f0883e') : '#58a6ff';
+        const s2 = sh(l);
+        const c = l.qty < 0 ? (s2 && s2.tested ? '#f85149' : s2 && s2.pressured ? '#d29922' : '#f0883e') : '#58a6ff';
         return (
-          <div key={i} style={{ position: 'absolute', left: `${X(l.strike)}%`, top: 8, transform: 'translateX(-50%)', textAlign: 'center' }}
-            title={`${l.qty > 0 ? '+' : ''}${l.qty} ${l.strike}${l.right} ${l.expiry}${s && s.absDelta != null ? ` · ${Math.round(s.absDelta * 100)}Δ` : ''}`}>
-            <div style={{ width: 3, height: 22, margin: '0 auto', background: c, borderRadius: 1, opacity: s && s.tested ? 1 : 0.85 }} />
-            <div className="mono" style={{ fontSize: 10.5, color: c, whiteSpace: 'nowrap' }}>{l.strike}{l.right}
-              {(() => { const n = new Set(legs.filter(x => x.strike === l.strike && x.right === l.right).map(x => x.expiry)).size; return n > 1 ? ` · ${n} expiries` : ''; })()}</div>
+          <div key={i} style={{ position: 'absolute', left: `${X(l.strike)}%`, top: 9, transform: 'translateX(-50%)', textAlign: 'center' }}
+            title={`${l.qty > 0 ? '+' : ''}${l.qty} ${l.strike}${l.right} ${l.expiry}${s2 && s2.absDelta != null ? ` · ${Math.round(s2.absDelta * 100)}\u0394` : ''}${s2 && s2.tested ? ' · tested' : ''}`}>
+            <div style={{ width: 3, height: 24, margin: '0 auto', background: c, borderRadius: 1, opacity: s2 && s2.tested ? 1 : 0.85 }} />
+            <div className="mono" style={{ fontSize: 10.5, color: c, whiteSpace: 'nowrap' }}>{l.strike}{l.right}</div>
           </div>
         );
       })}
-      <div style={{ position: 'absolute', left: `${X(spot)}%`, top: 12, transform: 'translateX(-50%)' }} title={`Spot ${spot}`}>
-        <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#e6edf3', border: '2px solid #0d1117' }} />
+      <div style={{ position: 'absolute', left: `${strip.spot.x * 100}%`, top: 15, transform: 'translateX(-50%)' }}
+        title={`Spot ${spot} — ${strip.spot.inProfit ? 'inside' : 'outside'} the break-evens`}>
+        <div style={{ width: 12, height: 12, borderRadius: '50%',
+          background: strip.spot.inProfit ? '#e6edf3' : '#f85149', border: '2px solid #0d1117' }} />
         <div className="mono" style={{ fontSize: 10.5, color: '#e6edf3', position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{spot}</div>
       </div>
     </div>
