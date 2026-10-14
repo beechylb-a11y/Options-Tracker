@@ -1437,7 +1437,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const legs = shadowLegs(r.legs);
     const price = fv(secBag, 'price');
     if (!legs.length || !(price > 0)) return null;
-    const expiry = is0 ? tradingSession().yyyymmdd : (singleExp || deriveExpiryYYYYMMDD());
+    // The session the ticket was BUILT for, not the one it happens to be saved in.
+    // Press Save after 16:00 on a Monday and tradingSession() rolls to Tuesday: the
+    // row then claims a Tuesday session and a Tuesday expiry for a trade that was
+    // searched at 11:35 Monday and would have closed at 15:45 Monday, so settlement
+    // reads the wrong day's close and scores a trade that never existed. The print
+    // summary already dates itself this way; capture did not. (Oct 2026.)
+    const ses = ticketSession({ loggedAt, createdAt, pricedAt: dataFresh && (dataFresh.pulledAt || dataFresh.asOf) });
+    const expiry = is0 ? ses.yyyymmdd : (singleExp || deriveExpiryYYYYMMDD());
     const typed = signedNet(ticketNet, cashType);
     // Half the combo spread (step 3): the live combo quote when greeks were fetched,
     // otherwise a per-leg estimate. A model-priced entry pays it on the way in; a
@@ -1450,7 +1457,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const entryNet = Number.isFinite(typed) && typed !== 0 ? typed
       : fair != null ? Math.round((fair - halfSpread) * 100) / 100 : null;
     const strategy = effectiveStrat || r.legStrat || '';
-    const ses = tradingSession();
     const v = {
       account: accountConfig?.id || '', engine: is0 ? '0DTE' : '45DTE', sessionDate: ses.dateISO,
       underlying: secBag.underlying, strategy, legs, expiry, spot: price,
@@ -1465,9 +1471,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       pMaxLoss: r.pMaxLoss != null ? +r.pMaxLoss.toFixed(4) : null,
       moveCost: r.greeks && Number.isFinite(r.greeks.gMag) && is0 ? +r.greeks.gMag.toFixed(3) : null,
       inputs: is0
-        ? { em: fv(i0, 'em'), sdLeft: r.emRemaining || null, emSource: i0.emSource || null, vix: fv(i0, 'vix'), vix1d: fv(i0, 'vix1d'), atr: fv(i0, 'atr'), hours: ses.hoursToBell ?? null,
+        ? { em: fv(i0, 'em'), sdLeft: r.emRemaining || null, emSource: i0.emSource || null, vix: fv(i0, 'vix'), vix1d: fv(i0, 'vix1d'), atr: fv(i0, 'atr'),
+            // The hours the VERDICT was computed with — the engine reads this from the
+            // ticket, not from the clock. Recording the clock's figure instead stored a
+            // horizon the scores were never calculated against.
+            hours: fv(i0, 'hours') || null, hoursToBell: ses.hoursToBell ?? null,
+            sessionBasis: ses.basis,
             delta: fv(i0, 'delta'), gamma: fv(i0, 'gamma'), theta: fv(i0, 'theta'), regime: r.regime || null, dir: r.dirLabel || null }
-        : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null },
+        : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null, sessionBasis: ses.basis },
       decisionTs: extra.decisionTs || null,
     };
     v.sig = shadowSig({ sessionDate: v.sessionDate, engine: v.engine, underlying: v.underlying, strategy, legs, expiry, account: v.account });
