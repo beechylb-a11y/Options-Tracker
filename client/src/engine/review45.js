@@ -81,6 +81,23 @@ export function reviewOpen45(p) {
     out.action = 'unknown'; out.headline = 'Legs not found — can’t check this one';
     return out;
   }
+  // No underlying price is not a small gap: every short is measured by how far price
+  // sits from it, and `toward` for a put is (spot − strike). With spot missing that
+  // is −strike, so `itm` is true, so EVERY short put reads in the money and tested,
+  // and the card recommends a roll off nothing. That is exactly what happened to the
+  // QQQ 699/709/805/815 condor on 14 Oct: the 709P was called tested at 23Δ when the
+  // tested mark is 30Δ, because the ITM branch had fired on a spot of zero.
+  //
+  // So it refuses rather than guesses. The strike strip already required a real spot
+  // and silently drew nothing; this says why, in the one place that can. (Oct 2026.)
+  if (!(now.spot > 0)) {
+    out.action = 'unknown';
+    out.headline = 'No underlying price — can’t check this one';
+    out.warnings.push('The bridge returned no price for ' + underlying
+      + ', so nothing can be measured against the strikes. Every short would read in the money.'
+      + ' Check the bridge is connected and the vol surface pulled.');
+    return out;
+  }
 
   // ── Time ──
   const expiries = [...new Set(legs.map(l => l.expiry))].sort();

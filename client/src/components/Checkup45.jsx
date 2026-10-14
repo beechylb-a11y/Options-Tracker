@@ -91,7 +91,10 @@ export default function Checkup45({ tickets, openPositions }) {
       if (!legs) { legs = legsFromNotes(t.notes); source = legs ? 'ticket notes' : null; }
       const vs = surf[t.underlying] || {};
       let now = { todayYmd, spot: num(vs.spot), iv: num(vs.iv) };
-      let quoteErr = null;
+      // A vol-surface failure was swallowed here: spot came back undefined, every
+      // short read in the money, and the card recommended a roll with no price
+      // behind it. Say it instead. (Oct 2026.)
+      let quoteErr = vs.error ? `vol surface: ${vs.error}` : null;
       if (legs) {
         const nearExp = legs.map(l => l.expiry).sort()[0];
         const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
