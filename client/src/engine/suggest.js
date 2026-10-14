@@ -67,6 +67,70 @@ export function suggestions(rows, { outcome = 'managed' } = {}) {
       evidence: `No other level beat it on the latest third of ${shortG.length} short-gamma verdicts.` });
   } else waiting.push({ what: 'Gamma move-cost block level', n: shortG.length });
 
+  // 2b. WHICH RULER the gamma block should measure against (Oct 2026).
+  //
+  // The block above tests the LEVEL. This tests the measure itself, because the two
+  // SPX and IWM tickets of 12 Oct suggested the level may not be the problem.
+  //
+  // move cost is ½|Γ|σ²/|Θ| and σ is ATR ÷ 1.6 — a typical FULL day's range, drawn
+  // from a 14-session average that includes overnight gaps. A 0DTE opened at 11:35
+  // and closed at 15:45 is never exposed to that. On those two tickets ATR ran 2.7×
+  // and 2.1× the market's own price for the remaining session, and both blocked at
+  // 5.79 and 7.14 against a limit of 2.0; on the straddle's ruler they read 0.81 and
+  // 1.66, which is "low" and a warn.
+  //
+  // Which ruler actually separates winners from losers is an empirical question and
+  // is left to the data. Three measures are fitted and tested the same way, from
+  // fields already stored, so nothing new has to be captured:
+  //
+  //   atr       as recorded — a full day's realised range
+  //   horizon   the same, scaled to the hours the position was exposed for. Cost
+  //             goes as σ², and σ as √t, so the scale factor is linear in time.
+  //   implied   ½|Γ|·sdLeft²/|Θ| — the market's own remaining-session move
+  //
+  // A caveat the winner has to be read against: the measure is meant to compare
+  // REALISED against IMPLIED, so `implied` puts implied on both sides and is biased
+  // toward reading ~1 whatever the market does. If it wins it may be winning by
+  // being uninformative, and `horizon` is the safer change of the two.
+  const FULL_SESSION_TO_BELL = 6.5;
+  const rulerOf = {
+    atr: r => Number(r.move_cost),
+    horizon: r => {
+      const h = Number((r.inputs || {}).hoursToBell ?? (r.inputs || {}).hours);
+      const mc = Number(r.move_cost);
+      return (Number.isFinite(h) && h > 0 && Number.isFinite(mc))
+        ? mc * Math.min(1, h / FULL_SESSION_TO_BELL) : null;
+    },
+    implied: r => {
+      const i = r.inputs || {};
+      const g = Math.abs(Number(i.gamma)), th = Math.abs(Number(i.theta)), sd = Number(i.sdLeft);
+      return (g > 0 && th > 0 && sd > 0) ? 0.5 * g * sd * sd / th : null;
+    },
+  };
+  const LEVELS = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 99];
+  const rulerRuns = [];
+  for (const [name, f] of Object.entries(rulerOf)) {
+    const rows = shortG.filter(o => Number.isFinite(f(o.row)));
+    if (rows.length < SUGGEST_N) continue;
+    const t = thresholdTest(rows, { candidates: LEVELS, current: MOVE_COST_BANDS.block,
+      allow: (r, th) => f(r) <= th });
+    if (t) rulerRuns.push({ name, n: rows.length, t });
+  }
+  if (rulerRuns.length >= 2) {
+    const best = rulerRuns.reduce((a, b) => (b.t.test.best.R > a.t.test.best.R ? b : a));
+    const atrRun = rulerRuns.find(x => x.name === 'atr');
+    const line = x => `${x.name} at ${x.t.best}: ${fmtR(x.t.test.best.R)} over ${x.t.test.best.n}`;
+    if (best.name !== 'atr' && atrRun && best.t.test.best.R > atrRun.t.test.best.R + 1e-9) {
+      out.push({ id: 'gamma-ruler', tone: 'change',
+        title: `Measure gamma cost against the ${best.name === 'horizon' ? 'hours the trade is actually exposed' : "market's remaining-session move"}, not a full day's ATR`,
+        evidence: `On the latest third, ${rulerRuns.map(line).join('; ')}. `
+          + (best.name === 'implied'
+            ? 'Read with care: this ruler puts implied on both sides of the ratio, so it may be winning by saying less.'
+            : 'Same measure, scaled to the window the position is open for.') });
+    } else out.push({ id: 'gamma-ruler', tone: 'keep', title: "Keep measuring gamma cost against ATR",
+      evidence: `No other ruler beat it out of sample — ${rulerRuns.map(line).join('; ')}.` });
+  } else waiting.push({ what: 'Which ruler the gamma block uses', n: shortG.length });
+
   // 3. Minimum edge score.
   const scored = settled.filter(o => Number.isFinite(Number(o.row.edge_score)));
   if (scored.length >= SUGGEST_N) {
