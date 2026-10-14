@@ -1,11 +1,17 @@
 /* Where the vol-surface route gets a price, and what it says when it cannot get one.
 
-   QQQ returned no price on 14 Oct. The route asks TWS for market data type 2 (frozen)
-   so model greeks keep resolving after the close, but frozen returns nothing at all for
-   an instrument the account cannot stream — and QQQ/SPY/IWM are STK/SMART, a separate
-   entitlement from the OPRA options bundle. /api/market-data had already met this and
-   falls back to the last bar; /api/vol-surface pulled a year of daily bars in parallel
-   and used the last close for nothing but the trend.
+   QQQ returned no price on 14 Oct. The bridge log settled why, and it was not the first
+   guess (a missing entitlement). The SAME QQQ/STK contract answers under one market data
+   type and not the other:
+
+     type 3 (/api/market-data)   snap QQQ/STK: bid=753.87 ask=753.91 ... delayed=true
+     type 2 (/api/vol-surface)   snap QQQ/STK (timeout): bid=0 ask=0 last=0 close=0
+     type 2, options             snap QQQ/OPT: bid=1 ask=1.01 ... delayed=false
+
+   The account holds QQQ equity DELAYED and the options real-time on OPRA. Frozen (2)
+   serves the last real-time snapshot, so for a delayed-only line it has nothing to
+   serve and no error to raise. reqMarketDataType is connection-level, so vol-surface's
+   choice of frozen — right for the greeks — governed its cash snapshot too.
 
    A spot of zero is not a small gap: `toward` for a put is (spot − strike), so it put
    every short put in the money and turned the check-up upside down. */
@@ -65,13 +71,23 @@ describe('resolveSpot — the QQQ outage', () => {
 describe('resolveSpot — naming the cause', () => {
   const noBars = extra => resolveSpot({ daily: [], dailySource: 'QQQ', underlying: 'QQQ', secType: 'STK', ...extra });
 
-  it('distinguishes a missing entitlement from a dead feed', () => {
-    expect(noBars({ snap: { notSubscribed: true, noTicks: true } }).note).toMatch(/entitlement/i);
-    expect(noBars({ snap: { noTicks: true } }).note).toMatch(/data farms|too slow/i);
+  it('blames frozen-on-a-delayed-line when that is what was asked for', () => {
+    // The 14 Oct case. No error code was raised, because nothing was unsubscribed —
+    // which is exactly why the first explanation (a missing entitlement) was wrong.
+    const r = noBars({ snap: { noTicks: true }, requestedType: 2 });
+    expect(r.note).toMatch(/frozen/i);
+    expect(r.note).toMatch(/delayed-only/i);
+    expect(r.note).not.toMatch(/data farms/i);
   });
 
-  it('tells the reader a bridge restart will not fix the TWS end', () => {
-    expect(noBars({ snap: { noTicks: true } }).note).toMatch(/restarting the bridge will not fix/i);
+  it('blames the feed only once frozen has been ruled out', () => {
+    const r = noBars({ snap: { noTicks: true }, requestedType: 3 });
+    expect(r.note).toMatch(/data farms|too slow/i);
+    expect(r.note).toMatch(/restarting the bridge will not fix/i);
+  });
+
+  it('still reports a real missing entitlement ahead of either', () => {
+    expect(noBars({ snap: { notSubscribed: true, noTicks: true }, requestedType: 2 }).note).toMatch(/entitlement/i);
   });
 
   it('still returns a note when there is nothing to go on at all', () => {

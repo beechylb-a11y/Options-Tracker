@@ -1272,8 +1272,10 @@ app.get('/api/atm-straddle', async (req, res) => {
   try {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
-    // Frozen(2) for options: real-time via OPRA in RTH, last snapshot after hours.
-    try { ib.reqMarketDataType(2); } catch (e) {}
+    // Delayed(3) for the cash snapshot, frozen(2) for the option legs — the same split
+    // as /api/vol-surface, and for the same reason. The note below about SPY/QQQ/IWM
+    // returning nothing was this bug seen from outside and worked around with ?spot=.
+    try { ib.reqMarketDataType(3); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     const expiry = req.query.expiry; // YYYYMMDD
     // Straddle -> 1 SD. Black-Scholes ATM identity: straddle ~= 0.7979 * S * sigma * sqrt(T),
@@ -1297,6 +1299,8 @@ app.get('/api/atm-straddle', async (req, res) => {
         return res.status(502).json({ error: 'Could not read spot price' });
       }
     }
+    // Cash snapshot done; the legs below want frozen.
+    try { ib.reqMarketDataType(2); } catch (e) {}
 
     // 2) Nearest strike. Strike increments differ by product.
     const inc = (underlying === 'SPX' || underlying === 'NDX') ? 5
@@ -1526,7 +1530,12 @@ app.get('/api/vol-surface', async (req, res) => {
   try {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
-    try { ib.reqMarketDataType(2); } catch (e) {}
+    // Delayed(3) for the cash and VIX snapshots, frozen(2) for the option pulls below.
+    // reqMarketDataType is connection-level, so one setting used to govern both halves
+    // of this route and the two halves want opposite things: frozen keeps model greeks
+    // resolving after the close, and frozen returns nothing at all for an instrument
+    // held delayed-only — which is every US ETF line on this account. See resolveSpot.
+    try { ib.reqMarketDataType(3); } catch (e) {}
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     if (!contractOf(underlying) || ['VIX', 'VIX1D', 'ES'].includes(underlying)) {
       return res.status(400).json({ error: `Vol surface not supported for ${underlying}` });
@@ -1549,9 +1558,13 @@ app.get('/api/vol-surface', async (req, res) => {
     const snap = caller > 0 ? null : await getSnapshot(uc);
     const h = caller > 0 || (snap && (snap.mid || snap.last || snap.prevClose)) ? null : await histP;
     const sp = resolveSpot({ caller, snap, daily: h && h.daily, dailySource: h && h.dailySource,
-      underlying, secType: uc && uc.secType });
+      underlying, secType: uc && uc.secType, requestedType: 3 });
     const spot = sp.spot, spotSource = sp.source, spotAsOf = sp.asOf;
     if (sp.note) notes.push(sp.note);
+
+    // Cash snapshot is in; the option lines want frozen from here on. Subscriptions
+    // already open keep the type they were opened with, so this only affects what follows.
+    try { ib.reqMarketDataType(2); } catch (e) {}
 
     // 2) Expiries off the real chain; Friday-nearest if the chain lookup fails.
     const chain = await getOptionChain(underlying).catch(() => null);

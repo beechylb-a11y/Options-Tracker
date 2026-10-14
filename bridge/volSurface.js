@@ -129,21 +129,37 @@ export const avgIV = (a, b) => (a > 0 && b > 0) ? (a + b) / 2 : (a > 0 ? a : b >
 // silence: no IVs, no strike strip, and — because `toward` for a put is (spot − strike)
 // — every short put read in the money off a spot of zero.
 //
-// The streaming snapshot is not a dependable source of a price on the vol-surface
-// route. That route asks TWS for market data type 2 (frozen), because frozen is what
-// keeps model greeks resolving after the close; but frozen returns NOTHING for an
-// instrument the account cannot stream, and QQQ, SPY and IWM are STK/SMART — a
-// different entitlement from the OPRA options bundle the engine relies on.
-// /api/market-data already met this and fixed it by falling back to the last bar.
+// THE CAUSE, from the bridge log of 14 Oct — not the one first guessed here. The same
+// QQQ/STK contract behaves differently depending on which market data type the ROUTE
+// asked for, and the two routes ask for different ones:
 //
+//   type 3 (/api/market-data)    snap QQQ/STK: bid=753.87 ask=753.91 ... delayed=true
+//   type 2 (/api/vol-surface)    snap QQQ/STK (timeout): bid=0 ask=0 last=0 close=0
+//   type 2, options              snap QQQ/OPT: bid=1 ask=1.01 ... delayed=false
+//
+// So the account is not missing QQQ equity data; it holds it DELAYED only, while the
+// options come through real-time on OPRA. Frozen (2) serves the last REAL-TIME
+// snapshot — and there is no real-time QQQ equity stream for it to hold the last of,
+// so the request is accepted and nothing ever arrives. Frozen data has no QQQ to
+// freeze. The first guess here was a missing entitlement, which would have raised one
+// of the not-subscribed error codes; none were raised, because nothing is unsubscribed.
+//
+// reqMarketDataType is a CONNECTION-level setting, not a per-request one, which is how
+// the two routes came to disagree: vol-surface sets 2 so model greeks keep resolving
+// after the close (delayed only ticks during RTH), and that setting then also governed
+// its underlying snapshot, which needs the opposite. The routes now step the type down
+// for the underlying snapshot and back up before the option pulls.
+//
+// This fallback stays as the layer beneath that, because a price can still fail to
+// arrive — a slow link, or TWS having lost its own connection to the IBKR data farms.
 // The vol-surface route pulls a year of daily bars in parallel for the trend read and
-// then used the last close for nothing else. Historical data comes down a different
-// IBKR pathway from streaming quotes, so it survives a feed this route cannot use.
+// used the last close for nothing else. Historical data comes down a different IBKR
+// pathway from streaming quotes, so it survives some failures the quote feed does not.
 // A stale price that says it is stale beats a zero that passes for a price.
 //
 // Returns { spot, source, asOf, note }. `spot` is 0 when nothing can be had, and
 // `note` then names the cause instead of leaving the caller to infer one.
-export function resolveSpot({ caller, snap, daily, dailySource, underlying, secType } = {}) {
+export function resolveSpot({ caller, snap, daily, dailySource, underlying, secType, requestedType } = {}) {
   const n = v => { const x = parseFloat(v); return Number.isFinite(x) && x > 0 ? x : 0; };
   const none = { spot: 0, source: null, asOf: null, note: null };
 
@@ -170,8 +186,15 @@ export function resolveSpot({ caller, snap, daily, dailySource, underlying, secT
   if (s.notSubscribed) return { ...none,
     note: `TWS reports no market-data entitlement for ${underlying}${secType ? ` (${secType})` : ''} — `
       + 'an options subscription does not cover the underlying quote.' };
+  // Frozen asked of a delayed-only instrument is the known way to get silence with no
+  // error, so it is named FIRST. Nothing was unsubscribed and no code was raised, which
+  // is exactly why this took a log to find rather than reasoning.
+  if (s.noTicks && requestedType === 2) return { ...none,
+    note: `No ticks for ${underlying}${secType ? ` (${secType})` : ''} under frozen market data. `
+      + 'Frozen serves the last real-time snapshot, so it returns nothing for an instrument held '
+      + 'delayed-only. The route should step down to delayed (3) for the underlying snapshot.' };
   if (s.noTicks) return { ...none,
-    note: `TWS accepted the ${underlying} quote request and sent no ticks — usually TWS has lost its `
+    note: `TWS accepted the ${underlying} quote request and sent no ticks — either TWS has lost its `
       + 'connection to the IBKR data farms, or the link is too slow to answer in time. Check the '
       + 'data-farm indicator in TWS; restarting the bridge will not fix that end.' };
   return { ...none, note: `No price for ${underlying} from any source.` };
