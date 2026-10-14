@@ -10,7 +10,7 @@ import net from 'net';
 import { computeOvernight } from './esOvernight.js';
 import { parseLegs, composeCombo, summarise, geometry, legKey, spreadProfile } from './replay.js';
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
-  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV } from './volSurface.js';
+  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
 
 const app = express();
@@ -178,12 +178,20 @@ function connectTWS() {
   });
 }
 
+// IBKR's "you are not entitled to this feed" family. A streaming request with no
+// entitlement is NOT an error to the API: reqMktData is accepted, one of these codes
+// comes back on the error channel, and then no tick ever arrives. Without listening
+// for them a snapshot that returns nothing is indistinguishable from a snapshot that
+// returned nothing because the market is quiet. (Oct 2026.)
+const NOT_SUBSCRIBED = [10089, 10090, 10091, 10167, 10168, 354, 10197];
+
 // ── Request market data snapshot ──
 function getSnapshot(contract) {
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
     const data = {};
     let resolved = false;
+    let notSubscribed = false;
     // Data-quality tracking: delayed field IDs (66-76) indicate TWS is serving
     // delayed (typically ~10 min lagged) data because there's no real-time
     // subscription for this instrument. marketDataType event confirms it.
@@ -215,40 +223,48 @@ function getSnapshot(contract) {
     };
     let graceTimer = null;
 
-    const onTickEnd = (id, early) => {
-      if (id !== reqId || resolved) return;
+    const onErr = (err, code, id) => {
+      if (id !== reqId) return;
+      if (NOT_SUBSCRIBED.includes(code)) notSubscribed = true;
+    };
+
+    // One settle path, so the flags a caller reads cannot differ between finishing
+    // early and timing out — they used to be written out twice.
+    const settle = (why) => {
+      if (resolved) return;
       resolved = true;
       if (graceTimer) clearTimeout(graceTimer);
-      if (early) { try { ib.cancelMktData(reqId); } catch (e) {} }
+      if (why !== 'end') { try { ib.cancelMktData(reqId); } catch (e) {} }
       ib.removeListener(EventName.tickPrice, onTick);
       ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
       ib.removeListener(EventName.marketDataType, onMdType);
+      ib.removeListener(EventName.error, onErr);
       data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
       data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
       data.frozen = mdType === 2 || mdType === 4;
-      console.log(`[BRIDGE] snap ${contract.symbol}/${contract.secType}: bid=${data.bid||0} ask=${data.ask||0} last=${data.last||0} close=${data.prevClose||0} delayed=${data.delayed}`);
+      data.mdType = mdType;
+      data.notSubscribed = notSubscribed;
+      // No tick of any kind. Say so here, because every caller downstream only sees a
+      // zero and has to guess between "closed", "not entitled" and "link too slow".
+      data.noTicks = !(data.bid || data.ask || data.last || data.prevClose);
+      console.log(`[BRIDGE] snap ${contract.symbol}/${contract.secType} (${why}): bid=${data.bid||0} ask=${data.ask||0}`
+        + ` last=${data.last||0} close=${data.prevClose||0} delayed=${data.delayed} mdType=${mdType}`
+        + (notSubscribed ? ' NOT-SUBSCRIBED' : '') + (data.noTicks ? ' NO-TICKS' : ''));
       resolve(data);
     };
 
+    const onTickEnd = (id, early) => {
+      if (id !== reqId) return;
+      settle(early ? 'grace' : 'end');
+    };
+
+    ib.on(EventName.error, onErr);
     ib.on(EventName.tickPrice, onTick);
     ib.on(EventName.tickSnapshotEnd, onTickEnd);
     ib.on(EventName.marketDataType, onMdType);
     ib.reqMktData(reqId, contract, '', false, false);
 
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        ib.removeListener(EventName.tickPrice, onTick);
-        ib.removeListener(EventName.tickSnapshotEnd, onTickEnd);
-        ib.removeListener(EventName.marketDataType, onMdType);
-        ib.cancelMktData(reqId);
-        data.mid = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
-        data.delayed = sawDelayedField || mdType === 3 || mdType === 4;
-        data.frozen = mdType === 2 || mdType === 4;
-        console.log(`[BRIDGE] snap ${contract.symbol}/${contract.secType} (timeout): bid=${data.bid||0} ask=${data.ask||0} last=${data.last||0} close=${data.prevClose||0} delayed=${data.delayed}`);
-        resolve(data);
-      }
-    }, 6000);
+    setTimeout(() => settle('timeout'), 6000);
   });
 }
 
@@ -332,7 +348,7 @@ function getOptionGreeks(contract) {
     // Market-data-not-subscribed errors (scoped to THIS request).
     const onErr = (err, code, id) => {
       if (id !== reqId) return;
-      if ([10089, 10090, 10091, 10167, 10168, 354, 10197].includes(code)) notSubscribed = true;
+      if (NOT_SUBSCRIBED.includes(code)) notSubscribed = true;
     };
     ib.on(EventName.error, onErr);
     ib.on(EventName.tickOptionComputation, onGreeks);
@@ -1525,12 +1541,17 @@ app.get('/api/vol-surface', async (req, res) => {
     const vixP = Promise.all([getSnapshot(contracts.VIX).catch(() => null), getSnapshot(contracts.VIX3M).catch(() => null)])
       .then(([a, b]) => ({ vix: lvl(a), vix3m: lvl(b) }));
 
-    // 1) Spot
-    let spot = Number(req.query.spot) || 0;
-    if (!(spot > 0)) {
-      const s = await getSnapshot(contractOf(underlying));
-      spot = s.mid || s.last || s.prevClose || 0;
-    }
+    // 1) Spot — see resolveSpot in volSurface.js for why this route needs a fallback
+    // that /api/market-data already has. The daily bars are in flight above and were
+    // being used for the trend read alone; the last close is the fallback.
+    const caller = Number(req.query.spot) || 0;
+    const uc = contractOf(underlying);
+    const snap = caller > 0 ? null : await getSnapshot(uc);
+    const h = caller > 0 || (snap && (snap.mid || snap.last || snap.prevClose)) ? null : await histP;
+    const sp = resolveSpot({ caller, snap, daily: h && h.daily, dailySource: h && h.dailySource,
+      underlying, secType: uc && uc.secType });
+    const spot = sp.spot, spotSource = sp.source, spotAsOf = sp.asOf;
+    if (sp.note) notes.push(sp.note);
 
     // 2) Expiries off the real chain; Friday-nearest if the chain lookup fails.
     const chain = await getOptionChain(underlying).catch(() => null);
@@ -1598,6 +1619,7 @@ app.get('/api/vol-surface', async (req, res) => {
     const term = termBiasFromIV(frontAtm && frontAtm.iv, backAtm && backAtm.iv);
     const out = {
       underlying, spot: spot > 0 ? +spot.toFixed(2) : null, today,
+      spotSource, spotAsOf, spotStale: spotSource === 'daily-close' || spotSource === 'close',
       expiries: { requested: reqExpiry, trade: tradeExp, front: frontExp, back: backExp,
         tradeDte: tradeExp ? daysBetween(today, tradeExp) : null,
         frontDte: frontExp ? daysBetween(today, frontExp) : null,

@@ -95,6 +95,11 @@ export default function Checkup45({ tickets, openPositions }) {
       // short read in the money, and the card recommended a roll with no price
       // behind it. Say it instead. (Oct 2026.)
       let quoteErr = vs.error ? `vol surface: ${vs.error}` : null;
+      // Where the price came from, and whether it is today's. The bridge now says so
+      // rather than handing back a bare number or a zero; a check-up run off a stale
+      // close is still worth reading, but only if the reader knows that is what it is.
+      const priceNote = (vs.notes || []).find(n => /no live price|entitlement|no ticks|sent no ticks|no price for/i.test(n)) || null;
+      let spotFromGreeks = false;
       if (legs) {
         const nearExp = legs.map(l => l.expiry).sort()[0];
         const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
@@ -107,6 +112,7 @@ export default function Checkup45({ tickets, openPositions }) {
             if (mid == null) ok = false; else mark += l.qty * mid;
             return { ...l, iv: gl ? gl.iv : null, delta: gl ? gl.delta : null };
           });
+          spotFromGreeks = num(g.undPrice) > 0;
           now = { ...now, mark: ok ? mark : undefined, spot: num(g.undPrice) || now.spot,
             delta: g.net ? g.net.delta : undefined, theta: g.net ? g.net.theta : undefined, vega: g.net ? g.net.vega : undefined };
           if (!ok) quoteErr = 'some legs had no quote — P&L not computed';
@@ -157,7 +163,11 @@ export default function Checkup45({ tickets, openPositions }) {
           }
         } catch (e) { roll = null; }   // a roll suggestion is a convenience, never a blocker
       }
-      out.push({ t, legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend, spot: now.spot, roll });
+      out.push({ t, legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
+        spot: now.spot, roll,
+        // The greeks' undPrice overrides the surface spot where it exists, so a stale
+        // surface price only stands if the greeks had none either.
+        spotStale: !!vs.spotStale && !spotFromGreeks, spotAsOf: vs.spotAsOf || null, priceNote });
     }
     setRows({ list: out, posErr });
     setRanAt(new Date());
@@ -200,7 +210,7 @@ export default function Checkup45({ tickets, openPositions }) {
 
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
-  const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll } = row;
+  const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll, spotStale, spotAsOf, priceNote } = row;
   const m = rv.metrics || {};
   const tone = TONE[rv.tone] || TONE.grey;
   const label = ACTION_LABEL[rv.action] || rv.action;
@@ -241,6 +251,12 @@ function CheckupCard({ row }) {
         {source && <Chip label="legs" val={source} tone={source === 'TWS' ? null : 'amber'} />}
       </div>
 
+      {/* A price that is not today's changes what every delta and IV below it means, so
+          it is said at card level and not buried with the quote notes. */}
+      {spotStale && <div data-testid="stale-spot" style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>
+        Price is the {spotAsOf ? `${spotAsOf.slice(4, 6)}/${spotAsOf.slice(6, 8)} ` : ''}close, not live — deltas and IVs are computed against it.
+      </div>}
+      {!(spot > 0) && priceNote && <div data-testid="no-spot-why" style={{ marginTop: 8, fontSize: 12.5, color: '#f85149' }}>{priceNote}</div>}
       {(note || quoteErr) && <div style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>{[note, quoteErr].filter(Boolean).join(' · ')}</div>}
       {rv.warnings.length > 0 && (
         <ul style={{ marginTop: 8, fontSize: 12.5, color: '#e3b341', paddingLeft: 16, listStyle: 'disc' }}>

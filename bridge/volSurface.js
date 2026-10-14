@@ -122,3 +122,57 @@ export function realisedVol(closes, n = 30) {
 }
 
 export const avgIV = (a, b) => (a > 0 && b > 0) ? (a + b) / 2 : (a > 0 ? a : b > 0 ? b : null);
+
+// ── Where the spot price comes from ─────────────────────────────────────────────
+//
+// QQQ came back with no price on 14 Oct and the whole 45DTE check-up degraded in
+// silence: no IVs, no strike strip, and — because `toward` for a put is (spot − strike)
+// — every short put read in the money off a spot of zero.
+//
+// The streaming snapshot is not a dependable source of a price on the vol-surface
+// route. That route asks TWS for market data type 2 (frozen), because frozen is what
+// keeps model greeks resolving after the close; but frozen returns NOTHING for an
+// instrument the account cannot stream, and QQQ, SPY and IWM are STK/SMART — a
+// different entitlement from the OPRA options bundle the engine relies on.
+// /api/market-data already met this and fixed it by falling back to the last bar.
+//
+// The vol-surface route pulls a year of daily bars in parallel for the trend read and
+// then used the last close for nothing else. Historical data comes down a different
+// IBKR pathway from streaming quotes, so it survives a feed this route cannot use.
+// A stale price that says it is stale beats a zero that passes for a price.
+//
+// Returns { spot, source, asOf, note }. `spot` is 0 when nothing can be had, and
+// `note` then names the cause instead of leaving the caller to infer one.
+export function resolveSpot({ caller, snap, daily, dailySource, underlying, secType } = {}) {
+  const n = v => { const x = parseFloat(v); return Number.isFinite(x) && x > 0 ? x : 0; };
+  const none = { spot: 0, source: null, asOf: null, note: null };
+
+  if (n(caller)) return { spot: n(caller), source: 'caller', asOf: null, note: null };
+
+  const s = snap || {};
+  if (n(s.mid)) return { spot: n(s.mid), source: 'mid', asOf: null, note: null };
+  if (n(s.last)) return { spot: n(s.last), source: 'last', asOf: null, note: null };
+  if (n(s.prevClose)) return { spot: n(s.prevClose), source: 'close', asOf: null, note: null };
+
+  // Only the underlying's OWN bars. SPX/XSP read SPY and RUT reads IWM for the trend,
+  // where every number is a ratio and the proxy's scale does not matter. A price is
+  // not a ratio: SPY is a tenth of SPX, so the proxy here would be a wrong answer
+  // rather than a stale one.
+  const bars = Array.isArray(daily) ? daily : [];
+  const last = bars.length ? bars[bars.length - 1] : null;
+  if (last && dailySource === underlying && n(last[4])) {
+    const spot = n(last[4]);
+    return { spot, source: 'daily-close', asOf: String(last[0]),
+      note: `No live price for ${underlying} — using the ${last[0]} daily close (${spot}). `
+        + 'IVs and deltas are computed against a stale spot.' };
+  }
+
+  if (s.notSubscribed) return { ...none,
+    note: `TWS reports no market-data entitlement for ${underlying}${secType ? ` (${secType})` : ''} — `
+      + 'an options subscription does not cover the underlying quote.' };
+  if (s.noTicks) return { ...none,
+    note: `TWS accepted the ${underlying} quote request and sent no ticks — usually TWS has lost its `
+      + 'connection to the IBKR data farms, or the link is too slow to answer in time. Check the '
+      + 'data-farm indicator in TWS; restarting the bridge will not fix that end.' };
+  return { ...none, note: `No price for ${underlying} from any source.` };
+}
