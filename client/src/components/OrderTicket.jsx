@@ -150,6 +150,28 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const snapRef = useRef({});
   useEffect(() => { snapRef.current = startCloseVolSnapshot(pos.underlying, { expiry: pos.engine === '0DTE' ? pos.entryDate : '' }); // eslint-disable-next-line
   }, []);
+  // A roll opens a NEW ticket, and the 45DTE check-up measures it from its entry
+  // spot and ATM IV (Price / IV on the decision row) — without them it can't split
+  // P&L into time / price / vol. The close snapshot above never fetched IV for a
+  // 45DTE ticket and the roll never wrote one, so rolled tickets were logged with
+  // neither (QQQ 699/709/755/765, 15 Oct). Read them from the same vol surface the
+  // check-up compares against, started when the Roll tab opens. (Oct 2026.)
+  const entrySnapRef = useRef(null);
+  useEffect(() => {
+    if (tab !== 'roll' || entrySnapRef.current) return;
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl || !pos.underlying) { entrySnapRef.current = Promise.resolve({}); return; }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 45000);
+    entrySnapRef.current = fetch(bridgeUrl + '/api/vol-surface?underlying=' + encodeURIComponent(pos.underlying),
+      { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+      .then(r => r.json())
+      .then(vs => (vs && !vs.error ? { spot: parseFloat(vs.spot) || null, iv: parseFloat(vs.iv) || null } : {}))
+      .catch(() => ({}))
+      .finally(() => clearTimeout(t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [fills, setFills] = useState(null);
   async function fetchFills() {
     const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
@@ -237,6 +259,12 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
     setBusy(true); setMsg(null);
     const snapV = snapRef.current || {};
     const halfFees = rtFees(rq);
+    // Entry spot / IV for the new ticket: whatever the vol surface has returned,
+    // waiting at most 15s more — a roll must never hang on the bridge.
+    const es = await Promise.race([
+      Promise.resolve(entrySnapRef.current || {}),
+      new Promise(r => setTimeout(() => r({}), 15000))
+    ]).catch(() => ({}));
     try {
       const oldRef = pos.ticketRef;
       const carriedTxt = partial
@@ -267,7 +295,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           + `Net roll ${rs.net >= 0 ? rs.net.toFixed(2) + ' cr' : Math.abs(rs.net).toFixed(2) + ' db'}; cumulative basis ${rs.cumulative.toFixed(2)} ${rs.cumulative >= 0 ? 'cr' : 'db'}.`
           + (notes ? '\n\n--- My notes ---\n' + notes : ''),
         account: pos.account, timestamp: new Date().toISOString(),
-        price: snapV.closeUnderlyingPrice || '', vix: snapV.closeVix || '',
+        price: es.spot || snapV.closeUnderlyingPrice || '', iv: es.iv || '', vix: snapV.closeVix || '',
         dte: '45DTE', expiryDate: roll.expiry || ''
       });
       onDone && onDone();
