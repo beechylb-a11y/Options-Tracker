@@ -7,7 +7,7 @@ import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import { lastSessionDate } from '../engine/session';
 import {
   normalisePosition, withEntryFill, avgOfFills, targetToPrice, priceToTarget, pnlAt, ibkrLines,
-  ladder, LADDER_PRESETS, rollSummary, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
+  ladder, LADDER_PRESETS, rollSummary, carriedFromTws, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
 } from '../utils/ticketMath';
 import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
@@ -201,15 +201,36 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const oldStrikes = pos.legs.split(/[\/|,\s]+/).map(Number).filter(x => x > 0);
   const [roll, setRoll] = useState({
     qty: pos.qtyOpen || 1, closeAt: '', openAt: '', openSide: pos.isCredit ? 'cr' : 'db',
-    expiry: '', strikes: oldStrikes.map(String)
+    expiry: '', strikes: oldStrikes.map(String),
+    carried: '', carriedSide: pos.isCredit ? 'cr' : 'db'
   });
   const rq = Math.min(Number(roll.qty) || 0, pos.qtyOpen);
   const closeAt = parseFloat(roll.closeAt), openAtAbs = parseFloat(roll.openAt);
   const openNcd = isFinite(openAtAbs) ? (roll.openSide === 'cr' ? openAtAbs : -openAtAbs) : null;
-  const rs = isFinite(closeAt) && openNcd != null ? rollSummary(pos, rq, closeAt, openNcd) : null;
-  const rollFees = rtFees(rq);   // the old ticket's round trip: its entry and this close
   const newLegs = roll.strikes.join(' / ');
   const changedLegs = roll.strikes.filter((s, i) => Number(s) !== oldStrikes[i]).length;
+  // Partial roll: some legs move, the rest carry across. TWS only trades the moved
+  // legs, so the two prices are for those; the carried legs' entry price is needed
+  // to split the result correctly between the old and new tickets (see rollSummary).
+  const partial = changedLegs > 0 && changedLegs < oldStrikes.length;
+  const carriedStrikes = oldStrikes.filter((s, i) => Number(roll.strikes[i]) === s);
+  const carriedAbs = parseFloat(roll.carried);
+  const carriedNcd = partial ? (isFinite(carriedAbs) ? (roll.carriedSide === 'cr' ? carriedAbs : -carriedAbs) : null) : 0;
+  const rs = isFinite(closeAt) && openNcd != null && carriedNcd != null ? rollSummary(pos, rq, closeAt, openNcd, carriedNcd) : null;
+  const rollFees = rtFees(rq);   // the old ticket's round trip: its entry and this close
+  const [carriedMsg, setCarriedMsg] = useState('');
+  async function carriedFromBridge() {
+    const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
+    if (!bridgeUrl) { setCarriedMsg('Set the IBKR Bridge URL in Settings first.'); return; }
+    setCarriedMsg('Reading TWS positions…');
+    try {
+      const d = await (await fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } })).json();
+      const v = carriedFromTws(d.raw || [], pos.underlying, carriedStrikes);
+      if (v == null) { setCarriedMsg(`TWS has no ${pos.underlying} ${carriedStrikes.join('/')} position — type the entry price.`); return; }
+      setRoll(r => ({ ...r, carried: Math.abs(v).toFixed(2), carriedSide: v >= 0 ? 'cr' : 'db' }));
+      setCarriedMsg('From TWS avg cost (includes IBKR commission — use your fills if you want it exact).');
+    } catch (e) { setCarriedMsg('TWS fetch failed: ' + e.message); }
+  }
 
   async function recordRoll() {
     if (!rs || rq <= 0) return;
@@ -218,10 +239,15 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
     const halfFees = rtFees(rq);
     try {
       const oldRef = pos.ticketRef;
+      const carriedTxt = partial
+        ? ` Carried ${carriedStrikes.join('/')} at entry ${Math.abs(carriedNcd).toFixed(2)} ${carriedNcd >= 0 ? 'cr' : 'db'}; moved legs closed @ ${closeAt.toFixed(2)} ${side}, opened @ ${openAtAbs.toFixed(2)} ${roll.openSide}.`
+        : '';
       await api.closeTicket(oldRef, {
-        closeDate, closePrice: closeAt, qtyClosed: rq, fees: halfFees,
+        // closeFull / openFull = the traded prices with the carried legs booked
+        // through at their entry, so each ticket holds only its own P&L.
+        closeDate, closePrice: rs.closeFull, qtyClosed: rq, fees: halfFees,
         grossPnl: round2(rs.realised),
-        notes: [`ROLLED → ${newLegs}${roll.expiry ? ' exp ' + roll.expiry : ''} @ ${openAtAbs.toFixed(2)} ${roll.openSide} (net roll ${rs.net >= 0 ? rs.net.toFixed(2) + ' cr' : Math.abs(rs.net).toFixed(2) + ' db'})`, notes].filter(Boolean).join(' — '),
+        notes: [`ROLLED → ${newLegs}${roll.expiry ? ' exp ' + roll.expiry : ''} @ ${Math.abs(rs.openFull).toFixed(2)} ${rs.openFull >= 0 ? 'cr' : 'db'} (net roll ${rs.net >= 0 ? rs.net.toFixed(2) + ' cr' : Math.abs(rs.net).toFixed(2) + ' db'}).${carriedTxt}`, notes].filter(Boolean).join(' — '),
         account: pos.account,
         sessionHigh: snapV.sessionHigh ?? null, sessionLow: snapV.sessionLow ?? null,
         closeVix: snapV.closeVix ?? null, closeIV: snapV.closeIV ?? null,
@@ -231,13 +257,13 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
         engine: pos.engine || '45DTE', underlying: pos.underlying,
         strategy: `${pos.underlying} - ${pos.strategy} - ${rq} contract${rq !== 1 ? 's' : ''}`,
         direction: 'Roll', contracts: rq, wingStrikes: newLegs, engineStrikes: newLegs,
-        netCreditDebit: openNcd,
+        netCreditDebit: rs.openFull,
         // Max profit/risk are left blank on purpose: they depend on leg types and
         // widths the roll ticket does not model. Open the new legs in the engine
         // for those; % targets fall back to the entry credit meanwhile.
         notes: `Rolled from TICKET-${oldRef} (${pos.legs}, entry ${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}). `
-          + `Closed old @ ${closeAt.toFixed(2)} ${side}, realised ${fmt$(rs.realised - halfFees)} on ${rq}. `
-          + `Opened new @ ${openAtAbs.toFixed(2)} ${roll.openSide}${roll.expiry ? ', exp ' + roll.expiry : ''}. `
+          + `Closed old @ ${rs.closeFull.toFixed(2)} ${side}, realised ${fmt$(rs.realised - halfFees)} on ${rq}. `
+          + `Opened new @ ${Math.abs(rs.openFull).toFixed(2)} ${rs.openFull >= 0 ? 'cr' : 'db'}${roll.expiry ? ', exp ' + roll.expiry : ''}.${carriedTxt} `
           + `Net roll ${rs.net >= 0 ? rs.net.toFixed(2) + ' cr' : Math.abs(rs.net).toFixed(2) + ' db'}; cumulative basis ${rs.cumulative.toFixed(2)} ${rs.cumulative >= 0 ? 'cr' : 'db'}.`
           + (notes ? '\n\n--- My notes ---\n' + notes : ''),
         account: pos.account, timestamp: new Date().toISOString(),
@@ -422,14 +448,14 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
         {tab === 'roll' && (<>
           <div style={{ fontSize: 12.5, color: '#a8b2be', marginBottom: 10, lineHeight: 1.5 }}>
-            One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, and the new legs open as a new ticket linked back to it. Change only the strikes that move — untested legs just carry across.
+            One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, and the new legs open as a new ticket linked back to it. Change only the strikes that move — untested legs just carry across, and their entry price is asked for so each ticket keeps only its own P&amp;L.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
             <div><label style={lbl}>Contracts to roll</label>
               <input type="number" min="1" max={pos.qtyOpen} value={roll.qty} onChange={e => setRoll(r => ({ ...r, qty: e.target.value }))} style={inp} /></div>
-            <div><label style={lbl}>Close old @ ({side})</label>
+            <div><label style={lbl}>{partial ? `Close moved legs @ (${side})` : `Close old @ (${side})`}</label>
               <input type="number" step={tick} value={roll.closeAt} onChange={e => setRoll(r => ({ ...r, closeAt: e.target.value }))} style={inp} /></div>
-            <div><label style={lbl}>Open new @</label>
+            <div><label style={lbl}>{partial ? 'Open new legs @' : 'Open new @'}</label>
               <div style={{ display: 'flex', gap: 4 }}>
                 <input type="number" step={tick} value={roll.openAt} onChange={e => setRoll(r => ({ ...r, openAt: e.target.value }))} style={inp} />
                 <select value={roll.openSide} onChange={e => setRoll(r => ({ ...r, openSide: e.target.value }))} style={{ ...inp, width: 56 }}>
@@ -457,11 +483,34 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           </div>
 
+          {partial && (
+            <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #9e6a03' }}>
+              <div style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.5, marginBottom: 8 }}>
+                Partial roll — enter the two prices above for the <b>moved legs only</b> (what the TWS roll combo traded).
+                The {carriedStrikes.join(' / ')} legs carry across, so their entry price goes here: the old ticket then banks only what the moved legs made, and the new ticket starts from the carried legs' entry plus the new credit.
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div style={{ width: 220 }}><label style={lbl}>Carried legs ({carriedStrikes.join('/')}) entry @</label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input type="number" step={tick} value={roll.carried} onChange={e => setRoll(r => ({ ...r, carried: e.target.value }))} style={inp} />
+                    <select value={roll.carriedSide} onChange={e => setRoll(r => ({ ...r, carriedSide: e.target.value }))} style={{ ...inp, width: 56 }}>
+                      <option value="cr">cr</option><option value="db">db</option>
+                    </select>
+                  </div></div>
+                <button onClick={carriedFromBridge} type="button"
+                  style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', fontSize: 12.5, cursor: 'pointer' }}>From TWS</button>
+              </div>
+              {carriedMsg && <div style={{ fontSize: 12, color: '#8b949e', marginTop: 6 }}>{carriedMsg}</div>}
+              {!isFinite(carriedAbs) && <div style={{ fontSize: 12, color: '#d29922', marginTop: 6 }}>Needed to record the roll.</div>}
+            </div>
+          )}
+
           {rs && (
             <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #21262d', fontSize: 13, lineHeight: 1.7 }}>
               <div>Realised on old ({rq}): <b className="mono" style={{ color: pnlColor(rs.realised) }}>{fmt$(rs.realised - rollFees)}</b> <span style={{ color: '#8b949e' }}>after {fmt$(rollFees, 2)} comm (entry + close)</span></div>
               <div>Net roll: <b className="mono" style={{ color: rs.net >= 0 ? '#3fb950' : '#f85149' }}>{Math.abs(rs.net).toFixed(2)} {rs.net >= 0 ? 'credit' : 'debit'}</b> per share · {fmt$(rs.net * 100 * rq)} on {rq}</div>
               <div className="mono" style={{ color: '#a8b2be' }}>IBKR roll combo: {rs.net >= 0 ? `SELL @ ${rs.net.toFixed(2)}  (or BUY @ −${rs.net.toFixed(2)})` : `BUY @ ${Math.abs(rs.net).toFixed(2)}`}</div>
+              <div>Old ticket closes at <b className="mono">{rs.closeFull.toFixed(2)} {side}</b> · new ticket opens at <b className="mono">{Math.abs(rs.openFull).toFixed(2)} {rs.openFull >= 0 ? 'cr' : 'db'}</b>{partial && <span style={{ color: '#8b949e' }}> (moved legs ± carried {Math.abs(carriedNcd).toFixed(2)} {carriedNcd >= 0 ? 'cr' : 'db'})</span>}</div>
               <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: '#8b949e' }}>(entry {Math.abs(pos.ncd || 0).toFixed(2)} {pos.isCredit ? 'cr' : 'db'} ± this roll)</span></div>
               {rq < pos.qtyOpen && <div style={{ color: '#d29922' }}>{pos.qtyOpen - rq} contract{pos.qtyOpen - rq > 1 ? 's' : ''} stay on the old legs.</div>}
             </div>
@@ -493,7 +542,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           </>) : (
             <button onClick={recordRoll} disabled={busy || !rs || rq <= 0 || noEntry}
               style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: '#9e6a03', color: '#fff', opacity: busy || !rs || rq <= 0 || noEntry ? 0.45 : 1 }}>
-              {busy ? 'Rolling…' : rs ? `Roll ${rq} · bank ${fmt$(rs.realised - rollFees)} · new ticket ${Math.abs(openNcd).toFixed(2)} ${roll.openSide}` : 'Enter close and open prices'}
+              {busy ? 'Rolling…' : rs ? `Roll ${rq} · bank ${fmt$(rs.realised - rollFees)} · new ticket ${Math.abs(rs.openFull).toFixed(2)} ${rs.openFull >= 0 ? 'cr' : 'db'}` : partial && !isFinite(carriedAbs) ? 'Enter the carried legs’ entry price' : 'Enter close and open prices'}
             </button>
           )}
           <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>Cancel</button>

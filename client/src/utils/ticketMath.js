@@ -240,12 +240,49 @@ export const LADDER_PRESETS = {
 // Roll arithmetic. closeAt = debit/credit to take the old legs off (magnitude, same
 // side rules as a close); openAt = the new structure's per-share net in ncd sign
 // (+ credit / − debit). Net roll is what the IBKR roll combo prices at.
-export function rollSummary(pos, qty, closeAt, openNcd) {
-  const realised = pnlAt(pos, closeAt, qty);
+//
+// In a partial roll (some legs carry across untouched) closeAt / openNcd are what TWS
+// actually traded — the MOVED legs only; the roll combo never touches the carried
+// ones. carriedNcd is the carried legs' own entry price (per share, + credit / −
+// debit). They are booked as if closed and re-opened at that same price, so the old
+// ticket realises only what the moved legs made (closeFull) and the new ticket's
+// basis carries their entry (openFull); the net roll is unchanged.
+//
+// Without it, a QQQ 699/709/805/815 condor (2.44 cr) rolled 805/815 → 755/765
+// (0.22 db / 2.49 cr) banked 2.22 a lot on the old ticket and opened the new
+// four-leg condor at 2.49 — so the check-up read −$1,250 and "stop hit" against a
+// TWS P&L of −$620. With the puts' 1.28 cr carried: old closes at 1.50 (+0.94 a lot,
+// TWS realised $472), new opens at 3.77 (TWS avg 3.745). (Oct 2026.)
+export function rollSummary(pos, qty, closeAt, openNcd, carriedNcd = 0) {
+  const c = Number(carriedNcd) || 0;
+  const closeFull = round2(pos.isCredit ? closeAt + c : closeAt - c);  // close-side units, like closeAt
+  const openFull = round2(openNcd + c);
+  const realised = pnlAt(pos, closeFull, qty);
   const closeSigned = pos.isCredit ? -closeAt : closeAt;  // cash in (+) / out (−) per share
   const net = round2(closeSigned + openNcd);              // + = roll for a credit
   const cumulative = round2((pos.ncd || 0) + net);        // running basis across the roll
-  return { realised, net, cumulative };
+  return { realised, net, cumulative, closeFull, openFull };
+}
+
+// Net entry price, per share per ONE unit (+ credit / − debit), of the TWS legs at
+// the given strikes — what a partial roll carries across. Reads the bridge's
+// /api/positions raw legs (perShare = avgCost ÷ multiplier, which includes IBKR's
+// commission: a 709P sold at 6.62 shows 6.614). null when any strike is missing.
+export function carriedFromTws(rawLegs, underlying, strikes, expiry = '') {
+  const want = (strikes || []).map(Number).filter(x => x > 0);
+  if (!want.length) return null;
+  const exp = String(expiry || '').replace(/-/g, '');
+  const pool = (rawLegs || []).filter(l => String(l.underlying).toUpperCase() === String(underlying).toUpperCase()
+    && (!exp || String(l.expiry) === exp));
+  const picked = [];
+  for (const s of want) {
+    const l = pool.find(x => Number(x.strike) === s && !picked.includes(x));
+    if (!l) return null;
+    picked.push(l);
+  }
+  const lots = Math.min(...picked.map(l => Math.abs(Number(l.qty)) || 0)) || 1;
+  const net = picked.reduce((a, l) => a + -Math.sign(l.qty) * (Number(l.perShare) || 0) * Math.abs(l.qty), 0) / lots;
+  return round2(net);
 }
 
 // Exit plans persisted per ticket (keyed by the Decisions Timestamp — present on the
