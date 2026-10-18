@@ -88,8 +88,27 @@ export function mergeClosedTrades(tracker, decisions, account, accounts = []) {
       Account: d.Account || '',
       _source: 'ticket'
     }));
+  // Every engine close is stored twice: the ticket itself (Status Closed, Actual P&L)
+  // and a "TICKET-<row>" TradeTracker row per tranche, appended by the close ticket.
+  // Journal and the monthly benchmark already drop those tracker rows; this merge did
+  // not, so the Dashboard, its daily bars and the header strip counted every engine
+  // trade twice. (Oct 2026.) The ticket wins, as on those pages — it carries the
+  // whole trade's P&L across tranches. A TICKET row is only dropped when its ticket
+  // is here as a closed trade, so a tranche whose ticket is still Partial (or is
+  // filtered out) is not lost.
+  const ticketRows = new Set(filteredDecisions
+    .filter(d => d.Status === 'Closed' && d['Actual P&L'] && d._rowIndex != null)
+    .map(d => String(d._rowIndex)));
+  const ticketRowOf = t => {
+    const m = /^TICKET-(\d+)$/.exec(String(t['Order #'] || '').trim());
+    return m ? m[1] : null;
+  };
   return [
-    ...filteredTracker.filter(t => t.Status !== 'Open' && t[COL.TOTAL_PNL]),
+    ...filteredTracker.filter(t => {
+      if (t.Status === 'Open' || !t[COL.TOTAL_PNL]) return false;
+      const ref = ticketRowOf(t);
+      return !(ref && ticketRows.has(ref));
+    }),
     ...closedTickets
   ].sort((a, b) => new Date(a[COL.ENTRY_DATE] || a[COL.CLOSE_DATE] || 0) - new Date(b[COL.ENTRY_DATE] || b[COL.CLOSE_DATE] || 0));
 }
