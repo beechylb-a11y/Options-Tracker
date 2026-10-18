@@ -9,6 +9,7 @@ import { eventRisk0DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
+import { legQty } from './legQty.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -1843,7 +1844,7 @@ export function calc0DTE(inputs) {
         strike: l.strike,
         type: label.includes('call') ? 'call' : 'put',
         side: (label.includes('short') || label.includes('sell')) ? 'sell' : 'buy',
-        qty: label.includes('x2') ? 2 : 1
+        qty: legQty(l)
       };
     });
 

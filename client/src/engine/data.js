@@ -341,7 +341,7 @@ export const DELTA_GUIDE = [
   { strat: 'Diagonal spread',          range: 'Short 30Δ / Long 50Δ',    note: 'Front/back month' },
   { strat: 'Broken wing butterfly',    range: 'ATM body, 1 SD wings',    note: 'Risk wing wider' },
   { strat: 'Jade lizard',              range: '20Δ put, 16Δ call spread', note: 'No upside risk' },
-  { strat: 'Ratio spread',             range: '50Δ long, 2x 25Δ short', note: 'ATM/OTM' },
+  { strat: 'Ratio spread',             range: '50Δ longs, 25Δ shorts (1:2 / 2:3 / 3:4)', note: 'protective long at the zero-risk strike (R-54)' },
   { strat: 'Bull call / Bear put',     range: '50Δ long, 30Δ short',    note: 'ITM to OTM' },
   { strat: 'Iron butterfly',           range: 'ATM short, 1 SD wings',   note: 'Max credit at center' },
   { strat: 'Standard butterfly',       range: 'ATM body, ±1 SD wings',  note: 'Pin trade' },

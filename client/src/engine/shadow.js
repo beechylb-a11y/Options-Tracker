@@ -8,6 +8,7 @@
 // Pure functions here; the panel records, the settle pass prices outcomes.
 
 import { bsPrice, RATE, divYieldOf } from './payoffCurve.js';
+import { legQty } from './legQty.js';
 
 const N = x => 0.5 * (1 + erf(x / Math.SQRT2));
 function erf(x) {
@@ -37,7 +38,7 @@ export function shadowLegs(legs) {
   return (legs || []).map(l => {
     const lb = String(l.label || '').toLowerCase();
     const right = lb.includes('put') ? 'P' : lb.includes('call') ? 'C' : null;
-    const mult = /x2\b/.test(lb) ? 2 : 1;
+    const mult = legQty(l);
     const qty = (/short|sell/.test(lb) ? -1 : 1) * mult;
     return { strike: Number(l.strike), right, qty };
   }).filter(l => l.right && Number.isFinite(l.strike));

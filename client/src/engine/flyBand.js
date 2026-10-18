@@ -1,3 +1,4 @@
+import { legQty } from './legQty.js';
 // ── Butterfly profit band in the market's units (Oct 2026) ──
 //
 // A fly's profit band in points says little on its own: 4 points is wide at 15:30
@@ -25,7 +26,7 @@ function putN(S, K, s) { return callN(S, K, s) - (S - K); }
 
 const parse = legs => (legs || []).map(l => {
   const lb = String(l.label || '').toLowerCase();
-  return { k: +l.strike, call: lb.includes('call'), q: (lb.includes('short') || lb.includes('sell') ? -1 : 1) * (/x2\b/.test(lb) ? 2 : 1) };
+  return { k: +l.strike, call: lb.includes('call'), q: (lb.includes('short') || lb.includes('sell') ? -1 : 1) * legQty(l) };
 }).filter(l => isFinite(l.k));
 
 export function flyBand({ legs, price, sdLeft, sdDay, net }) {
