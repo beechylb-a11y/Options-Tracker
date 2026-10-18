@@ -1,3 +1,4 @@
+import { legQty } from '../engine/legQty.js';
 // ── Commission: one counting rule for the whole app (Oct 2026) ──
 //
 // Before this file there were three: ProfitTaker counted CONTRACTS (a 1x2x1 fly is
@@ -26,7 +27,7 @@ const num = x => (x === null || x === undefined || x === '' || !isFinite(Number(
 export function unitsFromLegs(legs) {
   if (!Array.isArray(legs) || !legs.length) return 0;
   const use = (legs.length === 4 && String(legs[0]?.label || '').includes('VIX')) ? legs.slice(0, 2) : legs;
-  return use.reduce((a, l) => a + (/x2\b/i.test(l.label || '') ? 2 : 1), 0);
+  return use.reduce((a, l) => a + legQty(l), 0);
 }
 
 // Contracts in one unit of a LOGGED ticket, where only "Wing Strikes"

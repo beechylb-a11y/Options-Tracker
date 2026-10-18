@@ -19,6 +19,8 @@ import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as close
 import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffTimeChart from './PayoffTimeChart';
 import { computeTrend, trendLabel } from '../engine/trend';
+import { legQty } from '../engine/legQty.js';
+import { RATIO_CHOICES, DEFAULT_RATIO_SPEC, ratioChoice, isProtected, ratioShape } from '../engine/ratioSpread.js';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 // '' = unknown. Only used when IV Front/Back are absent — with both present the
@@ -209,7 +211,7 @@ function StrikeChip({ leg, idx, engineStrike, step, onCommit, stripLabel, compac
   const label = stripLabel ? stripLabel(leg.label) : leg.label;
   // Compact, order-ticket form: +751P · −2×754P. The full label is the tooltip.
   const lbl = leg.label.toLowerCase();
-  const qtyX = /x2\b/.test(lbl) ? 2 : 1;
+  const qtyX = legQty(leg);
   // Words, not letters: "+772 Call", "−2×775 Put". (Oct 2026.)
   const ticketTxt = `${isShort ? '\u2212' : '+'}${qtyX > 1 ? qtyX + '\u00d7' : ''}${leg.strike} ${lbl.includes('call') ? 'Call' : 'Put'}`;
 
@@ -369,6 +371,52 @@ function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fe
 // Both); one line shows each short's live delta against its band and the POP those
 // deltas imply; and, when the delta method would place the shorts differently, one
 // line shows where — with the button that applies it or goes back to EM.
+// ── Ratio spread construction (R-54, Oct 2026) ──
+// Ratio 1:2 / 2:3 / 3:4 (long : short) and the protective long. With protection on
+// the engine suggests the zero-risk strike — the furthest out at which nothing is
+// lost above it before premium; with it off the trade is undefined risk (R-56) and
+// the engine will not size it.
+function RatioPicker({ spec, legs, onChange, outlook }) {
+  const seg = on => ({ padding:'2px 10px', fontSize:12, fontWeight:600, cursor:'pointer',
+    border:'1px solid ' + (on ? '#58a6ff' : '#30363d'), background: on ? '#0d1a2b' : '#0d1117',
+    color: on ? '#58a6ff' : '#a8b2be' });
+  const cur = ratioChoice(spec);
+  const prot = isProtected(spec);
+  const sh = ratioShape(legs || []);
+  const pLeg = sh && sh.pi != null ? legs[sh.pi] : null;
+  const right = pLeg ? (/put/i.test(pLeg.label) ? 'P' : 'C') : (outlook === 'bearish' ? 'P' : 'C');
+  const beyond = right === 'P' ? 'below' : 'above';
+  return (
+    <div data-testid="ratio-picker" style={{marginTop:8,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',fontSize:12.5,color:'#a8b2be'}}>
+      <span style={{fontSize:11,letterSpacing:'0.06em',textTransform:'uppercase'}}>Ratio</span>
+      <span style={{display:'inline-flex'}} role="group" aria-label="Ratio, long to short">
+        {RATIO_CHOICES.map((c, i) => (
+          <button key={c.id} type="button" data-testid={'ratio-' + c.id} aria-pressed={c.id === cur.id}
+            onClick={() => c.id !== cur.id && onChange({ ratio: c.id, protect: prot })}
+            title={`${c.L} long : ${c.S} short`}
+            style={{...seg(c.id === cur.id), borderRadius: i === 0 ? '6px 0 0 6px' : i === RATIO_CHOICES.length - 1 ? '0 6px 6px 0' : 0,
+              marginLeft: i ? -1 : 0}}>{c.id}</button>
+        ))}
+      </span>
+      <label style={{display:'inline-flex',alignItems:'center',gap:6,cursor:'pointer'}}>
+        <input type="checkbox" data-testid="ratio-protect" checked={prot}
+          onChange={e => onChange({ ratio: cur.id, protect: e.target.checked })} />
+        Protective long
+      </label>
+      {prot && pLeg && (
+        <span data-testid="ratio-protect-note">
+          {cur.S - cur.L}× {pLeg.strike}{right} suggested — no loss {beyond} it before premium
+        </span>
+      )}
+      {!prot && (
+        <span data-testid="ratio-unprotected-note" style={{color:'#f85149'}}>
+          Unprotected — {cur.S - cur.L} short has no maximum loss {beyond} the short strike (R-56); the engine will not size it
+        </span>
+      )}
+    </div>
+  );
+}
+
 function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, pop, legs,
   onFetch, fetching, onApply, applying, onBack, hideMethod }) {
   const seg = on => ({ padding:'2px 10px', fontSize:12, fontWeight:600, cursor:'pointer',
@@ -523,6 +571,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // The delta check matches them to legs by strike, so a strike edited afterwards simply
   // reads as "not fetched" rather than borrowing another strike's delta.
   const [legGreeks, setLegGreeks] = useState(init?.legGreeks ?? null);
+  // Ratio spread construction (R-54): { ratio: '1:2'|'2:3'|'3:4', protect }. A tab
+  // keeps its own; protection is on unless switched off.
+  const [ratioSpec, setRatioSpec] = useState(init?.ratioSpec ?? DEFAULT_RATIO_SPEC);
   // The strikes the delta method last applied: { bag, strat, map }. Log trade compares the
   // live overrides with it to record which method actually built the ticket.
   const [deltaApplied, setDeltaApplied] = useState(init?.deltaApplied ?? null);
@@ -744,8 +795,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec });
+  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -862,6 +913,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           } : null,
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['45'] || null,
+          ratioSpec,
           ...(over || {})
   });
 
@@ -889,7 +941,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1066,6 +1118,22 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     });
     markGreeksStale();
   }
+  // A new ratio or protection setting re-places the protective long; a protective
+  // strike typed for the old one would no longer be the zero-risk strike, so it goes.
+  function changeRatio(next) {
+    setRatioSpec(next);
+    const sh = ratioShape(r.legs || []);
+    if (sh && sh.pi != null && overrideStrikes['45'] && overrideStrikes['45'].map && overrideStrikes['45'].map[sh.pi] != null) {
+      setOverrideStrikes(prev => {
+        if (!prev['45']) return prev;
+        const map = { ...prev['45'].map }; delete map[sh.pi];
+        const out = { ...prev };
+        if (Object.keys(map).length) out['45'] = { ...prev['45'], map }; else delete out['45'];
+        return out;
+      });
+    }
+    markGreeksStale();
+  }
   function resetStrikes() {
     if (!overrideStrikes[bag]) return;
     setOverrideStrikes(prev => { const out = { ...prev }; delete out[bag]; return out; });
@@ -1214,7 +1282,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ladder, is0, i0, i45, overrideStrat, overrideStrikes, r.legStrat, commRateAcct]);
+  }, [ladder, is0, i0, i45, overrideStrat, overrideStrikes, r.legStrat, commRateAcct, ratioSpec]);
 
   // ── Net credit/debit pre-fills from the engine's TARGET for the structure in
   // front of you. A fresh ticket -- and every structure opened in its own tab --
@@ -1994,8 +2062,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const lbl = (l.label || '').toLowerCase();
         const right = lbl.includes('put') ? 'P' : 'C';
         const isShort = lbl.includes('short');
-        const isBody = lbl.includes('body') || lbl.includes('x2');
-        const mag = isBody ? 2 : 1;
+        // Quantity from the label ("x2", "x3"…). An iron fly's "(body)" shorts are
+        // ONE contract each — testing for 'body' sent them to the bridge as two.
+        const mag = legQty(l);
         const legExp = legExpiryOf(l);
         return { strike: l.strike, right, qty: (isShort ? -mag : mag), ...(legExp ? { expiry: legExp } : {}) };
       });
@@ -2850,7 +2919,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     // expiry here is the one PLANNED from the DTE unless the chain set it.
     const legsLine = r.legs && r.legs.length ? 'Legs: ' + r.legs.map(l => {
       const lb = String(l.label || '').toLowerCase();
-      const q = (/short|sell/.test(lb) ? -1 : 1) * (/x2\b/.test(lb) ? 2 : 1);
+      const q = (/short|sell/.test(lb) ? -1 : 1) * legQty(l);
       return `${q > 0 ? '+' : '-'}${Math.abs(q)} ${l.strike}${lb.includes('put') ? 'P' : 'C'} ${legExpiryOf(l) || (is0 ? tradingSession().yyyymmdd : deriveExpiryYYYYMMDD())}`;
     }).join(' / ') + '\n' : '';
     const fullNotes = expiriesLine + legsLine + engineSummary + planBlock
@@ -3084,6 +3153,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     style={{flex:'none',fontSize:12.5,color:'#8b949e',cursor:'help',padding:'0 4px'}}>ⓘ</span>
                 )}
               </div>
+            )}
+            {!is0 && r.legStrat === 'Ratio spread' && (
+              <RatioPicker spec={ratioSpec} legs={r.legs} onChange={changeRatio} outlook={i45.outlook} />
             )}
             {is0 && listedChain && listedChain.mode === '0' && (() => {
               const note = listedStrikeNote(listedChain, todayYmd, r.legs, r.listedFit);
@@ -5013,7 +5085,7 @@ function legsPayoff(legs, ncd) {
   const parsed = use.filter(l => isFinite(l.strike)).map(l => {
     const lb = String(l.label || '').toLowerCase();
     return { strike: l.strike, call: lb.includes('call'), sign: (lb.includes('short') || lb.includes('sell')) ? -1 : 1,
-      qty: lb.includes('x2') ? 2 : 1 };
+      qty: legQty(l) };
   });
   if (parsed.length < 2) return null;
   const ks = parsed.map(p => p.strike);
@@ -5123,10 +5195,10 @@ function strikeMarks(legs) {
     const m = by.get(l.strike) || { strike: l.strike, short: false, n: 0 };
     m.short = m.short || lb.includes('short') || lb.includes('sell');
     // A calendar's two legs share a strike but not an expiry — one mark, not "2×".
-    m.n += legRole(lb) ? 0.5 : /x2\b/.test(lb) ? 2 : 1;
+    m.n += legRole(lb) ? 0.5 : legQty(l);
     by.set(l.strike, m);
   });
-  return [...by.values()].map(m => ({ strike: m.strike, short: m.short, x2: m.n > 1 })).sort((a, b) => a.strike - b.strike);
+  return [...by.values()].map(m => ({ strike: m.strike, short: m.short, x2: m.n > 1, n: m.n })).sort((a, b) => a.strike - b.strike);
 }
 
 // Payoff shape for a card: scaled to its own range, zero line when priced, a
@@ -5172,7 +5244,7 @@ function PayoffGlyph({ pay, price, color, strikes }) {
             <span key={i} className="mono" style={{ position: 'absolute', top: m.row ? 14 : 0, left: `${m.pct}%`,
               transform: `translateX(${m.pct < 6 ? '0' : m.pct > 94 ? '-100%' : '-50%'})`, whiteSpace: 'nowrap',
               fontSize: 11, lineHeight: '14px', fontWeight: m.short ? 700 : 400, color: m.short ? '#e6edf3' : '#8b949e' }}>
-              {m.x2 ? '2×' : ''}{fmtK(m.strike)}
+              {m.x2 ? (Number.isInteger(m.n) ? m.n : 2) + '×' : ''}{fmtK(m.strike)}
             </span>
           ))}
         </div>

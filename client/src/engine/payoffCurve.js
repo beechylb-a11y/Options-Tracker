@@ -1,3 +1,4 @@
+import { legQty } from './legQty.js';
 // ================================================================
 //  PAYOFF CURVE — position P&L at ANY date, not just expiry (Oct 2026)
 //  Pure functions — no DOM access.
@@ -68,7 +69,7 @@ export function curveLegs(legs, { dteOf, ivOf, baseIV, rate = RATE, divYield = D
     if (!(iv > 0) || !(dte >= 0)) return null;
     out.push({ strike: +l.strike, right: lb.includes('put') ? 'P' : 'C',
       sign: (lb.includes('short') || lb.includes('sell')) ? -1 : 1,
-      qty: /x2\b/.test(lb) ? 2 : 1, dte, iv: iv / 100, r: rate, q: divYield, label: l.label });
+      qty: legQty(l), dte, iv: iv / 100, r: rate, q: divYield, label: l.label });
   }
   return out.length ? out : null;
 }

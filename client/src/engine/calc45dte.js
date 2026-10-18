@@ -8,6 +8,7 @@ import { eventRisk45DTE, nowET } from './events.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStrikes.js';
+import { buildRatioLegs, reprotect, isProtected, ratioChoice, ratioShape, ratioTailLoss } from './ratioSpread.js';
 
 // ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
 // front/back is the same ratio as VIX/VIX3M: calm markets sit near 0.85-0.92, above 1
@@ -111,6 +112,13 @@ export function calc45DTE(inputs) {
     ratings45[7] = 'POOR'; if (ivr < 25) ratings45[8] = 'EXCELLENT';
     ratings45[0] = degrade(ratings45[0]); ratings45[9] = degrade(ratings45[9]);
   }
+  // Ratio spread (R-54/R-56, Oct 2026): rated as the PROTECTED trade. With the
+  // protective long switched off it is undefined risk — never better than MARGINAL,
+  // so the engine never picks it on its own.
+  const ratioSpec = inputs.ratioSpec || null;
+  const ratioProtect = isProtected(ratioSpec);
+  const iRatio = STRATS_45DTE.indexOf('Ratio spread');
+  if (!ratioProtect && iRatio >= 0 && (ratings45[iRatio] === 'EXCELLENT' || ratings45[iRatio] === 'GOOD')) ratings45[iRatio] = 'MARGINAL';
 
   const order = {EXCELLENT:0,GOOD:1,MARGINAL:2,'POOR':3};
   const sorted = STRATS_45DTE.map((s,i) => ({name:s, rating:ratings45[i], idx:i})).sort((a,b) => order[a.rating]-order[b.rating] || a.idx-b.idx);
@@ -147,7 +155,7 @@ export function calc45DTE(inputs) {
   // No floor under the loss: see UNDEFINED_RISK in data.js. Everything downstream
   // that divides by a max loss has to be told, because the number it would use is
   // one the structure does not have. (Oct 2026.)
-  const riskUndefined = UNDEFINED_RISK.has(legStrat);
+  const riskUndefined = UNDEFINED_RISK.has(legStrat) || (legStrat === 'Ratio spread' && !ratioProtect);
   // Planned exit: closeDte days before the (near) expiry — 21 by the playbook, 7 on
   // the front leg for calendars/diagonals (EXIT_RULES); inputs.closeDte overrides.
   const closeDte45 = inputs.closeDte > 0 ? inputs.closeDte : exitRuleFor('45DTE', legStrat).closeDte;
@@ -205,7 +213,9 @@ export function calc45DTE(inputs) {
     } else if (legStrat === 'Short put') {
       legs = [leg('Short put',p-sd80)];
     } else if (legStrat === 'Ratio spread') {
-      legs = [leg('Long call',p),leg('Short call x2',p+sd50)];
+      // Ratio 1:2 / 2:3 / 3:4 with an optional protective long (R-54); puts on a
+      // bearish outlook. Quantities ride on the labels ("x3") and on leg.qty.
+      legs = buildRatioLegs({ p, sd50, R, step: strikeStep45, isBear, spec: ratioSpec });
     } else if (legStrat === 'Standard butterfly') {
       legs = [leg('Long put',p-sd50),leg('Short put',p),leg('Short call',p),leg('Long call',p+sd50)];
     }
@@ -229,6 +239,9 @@ export function calc45DTE(inputs) {
     if (f.changed) { legs = f.legs; listedFit = { moves: f.moves, equalWings: f.equalWings }; }
     else if (f.skipped) listedFit = { skipped: f.skipped };
   }
+  // The protective long follows the fitted long and short, snapped inward onto a
+  // listed strike so the top side never carries a loss.
+  if (legStrat === 'Ratio spread') legs = reprotect(legs, { step: strikeStep45, listed: listed45 });
   const engineLegs = legs.map(l => ({ ...l }));
   const ovStrikes = inputs.overrideStrikes || null;
   let strikeOrderWarning = null;
@@ -242,6 +255,13 @@ export function calc45DTE(inputs) {
       const k = (typeof v === 'number' && isFinite(v) && v > 0) ? Rov(v) : null;
       return k != null ? { ...l, strike: k } : l;
     });
+    // A hand-moved long or short drags the protective long with it — unless the
+    // protective strike itself was typed, which is the user's call.
+    if (legStrat === 'Ratio spread') {
+      const sh = ratioShape(legs);
+      const typedProt = sh && sh.pi != null && typeof ovStrikes[sh.pi] === 'number' && ovStrikes[sh.pi] > 0;
+      legs = reprotect(legs, { step: tStep45, listed: listed45, keep: typedProt });
+    }
     // Flag (never throw) when edits break the engine's relative strike ordering.
     for (let i = 1; i < legs.length; i++) {
       const d0 = Math.sign(engineLegs[i].strike - engineLegs[i - 1].strike);
@@ -509,6 +529,7 @@ export function calc45DTE(inputs) {
   else if (legStrat === 'Iron butterfly') { stratModifier = 0.95; stratModReason = 'Iron fly — pin/gamma risk'; }
   else if (legStrat === 'Credit spread') { stratModifier = 0.95; stratModReason = 'Credit spread — gamma near short'; }
   else if (legStrat === 'Jade lizard') { stratModifier = 0.90; stratModReason = 'Jade lizard — naked put side'; }
+  else if (legStrat === 'Ratio spread' && ratioProtect) { stratModifier = 0.95; stratModReason = 'Ratio with protective long — defined risk'; }
   else if (legStrat === 'Ratio spread') { stratModifier = 0.85; stratModReason = 'Ratio — uncovered short beyond the long'; }
   else if (legStrat === 'Broken wing butterfly') { stratModifier = 0.92; stratModReason = 'BWB — fill/gamma'; }
   else if (/Calendar|Diagonal/.test(legStrat)) { stratModifier = 0.90; stratModReason = 'Time spread — vega and gap risk'; }
@@ -607,7 +628,16 @@ export function calc45DTE(inputs) {
   if (riskUndefined) {
     warnings.push(legStrat === 'Short strangle'
       ? 'Short strangle — the call side has no maximum loss. The engine will not size this: enter your own contract count against the margin TWS shows.'
-      : 'Short put — loss runs to (strike − credit) on assignment, which is far larger than any wing. The engine will not size this: enter your own contract count.');
+      : legStrat === 'Ratio spread'
+        ? `Ratio ${ratioChoice(ratioSpec).id} without the protective long — ${ratioChoice(ratioSpec).S - ratioChoice(ratioSpec).L} short beyond the longs has no maximum loss past the short strike. Undefined-risk rules apply (R-56): the engine will not size this; enter your own contract count against the margin TWS shows.`
+        : 'Short put — loss runs to (strike − credit) on assignment, which is far larger than any wing. The engine will not size this: enter your own contract count.');
+  }
+  if (legStrat === 'Ratio spread' && ratioProtect) {
+    const tail = ratioTailLoss(legs);
+    const sh = ratioShape(legs);
+    if (tail > 0 && sh && sh.pi != null) {
+      warnings.push(`Protective long ${legs[sh.pi].strike} sits past the zero-risk strike — up to $${Math.round(tail)} per package lost beyond it before premium (R-54)`);
+    }
   }
   if (vix > 25) warnings.push('VIX >25 — reduce size');
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
@@ -767,6 +797,7 @@ export function calc45DTE(inputs) {
     greeks, sdRange, deltaGuide: DELTA_GUIDE,
     decision, decisionClass, hardBlocker, blockers, warnings, missingSize,
     riskUndefined,
+    ratio: legStrat === 'Ratio spread' ? { id: ratioChoice(ratioSpec).id, protect: ratioProtect, tailLoss: ratioTailLoss(legs) } : null,
     tradeConfidence, confidenceTier, confidenceDriver, confConflicts,
     behaviour: MARKET_BEHAVIOUR_45DTE[legStrat] || '',
     outlook, trend: trend || null, vixTermRatio: vixTermRatio || null

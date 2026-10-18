@@ -1,4 +1,5 @@
 import { fitToListed, normListed, nearestListed } from './listedStrikes.js';
+import { reprotect, ratioShape } from './ratioSpread.js';
 // ================================================================
 //  DELTA CROSS-CHECK AND DELTA STRIKES  (R-49, Oct 2026)
 // ================================================================
@@ -160,7 +161,9 @@ export const DELTA_TARGETS = {
     'Jade lizard':          { mode: 'side', pop: 'credit', shorts: { P: { t: 20, lo: 15, hi: 30 }, C: { t: 16, lo: 10, hi: 22 } } },
     'Bull call spread':     { mode: 'short', pop: null, shorts: { C: { t: 30, lo: 20, hi: 40 } } },
     'Bear put spread':      { mode: 'short', pop: null, shorts: { P: { t: 30, lo: 20, hi: 40 } } },
-    'Ratio spread':         { mode: 'short', pop: null, shorts: { C: { t: 25, lo: 18, hi: 32 } } },
+    // Calls above spot, or puts below on a bearish outlook (R-54). The protective long
+    // is not banded: it is placed from the long and short (ratioSpread.js).
+    'Ratio spread':         { mode: 'short', pop: null, shorts: { C: { t: 25, lo: 18, hi: 32 }, P: { t: 25, lo: 18, hi: 32 } } },
     // Naked shorts (Oct 2026). mode 'short' because there is no wing to carry along —
     // the short IS the position. 16Δ a side is the tastylive strangle; a lone short
     // put is placed a little closer, 20Δ, since it has no call side paying for it.
@@ -342,8 +345,12 @@ export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, und
   } else {
     // Short only. A debit spread whose short crosses its long is no longer a spread:
     // hold the short at least one strike beyond the long.
+    // Only the longs on the near (spot) side of the short count — a ratio spread's
+    // protective long sits beyond the short and must not push the short past it.
     moves.forEach(m => {
-      const longs = parsed.filter(p => !p.short && p.right === m.right);
+      const longs = parsed.filter(p => !p.short && p.right === m.right
+        && !/protective/i.test(p.label || '')
+        && (m.right === 'C' ? p.strike < m.from : p.strike > m.from));
       longs.forEach(l => {
         if (m.right === 'C' && next[m.idx].strike <= l.strike) next[m.idx].strike = l.strike + step;
         if (m.right === 'P' && next[m.idx].strike >= l.strike) next[m.idx].strike = l.strike - step;
@@ -361,6 +368,14 @@ export function deltaStrikePlan({ legs, strat, horizon, price, legGreeks, T, und
       f.legs.forEach((l, i) => { next[i].strike = l.strike; });
       moves.forEach(m => { m.to = next[m.idx].strike; m.estDelta = (bsAbsDelta(price, m.to, m.v, m.right) || 0) * 100; });
     }
+  }
+
+  // Ratio spread: the protective long is re-placed at the zero-risk strike for the
+  // moved short (snapped inward, onto the listed chain when there is one).
+  const rs = ratioShape(next);
+  if (rs && rs.pi != null) {
+    const re = reprotect(next, { step, listed: normListed(listed) });
+    if (re !== next) next[rs.pi].strike = re[rs.pi].strike;
   }
 
   return {
