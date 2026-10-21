@@ -1067,9 +1067,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             error: d && d.error ? d.error : txt.trim().startsWith('<') || /Cannot GET/.test(txt) ? 'bridge has no earnings route yet — pull and restart it' : 'no reply' });
           return;
         }
-        const allFailed = d.checked > 0 && d.failed && d.failed.length >= d.checked;
-        setEarningsCal({ und: earnUnd, events: d.events, failed: d.failed || [],
-          status: allFailed ? 'unavailable' : d.complete ? 'ok' : 'partial', error: allFailed ? 'Nasdaq calendar not reachable' : null });
+        // Days past Nasdaq's listing horizon are not failures (the bridge fills them
+        // from each company's next expected date); only gaps inside it are.
+        const allFailed = d.checked > 0 && !d.horizon && d.failed && d.failed.length >= d.checked;
+        setEarningsCal({ und: earnUnd, events: d.events, failed: d.failed || [], horizon: d.horizon || null, unchecked: d.unchecked || [],
+          status: allFailed ? 'unavailable' : (d.failed || []).length ? 'partial' : 'ok',
+          error: allFailed ? `Nasdaq calendar not reachable${d.why ? ' (' + d.why + ')' : ''}` : null });
       })
       .catch(() => { if (live) setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'bridge not reachable' }); })
       .finally(() => clearTimeout(t));
@@ -6012,7 +6015,7 @@ function EarningsBadge({ risk, cal, underlying }) {
   if (cal.status === 'loading') return isSingleStock(u) ? pill('#1c2128', '#8b949e', 'EARNINGS …', 'Checking the earnings calendar', 'earnings-badge') : null;
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const day = iso => `${+iso.slice(8, 10)} ${MON[+iso.slice(5, 7) - 1]}`;
-  const when = e => `${day(e.date)}${e.time === 'bmo' ? ' BMO' : e.time === 'amc' ? ' AMC' : ''}`;
+  const when = e => `${e.estimated ? '~' : ''}${day(e.date)}${e.time === 'bmo' ? ' BMO' : e.time === 'amc' ? ' AMC' : ''}`;
   const evs = (risk && risk.events) || [];
   const mine = evs.filter(e => e.symbol === u);
   const tip = [...((risk && risk.warnings) || []), ...((risk && risk.notices) || [])].join('\n\n');

@@ -66,25 +66,82 @@ async function fetchDay(dateISO, fetchImpl) {
   } finally { clearTimeout(t); }
 }
 
+/** "Earnings announcement* for NVDA: Nov 18, 2026" → '2026-11-18' (null when absent). */
+const MON = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+export function parseNextDate(json) {
+  const d = json && json.data;
+  const text = [d && d.announcement, d && d.reportText].filter(Boolean).join(' ');
+  const m = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? (\d{1,2}), (\d{4})/.exec(text);
+  return m ? `${m[3]}-${String(MON[m[1]]).padStart(2, '0')}-${m[2].padStart(2, '0')}` : null;
+}
+
+const nextCache = new Map();             // symbol → { at, date }
+async function fetchNext(symbol, fetchImpl) {
+  const hit = nextCache.get(symbol);
+  if (hit && Date.now() - hit.at < FRESH_MS) return hit.date;
+  const f = fetchImpl || globalThis.fetch;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await f(`https://api.nasdaq.com/api/analyst/${encodeURIComponent(symbol)}/earnings-date`, {
+      headers: { 'User-Agent': UA, Accept: 'application/json, text/plain, */*', Origin: 'https://www.nasdaq.com', Referer: 'https://www.nasdaq.com/' },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error('Nasdaq ' + r.status);
+    const date = parseNextDate(await r.json());
+    nextCache.set(symbol, { at: Date.now(), date });
+    return date;
+  } finally { clearTimeout(t); }
+}
+
 /**
  * Earnings for the given symbols between two dates.
- * @returns { events: [{ symbol, name, date, time }], checked: n days, failed: [dates], complete }
+ *
+ * Nasdaq's day calendar only lists about five weeks ahead; past that every day
+ * fails. A run of failures at the END of the window is that horizon, not an error:
+ * it is reported as `horizon` (the last day it lists), and for each symbol with no
+ * report found before it, the company's next expected date is read instead and
+ * added when it falls inside the window (marked estimated).
+ * @returns { events: [{ symbol, name, date, time, estimated? }], checked, failed (gaps
+ *            inside the listed range), horizon, unchecked (symbols past the horizon with
+ *            no next date), complete, why }
  */
 export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, concurrency = 4 } = {}) {
   const want = new Set((symbols || []).map(s => String(s).trim().toUpperCase()).filter(Boolean));
   const days = weekdays(fromISO, toISO);
-  const failed = [], events = [];
+  const failedAll = [], ok = [], events = [];
+  let why = '';
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, days.length) }, async () => {
     while (i < days.length) {
       const d = days[i++];
-      try { (await fetchDay(d, fetchImpl)).forEach(e => { if (!want.size || want.has(e.symbol)) events.push(e); }); }
-      catch (e) { failed.push(d); }
+      try { (await fetchDay(d, fetchImpl)).forEach(e => { if (!want.size || want.has(e.symbol)) events.push(e); }); ok.push(d); }
+      catch (e) { failedAll.push(d); if (!why) why = e.message; }
     }
   }));
+  ok.sort(); failedAll.sort();
+  const lastOk = ok.length ? ok[ok.length - 1] : null;
+  // Failures after the last listed day are the calendar's horizon; earlier ones are gaps.
+  const failed = lastOk ? failedAll.filter(d => d < lastOk) : failedAll;
+  const pastHorizon = lastOk ? failedAll.filter(d => d > lastOk) : [];
+  const horizon = pastHorizon.length ? lastOk : null;
+  const unchecked = [];
+  if (horizon) {
+    const found = new Set(events.map(e => e.symbol));
+    for (const sym of want) {
+      if (found.has(sym)) continue;           // its next report is already inside the listed range
+      try {
+        const date = await fetchNext(sym, fetchImpl);
+        if (date && date >= fromISO && date <= toISO) events.push({ symbol: sym, name: '', date, time: 'unknown', estimated: true });
+        else if (!date) unchecked.push(sym);
+      } catch (e) { unchecked.push(sym); }
+    }
+  }
   events.sort((a, b) => a.date.localeCompare(b.date) || a.symbol.localeCompare(b.symbol));
-  failed.sort();
-  return { events, checked: days.length, failed, complete: failed.length === 0 };
+  return { events, checked: days.length, failed, horizon, unchecked,
+    complete: failed.length === 0 && unchecked.length === 0 && (lastOk != null || !days.length), why };
 }
+
+export const _nextCacheForTests = nextCache;
 
 export const _cacheForTests = cache;

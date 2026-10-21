@@ -1145,7 +1145,7 @@ app.get('/api/earnings', async (req, res) => {
     const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : from;
     if (!symbols.length) return res.status(400).json({ error: 'symbols required' });
     const out = await earningsBetween(symbols, from, to);
-    if (out.failed.length) console.log(`[BRIDGE] earnings: ${out.failed.length}/${out.checked} days unreadable (${out.failed.slice(0, 3).join(', ')}…)`);
+    if (out.failed.length || out.unchecked.length) console.log(`[BRIDGE] earnings: ${out.failed.length}/${out.checked} days unreadable, unchecked ${out.unchecked.join(',') || '-'}${out.why ? ' — ' + out.why : ''}`);
     res.json({ ...out, from, to, source: 'nasdaq' });
   } catch (err) {
     console.log('[BRIDGE] earnings error:', err.message);

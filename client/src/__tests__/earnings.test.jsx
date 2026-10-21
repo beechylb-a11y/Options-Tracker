@@ -2,7 +2,7 @@
    names — checked against the 0DTE reaction day and the 45DTE hold. */
 import { describe, it, expect, vi } from 'vitest';
 import { earningsRisk0DTE, earningsRisk45DTE, earningsSymbols, earningsWindow, prevWeekday, isSingleStock } from '../engine/earnings';
-import { parseDay, timeOf, weekdays, earningsBetween, _cacheForTests } from '../../../bridge/earnings.js';
+import { parseDay, timeOf, weekdays, earningsBetween, parseNextDate, _cacheForTests, _nextCacheForTests } from '../../../bridge/earnings.js';
 
 const ok = events => ({ status: 'ok', events, failed: [] });
 
@@ -78,19 +78,40 @@ describe('bridge calendar reader', () => {
     expect(parseDay({ data: { rows: null } }, '2026-10-24')).toEqual([]);
     expect(weekdays('2026-10-23', '2026-10-27')).toEqual(['2026-10-23', '2026-10-26', '2026-10-27']);
   });
-  it('filters to the symbols asked for and reports the days it could not read', async () => {
+  it('filters to the symbols asked for and reports a gap it could not read', async () => {
     _cacheForTests.clear();
     const fetchImpl = vi.fn(async url => {
-      if (url.includes('2026-10-27')) return { ok: false, status: 403 };
+      if (url.includes('2026-10-26')) return { ok: false, status: 403 };
       const date = url.split('date=')[1];
-      return { ok: true, json: async () => ({ data: { rows: date === '2026-10-26'
+      return { ok: true, json: async () => ({ data: { rows: date === '2026-10-27'
         ? [{ symbol: 'TSLA', time: 'time-after-hours' }, { symbol: 'IBM', time: 'time-pre-market' }] : [] } }) };
     });
     const r = await earningsBetween(['tsla'], '2026-10-23', '2026-10-27', { fetchImpl });
-    expect(r.events).toEqual([expect.objectContaining({ symbol: 'TSLA', date: '2026-10-26', time: 'amc' })]);
-    expect(r.failed).toEqual(['2026-10-27']);
+    expect(r.events).toEqual([expect.objectContaining({ symbol: 'TSLA', date: '2026-10-27', time: 'amc' })]);
+    expect(r.failed).toEqual(['2026-10-26']);
+    expect(r.horizon).toBe(null);
     expect(r.complete).toBe(false);
+    expect(r.why).toBe('Nasdaq 403');
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+  it('past the calendar’s ~5-week horizon, uses each company’s next expected date', async () => {
+    _cacheForTests.clear(); _nextCacheForTests.clear();
+    const fetchImpl = vi.fn(async url => {
+      if (url.includes('/analyst/NVDA/')) return { ok: true, json: async () => ({ data: { announcement: 'Earnings announcement* for NVDA: Nov 18, 2026' } }) };
+      if (url.includes('/analyst/')) return { ok: true, json: async () => ({ data: { announcement: '' } }) };
+      const date = url.split('date=')[1];
+      if (date > '2026-11-25') return { ok: false, status: 400 };
+      return { ok: true, json: async () => ({ data: { rows: date === '2026-11-02' ? [{ symbol: 'AAPL', time: 'time-after-hours' }] : [] } }) };
+    });
+    const r = await earningsBetween(['NVDA', 'AAPL', 'ZZZZ'], '2026-10-26', '2026-12-04', { fetchImpl });
+    expect(r.horizon).toBe('2026-11-25');
+    expect(r.failed).toEqual([]);
+    expect(r.events.map(e => `${e.symbol} ${e.date}${e.estimated ? ' est' : ''}`)).toEqual(['AAPL 2026-11-02', 'NVDA 2026-11-18 est']);
+    expect(r.unchecked).toEqual(['ZZZZ']);
+    expect(parseNextDate({ data: { reportText: 'NVIDIA is expected* to report earnings on Feb 25, 2027 after market close.' } })).toBe('2027-02-25');
+    // and the engine says how far it could see for a stock with no date
+    const n = earningsRisk45DTE({ underlying: 'ZZZZ', todayISO: '2026-10-26', dte: 45, earnings: { status: 'ok', events: [], failed: [], horizon: '2026-11-25', unchecked: ['ZZZZ'] } });
+    expect(n.notices[0]).toMatch(/checked to 25 Nov only/);
   });
 });
 

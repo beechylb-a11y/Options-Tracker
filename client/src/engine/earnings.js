@@ -59,6 +59,9 @@ function coverage(data, underlying, own) {
   if (!data || data.status === 'unavailable') {
     return [`Earnings not checked${data && data.error ? ` (${data.error})` : ''} — ${own ? `${underlying}'s` : 'the index’s largest names’'} report dates are unknown for this ticket; check them before trading`];
   }
+  if (data.unchecked && data.unchecked.includes(underlying) && data.horizon) {
+    return [`Earnings checked to ${dayLabel(data.horizon)} only — Nasdaq lists no expected date for ${underlying} after that; check it before holding past ${dayLabel(data.horizon)}`];
+  }
   if (data.status === 'partial' && data.failed && data.failed.length) {
     return [`Earnings calendar unreadable for ${data.failed.length} day${data.failed.length > 1 ? 's' : ''} in this window (${data.failed.slice(0, 3).map(dayLabel).join(', ')}${data.failed.length > 3 ? '…' : ''}) — those days are unchecked`];
   }
@@ -118,7 +121,7 @@ export function earningsRisk45DTE({ underlying, todayISO, dte, closeDte = 21, ea
     const mine = e.symbol === u;
     if (!mine && !(h && h[e.symbol])) continue;
     hits.push(e);
-    const when = `${dayLabel(e.date)}, ${TIME[e.time]}`;
+    const when = `${dayLabel(e.date)}, ${e.estimated ? 'expected date (not yet confirmed)' : TIME[e.time]}`;
     const beforeClose = e.date <= closeISO;
     if (mine) {
       if (beforeClose) warnings.push(`${u} earnings ${when} — inside the hold, before your ${closeDte}-DTE close on ${dayLabel(closeISO)}. Expect a gap through the strikes and IV collapsing after; today's IV rank is partly that report. Held through earnings this is a different trade — smaller size, or wait until it has reported`);
