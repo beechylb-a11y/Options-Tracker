@@ -124,22 +124,35 @@ export function reviewOpen45(p) {
   const lot$ = x => x == null ? null : Math.round(x * 100);
 
   // ── Plan: theta alone, at entry spot and IV ──
+  // With each leg's IV logged at entry (Oct 2026, "Leg IVs:" in the notes), entry is
+  // valued at those IVs and the vol line includes skew. Without them, today's leg IVs
+  // are shifted back by the ATM change — a skew move then lands in "not explained".
   const ivNowOf = l => (l.iv > 0 ? l.iv : now.iv) || 0;
-  const ivShift = entry.iv > 0 && now.iv > 0 ? now.iv - entry.iv : 0;     // ATM pts since entry
-  let attribution = null, planShare = null;
+  const legIvs = entry.legIvs || null;
+  const legKey = l => `${Number(l.strike)}${l.right}`;
+  const haveLegIv = !!legIvs && new Set(legs.map(l => l.expiry)).size === 1 && legs.every(l => legIvs[legKey(l)] > 0);
+  const ivShift = !haveLegIv && entry.iv > 0 && now.iv > 0 ? now.iv - entry.iv : 0;     // ATM pts since entry
+  const ivEntryOf = haveLegIv ? (l => legIvs[legKey(l)]) : (l => Math.max(0.01, ivNowOf(l) - ivShift));
+  let attribution = null, planShare = null, planCurve = null, planClose = null;
   const canModel = entry.spot > 0 && now.spot > 0 && legs.every(l => ivNowOf(l) > 0);
   if (canModel) {
-    const V = (S, shift, off) => valueOf(legs, S, shift, off, today, underlying, ivNowOf);
-    const v0 = V(entry.spot, -ivShift, -daysHeld);         // at entry: entry spot, entry vol, entry date
-    const vT = V(entry.spot, -ivShift, 0);                 // today, nothing else moved
-    const vP = V(now.spot, -ivShift, 0);                   // today, price moved
-    const vV = V(now.spot, 0, 0);                          // today, price and vol moved
+    const Ve = (S, off) => valueOf(legs, S, 0, off, today, underlying, ivEntryOf);   // entry vols
+    const v0 = Ve(entry.spot, -daysHeld);                  // at entry: entry spot, entry vol, entry date
+    const vT = Ve(entry.spot, 0);                          // today, nothing else moved
+    const vP = Ve(now.spot, 0);                            // today, price moved
+    const vV = valueOf(legs, now.spot, 0, 0, today, underlying, ivNowOf);   // today, price and vol moved
     planShare = (vT - v0);
     attribution = {
       time: lot$(vT - v0), price: lot$(vP - vT), vol: lot$(vV - vP),
       model: lot$(vV - v0),
       other: pnlShare != null ? lot$(pnlShare - (vV - v0)) : null,   // fills, skew, model error
+      skewIncluded: haveLegIv,
     };
+    // The theta-only path, day by day from entry to the planned close: what the
+    // trade should be worth if price and vol stood still.
+    planCurve = [];
+    for (let d = 0; d <= planDays; d++) planCurve.push({ day: d, pnl$: Math.round((Ve(entry.spot, d - daysHeld) - v0) * 100 * qtyOpen) });
+    planClose = planCurve[planCurve.length - 1].pnl$;
   } else if (targetShare) {
     planShare = targetShare * timeFrac;                    // straight-line pace to the target
   }
@@ -175,7 +188,7 @@ export function reviewOpen45(p) {
 
   // ── Backdrop ──
   const fit = trendFit(trend, now.delta);
-  const ivChange = ivShift ? +ivShift.toFixed(1) : 0;
+  const ivChange = entry.iv > 0 && now.iv > 0 ? +(now.iv - entry.iv).toFixed(1) : 0;
   const shortVega = isFinite(now.vega) ? now.vega < 0 : isCredit;
   let events = [];
   try { events = eventRisk45DTE(isoOf(today), Math.max(0, daysToClose)).events.filter(e => ((CALENDAR.severity || {})[e.kind]) === 'high'); }
@@ -195,6 +208,7 @@ export function reviewOpen45(p) {
     pnlShare: pnlShare != null ? +pnlShare.toFixed(2) : null,
     pnl$: pnlShare != null ? Math.round(pnlShare * 100 * qtyOpen) : null,
     pnlLot$: lot$(pnlShare), plan$: planShare != null ? Math.round(planShare * 100 * qtyOpen) : null,
+    planDays, planCurve, planClose$: planClose, entryYmd,
     target$: targetShare ? Math.round(targetShare * 100 * qtyOpen) : null,
     progress: progress != null ? +progress.toFixed(2) : null,
     pctOfMax: pctOfMax != null ? +pctOfMax.toFixed(2) : null,

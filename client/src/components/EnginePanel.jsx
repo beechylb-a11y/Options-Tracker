@@ -2922,7 +2922,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       const q = (/short|sell/.test(lb) ? -1 : 1) * legQty(l);
       return `${q > 0 ? '+' : '-'}${Math.abs(q)} ${l.strike}${lb.includes('put') ? 'P' : 'C'} ${legExpiryOf(l) || (is0 ? tradingSession().yyyymmdd : deriveExpiryYYYYMMDD())}`;
     }).join(' / ') + '\n' : '';
-    const fullNotes = expiriesLine + legsLine + engineSummary + planBlock
+    // Each leg's IV at entry (Oct 2026), when Fetch Greeks ran for this ticket: the
+    // check-up values the entry with them, so a skew move shows as IV change instead
+    // of P&L the model "can't explain".
+    const lgRows = legGreeks && legGreeks.bag === (is0 ? '0' : '45') && Array.isArray(legGreeks.rows) ? legGreeks.rows : [];
+    const ivLegs = (r.legs || []).map(l => {
+      const lb = String(l.label || '').toLowerCase();
+      const right = lb.includes('put') ? 'P' : 'C';
+      const g = lgRows.find(x => Number(x.strike) === Number(l.strike) && x.right === right && Number(x.iv) > 0);
+      return g ? `${l.strike}${right} ${Number(g.iv).toFixed(2)}` : null;
+    });
+    const legIvsLine = !isTimeSpread && ivLegs.length && ivLegs.every(Boolean) ? 'Leg IVs: ' + [...new Set(ivLegs)].join(' / ') + '\n' : '';
+    const fullNotes = expiriesLine + legsLine + legIvsLine + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);

@@ -19,6 +19,7 @@ import { eventsInWindow } from './events.js';
 import { exitRuleFor, STOP_LOSS_PCT } from './data.js';
 import { matchTicketLegs, legsFromNotes, strategyName } from '../utils/positionMatch.js';
 import { normalisePosition, stopToPrice, targetToPrice, pnlAt, withEntryFill } from '../utils/ticketMath.js';
+import { rollChain } from './rollChain.js';
 
 const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
 const symOf = u => { const s = String(u || '').toUpperCase(); return s === 'SPXW' ? 'SPX' : s; };
@@ -64,7 +65,7 @@ export function yearsToExpiry(expiryYmd, now = new Date()) {
  * @param raw        TWS option legs from the bridge, or null when it is not reachable
  * @param todayYmd   the session date, YYYYMMDD
  */
-export function buildBook({ open, decisions, raw, todayYmd }) {
+export function buildBook({ open, decisions, raw, todayYmd, closes = [] }) {
   const byTs = new Map(), byRow = new Map();
   (decisions || []).forEach(d => { if (d.Timestamp) byTs.set(String(d.Timestamp), d); if (d._rowIndex) byRow.set(Number(d._rowIndex), d); });
   return (open || []).map(r0 => {
@@ -104,6 +105,9 @@ export function buildBook({ open, decisions, raw, todayYmd }) {
       pos,                                                  // normalised: ncd, isCredit, basis, maxRisk/ct
       entry: { ncd: pos.ncd || 0, spot: num(d.Price), iv: num(d.IV), vix1d: num(d.VIX1D), em: num(d.EM), ymd: entryYmd },
       maxRisk: num(row.maxRisk),
+      // What the tickets this one was rolled from banked (Oct 2026): part of the
+      // position's P&L, though not of this ticket's.
+      chain: d && d.Notes ? rollChain(d, { decisions: decisions || [], closes: closes || [] }) : null,
     };
   });
 }
@@ -223,7 +227,7 @@ export function positionRisk(p, quotes, { now = new Date(), spotHint = null } = 
 }
 
 export function totals(risks) {
-  const t = { spxDelta1: 0, theta: 0, vega: 0, gamma1: 0, pnl: 0, n: 0, modelled: 0 };
+  const t = { spxDelta1: 0, theta: 0, vega: 0, gamma1: 0, pnl: 0, banked: 0, n: 0, modelled: 0 };
   for (const r of risks) {
     if (!r || !r.greeks) continue;
     t.n++;
@@ -233,6 +237,7 @@ export function totals(risks) {
     t.vega += r.greeks.vega || 0;
     t.gamma1 += r.gamma1 || 0;
     if (Number.isFinite(r.pnl)) t.pnl += r.pnl;
+    if (r.p && r.p.chain) t.banked += r.p.chain.banked;
   }
   return t;
 }

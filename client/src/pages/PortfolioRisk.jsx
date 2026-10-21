@@ -78,10 +78,11 @@ export default function PortfolioRisk({ authenticated, account }) {
       api.getOpenPositions(account),
       api.getDecisions().catch(() => []),
       api.getStats(account).catch(() => null),
-    ]).then(([open, decisions, stats]) => {
+      Promise.resolve().then(() => api.getCloses()).catch(() => []),
+    ]).then(([open, decisions, stats, closes]) => {
       if (dead) return;
       setBase({ open: Array.isArray(open) ? open : [], decisions: Array.isArray(decisions) ? decisions : [],
-        cap: Number(stats?.config?.maxOpenRisk) || null });
+        cap: Number(stats?.config?.maxOpenRisk) || null, closes: Array.isArray(closes) ? closes : [] });
       setErr(null);
     }).catch(e => { if (!dead) setErr(e.message); })
       .finally(() => { if (!dead) setLoading(false); });
@@ -99,7 +100,7 @@ export default function PortfolioRisk({ authenticated, account }) {
       getJson(bridgeUrl + '/api/market-data?underlying=SPX', 30000),
     ]);
     const raw = pos && Array.isArray(pos.raw) ? pos.raw : null;
-    const book = buildBook({ open: base.open, decisions: base.decisions, raw, todayYmd: tradingSession(t0).yyyymmdd });
+    const book = buildBook({ open: base.open, decisions: base.decisions, closes: base.closes, raw, todayYmd: tradingSession(t0).yyyymmdd });
     const want = book.filter(p => p.legs && p.live > 0 && (!p.expiry || p.expiry >= tradingSession(t0).yyyymmdd));
     const quotes = {};
     await pool(want, 3, async p => {
@@ -120,7 +121,7 @@ export default function PortfolioRisk({ authenticated, account }) {
 
   const view = useMemo(() => {
     if (!base) return null;
-    const book = buildBook({ open: base.open, decisions: base.decisions, raw: live.raw, todayYmd });
+    const book = buildBook({ open: base.open, decisions: base.decisions, closes: base.closes, raw: live.raw, todayYmd });
     const risks = {}, reviews = {};
     for (const p of book) {
       if (p.expiry && p.expiry < todayYmd) continue;
@@ -290,7 +291,8 @@ function Tiles({ tot, budget, anyModel }) {
   const used = e.cap ? e.committed / e.cap : null;
   return (
     <div className="grid gap-3 mb-4" data-testid="risk-tiles" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-      <Tile label="Open P&L" value={money(tot.pnl)} tone={pc(tot.pnl)} sub={anyModel ? 'some marks modelled' : 'at the mid'} />
+      <Tile label="Open P&L" value={money(tot.pnl)} tone={pc(tot.pnl)}
+        sub={(tot.banked ? `position ${money(tot.pnl + tot.banked)} incl. ${money(tot.banked)} banked in rolls · ` : '') + (anyModel ? 'some marks modelled' : 'at the mid')} />
       <Tile label="Delta, SPX-weighted" value={money(tot.spxDelta1)} tone={Math.abs(tot.spxDelta1) < 50 ? C.text : pc(tot.spxDelta1)}
         sub="per 1% SPX move" tip="What the book makes (+) or loses (−) if SPX rises 1% and everything moves with its beta." />
       <Tile label="Theta" value={money(tot.theta)} tone={pc(tot.theta)} sub="per day, nothing moving"
@@ -414,7 +416,10 @@ function PositionsTable({ book, risks, onAct, plan }) {
                 <td className="py-2 pr-3 mono text-right" style={{ color: r && r.markSource === 'model' ? C.muted : C.text }}>
                   {r && Number.isFinite(r.closePx) ? Math.max(0, r.closePx).toFixed(2) : '—'}{r && r.markSource === 'model' ? '*' : ''}
                 </td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.pnl) }}>{r ? money(r.pnl) : '—'}</td>
+                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.pnl) }}>{r ? money(r.pnl) : '—'}
+                  {p.chain && <div className="text-[11px]" style={{ color: C.faint }} title={p.chain.links.map(l => `${l.strikes}: ${money(l.realised)}`).join(' · ')}>
+                    pos. <span style={{ color: pc(r && r.pnl != null ? r.pnl + p.chain.banked : p.chain.banked) }}>{money((r && r.pnl != null ? r.pnl : 0) + p.chain.banked)}</span> incl. roll {money(p.chain.banked)}</div>}
+                </td>
                 <td className="py-2 pr-3 mono text-right text-[12px]">
                   {st ? <span style={{ color: C.red }}>{money(st.loss)}</span> : '—'}{' / '}{tg ? <span style={{ color: C.green }}>{money(tg.gain)}</span> : '—'}
                 </td>

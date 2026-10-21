@@ -6,6 +6,7 @@ import FillReconcile from './FillReconcile';
 import EditTicketModal from './EditTicketModal';
 import { normalisePosition, stopToPrice, pnlAt, loadPlan, withEntryFill } from '../utils/ticketMath';
 import { STOP_LOSS_PCT } from '../engine/data';
+import { rollChain } from '../engine/rollChain';
 
 // Stop line for an open position: the plan saved at entry, else the 100% guide.
 // What was actually got: the fills' average entry when fills are recorded, else the
@@ -71,6 +72,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [cancelling, setCancelling] = useState(null);
   const [editing, setEditing] = useState(null);   // the row being corrected
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
+  const [chains, setChains] = useState({});     // ticketRef → what earlier rolled tickets banked
 
   // The cap is a property of the account, not of the page that happens to be
   // showing positions. The Dashboard already has it and passes it; everywhere else
@@ -94,6 +96,28 @@ export default function OpenPositions({ authenticated, account, compact = false,
       .finally(() => { if (!dead) setLoading(false); });
     return () => { dead = true; };
   }, [authenticated, account, reload]);
+
+  // A rolled ticket's position includes what the tickets before it banked: the
+  // roll closed them, so their P&L is not on this row (Oct 2026). Looked up after
+  // the rows load so the table never waits on it.
+  useEffect(() => {
+    if (!authenticated || !rows.length) return;
+    let dead = false;
+    Promise.all([
+      Promise.resolve().then(() => api.getDecisions()).catch(() => []),
+      Promise.resolve().then(() => api.getCloses()).catch(() => []),
+    ]).then(([decisions, closes]) => {
+      if (dead || !Array.isArray(decisions)) return;
+      const out = {};
+      for (const r of rows) {
+        const d = decisions.find(x => (r.timestamp && x.Timestamp === r.timestamp) || Number(x._rowIndex) === Number(r.ticketRef));
+        const c = d ? rollChain(d, { decisions, closes: Array.isArray(closes) ? closes : [] }) : null;
+        if (c) out[r.ticketRef] = c;
+      }
+      setChains(out);
+    });
+    return () => { dead = true; };
+  }, [authenticated, rows]);
 
   // The ticket ref IS the 1-based Decisions row, which is what the status route
   // addresses, so no lookup is needed.
@@ -123,6 +147,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const openRisk = rows.reduce((a, r) =>
     a + (n(r.qty) > 0 ? n(r.maxRisk) * (n(r.qtyOpen) / n(r.qty)) : 0), 0);
   const realised = rows.reduce((a, r) => a + n(r.realisedPnl), 0);
+  const rollBanked = Object.values(chains).reduce((a, c) => a + (c.banked || 0), 0);
   const partials = rows.filter(r => r.status === 'Partial' || r.status === STATUS.PART_CLOSED).length;
   // Money at risk and money committed are different questions, and only one of
   // them is urgent. A resting order can fill at any moment, so it counts against
@@ -193,6 +218,11 @@ export default function OpenPositions({ authenticated, account, compact = false,
           {realised !== 0 && (
             <span><span className="text-text-muted">Banked </span>
               <b className={realised >= 0 ? 'win' : 'loss'}>{money(realised)}</b></span>
+          )}
+          {rollBanked !== 0 && (
+            <span title="What the tickets these positions were rolled from banked before the roll">
+              <span className="text-text-muted">Banked in rolls </span>
+              <b className={rollBanked >= 0 ? 'win' : 'loss'}>{money(rollBanked)}</b></span>
           )}
           {!compact && working.length > 0 && (
             <button onClick={() => setReconciling(true)}
@@ -280,6 +310,13 @@ export default function OpenPositions({ authenticated, account, compact = false,
                     {!compact && <td className="py-2 pr-2 text-right mono text-text-muted">{r.avgExit === '' ? '—' : r.avgExit}</td>}
                     <td className={'py-2 pr-2 text-right mono ' + (n(r.realisedPnl) >= 0 ? 'win' : 'loss')}>
                       {r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
+                      {chains[r.ticketRef] && (
+                        <div data-testid="op-roll-banked" className="text-[11px]" style={{ color: chains[r.ticketRef].banked >= 0 ? '#3fb950' : '#f85149' }}
+                          title={'Banked by the ticket' + (chains[r.ticketRef].rolls > 1 ? 's' : '') + ' this was rolled from: '
+                            + chains[r.ticketRef].links.map(l => `${l.strikes} ${money(l.realised)}`).join(' · ')}>
+                          {money(chains[r.ticketRef].banked)} in roll
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 pl-2"><Pill s={r.status} /></td>
                     <td className="py-2 pl-2 text-right" style={{ whiteSpace: 'nowrap' }}>

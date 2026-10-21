@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Stethoscope, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../utils/api';
-import { reviewOpen45, ymdOfIso } from '../engine/review45';
+import { reviewOpen45, ymdOfIso, daysBetweenYmd } from '../engine/review45';
+import { rollChain, legIvsFromNotes } from '../engine/rollChain';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../utils/positionMatch';
 import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
@@ -39,7 +40,7 @@ async function getJson(url, ms = 30000) {
 }
 
 // Build everything reviewOpen45 needs for one ticket.
-export function ticketInputs(d, openRow) {
+export function ticketInputs(d, openRow, history = null) {
   const contracts = num(d.Contracts) || 1;
   const qtyOpen = openRow && num(openRow.qtyOpen) != null ? num(openRow.qtyOpen) : contracts;
   const entryIso = sessionDateOf(d.Timestamp) || String(d.Timestamp || '').slice(0, 10);
@@ -49,7 +50,10 @@ export function ticketInputs(d, openRow) {
     strategy: strategyName(d.Strategy), strikes: d['Wing Strikes'] || '', notes: d.Notes || '',
     qtyOpen, contracts,
     entry: { ncd: num(d['Net Debit/Credit']) || 0, dateYmd: ymdOfIso(entryIso), spot: num(d.Price), iv: num(d.IV),
+      legIvs: legIvsFromNotes(d.Notes),
       maxProfit: maxProfit != null ? maxProfit / contracts : null, maxRisk: maxRisk != null ? maxRisk / contracts : null },
+    // Earlier tickets this one was rolled from, and what they banked (Oct 2026).
+    chain: history ? rollChain(d, history) : null,
   };
 }
 
@@ -72,11 +76,17 @@ export default function Checkup45({ tickets, openPositions }) {
     const openByTs = {};
     (open || []).forEach(o => { if (o.timestamp) openByTs[o.timestamp] = o; });
 
-    const pos = await getJson(bridgeUrl + '/api/positions', 15000);
+    // Every ticket and close, to follow a rolled ticket back to the first one.
+    const [allDec, allCloses, pos] = await Promise.all([
+      Promise.resolve().then(() => api.getDecisions()).catch(() => []),
+      Promise.resolve().then(() => api.getCloses()).catch(() => []),
+      getJson(bridgeUrl + '/api/positions', 15000),
+    ]);
+    const history = { decisions: Array.isArray(allDec) ? allDec : [], closes: Array.isArray(allCloses) ? allCloses : [] };
     const raw = pos && Array.isArray(pos.raw) ? pos.raw : [];
     const posErr = pos && pos.error ? pos.error : null;
 
-    const inputs = list.map(d => ticketInputs(d, openByTs[d.Timestamp]));
+    const inputs = list.map(d => ticketInputs(d, openByTs[d.Timestamp], history));
     const unds = [...new Set(inputs.map(t => t.underlying))];
     const surf = {};
     await Promise.all(unds.map(async u => {
@@ -208,45 +218,118 @@ export default function Checkup45({ tickets, openPositions }) {
   );
 }
 
+const absMoney = v => '$' + Math.abs(Math.round(v || 0)).toLocaleString();   // round first: −13.5 reads $13, as money() does
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtYmd = y => (y && String(y).length === 8 ? `${+String(y).slice(6, 8)} ${MON[+String(y).slice(4, 6) - 1]}` : '—');
+function ymdAdd(y, n) {
+  const d = new Date(Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, +y.slice(6, 8)) + n * 86400000);
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+const PACE_COL = { target: '#3fb950', ahead: '#3fb950', 'on plan': '#3fb950', behind: '#d29922', 'off plan': '#f85149', unknown: '#8b949e' };
+
+// The P&L of the open lots split into time / price / IV / not explained, in $ for
+// every open contract (the panel used to show these per lot beside a total).
+export function breakdown(m, qty) {
+  const a = m.attribution;
+  if (!a) return null;
+  const k = Math.max(1, qty || 1);
+  return { time: (a.time || 0) * k, price: (a.price || 0) * k, vol: (a.vol || 0) * k,
+    other: a.other != null ? a.other * k : null, skewIncluded: !!a.skewIncluded };
+}
+
+/** One plain sentence: where the trade is against its plan, and the position across rolls. */
+export function summaryLine(m, chain, qty) {
+  const parts = [];
+  if (m.daysHeld != null && m.planDays) {
+    parts.push(m.daysHeld > m.planDays ? `Past the planned close (${m.planDays} days held).`
+      : `Day ${m.daysHeld} of ${m.planDays} in the planned hold${chain ? ' of the rolled ticket' : ''}.`);
+  }
+  if (m.pnl$ != null) {
+    let s = `${m.pnl$ >= 0 ? 'Up' : 'Down'} ${absMoney(m.pnl$)}${chain ? ' on this ticket' : ''}`;
+    if (m.plan$ != null) s += `; time decay alone would have it ${m.plan$ >= 0 ? 'up' : 'down'} ${absMoney(m.plan$)}`;
+    parts.push(s + '.');
+  }
+  if (chain && m.pnl$ != null) {
+    const pos = m.pnl$ + chain.banked;
+    parts.push(`With the ${money(chain.banked)} banked when you rolled${chain.rolls > 1 ? ` (${chain.rolls} rolls)` : ''}, the whole position is ${pos >= 0 ? 'up' : 'down'} ${absMoney(pos)}.`);
+  }
+  const b = breakdown(m, qty);
+  if (b && b.other != null && m.pnl$ != null && Math.abs(b.other) > Math.max(50, Math.abs(b.price) + Math.abs(b.vol))) {
+    parts.push(`Most of the ${b.other < 0 ? 'loss' : 'gain'} is not price or IV — see “not explained” below.`);
+  }
+  return parts.join(' ');
+}
+
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
   const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll, spotStale, spotAsOf, priceNote } = row;
+  const chain = t.chain || null;
   const m = rv.metrics || {};
   const tone = TONE[rv.tone] || TONE.grey;
   const label = ACTION_LABEL[rv.action] || rv.action;
+  const banked = chain ? chain.banked : 0;
+  const posPnl = m.pnl$ != null ? m.pnl$ + banked : null;
+  const nextStep = rv.steps && rv.steps[0];
+  const q = t.qtyOpen;
+  const targetPx = m.target$ != null && m.ncd != null && q
+    ? (m.isCredit ? Math.abs(m.ncd) - m.target$ / (100 * q) : Math.abs(m.ncd) + m.target$ / (100 * q)) : null;
+  const closeYmd = m.nearExp && m.closeDte != null ? ymdAdd(m.nearExp, -m.closeDte) : null;
   return (
     <div data-testid="checkup-card" data-action={rv.action}
       style={{ border: `1px solid #30363d`, borderLeft: `4px solid ${tone.fg}`, borderRadius: 10, padding: 14, background: '#0d1117' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
         <span data-testid="checkup-action" style={{ padding: '4px 10px', borderRadius: 6, fontWeight: 800, fontSize: 13, letterSpacing: '.02em',
           textTransform: 'uppercase', color: tone.fg, background: tone.bg, border: `1px solid ${tone.border}` }}>{label}</span>
-        <span style={{ color: '#e6edf3', fontWeight: 600 }}>{t.underlying} {t.strategy}</span>
-        <span className="mono" style={{ color: '#8b949e', fontSize: 12.5 }}>{parseStrikes(t.strikes).join(' / ')} · {t.qtyOpen} open</span>
-        {m.pnl$ != null && <span className="mono" style={{ marginLeft: 'auto', fontWeight: 700, color: m.pnl$ >= 0 ? '#3fb950' : '#f85149' }}>{money(m.pnl$)}</span>}
+        <div>
+          <span style={{ color: '#e6edf3', fontWeight: 600 }}>{t.underlying} {t.strategy}</span>
+          <span className="mono" style={{ color: '#8b949e', fontSize: 12.5, marginLeft: 8 }}>{parseStrikes(t.strikes).join(' / ')} · {q} open</span>
+          {chain && <div data-testid="roll-history" className="mono" style={{ fontSize: 12, color: '#a8b2be', marginTop: 2 }}>
+            {chain.links.map(l => `${l.strikes || 'TICKET-' + l.ref} → rolled ${fmtYmd(l.closeYmd)} (${money(l.realised)})`).join(' · ')}
+          </div>}
+        </div>
+        {posPnl != null && (
+          <div style={{ marginLeft: 'auto', textAlign: 'right' }} data-testid="position-pnl">
+            <div className="mono" style={{ fontWeight: 800, fontSize: 18, color: posPnl >= 0 ? '#3fb950' : '#f85149' }}>{money(posPnl)}</div>
+            <div style={{ fontSize: 11.5, color: '#8b949e' }}>
+              {chain ? <>position · this ticket <span className="mono">{money(m.pnl$)}</span> + banked <span className="mono">{money(banked)}</span></> : 'open P&L'}
+            </div>
+          </div>
+        )}
       </div>
-      <div style={{ marginTop: 6, color: tone.fg, fontSize: 13.5 }}>{rv.headline}</div>
+
+      <div style={{ marginTop: 8, color: tone.fg, fontSize: 14, fontWeight: 600 }}>{rv.headline}</div>
+      {nextStep && <div data-testid="next-step" style={{ marginTop: 3, color: '#e6edf3', fontSize: 13.5 }}>
+        <span style={{ color: '#8b949e' }}>Next: </span>{nextStep}</div>}
+      {rv.action !== 'unknown' && <div data-testid="checkup-summary" style={{ marginTop: 8, color: '#c9d1d9', fontSize: 13 }}>{summaryLine(m, chain, q)}</div>}
 
       {rv.action !== 'unknown' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr)', gap: 16, marginTop: 12 }}>
-          <PlanTrack m={m} />
-          <Attribution a={m.attribution} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, marginTop: 12 }}>
+          <PnLChart m={m} chain={chain} />
+          <Waterfall m={m} chain={chain} qty={q} />
         </div>
       )}
+
+      {rv.action !== 'unknown' && (
+        <div data-testid="exits" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+          {m.target$ != null && <Chip label={chain ? 'target (this ticket)' : 'target'} tone="green" val={`${money(m.target$)}${targetPx != null ? ` · close @${Math.max(0, targetPx).toFixed(2)}` : ''}`}
+            tip={`Take profit at ${m.targetLabel}.`} />}
+          {m.stopPrice != null && <Chip label={chain ? 'stop (this ticket)' : 'stop'} val={`${money(m.stop$)} · close @${m.stopPrice.toFixed(2)}`}
+            tone={m.toStop$ != null && m.toStop$ <= 0 ? 'red' : m.toStop$ != null && m.stop$ && m.toStop$ < Math.abs(m.stop$) * 0.3 ? 'amber' : 'red'}
+            tip={`Stop guide: ${m.stopPct}% of the entry premium.${m.toStop$ != null ? ` ${m.toStop$ > 0 ? money(m.toStop$) + ' of room left' : 'Reached.'}` : ''}${chain ? ` The position would then be ${money(banked + m.stop$)} after the roll.` : ''}`} />}
+          {closeYmd && <Chip label="time stop" val={`${fmtYmd(closeYmd)} · ${m.daysToClose > 0 ? `in ${m.daysToClose}d` : 'now'}`}
+            tone={m.daysToClose <= 0 ? 'red' : m.daysToClose <= 5 ? 'amber' : null} tip={`Close by ${m.closeDte} DTE (${m.dte} DTE now), whatever the P&L.`} />}
+        </div>
+      )}
+
       {rv.action !== 'unknown' && legs && spot > 0 && <StrikeStrip legs={legs} spot={spot} shorts={m.shorts || []} ncd={m.ncd} />}
       {roll && <RollPlan roll={roll} />}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-        {m.dte != null && <Chip label="DTE" val={m.dte} tone={m.daysToClose <= 5 ? 'amber' : null}
-          tip={`Time stop at ${m.closeDte} DTE — ${m.daysToClose > 0 ? m.daysToClose + ' days away' : 'reached'}`} />}
-        {m.daysToClose != null && <Chip label="time stop" val={m.daysToClose > 0 ? `in ${m.daysToClose}d` : 'now'} tone={m.daysToClose <= 0 ? 'red' : m.daysToClose <= 5 ? 'amber' : null} />}
-        {m.stopPrice != null && <Chip label="stop" val={`@${m.stopPrice.toFixed(2)} · ${money(m.stop$)}`}
-          tone={m.toStop$ != null && m.toStop$ <= 0 ? 'red' : m.toStop$ != null && m.stop$ && m.toStop$ < Math.abs(m.stop$) * 0.3 ? 'amber' : null}
-          tip={`Stop guide: ${m.stopPct}% of the entry premium.${m.toStop$ != null ? ` ${m.toStop$ > 0 ? money(m.toStop$) + ' of room left' : 'Reached.'}` : ''}`} />}
         {m.ivChange ? <Chip label="IV since entry" val={(m.ivChange > 0 ? '+' : '') + m.ivChange + ' pts'}
           tone={(m.shortVega && m.ivChange >= 2) || (!m.shortVega && m.ivChange <= -2) ? 'amber' : (m.shortVega && m.ivChange < 0) ? 'green' : null} /> : null}
         {trend && <Chip label="trend" val={trendLabel(trend)} tone={m.trendFit < 0 ? 'amber' : m.trendFit > 0 ? 'green' : null}
           tip={(m.trendFit < 0 ? 'Against your delta. ' : m.trendFit > 0 ? 'With your delta. ' : '') + trend.why} />}
-        {m.events && m.events.length > 0 && <Chip label="events" val={m.events.length + ' before stop'} tone="amber"
+        {m.events && m.events.length > 0 && <Chip label="events" val={m.events.length + ' before time stop'} tone="amber"
           tip={m.events.map(e => `${e.label} ${e.date}`).join(' · ')} />}
         {source && <Chip label="legs" val={source} tone={source === 'TWS' ? null : 'amber'} />}
       </div>
@@ -263,14 +346,14 @@ function CheckupCard({ row }) {
           {rv.warnings.map((w, i) => <li key={i}>{w}</li>)}
         </ul>
       )}
-      {(rv.steps.length > 0 || rv.reasons.length > 0) && (
+      {(rv.steps.length > 1 || rv.reasons.length > 0) && (
         <div style={{ marginTop: 8 }}>
           <button onClick={() => setMore(!more)} style={{ fontSize: 12.5, color: '#58a6ff', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {more ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {more ? 'Hide' : 'How and why'}
+            {more ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {more ? 'Hide' : 'Why, and other options'}
           </button>
           {more && (
             <div style={{ marginTop: 6, fontSize: 13, color: '#c9d1d9' }}>
-              {rv.steps.map((s, i) => <div key={'s' + i} style={{ marginBottom: 4 }}>→ {s}</div>)}
+              {rv.steps.slice(1).map((s, i) => <div key={'s' + i} style={{ marginBottom: 4 }}>→ {s}</div>)}
               {rv.reasons.map((s, i) => <div key={'r' + i} style={{ marginBottom: 4, color: '#a8b2be' }}>{s}</div>)}
               <div style={{ marginTop: 4, color: '#8b949e', fontSize: 12 }}>Rule: {rv.rule.why || `${rv.rule.target}% target`} · close by {m.closeDte} DTE</div>
             </div>
@@ -291,62 +374,164 @@ function Chip({ label, val, tone, tip }) {
   );
 }
 
-// Time elapsed of the planned hold against progress to the profit target, with
-// the theta-only plan as a ghost marker. One glance: are we where we should be?
-function PlanTrack({ m }) {
-  const W = 100;
-  const tf = Math.max(0, Math.min(1, m.timeFrac || 0));
-  const prog = m.progress;
-  const planProg = m.plan$ != null && m.target$ ? m.plan$ / m.target$ : null;
-  const clamp = x => Math.max(-0.5, Math.min(1.2, x));
-  const pace = m.pace;
-  const col = pace === 'target' || pace === 'ahead' || pace === 'on plan' ? '#3fb950' : pace === 'behind' ? '#d29922' : '#f85149';
-  const X = x => ((clamp(x) + 0.5) / 1.7) * W;           // −50% … +120% of target across the bar
+// P&L against days held, for the whole position: the theta-only plan as a dashed
+// path, target and stop as lines, today as a dot, and — for a rolled ticket — what
+// the earlier tickets banked before it. Replaces two unlabelled bars (Oct 2026).
+function PnLChart({ m, chain }) {
+  const planDays = Math.max(1, m.planDays || 1);
+  const banked = chain ? chain.banked : 0;
+  const start = chain && chain.startYmd ? chain.startYmd : m.entryYmd;
+  const off = chain && start && m.entryYmd ? Math.max(0, daysBetweenYmd(start, m.entryYmd)) : 0;
+  const held = Math.max(0, m.daysHeld || 0);
+  const span = Math.max(off + planDays, off + held);
+  const today = off + held;
+  const curve = (m.planCurve && m.planCurve.length > 1 ? m.planCurve
+    : m.target$ != null ? [{ day: 0, pnl$: 0 }, { day: planDays, pnl$: m.target$ }] : [{ day: 0, pnl$: 0 }])
+    .map(c => ({ d: off + c.day, v: banked + c.pnl$ }));
+  const now = m.pnl$ != null ? banked + m.pnl$ : null;
+  const planNow = m.plan$ != null ? banked + m.plan$ : null;
+  const target = m.target$ != null ? banked + m.target$ : null;
+  const stop = m.stop$ != null ? banked + m.stop$ : null;
+  // Earlier tickets: a dotted step per ticket, from 0 up to what each banked.
+  const segs = [];
+  if (chain) {
+    let acc = 0;
+    chain.links.forEach((l, i) => {
+      const d0 = l.entryYmd && start ? Math.max(0, daysBetweenYmd(start, l.entryYmd)) : 0;
+      const nx = chain.links[i + 1];
+      const d1 = nx && nx.entryYmd ? Math.max(d0, daysBetweenYmd(start, nx.entryYmd)) : off;
+      segs.push({ d0, d1, v0: acc, v1: acc + l.realised, l });
+      acc += l.realised;
+    });
+  }
+  const vals = [0, banked, ...curve.map(c => c.v), now, planNow, target, stop].filter(v => v != null && isFinite(v));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = Math.max(40, (hi - lo) * 0.08); lo -= pad; hi += pad;
+  const W = 640, H = 230, L = 54, R = 104, T = 12, B = 40;
+  const X = d => L + (d / span) * (W - L - R);
+  const Y = v => T + ((hi - v) / (hi - lo)) * (H - T - B);
+  const col = PACE_COL[m.pace] || '#8b949e';
+  const path = curve.map((c, i) => `${i ? 'L' : 'M'}${X(c.d).toFixed(1)},${Y(c.v).toFixed(1)}`).join(' ');
+  // Keep the right-hand labels from sitting on top of each other.
+  const labels = [
+    target != null && { v: target, text: `target ${money(target)}`, c: '#3fb950' },
+    planNow != null && curve.length > 1 && { v: curve[curve.length - 1].v, text: `plan ${money(curve[curve.length - 1].v)}`, c: '#58a6ff' },
+    chain && { v: banked, text: `banked ${money(banked)}`, c: '#a8b2be' },
+    stop != null && { v: stop, text: `stop ${money(stop)}`, c: '#f85149' },
+  ].filter(Boolean).sort((a, b) => Y(a.v) - Y(b.v));
+  let lastY = -99;
+  labels.forEach(l => { l.y = Math.max(Y(l.v) + 4, lastY + 13); lastY = l.y; });
+  const xTicks = [{ d: 0, t: fmtYmd(start) }];
+  if (chain) xTicks.push({ d: off, t: `rolled ${fmtYmd(m.entryYmd)}` });
+  if (today > 0 && today < span) xTicks.push({ d: today, t: 'today' });
+  xTicks.push({ d: span, t: `${fmtYmd(m.nearExp && m.closeDte != null ? ymdAdd(m.nearExp, -m.closeDte) : null)} close` });
   return (
     <div data-testid="plan-track">
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>
-        Going to plan? <b style={{ color: col, textTransform: 'capitalize' }}>{pace === 'target' ? 'target reached' : pace}</b>
+      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 2 }}>
+        {chain ? 'Position P&L since you opened' : 'P&L since entry'} — going to plan? <b style={{ color: col, textTransform: 'capitalize' }}>{m.pace === 'target' ? 'target reached' : m.pace}</b>
       </div>
-      <svg viewBox={`0 0 ${W} 30`} width="100%" height="44" preserveAspectRatio="none" role="img"
-        aria-label={`Profit ${prog != null ? Math.round(prog * 100) : '—'}% of target; ${Math.round(tf * 100)}% of planned hold elapsed`}>
-        {/* time row */}
-        <rect x="0" y="3" width={W} height="5" rx="2.5" fill="#21262d" />
-        <rect x="0" y="3" width={tf * W} height="5" rx="2.5" fill="#58a6ff" opacity="0.8" />
-        {/* profit row */}
-        <rect x="0" y="16" width={W} height="9" rx="3" fill="#21262d" />
-        <line x1={X(0)} x2={X(0)} y1="14" y2="27" stroke="#484f58" strokeWidth="0.6" />
-        <line x1={X(1)} x2={X(1)} y1="13" y2="28" stroke="#3fb950" strokeWidth="0.8" strokeDasharray="1.5 1" />
-        {prog != null && <rect x={Math.min(X(0), X(prog))} y="16" width={Math.abs(X(prog) - X(0))} height="9" rx="2" fill={col} opacity="0.85" />}
-        {planProg != null && <rect x={X(planProg) - 0.6} y="14" width="1.2" height="13" fill="#e6edf3" opacity="0.9" />}
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" style={{ display: 'block' }}
+        aria-label={`P&L ${now != null ? money(now) : 'unknown'} against a plan of ${planNow != null ? money(planNow) : 'unknown'} by today`}>
+        {/* zero */}
+        <line x1={L} x2={W - R} y1={Y(0)} y2={Y(0)} stroke="#484f58" strokeWidth="1" />
+        <text x={L - 6} y={Y(0) + 4} fontSize="11" fill="#8b949e" textAnchor="end">$0</text>
+        {/* target and stop */}
+        {target != null && <line x1={X(off)} x2={W - R} y1={Y(target)} y2={Y(target)} stroke="#3fb950" strokeWidth="1.2" strokeDasharray="5 4" />}
+        {stop != null && <line x1={X(off)} x2={W - R} y1={Y(stop)} y2={Y(stop)} stroke="#f85149" strokeWidth="1.2" strokeDasharray="5 4" />}
+        {/* earlier tickets and the roll */}
+        {segs.map((s, i) => (
+          <g key={i}>
+            <line x1={X(s.d0)} x2={X(s.d1)} y1={Y(s.v0)} y2={Y(s.v1)} stroke="#a8b2be" strokeWidth="1.5" strokeDasharray="2 3" />
+            <circle cx={X(s.d1)} cy={Y(s.v1)} r="3" fill="#a8b2be" />
+          </g>
+        ))}
+        {chain && <line x1={X(off)} x2={W - R} y1={Y(banked)} y2={Y(banked)} stroke="#a8b2be" strokeWidth="0.8" opacity="0.5" />}
+        {chain && <line x1={X(off)} x2={X(off)} y1={T} y2={H - B} stroke="#d29922" strokeWidth="1" strokeDasharray="3 3" />}
+        {/* plan: time decay only */}
+        <path d={path} fill="none" stroke="#58a6ff" strokeWidth="1.8" strokeDasharray="6 4" />
+        {/* today */}
+        {today <= span && <line x1={X(today)} x2={X(today)} y1={T} y2={H - B} stroke="#30363d" strokeWidth="1" />}
+        {now != null && planNow != null && <line x1={X(today)} x2={X(today)} y1={Y(planNow)} y2={Y(now)} stroke={col} strokeWidth="2.5" opacity="0.55" />}
+        {planNow != null && <circle cx={X(today)} cy={Y(planNow)} r="3.5" fill="#0d1117" stroke="#58a6ff" strokeWidth="1.5" />}
+        {now != null && <circle cx={X(today)} cy={Y(now)} r="6" fill={col} stroke="#0d1117" strokeWidth="2" />}
+        {now != null && <text x={X(today) + (X(today) > W - R - 120 ? -10 : 10)} y={Y(now) + 4} fontSize="12.5" fontWeight="700" fill={col}
+          textAnchor={X(today) > W - R - 120 ? 'end' : 'start'}>now {money(now)}</text>}
+        {now != null && planNow != null && Math.abs(now - planNow) > 20 && (
+          <text x={X(today) + (X(today) > W - R - 120 ? -10 : 10)} y={(Y(now) + Y(planNow)) / 2 + 4} fontSize="11" fill="#8b949e"
+            textAnchor={X(today) > W - R - 120 ? 'end' : 'start'}>{money(now - planNow)} vs plan</text>
+        )}
+        {labels.map((l, i) => <text key={i} x={W - R + 6} y={l.y} fontSize="11" fill={l.c}>{l.text}</text>)}
+        {/* x axis */}
+        {xTicks.map((k, i) => (
+          <g key={i}>
+            <line x1={X(k.d)} x2={X(k.d)} y1={H - B} y2={H - B + 4} stroke="#484f58" />
+            <text x={X(k.d)} y={H - B + 16} fontSize="11" fill={k.t === 'today' ? '#e6edf3' : '#8b949e'}
+              textAnchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}>{k.t}</text>
+          </g>
+        ))}
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#a8b2be' }} className="mono">
-        <span>{m.daysHeld}d of {m.daysHeld + Math.max(0, m.daysToClose)}d hold</span>
-        <span>{money(m.pnl$)} of {money(m.target$)} target{m.plan$ != null ? ` · plan ${money(m.plan$)}` : ''}</span>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: '#8b949e', marginTop: 2 }}>
+        <span><span style={{ color: '#58a6ff' }}>- - -</span> plan: time decay only, price and IV unchanged</span>
+        <span><span style={{ color: col }}>●</span> now</span>
+        {chain && <span><span style={{ color: '#a8b2be' }}>···</span> earlier ticket{chain.rolls > 1 ? 's' : ''} (realised; daily path not recorded)</span>}
+        <span>{held} of {planDays} days held</span>
       </div>
     </div>
   );
 }
 
-// What time, price and volatility each did since entry (per lot × open lots).
-function Attribution({ a }) {
-  if (!a) return <div style={{ fontSize: 12.5, color: '#8b949e' }}>Entry price or IV not logged — no time / price / vol split.</div>;
-  const parts = [['Time', a.time], ['Price', a.price], ['Vol', a.vol]];
-  if (a.other != null && Math.abs(a.other) >= 5) parts.push(['Other', a.other]);
-  const max = Math.max(1, ...parts.map(p => Math.abs(p[1] || 0)));
+// From $0 to where the position is now, one step at a time: banked rolls, then the
+// open ticket's time / price / IV and the part the model cannot explain.
+function Waterfall({ m, chain, qty }) {
+  const b = breakdown(m, qty);
+  const rows = [];
+  if (chain) rows.push({ k: `Banked when you rolled${chain.rolls > 1 ? ` (${chain.rolls})` : ''}`, v: chain.banked });
+  if (b) {
+    rows.push({ k: 'Time decay (the plan)', v: b.time });
+    rows.push({ k: 'Price move', v: b.price });
+    rows.push({ k: b.skewIncluded ? 'IV change (each leg)' : 'IV change (ATM)', v: b.vol });
+    if (b.other != null) rows.push({ k: 'Not explained by price or IV', v: b.other, other: true });
+  } else if (m.pnl$ != null) rows.push({ k: chain ? 'This ticket' : 'Open P&L', v: m.pnl$ });
+  if (!rows.length) return <div style={{ fontSize: 12.5, color: '#8b949e' }}>No live mark — nothing to break down.</div>;
+  let acc = 0;
+  const steps = rows.map(r => { const s = { ...r, from: acc, to: acc + r.v }; acc += r.v; return s; });
+  const total = acc;
+  const pts = [0, ...steps.map(s => s.to)];
+  const lo = Math.min(...pts), hi = Math.max(...pts), span = Math.max(1, hi - lo);
+  const P = v => ((v - lo) / span) * 100;
+  const other = steps.find(s => s.other);
   return (
     <div data-testid="attribution">
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>Since entry, per lot</div>
-      {parts.map(([k, v]) => (
-        <div key={k} style={{ display: 'grid', gridTemplateColumns: '44px 1fr 56px', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <span style={{ color: '#a8b2be' }}>{k}</span>
-          <div style={{ position: 'relative', height: 8, background: '#161b22', borderRadius: 4 }}>
-            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: '#484f58' }} />
-            <div style={{ position: 'absolute', top: 0, bottom: 0, borderRadius: 4, background: v >= 0 ? '#3fb950' : '#f85149',
-              left: v >= 0 ? '50%' : `${50 - 50 * Math.abs(v) / max}%`, width: `${50 * Math.abs(v || 0) / max}%` }} />
+      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 6 }}>
+        What made the P&L — all {qty} contract{qty === 1 ? '' : 's'}{chain ? ', whole position' : ''}
+      </div>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: 'grid', gridTemplateColumns: '172px 1fr 64px', alignItems: 'center', gap: 8, fontSize: 12.5, marginBottom: 4 }}>
+          <span style={{ color: s.other ? '#e3b341' : '#c9d1d9' }}>{s.k}</span>
+          <div style={{ position: 'relative', height: 12, background: '#161b22', borderRadius: 3 }}>
+            <div style={{ position: 'absolute', left: `${P(0)}%`, top: -2, bottom: -2, width: 1, background: '#484f58' }} />
+            <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2,
+              left: `${Math.min(P(s.from), P(s.to))}%`, width: `${Math.max(0.6, Math.abs(P(s.to) - P(s.from)))}%`,
+              background: s.v >= 0 ? '#3fb950' : '#f85149', opacity: s.other ? 0.6 : 0.9 }} />
           </div>
-          <span className="mono" style={{ textAlign: 'right', color: v >= 0 ? '#3fb950' : '#f85149' }}>{money(v)}</span>
+          <span className="mono" style={{ textAlign: 'right', color: s.v >= 0 ? '#3fb950' : '#f85149' }}>{money(s.v)}</span>
         </div>
       ))}
+      <div style={{ display: 'grid', gridTemplateColumns: '172px 1fr 64px', alignItems: 'center', gap: 8, fontSize: 13, borderTop: '1px solid #30363d', paddingTop: 5, marginTop: 2 }}>
+        <span style={{ color: '#e6edf3', fontWeight: 700 }}>{chain ? 'Position now' : 'Now'}</span>
+        <div style={{ position: 'relative', height: 12 }}>
+          <div style={{ position: 'absolute', left: `${P(total)}%`, top: 0, bottom: 0, width: 3, marginLeft: -1, background: total >= 0 ? '#3fb950' : '#f85149' }} />
+        </div>
+        <span className="mono" style={{ textAlign: 'right', fontWeight: 700, color: total >= 0 ? '#3fb950' : '#f85149' }}>{money(total)}</span>
+      </div>
+      {other && Math.abs(other.v) >= 25 && (
+        <div data-testid="other-explained" style={{ fontSize: 12, color: '#a8b2be', marginTop: 8 }}>
+          “Not explained” is the P&L the time, price and IV model can’t account for.{' '}
+          {b && b.skewIncluded
+            ? 'With each leg’s IV known, that is mostly the entry price against fair value, and wide quotes in today’s mark.'
+            : 'Usually skew — the tested side’s IV moving more than the ATM IV — or the entry price against fair value. Tickets logged from now on carry each leg’s IV, so the IV line will include skew.'}
+        </div>
+      )}
     </div>
   );
 }
@@ -403,8 +588,12 @@ function StrikeStrip({ legs, spot, shorts, ncd }) {
       Entry price not logged — no break-even band.</div>;
   }
   const X = v => strip.at(v) * 100;
+  // The nearest short to price, in points and standard deviations: the one number
+  // the strip is there to show.
+  const near = (shorts || []).filter(x => x.cushion != null).sort((a, b) => a.cushion - b.cushion)[0];
   return (
-    <div data-testid="strike-strip" style={{ position: 'relative', height: 56, marginTop: 14 }}>
+    <div style={{ marginTop: 14 }}>
+    <div data-testid="strike-strip" style={{ position: 'relative', height: 56 }}>
       {strip.zone && (
         <div title={`Break-even ${strip.zone.from} to ${strip.zone.to} — profitable at expiry between them`}
           style={{ position: 'absolute', left: `${strip.zone.x0 * 100}%`, width: `${(strip.zone.x1 - strip.zone.x0) * 100}%`,
@@ -436,6 +625,15 @@ function StrikeStrip({ legs, spot, shorts, ncd }) {
           background: strip.spot.inProfit ? '#e6edf3' : '#f85149', border: '2px solid #0d1117' }} />
         <div className="mono" style={{ fontSize: 10.5, color: '#e6edf3', position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{spot}</div>
       </div>
+    </div>
+    <div data-testid="strip-legend" style={{ fontSize: 12, color: '#a8b2be', marginTop: 2 }}>
+      {strip.zone && <><span style={{ color: '#3fb950' }}>Green band</span>: in profit at expiry between <span className="mono">{Math.round(strip.zone.from)}</span> and <span className="mono">{Math.round(strip.zone.to)}</span>. </>}
+      <span style={{ color: '#f0883e' }}>Shorts</span> (red when tested), <span style={{ color: '#58a6ff' }}>longs</span>.
+      {near && <> Price <span className="mono">{spot}</span> is {near.cushion >= 0
+        ? <><span className="mono">{near.cushion.toFixed(1)}</span> {near.right === 'P' ? 'above' : 'below'} the {near.strike}{near.right} short</>
+        : <><span className="mono">{Math.abs(near.cushion).toFixed(1)}</span> through the {near.strike}{near.right} short</>}
+        {near.cushionSd != null && <> ({Math.abs(near.cushionSd).toFixed(1)}σ{near.absDelta != null ? `, ${Math.round(near.absDelta * 100)}Δ` : ''})</>}.</>}
+    </div>
     </div>
   );
 }

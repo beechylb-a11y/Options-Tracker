@@ -159,3 +159,17 @@ describe('needs attention', () => {
     expect(items.map(i => i.title)).toEqual(['21-DTE close in 3 days', 'Target reached — take profit'])   // amber before green;
   });
 });
+
+describe('rolled positions', () => {
+  it('carries what the earlier ticket banked into the position', () => {
+    const dec = [
+      { _rowIndex: 54, Timestamp: '2026-10-01T15:00:00.000Z', 'Wing Strikes': '595 / 600 / 670 / 675', Notes: '' },
+      { ...decisions[0], Notes: 'Rolled from TICKET-54 (…). Net roll 0.80 cr' },
+    ];
+    const b = buildBook({ open: [open[0]], decisions: dec, raw, todayYmd: TODAY,
+      closes: [{ 'Ticket Ref': '54', 'Close Date': '2026-10-05', 'P&L ($)': '310' }] });
+    expect(b[0].chain.banked).toBe(310);
+    const r = positionRisk(b[0], quotes, { now: NOW });
+    expect(totals([r]).banked).toBe(310);
+  });
+});
