@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { api, clearApiCache } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { mergeClosedTrades, todayPnlOf, filterTracker } from '../utils/stats';
+import { marketClock } from '../engine/marketClock';
 
 // Persistent context strip: account switcher, today P&L, daily-loss gauge,
 // open-position count, data freshness + global refresh, Sheets/bridge status.
@@ -49,6 +50,32 @@ function BridgeControl({ state, title, onAction, busy, note, mode }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// New York date and time, and where the session stands (Oct 2026). Ticks every
+// 15 s; the tooltip gives your own clock alongside.
+const CLOCK_TONE = {
+  green: { fg: '#3fb950', bg: '#0f2417', border: '#238636' },
+  amber: { fg: '#e3b341', bg: '#1f1a0d', border: '#9e6a03' },
+  blue: { fg: '#58a6ff', bg: '#0c1d36', border: '#1f6feb' },
+  grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
+};
+export function NyClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
+  const c = marketClock(now);
+  const t = CLOCK_TONE[c.tone] || CLOCK_TONE.grey;
+  const local = now.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  return (
+    <div className="flex items-center gap-2" data-testid="ny-clock" title={`New York ${c.date} ${c.time} · your time ${local}`}>
+      <span className="text-[12px] text-text-faint uppercase tracking-wider">NY</span>
+      <span className="mono text-sm font-bold text-text">{c.time}</span>
+      <span className="text-[12.5px] text-text-muted">{c.date}</span>
+      <span data-testid="ny-status" className="text-[11px] font-bold px-1.5 py-0.5 rounded"
+        style={{ color: t.fg, background: t.bg, border: `1px solid ${t.border}`, letterSpacing: '0.04em' }}>{c.status}</span>
+      <span className="text-[12px] text-text-muted hidden xl:inline">{c.detail}</span>
     </div>
   );
 }
@@ -197,6 +224,8 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
             Sign in
           </button>
         ) : null}
+
+        <NyClock />
 
         {authenticated && (
           <>
