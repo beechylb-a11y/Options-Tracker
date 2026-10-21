@@ -3,6 +3,7 @@ import { BarChart, Bar, ComposedChart, Area, XAxis, YAxis, Tooltip, ResponsiveCo
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar } from 'lucide-react';
 import { api } from '../utils/api';
 import OpenPositions from '../components/OpenPositions';
+import UpcomingExpiries from '../components/UpcomingExpiries';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
@@ -200,12 +201,6 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   const calcRoi = startBR > 0 ? (totalPnl / startBR * 100) : 0;
   const maxDrawdownPct = startBR > 0 ? (maxDrawdownDollar / startBR * 100) : 0;
 
-  // ── Upcoming expiries (current-state) ──
-  const upcoming = openTrades
-    .filter(t => t['Expiry Date'])
-    .sort((a, b) => new Date(a['Expiry Date']) - new Date(b['Expiry Date']))
-    .slice(0, 8);
-
   // ── Risk config (daily-loss cap/gauge lives in the header strip) ──
   const maxOpenRisk = Number(config?.maxOpenRisk) || 0;
   const openRiskUsedPct = maxOpenRisk > 0 ? Math.min(100, (openRiskTotal / maxOpenRisk) * 100) : 0;
@@ -364,70 +359,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           )}
         </div>
 
-        <div className="card">
-          <h3 className="text-sm font-medium text-text-muted mb-3">Upcoming Expiries</h3>
-          {upcoming.length > 0 ? (
-            <div className="space-y-2">
-              {upcoming.map((t, i) => {
-                const expiryDate = new Date(t['Expiry Date']);
-                const now = new Date();
-                const dte = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
-                // For 0DTE (expires today): show hours remaining to 3pm ET close
-                const todayStr = localISODate(now);
-                const expiryStr = expiryDate.toISOString().split('T')[0];
-                const is0DTE = dte <= 0 || expiryStr === todayStr;
-                // Detect 45DTE trades (anything with DTE > 1 at entry, or strategy suggests longer term)
-                const is45DTE = dte > 1;
-                let timeLabel = `${dte}d`;
-                let urgentClass = 'badge-blue';
-                let warningNote = '';
-
-                if (is0DTE) {
-                  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-                  const close4pm = new Date(et); close4pm.setHours(15, 0, 0, 0);
-                  const hoursLeft = Math.max(0, (close4pm - et) / 3600000);
-                  timeLabel = hoursLeft > 0 ? `${hoursLeft.toFixed(1)}h` : 'Expired';
-                  urgentClass = hoursLeft <= 1 ? 'badge-red' : 'badge-red';
-                  const reminder3pm = new Date(et); reminder3pm.setHours(14, 30, 0, 0);
-                  if (et >= reminder3pm && hoursLeft > 0) timeLabel += ' ⚠';
-                } else if (is45DTE) {
-                  // 45DTE management: close by 21 DTE, warn approaching
-                  if (dte <= 14) {
-                    urgentClass = 'badge-red';
-                    warningNote = 'Past 21 DTE — close now';
-                  } else if (dte <= 21) {
-                    urgentClass = 'badge-red';
-                    warningNote = 'At 21 DTE — manage/close';
-                  } else if (dte <= 28) {
-                    urgentClass = 'badge-amber';
-                    warningNote = 'Approaching 21 DTE';
-                  } else {
-                    urgentClass = 'badge-blue';
-                  }
-                  timeLabel = `${dte}d`;
-                } else {
-                  urgentClass = dte <= 3 ? 'badge-red' : dte <= 7 ? 'badge-amber' : 'badge-blue';
-                }
-                return (
-                  <div key={i} className="flex items-center justify-between py-1.5 border-b border-bg-border last:border-0">
-                    <div>
-                      <span className="text-sm font-medium">{t.Underlying}</span>
-                      <span className="text-xs text-text-muted ml-2">{t['Strategy (OIC)']}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {warningNote && <span className="text-[12px] text-[#d29922]">{warningNote}</span>}
-                      <span className={`badge ${urgentClass}`}>
-                        {timeLabel}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="h-32 flex items-center justify-center text-text-faint text-sm">No open positions</div>
-          )}
-        </div>
+        <UpcomingExpiries authenticated={authenticated} account={account} />
       </div>
 
       {/* Row 4: Recent Trades */}

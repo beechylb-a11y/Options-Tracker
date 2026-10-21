@@ -4,7 +4,10 @@ import { exposure, STATUS } from '../engine/fills';
 import OrderTicket from './OrderTicket';
 import FillReconcile from './FillReconcile';
 import EditTicketModal from './EditTicketModal';
-import { normalisePosition, stopToPrice, pnlAt, loadPlan, withEntryFill } from '../utils/ticketMath';
+import { normalisePosition, stopToPrice, targetToPrice, pnlAt, loadPlan, withEntryFill } from '../utils/ticketMath';
+import { exitRuleFor } from '../engine/data';
+import { ticketExpiry, daysBetweenYmd } from '../utils/ticketExpiry';
+import { tradingSession } from '../engine/session';
 import { STOP_LOSS_PCT } from '../engine/data';
 import { rollChain } from '../engine/rollChain';
 
@@ -41,6 +44,30 @@ function entryOf(r) {
   return { side: pos.isCredit ? 'cr' : 'db', price: e, filled, asked: filled && Number.isFinite(asked) ? Math.abs(asked) : null };
 }
 
+// Profit target for the contracts open (or, for a resting order, all of them once
+// filled): the exit plan saved at entry, else the strategy's rule. Credit: buy back
+// at the price; debit: sell at it. (Oct 2026.)
+function targetOf(r0) {
+  const r = gotEntry(r0);
+  const pos = normalisePosition(r);
+  if (!(Math.abs(pos.ncd || 0) > 0)) return null;
+  const qtyOpen = Number(pos.qtyOpen) || 0;
+  const qty = qtyOpen > 0 ? qtyOpen : (Number(pos.qty) || 1);
+  const plan = r.timestamp ? loadPlan(r.timestamp) : null;
+  const rows = plan && Array.isArray(plan.rows) ? plan.rows.filter(x => Number(x.qty) > 0 && Number(x.pct) > 0) : [];
+  if (rows.length) {
+    const legs = rows.map(x => { const price = targetToPrice(pos, Number(x.pct)); return { pct: Number(x.pct), qty: Number(x.qty), price, gain: pnlAt(pos, price, Number(x.qty)) }; });
+    return { side: pos.isCredit ? 'buy back' : 'sell', price: legs[0].price, last: legs[legs.length - 1].price,
+      gain: legs.reduce((a, x) => a + x.gain, 0), legs, plan: true, basis: pos.basis };
+  }
+  const rule = exitRuleFor(pos.engine || r.engine, pos.strategy);
+  if (!rule || !(rule.target > 0)) return null;
+  const price = targetToPrice(pos, rule.target);
+  if (!(price >= 0)) return null;
+  return { side: pos.isCredit ? 'buy back' : 'sell', price, last: price, gain: pnlAt(pos, price, qty),
+    legs: [{ pct: rule.target, qty, price }], plan: false, basis: pos.basis };
+}
+
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
 // The server files a trade by its New York session (an after-close log rolls to the
 // next one), and showed the ET time beside it: logged 14:14 in Melbourne read
@@ -73,6 +100,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [editing, setEditing] = useState(null);   // the row being corrected
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
   const [chains, setChains] = useState({});     // ticketRef → what earlier rolled tickets banked
+  const [expiries, setExpiries] = useState({}); // ticketRef → { expiry, source, startYmd }
 
   // The cap is a property of the account, not of the page that happens to be
   // showing positions. The Dashboard already has it and passes it; everywhere else
@@ -108,13 +136,17 @@ export default function OpenPositions({ authenticated, account, compact = false,
       Promise.resolve().then(() => api.getCloses()).catch(() => []),
     ]).then(([decisions, closes]) => {
       if (dead || !Array.isArray(decisions)) return;
-      const out = {};
+      const out = {}, exps = {};
+      const todayYmd = tradingSession().yyyymmdd;
       for (const r of rows) {
         const d = decisions.find(x => (r.timestamp && x.Timestamp === r.timestamp) || Number(x._rowIndex) === Number(r.ticketRef));
         const c = d ? rollChain(d, { decisions, closes: Array.isArray(closes) ? closes : [] }) : null;
         if (c) out[r.ticketRef] = c;
+        const e = d ? ticketExpiry(d, decisions, { todayYmd }) : null;
+        exps[r.ticketRef] = { ...(e || {}), startYmd: c && c.startYmd ? c.startYmd : null };
       }
       setChains(out);
+      setExpiries(exps);
     });
     return () => { dead = true; };
   }, [authenticated, rows]);
@@ -215,14 +247,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
                 : `$${exp.committed.toFixed(0)} if all fill · cap $${exp.cap}`}
             </span>
           )}
-          {realised !== 0 && (
-            <span><span className="text-text-muted">Banked </span>
-              <b className={realised >= 0 ? 'win' : 'loss'}>{money(realised)}</b></span>
-          )}
-          {rollBanked !== 0 && (
-            <span title="What the tickets these positions were rolled from banked before the roll">
-              <span className="text-text-muted">Banked in rolls </span>
-              <b className={rollBanked >= 0 ? 'win' : 'loss'}>{money(rollBanked)}</b></span>
+          {(realised !== 0 || rollBanked !== 0) && (
+            <span title={`Closed so far on these positions: ${money(realised)} from tranches${rollBanked ? `, ${money(rollBanked)} from rolls (the tickets they were rolled from)` : ''}`}>
+              <span className="text-text-muted">Banked </span>
+              <b className={realised + rollBanked >= 0 ? 'win' : 'loss'}>{money(realised + rollBanked)}</b></span>
           )}
           {!compact && working.length > 0 && (
             <button onClick={() => setReconciling(true)}
@@ -242,12 +270,14 @@ export default function OpenPositions({ authenticated, account, compact = false,
               <th className="text-left py-2 pr-2">Opened</th>
               <th className="text-left py-2 pr-2">Position</th>
               {!compact && <th className="text-left py-2 pr-2">Legs</th>}
+              <th className="text-right py-2 pr-2" title="Days since the position was opened (since the first ticket, for a rolled one), and days to expiry">Days</th>
               <th className="text-right py-2 pr-2">Open / Qty</th>
               <th className="text-right py-2 pr-2" title="Net credit or debit per contract; for an order not yet filled, the limit it was sent at">Entry</th>
               <th className="text-right py-2 pr-2">Risk live</th>
               <th className="text-right py-2 pr-2" title={`Stop: the plan saved at entry, otherwise the ${STOP_LOSS_PCT}%-of-premium guide (credit: buy back at 2× the credit; debit: close when it is worth nothing). The loss is for all contracts.`}>Stop</th>
+              <th className="text-right py-2 pr-2" title="Profit target: the exit plan saved at entry, otherwise the strategy's rule (0DTE: % of the entry; 45DTE: % of max profit). The amount is for all contracts.">Target</th>
               {!compact && <th className="text-right py-2 pr-2">Avg exit</th>}
-              <th className="text-right py-2 pr-2">Banked</th>
+              <th className="text-right py-2 pr-2" title="Closed so far: tranches sold, plus what a roll banked on the ticket it replaced">Banked</th>
               <th className="text-left py-2 pl-2">Status</th>
               <th className="py-2 pl-2"></th>
             </tr>
@@ -280,6 +310,20 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       <b>{r.underlying}</b> <span className="text-text-muted">{r.strategy}</span>
                     </td>
                     {!compact && <td className="py-2 pr-2 mono text-text-muted">{r.legs}</td>}
+                    {(() => {
+                      const ex = expiries[r.ticketRef] || {};
+                      const today = tradingSession().yyyymmdd;
+                      const opened = String(r.entryDate || '').replace(/-/g, '');
+                      const held = opened.length === 8 ? Math.max(0, daysBetweenYmd(opened, today)) : null;
+                      const total = ex.startYmd ? Math.max(0, daysBetweenYmd(ex.startYmd, today)) : null;
+                      const dte = ex.expiry ? daysBetweenYmd(today, ex.expiry) : null;
+                      return (
+                        <td className="py-2 pr-2 text-right mono" data-testid="op-days" style={{ whiteSpace: 'nowrap' }}
+                          title={`${total != null ? `${total} days since the first ticket opened, ${held} since the roll` : `${held ?? '—'} days in the trade`}${ex.expiry ? ` · expires ${ex.expiry.slice(0, 4)}-${ex.expiry.slice(4, 6)}-${ex.expiry.slice(6, 8)} (${dte} DTE)` : ' · expiry not known — no Legs line on the ticket'}`}>
+                          {total != null ? total : held != null ? held : '—'}d
+                          {dte != null && <div className="text-[11px]" style={{ color: dte <= 0 ? '#f85149' : '#8b949e' }}>{dte <= 0 ? (dte === 0 ? 'expires today' : 'expired') : `${dte} DTE`}</div>}
+                        </td>);
+                    })()}
                     <td className="py-2 pr-2 text-right mono">
                       <b>{r.qtyOpen}</b><span className="text-text-muted"> / {r.qty}</span>
                       {resting > 0 && (
@@ -307,14 +351,21 @@ export default function OpenPositions({ authenticated, account, compact = false,
                         title={st ? `Stop: ${st.isCredit ? 'buy the spread back' : 'sell it'} at ${st.price.toFixed(2)} — ${st.pct}% of the ${st.isCredit ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}; ${money(st.loss)} on ${st.qty} contract${st.qty === 1 ? '' : 's'}${st.ifFilled ? ' once filled' : ''}` : 'No entry price on the ticket'}>
                         {st ? <><span className="text-text-faint">{st.isCredit ? 'buy back ' : 'sell '}</span>@{st.price.toFixed(2)} <span className="text-text-muted">{money(st.loss)}</span></> : '—'}
                       </td>); })()}
+                    {(() => { const tg = targetOf(r); return (
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-target" style={{ color: tg ? '#3fb950' : '#8b949e', whiteSpace: 'nowrap' }}
+                        title={tg ? tg.legs.map((x, i) => `${tg.legs.length > 1 ? `T${i + 1}: ` : ''}${x.qty}x ${tg.side} @ ${x.price.toFixed(2)} (+${x.pct}% of ${tg.basis === 'entry' ? 'entry' : 'max profit'})`).join('\n') + (tg.plan ? '\n(your exit plan)' : '\n(strategy rule)') : 'No entry price on the ticket'}>
+                        {tg ? <><span className="text-text-faint">{tg.side} </span>@{tg.price.toFixed(2)}{tg.legs.length > 1 ? `→${tg.last.toFixed(2)}` : ''} <span>{money(tg.gain)}</span></> : '—'}
+                      </td>); })()}
                     {!compact && <td className="py-2 pr-2 text-right mono text-text-muted">{r.avgExit === '' ? '—' : r.avgExit}</td>}
                     <td className={'py-2 pr-2 text-right mono ' + (n(r.realisedPnl) >= 0 ? 'win' : 'loss')}>
-                      {r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
+                      {chains[r.ticketRef]
+                        ? <span className={n(r.realisedPnl) + chains[r.ticketRef].banked >= 0 ? 'win' : 'loss'}>{money(n(r.realisedPnl) + chains[r.ticketRef].banked)}</span>
+                        : r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
                       {chains[r.ticketRef] && (
                         <div data-testid="op-roll-banked" className="text-[11px]" style={{ color: chains[r.ticketRef].banked >= 0 ? '#3fb950' : '#f85149' }}
                           title={'Banked by the ticket' + (chains[r.ticketRef].rolls > 1 ? 's' : '') + ' this was rolled from: '
                             + chains[r.ticketRef].links.map(l => `${l.strikes} ${money(l.realised)}`).join(' · ')}>
-                          {money(chains[r.ticketRef].banked)} in roll
+                          {n(r.realisedPnl) ? <>incl. {money(chains[r.ticketRef].banked)} roll</> : 'from the roll'}
                         </div>
                       )}
                     </td>
@@ -354,8 +405,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       <td className="py-1.5 pr-2 text-text-muted text-[12px]" colSpan={compact ? 1 : 2}>
                         &nbsp;&nbsp;&nbsp;tranche {i + 1}{c.notes ? ` — ${c.notes}` : ''}
                       </td>
+                      <td></td>
                       <td className="py-1.5 pr-2 text-right mono text-[12px]">{c.qtyClosed}</td>
                       <td className="py-1.5 pr-2 text-right mono text-[12px] text-text-muted">@ {c.closePrice}</td>
+                      <td></td>
                       <td></td>
                       <td></td>
                       {!compact && <td className="py-1.5 pr-2"></td>}
