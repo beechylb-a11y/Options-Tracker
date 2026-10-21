@@ -6,6 +6,7 @@ import { STRATS_0DTE, SQRT252, REGIME_CONDS, REGIME_COMMENTARY, VIX_GAP_RATINGS,
 import { blendCapture, stopLossFrac } from './capture.js';
 import { flyBand, BAND_THIN_PCT_OF_DAY } from './flyBand.js';
 import { eventRisk0DTE, nowET } from './events.js';
+import { earningsRisk0DTE } from './earnings.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
@@ -2535,6 +2536,11 @@ export function calc0DTE(inputs) {
   const _ev0 = eventRisk0DTE(_et.dateISO, _et.minutes);
   _ev0.warnings.forEach(w => warnings.push(w));
   const notices = [..._ev0.notices];
+  // Earnings (Oct 2026): a single stock's report, or a big index name's, reacting
+  // today. inputs.earnings comes from the bridge (Nasdaq calendar); warn-only.
+  const earningsRisk = earningsRisk0DTE({ underlying, todayISO: _et.dateISO, earnings: inputs.earnings });
+  earningsRisk.warnings.forEach(w => warnings.push(w));
+  earningsRisk.notices.forEach(n => notices.push(n));
 
   // ── Delta cross-check (R-49, Oct 2026) ──
   // The EM ruler has no skew; the short legs' live deltas do. A short outside its delta
@@ -2776,7 +2782,7 @@ export function calc0DTE(inputs) {
     legs, engineLegs, strikeOrderWarning, listedFit, listedOk: !!listed0,
     vertVariants, vertVariant: vertVariantId, priceCheck, flyBand: flyBandR,
     deltaCheck, deltaPlan,
-    eventsToday: _ev0.events, notices,
+    eventsToday: _ev0.events, notices, earningsRisk,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)

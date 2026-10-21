@@ -12,6 +12,7 @@ import { parseLegs, composeCombo, summarise, geometry, legKey, spreadProfile } f
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
   interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
+import { earningsBetween } from './earnings.js';
 
 const app = express();
 app.use(cors({
@@ -1130,6 +1131,26 @@ app.get('/api/es-overnight', async (req, res) => {
       snapshot: { last: snap.last, mid: snap.mid, bid: snap.bid, ask: snap.ask, close: snap.prevClose, high: snap.high, low: snap.low, delayed: !!snap.delayed }
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Earnings dates for tickets on single stocks (and an index's biggest names) ──
+// GET /api/earnings?symbols=TSLA,NVDA&from=YYYY-MM-DD&to=YYYY-MM-DD
+//   → { events: [{ symbol, name, date, time: bmo|amc|unknown }], checked, failed, complete }
+// From Nasdaq's public calendar (see earnings.js); not from TWS, so it works with
+// TWS closed. A day that could not be read is listed in `failed`.
+app.get('/api/earnings', async (req, res) => {
+  try {
+    const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : new Date().toISOString().slice(0, 10);
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : from;
+    if (!symbols.length) return res.status(400).json({ error: 'symbols required' });
+    const out = await earningsBetween(symbols, from, to);
+    if (out.failed.length) console.log(`[BRIDGE] earnings: ${out.failed.length}/${out.checked} days unreadable (${out.failed.slice(0, 3).join(', ')}…)`);
+    res.json({ ...out, from, to, source: 'nasdaq' });
+  } catch (err) {
+    console.log('[BRIDGE] earnings error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/health', (req, res) => {

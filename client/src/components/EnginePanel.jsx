@@ -6,6 +6,7 @@ import { calc0DTE } from '../engine/calc0dte';
 import { calc45DTE } from '../engine/calc45dte';
 import { UNDERLYING_LIST, resolveCashType, exitRuleFor, EXIT_RULES } from '../engine/data';
 import { tradingSession, ticketSession, fmtSessionDate } from '../engine/session';
+import { earningsSymbols, earningsWindow, isSingleStock } from '../engine/earnings';
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
 import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig, whyNoShadow } from '../engine/shadow';
@@ -625,6 +626,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [chainExp, setChainExp] = useState(null);
   // Strikes listed for the ticket's 45DTE expiry, calls and puts apart: { key, C, P, err }.
   const [listedChain, setListedChain] = useState(null);
+  // Earnings dates for the ticket's underlying (or an index's biggest names), from the
+  // bridge's Nasdaq calendar (Oct 2026). { und, status, events, failed, error }
+  const [earningsCal, setEarningsCal] = useState(null);
   const [loggedSig, setLoggedSig] = useState(init?.loggedSig ?? null);
   const [logging, setLogging] = useState(false);
   const [logNote, setLogNote] = useState('');
@@ -857,6 +861,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrikesStrat: overrideStrikes['0']?.strat || null,
           vertVariant,
           legGreeks: legGreeks && legGreeks.bag === '0' ? legGreeks.rows : null,
+          earnings: earningsCal && earningsCal.und === String(i0.underlying || '').toUpperCase() ? earningsCal : null,
           hoursToBell: tradingSession().hoursToBell,
           historyByStrategy: strategyHistory || null,
           captureByStrategy: captureStats ? captureStats['0DTE'] || null : null,
@@ -903,6 +908,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           overrideStrikesStrat: overrideStrikes['45']?.strat || null,
           listedStrikes: listedNow,
           legGreeks: legGreeks && legGreeks.bag === '45' ? legGreeks.rows : null,
+          earnings: earningsCal && earningsCal.und === String(i45.underlying || '').toUpperCase() ? earningsCal : null,
           closeDte: tsClose || null,
           curveModel,
           historyByStrategy: strategyHistory || null,
@@ -941,7 +947,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec, earningsCal]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -1034,6 +1040,42 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [is0, listedExp, listedUnd]);
+  // Earnings (Oct 2026): one request per underlying covers both modes — the session
+  // before today (a 0DTE's reaction day) through ~75 days out (any 45DTE expiry).
+  // A missing or failed calendar is passed on as such, never as "no earnings".
+  const earnUnd = String((is0 ? i0.underlying : i45.underlying) || '').toUpperCase();
+  useEffect(() => {
+    if (!earnUnd) return;
+    if (earningsCal && earningsCal.und === earnUnd && earningsCal.status !== 'loading') return;
+    const syms = earningsSymbols(earnUnd);
+    if (!syms.length) { setEarningsCal({ und: earnUnd, status: 'n/a', events: [] }); return; }
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl) { setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'no bridge set' }); return; }
+    const w = earningsWindow(tradingSession().dateISO, 75);
+    setEarningsCal({ und: earnUnd, status: 'loading', events: [] });
+    let live = true;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 60000);
+    fetch(`${bridgeUrl}/api/earnings?symbols=${encodeURIComponent(syms.join(','))}&from=${w.from}&to=${w.to}`,
+      { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
+      .then(r => r.text()).then(txt => {
+        let d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
+        if (!live) return;
+        if (!d || d.error || !Array.isArray(d.events)) {
+          setEarningsCal({ und: earnUnd, status: 'unavailable', events: [],
+            error: d && d.error ? d.error : txt.trim().startsWith('<') || /Cannot GET/.test(txt) ? 'bridge has no earnings route yet — pull and restart it' : 'no reply' });
+          return;
+        }
+        const allFailed = d.checked > 0 && d.failed && d.failed.length >= d.checked;
+        setEarningsCal({ und: earnUnd, events: d.events, failed: d.failed || [],
+          status: allFailed ? 'unavailable' : d.complete ? 'ok' : 'partial', error: allFailed ? 'Nasdaq calendar not reachable' : null });
+      })
+      .catch(() => { if (live) setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'bridge not reachable' }); })
+      .finally(() => clearTimeout(t));
+    return () => { live = false; ctrl.abort(); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [earnUnd]);
   function pickSingle(e) {
     const d = dteBetween(todayYmd, e);
     if (d > 0) setI45(p => ({ ...p, dte: String(d) }));
@@ -3117,6 +3159,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                         style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
                     })()}
                     {isOverride && <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:4,background:'#9e6a03',color:'#fff'}}>MANUAL OVERRIDE</span>}
+                    <EarningsBadge risk={r.earningsRisk} cal={earningsCal && earningsCal.und === String(secBag.underlying || '').toUpperCase() ? earningsCal : null} underlying={secBag.underlying} />
                   </>}
                 </span>
               </div>
@@ -5953,4 +5996,38 @@ function KV({label,value,cls}) {
   return (<div className="flex justify-between py-1 border-b border-[#21262d] last:border-0">
     <span className="text-sm text-[#c9d1d9]">{label}</span>
     <span className={`text-sm font-semibold mono ${cls||'text-white'}`}>{value}</span></div>);
+}
+
+// Earnings on the verdict line (Oct 2026): the ticket's own report in red when it
+// falls inside the window that matters (a 0DTE's reaction day, a 45DTE's hold), grey
+// when it is context (after the planned close, or one of an index's big names), and
+// a plain "not checked" when the calendar could not be read for a single stock.
+function EarningsBadge({ risk, cal, underlying }) {
+  const u = String(underlying || '').toUpperCase();
+  const pill = (bg, fg, text, tip, id) => (
+    <span data-testid={id} title={tip}
+      style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: bg, color: fg, letterSpacing: '0.03em' }}>{text}</span>
+  );
+  if (!cal || cal.status === 'n/a') return null;
+  if (cal.status === 'loading') return isSingleStock(u) ? pill('#1c2128', '#8b949e', 'EARNINGS …', 'Checking the earnings calendar', 'earnings-badge') : null;
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = iso => `${+iso.slice(8, 10)} ${MON[+iso.slice(5, 7) - 1]}`;
+  const when = e => `${day(e.date)}${e.time === 'bmo' ? ' BMO' : e.time === 'amc' ? ' AMC' : ''}`;
+  const evs = (risk && risk.events) || [];
+  const mine = evs.filter(e => e.symbol === u);
+  const tip = [...((risk && risk.warnings) || []), ...((risk && risk.notices) || [])].join('\n\n');
+  if (mine.length) {
+    const hot = risk.warnings.some(w => w.startsWith(u));
+    return pill(hot ? '#3d1214' : '#1c2128', hot ? '#ff7b72' : '#a8b2be', `EARNINGS ${when(mine[0])}`, tip, 'earnings-badge');
+  }
+  if (cal.status === 'unavailable' && isSingleStock(u)) return pill('#1c2128', '#d29922', 'EARNINGS NOT CHECKED', tip || cal.error || '', 'earnings-badge');
+  const others = evs.filter(e => e.symbol !== u);
+  if (others.length) {
+    const hot = risk.warnings.length > 0;
+    const names = [...new Set(others.map(e => e.symbol))];
+    return pill(hot ? '#3d1214' : '#1c2128', hot ? '#ff7b72' : '#a8b2be',
+      `${names.slice(0, 3).join(' · ')}${names.length > 3 ? ` +${names.length - 3}` : ''} EARNINGS`, tip, 'earnings-badge');
+  }
+  if (isSingleStock(u) && cal.status === 'ok') return pill('#0d2818', '#3fb950', 'NO EARNINGS IN WINDOW', 'Checked against the Nasdaq earnings calendar', 'earnings-badge');
+  return null;
 }

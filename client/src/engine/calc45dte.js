@@ -5,6 +5,7 @@
 import { STRATS_45DTE, REGIME_RATINGS45, REGIME_COMMENTARY45, MARKET_BEHAVIOUR_45DTE, DELTA_GUIDE, exitRuleFor, UNDEFINED_RISK } from './data.js';
 import { blendCapture, stopLossFrac } from './capture.js';
 import { eventRisk45DTE, nowET } from './events.js';
+import { earningsRisk45DTE } from './earnings.js';
 import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils/commission.js';
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStrikes.js';
@@ -668,6 +669,12 @@ export function calc45DTE(inputs) {
   const _ev45 = eventRisk45DTE(nowET().dateISO, dte);
   _ev45.warnings.forEach(w => warnings.push(w));
   const notices = [..._ev45.notices];
+  // Earnings (Oct 2026): the underlying's report before the planned close is held
+  // through. From the bridge (Nasdaq calendar); warn-only, like the macro events.
+  const earningsRisk = earningsRisk45DTE({ underlying, todayISO: nowET().dateISO, dte,
+    closeDte: closeDte45 || 21, earnings: inputs.earnings });
+  earningsRisk.warnings.forEach(w => warnings.push(w));
+  earningsRisk.notices.forEach(n => notices.push(n));
   if (unlisted45.length) warnings.push(`Not listed for this expiry: ${unlisted45.map(l => l.strike + (/put/i.test(l.label) ? 'P' : 'C')).join(', ')} — TWS cannot fill these strikes`);
   if (wingsUneven45) warnings.push(`Wings differ (put ${wingsUneven45.put} / call ${wingsUneven45.call}) — TWS lists unequal wings as a custom combo, not an ${/butterfly/i.test(legStrat) ? 'iron butterfly' : 'iron condor'}`);
   if (listedFit && listedFit.skipped) notices.push(`Listed strikes not used (${listedFit.skipped}) — strikes stay on the standard grid; check them in TWS`);
@@ -786,7 +793,7 @@ export function calc45DTE(inputs) {
     regime, regimeCommentary: REGIME_COMMENTARY45[regime],
     ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
     legs, engineLegs, strikeOrderWarning, strikeLine, deltaCheck, deltaPlan, listedFit, listedOk: !!listed45,
-    eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices,
+    eventsToExpiry: _ev45.events, eventHighCount: _ev45.highCount, eventExpiryISO: _ev45.expiryISO, notices, earningsRisk,
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, rawKelly, adjustedKelly, sizingModel, volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,

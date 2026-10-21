@@ -30,7 +30,7 @@ const mount = (extra = {}, onLog = () => true) => render(
     strategyHistory={{}} toast={() => {}}
     initialState={{ i0: { ...base }, ...extra }} />);
 
-const greekCalls = () => global.fetch.mock.calls.filter(c => !/listed-strikes|option-chain/.test(String(c[0]))).length;
+const greekCalls = () => global.fetch.mock.calls.filter(c => !/listed-strikes|option-chain|earnings/.test(String(c[0]))).length;
 
 describe('delta strip', () => {
   beforeEach(() => {
