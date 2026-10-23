@@ -13,15 +13,18 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   // Account management
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
-  const [accountForm, setAccountForm] = useState({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) });
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const [accountForm, setAccountForm] = useState({ name: '', startingBankroll: '3000', bankrollSince: todayISO(), maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) });
 
   // Auto-calc defaults when bankroll changes (only if user hasn't manually edited)
   const [manualLoss, setManualLoss] = useState(false);
   const [manualRisk, setManualRisk] = useState(false);
 
+  // The bankroll is live (Oct 2026): starting bankroll + realised P&L since the date
+  // set here, worked out by the server on every read. What is typed is the start.
   function handleBankrollChange(val) {
     const b = parseFloat(val) || 0;
-    const updates = { bankroll: val };
+    const updates = { startingBankroll: val };
     if (!manualLoss) updates.maxDailyLoss = Math.round(b * 0.20).toString();
     if (!manualRisk) updates.maxOpenRisk = Math.round(b * 0.40).toString();
     setAccountForm(f => ({ ...f, ...updates }));
@@ -73,8 +76,9 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       const newAccount = {
         id: accountForm.name.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now().toString(36),
         name: accountForm.name,
-        bankroll: parseFloat(accountForm.bankroll) || 3000,
+        bankroll: parseFloat(accountForm.startingBankroll) || 3000,
         startingBankroll: parseFloat(accountForm.startingBankroll) || 3000,
+        bankrollSince: accountForm.bankrollSince || todayISO(),
         maxDailyLoss: parseFloat(accountForm.maxDailyLoss) || 300,
         maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || 450,
         commissionPerContract: commNum(accountForm.commissionPerContract, DEFAULT_COMMISSION)
@@ -82,9 +86,9 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       const updated = [...(accounts || []), newAccount];
       await api.saveAccounts(updated);
       invalidateCommissionRates();
-      onAccountsChange(updated);
+      onAccountsChange(await api.getAccounts().catch(() => updated));
       setShowAddAccount(false);
-      setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false);
+      setAccountForm({ name: '', startingBankroll: '3000', bankrollSince: todayISO(), maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false);
     } catch (e) { console.error(e); }
     setSavingAccounts(false);
   }
@@ -95,15 +99,15 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       const updated = (accounts || []).map(a => a.id === editingAccount ? {
         ...a,
         name: accountForm.name,
-        bankroll: parseFloat(accountForm.bankroll) || a.bankroll,
         startingBankroll: parseFloat(accountForm.startingBankroll) || a.startingBankroll,
+        bankrollSince: accountForm.bankrollSince ?? a.bankrollSince ?? '',
         maxDailyLoss: parseFloat(accountForm.maxDailyLoss) || a.maxDailyLoss,
         maxOpenRisk: parseFloat(accountForm.maxOpenRisk) || a.maxOpenRisk,
         commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION)
       } : a);
       await api.saveAccounts(updated);
       invalidateCommissionRates();
-      onAccountsChange(updated);
+      onAccountsChange(await api.getAccounts().catch(() => updated));
       setEditingAccount(null);
     } catch (e) { console.error(e); }
     setSavingAccounts(false);
@@ -153,7 +157,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display font-semibold">Trading Accounts</h3>
-          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', bankroll: '3000', startingBankroll: '3000', maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false); }}
+          <button onClick={() => { setShowAddAccount(!showAddAccount); setEditingAccount(null); setAccountForm({ name: '', startingBankroll: '3000', bankrollSince: todayISO(), maxDailyLoss: '600', maxOpenRisk: '1200', commissionPerContract: String(DEFAULT_COMMISSION) }); setManualLoss(false); setManualRisk(false); }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors">
             <Plus size={12} /> Add account
           </button>
@@ -173,14 +177,21 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[12px] text-text-muted block mb-0.5">Bankroll ($)</label>
-                        <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
+                        <label className="text-[12px] text-text-muted block mb-0.5">Starting bankroll ($)</label>
+                        <input type="number" value={accountForm.startingBankroll} onChange={e => setAccountForm(f => ({ ...f, startingBankroll: e.target.value }))}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
                       <div>
-                        <label className="text-[12px] text-text-muted block mb-0.5">Starting ($)</label>
-                        <input type="number" value={accountForm.startingBankroll} onChange={e => setAccountForm(f => ({ ...f, startingBankroll: e.target.value }))}
+                        <label className="text-[12px] text-text-muted block mb-0.5" title="Realised P&L from this date on is added to the starting bankroll. Leave blank to count every trade.">P&L counts from</label>
+                        <input type="date" value={accountForm.bankrollSince || ''} onChange={e => setAccountForm(f => ({ ...f, bankrollSince: e.target.value }))}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                      </div>
+                      <div>
+                        <label className="text-[12px] text-text-muted block mb-0.5">Bankroll now (live)</label>
+                        <div className="px-2 py-1.5 text-xs mono text-text" data-testid="bankroll-preview">
+                          {fmt$((parseFloat(accountForm.startingBankroll) || 0) + (Number(a.realisedPnl) || 0))}
+                          <span className="text-text-faint"> = start {Number(a.realisedPnl) >= 0 ? '+' : '−'} {fmt$(Math.abs(Number(a.realisedPnl) || 0))} realised</span>
+                        </div>
                       </div>
                       <div>
                         <label className="text-[12px] text-text-muted block mb-0.5">Max daily loss ($) <span style={{color:"#8b949e"}}>default 20%</span></label>
@@ -211,13 +222,16 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span className="text-[12px] text-text-faint">{a.id}</span>
                       </div>
                       <div className="flex gap-4 text-[12px] text-text-muted mt-0.5">
-                        <span>Bankroll: <span className="mono text-text">{fmt$(a.bankroll)}</span></span>
+                        <span data-testid="account-bankroll" title={`Starting ${fmt$(a.startingBankroll)} + realised ${fmt$(a.realisedPnl || 0)} from ${a.realisedCount || 0} closed trade${a.realisedCount === 1 ? '' : 's'}${a.bankrollSince ? ` since ${a.bankrollSince}` : ''}`}>
+                          Bankroll: <span className="mono text-text">{fmt$(a.bankroll)}</span>
+                          {a.realisedPnl != null && <span className="text-text-faint"> ({fmt$(a.startingBankroll)} {Number(a.realisedPnl) >= 0 ? '+' : '−'} {fmt$(Math.abs(Number(a.realisedPnl)))}{a.bankrollSince ? ` since ${a.bankrollSince}` : ''})</span>}
+                        </span>
                         <span>Max loss: <span className="mono text-text">{fmt$(a.maxDailyLoss)}</span></span>
                         <span>Max risk: <span className="mono text-text">{fmt$(a.maxOpenRisk)}</span></span>
                         <span>Commission: <span className="mono text-text">${Number(a.commissionPerContract ?? DEFAULT_COMMISSION).toFixed(2)}</span>/contract</span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, bankroll: a.bankroll, startingBankroll: a.startingBankroll, maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk, commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION) }); setCalib(null); setShowAddAccount(false); setManualLoss(true); setManualRisk(true); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLoss: a.maxDailyLoss, maxOpenRisk: a.maxOpenRisk, commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION) }); setCalib(null); setShowAddAccount(false); setManualLoss(true); setManualRisk(true); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);
@@ -269,13 +283,13 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text placeholder-text-faint outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[12px] text-text-muted block mb-0.5">Bankroll ($)</label>
-                <input type="number" value={accountForm.bankroll} onChange={e => handleBankrollChange(e.target.value)}
+                <label className="text-[12px] text-text-muted block mb-0.5">Starting bankroll ($)</label>
+                <input type="number" value={accountForm.startingBankroll} onChange={e => handleBankrollChange(e.target.value)}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>
-                <label className="text-[12px] text-text-muted block mb-0.5">Starting bankroll ($)</label>
-                <input type="number" value={accountForm.startingBankroll} onChange={e => setAccountForm(f => ({ ...f, startingBankroll: e.target.value }))}
+                <label className="text-[12px] text-text-muted block mb-0.5" title="Realised P&L from this date on is added to the starting bankroll">P&L counts from</label>
+                <input type="date" value={accountForm.bankrollSince || ''} onChange={e => setAccountForm(f => ({ ...f, bankrollSince: e.target.value }))}
                   className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
               </div>
               <div>

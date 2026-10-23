@@ -25,6 +25,7 @@ import { pnlFromFills, commissionRate } from '../client/src/utils/commission.js'
 import { captureStats } from '../client/src/engine/capture.js';
 import { parseCSV, processCSV } from './csvParser.js';
 import { finnhubEarnings } from './earnings.js';
+import { realisedItems, withLiveBankroll, stripLive } from './bankroll.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -181,9 +182,16 @@ app.get('/api/accounts/diagnostic', requireAuth, async (req, res) => {
   }
 });
 
+// Accounts with live bankrolls: starting bankroll + realised P&L since the account's
+// start date (see bankroll.js). Every reader of a bankroll goes through this.
+async function liveAccounts() {
+  const [accounts, decRows, closeRows, trackerRows] = await Promise.all([getAccounts(), getDecisions(), getCloses(), getTradeTracker()]);
+  return withLiveBankroll(accounts, realisedItems({ decRows, closeRows, trackerRows }));
+}
+
 app.get('/api/accounts', requireAuth, async (req, res) => {
   try {
-    const accounts = await getAccounts();
+    const accounts = await liveAccounts();
     res.json(accounts);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -192,7 +200,7 @@ app.get('/api/accounts', requireAuth, async (req, res) => {
 
 app.put('/api/accounts', requireAuth, async (req, res) => {
   try {
-    await saveAccounts(req.body.accounts);
+    await saveAccounts(stripLive(req.body.accounts));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -513,13 +521,16 @@ app.get('/api/stats', requireAuth, async (req, res) => {
     }
     const stats = calculateStats(filtered);
     const config = await getConfig();
-    // If account selected, merge account-specific config
-    const accounts = await getAccounts();
+    // If account selected, merge account-specific config (bankrolls live: starting
+    // bankroll + realised P&L, Oct 2026)
+    const accounts = await liveAccounts();
     const acct = accounts.find(a => a.id === account);
     if (acct) {
       // Single account selected: use its own bankroll + risk limits
       config.currentBankroll = Number(acct.bankroll) || 0;
       config.startingBankroll = Number(acct.startingBankroll) || 0;
+      config.realisedPnl = acct.realisedPnl;
+      config.bankrollSince = acct.bankrollSince;
       config.maxDailyLoss = acct.maxDailyLoss;
       config.maxOpenRisk = acct.maxOpenRisk;
       config.aggregated = false;
