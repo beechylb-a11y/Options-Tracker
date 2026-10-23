@@ -78,40 +78,53 @@ describe('bridge calendar reader', () => {
     expect(parseDay({ data: { rows: null } }, '2026-10-24')).toEqual([]);
     expect(weekdays('2026-10-23', '2026-10-27')).toEqual(['2026-10-23', '2026-10-26', '2026-10-27']);
   });
-  it('filters to the symbols asked for and reports a gap it could not read', async () => {
-    _cacheForTests.clear();
-    const fetchImpl = vi.fn(async url => {
-      if (url.includes('2026-10-26')) return { ok: false, status: 403 };
-      const date = url.split('date=')[1];
-      return { ok: true, json: async () => ({ data: { rows: date === '2026-10-27'
-        ? [{ symbol: 'TSLA', time: 'time-after-hours' }, { symbol: 'IBM', time: 'time-pre-market' }] : [] } }) };
-    });
-    const r = await earningsBetween(['tsla'], '2026-10-23', '2026-10-27', { fetchImpl });
-    expect(r.events).toEqual([expect.objectContaining({ symbol: 'TSLA', date: '2026-10-27', time: 'amc' })]);
-    expect(r.failed).toEqual(['2026-10-26']);
-    expect(r.horizon).toBe(null);
-    expect(r.complete).toBe(false);
-    expect(r.why).toBe('Nasdaq 403');
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-  });
-  it('past the calendar’s ~5-week horizon, uses each company’s next expected date', async () => {
+  it('asks each company’s next date, then reads only the days that matter', async () => {
     _cacheForTests.clear(); _nextCacheForTests.clear();
     const fetchImpl = vi.fn(async url => {
       if (url.includes('/analyst/NVDA/')) return { ok: true, json: async () => ({ data: { announcement: 'Earnings announcement* for NVDA: Nov 18, 2026' } }) };
-      if (url.includes('/analyst/')) return { ok: true, json: async () => ({ data: { announcement: '' } }) };
+      if (url.includes('/analyst/TSLA/')) return { ok: true, json: async () => ({ data: { announcement: 'Earnings announcement* for TSLA: Jan 27, 2027' } }) };
       const date = url.split('date=')[1];
-      if (date > '2026-11-25') return { ok: false, status: 400 };
-      return { ok: true, json: async () => ({ data: { rows: date === '2026-11-02' ? [{ symbol: 'AAPL', time: 'time-after-hours' }] : [] } }) };
+      return { ok: true, json: async () => ({ data: { rows:
+        date === '2026-10-21' ? [{ symbol: 'TSLA', time: 'time-after-hours' }]
+        : date === '2026-11-18' ? [{ symbol: 'NVDA', time: 'time-after-hours' }] : [] } }) };
     });
-    const r = await earningsBetween(['NVDA', 'AAPL', 'ZZZZ'], '2026-10-26', '2026-12-04', { fetchImpl });
-    expect(r.horizon).toBe('2026-11-25');
-    expect(r.failed).toEqual([]);
-    expect(r.events.map(e => `${e.symbol} ${e.date}${e.estimated ? ' est' : ''}`)).toEqual(['AAPL 2026-11-02', 'NVDA 2026-11-18 est']);
-    expect(r.unchecked).toEqual(['ZZZZ']);
+    const r = await earningsBetween(['nvda', 'TSLA'], '2026-10-21', '2026-12-04', { fetchImpl, delayMs: 0 });
+    expect(r.events.map(e => `${e.symbol} ${e.date} ${e.time}${e.estimated ? ' est' : ''}`)).toEqual(['TSLA 2026-10-21 amc', 'NVDA 2026-11-18 amc']);
+    // 2 next-date requests + 3 days (21, 22 Oct and 18 Nov) — not a 33-day sweep
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(r.complete).toBe(true);
+  });
+  it('retries a reset connection, says why a request failed, and keeps a date it cannot confirm as estimated', async () => {
+    _cacheForTests.clear(); _nextCacheForTests.clear();
+    let tries = 0;
+    const reset = () => { const e = new Error('fetch failed'); e.cause = { code: 'ECONNRESET' }; return e; };
+    const fetchImpl = vi.fn(async url => {
+      if (url.includes('/analyst/NVDA/')) { if (tries++ < 1) throw reset(); return { ok: true, json: async () => ({ data: { announcement: 'for NVDA: Nov 18, 2026' } }) }; }
+      throw reset();
+    });
+    const r = await earningsBetween(['NVDA'], '2026-10-21', '2026-12-04', { fetchImpl, delayMs: 0 });
+    expect(r.events).toEqual([expect.objectContaining({ symbol: 'NVDA', date: '2026-11-18', estimated: true })]);
+    expect(r.failed).toEqual(['2026-10-21', '2026-10-22', '2026-11-18']);
+    expect(r.why).toBe('fetch failed: ECONNRESET');
+    expect(r.complete).toBe(false);
+  });
+  it('a company with no date found is unchecked, and the engine says so', async () => {
+    _cacheForTests.clear(); _nextCacheForTests.clear();
+    const fetchImpl = vi.fn(async url => {
+      if (url.includes('/analyst/')) return { ok: false, status: 404 };
+      return { ok: true, json: async () => ({ data: { rows: [] } }) };
+    });
+    const r = await earningsBetween(['ZZZZ'], '2026-10-26', '2026-10-30', { fetchImpl, delayMs: 0 });
+    expect(r.unchecked).toEqual([]);                         // every day of a short window was read instead
+    _cacheForTests.clear(); _nextCacheForTests.clear();
+    const r2 = await earningsBetween(['ZZZZ'], '2026-10-26', '2026-10-30', { fetchImpl: vi.fn(async url => {
+      if (url.includes('/analyst/')) return { ok: false, status: 404 };
+      return { ok: false, status: 403 };
+    }), delayMs: 0 });
+    expect(r2.unchecked).toEqual(['ZZZZ']);
     expect(parseNextDate({ data: { reportText: 'NVIDIA is expected* to report earnings on Feb 25, 2027 after market close.' } })).toBe('2027-02-25');
-    // and the engine says how far it could see for a stock with no date
-    const n = earningsRisk45DTE({ underlying: 'ZZZZ', todayISO: '2026-10-26', dte: 45, earnings: { status: 'ok', events: [], failed: [], horizon: '2026-11-25', unchecked: ['ZZZZ'] } });
-    expect(n.notices[0]).toMatch(/checked to 25 Nov only/);
+    const n = earningsRisk45DTE({ underlying: 'ZZZZ', todayISO: '2026-10-26', dte: 45, earnings: { status: 'partial', events: [], failed: [], unchecked: ['ZZZZ'], why: 'Nasdaq 403' } });
+    expect(n.notices[0]).toMatch(/Earnings date not found for ZZZZ \(Nasdaq 403\)/);
   });
 });
 

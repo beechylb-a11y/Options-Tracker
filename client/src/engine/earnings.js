@@ -59,8 +59,10 @@ function coverage(data, underlying, own) {
   if (!data || data.status === 'unavailable') {
     return [`Earnings not checked${data && data.error ? ` (${data.error})` : ''} — ${own ? `${underlying}'s` : 'the index’s largest names’'} report dates are unknown for this ticket; check them before trading`];
   }
-  if (data.unchecked && data.unchecked.includes(underlying) && data.horizon) {
-    return [`Earnings checked to ${dayLabel(data.horizon)} only — Nasdaq lists no expected date for ${underlying} after that; check it before holding past ${dayLabel(data.horizon)}`];
+  if (data.unchecked && data.unchecked.includes(underlying)) {
+    return [data.horizon
+      ? `Earnings checked to ${dayLabel(data.horizon)} only — Nasdaq lists no expected date for ${underlying} after that; check it before holding past ${dayLabel(data.horizon)}`
+      : `Earnings date not found for ${underlying}${data.why ? ` (${data.why})` : ''} — check it before trading`];
   }
   if (data.status === 'partial' && data.failed && data.failed.length) {
     return [`Earnings calendar unreadable for ${data.failed.length} day${data.failed.length > 1 ? 's' : ''} in this window (${data.failed.slice(0, 3).map(dayLabel).join(', ')}${data.failed.length > 3 ? '…' : ''}) — those days are unchecked`];

@@ -46,24 +46,56 @@ export function parseDay(json, dateISO) {
   }));
 }
 
-async function fetchDay(dateISO, fetchImpl) {
-  const hit = cache.get(dateISO);
-  const past = dateISO < isoOf(new Date());
-  if (hit && (past || Date.now() - hit.at < FRESH_MS)) return hit.rows;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Why a request failed, in words: Node's "fetch failed" hides the real reason
+// (connection reset, DNS, TLS) in err.cause.
+const reason = e => {
+  const c = e && e.cause;
+  return [e && e.message, c && (c.code || c.message)].filter(Boolean).join(': ') || 'unknown error';
+};
+
+async function getNasdaq(url, fetchImpl) {
   const f = fetchImpl || globalThis.fetch;
   if (!f) throw new Error('this Node has no fetch — Node 18 or newer is needed for earnings dates');
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const r = await f('https://api.nasdaq.com/api/calendar/earnings?date=' + dateISO, {
+    const r = await f(url, {
       headers: { 'User-Agent': UA, Accept: 'application/json, text/plain, */*', Origin: 'https://www.nasdaq.com', Referer: 'https://www.nasdaq.com/' },
       signal: ctrl.signal,
     });
-    if (!r.ok) throw new Error('Nasdaq ' + r.status);
-    const rows = parseDay(await r.json(), dateISO);
+    if (!r.ok) { const e = new Error('Nasdaq ' + r.status); e.status = r.status; throw e; }
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+// Nasdaq starts refusing a burst of requests (connections reset part-way through a
+// 50-day sweep, Oct 2026). So: one at a time, a pause between, a retry with backoff,
+// and a result kept until it is replaced — a refused refresh serves the last good one.
+async function polite(fn, { retries = 2, backoff = [800, 2000] } = {}) {
+  let last;
+  for (let i = 0; i <= retries; i++) {
+    try { return await fn(); } catch (e) {
+      last = e;
+      if (e && e.status && e.status < 500 && e.status !== 429) break;     // a real "no", not a hiccup
+      if (i < retries) await sleep(backoff[Math.min(i, backoff.length - 1)]);
+    }
+  }
+  throw last;
+}
+
+async function fetchDay(dateISO, fetchImpl, opts = {}) {
+  const hit = cache.get(dateISO);
+  const past = dateISO < isoOf(new Date());
+  if (hit && (past || Date.now() - hit.at < FRESH_MS)) return hit.rows;
+  try {
+    const rows = parseDay(await polite(() => getNasdaq('https://api.nasdaq.com/api/calendar/earnings?date=' + dateISO, fetchImpl), opts), dateISO);
     cache.set(dateISO, { at: Date.now(), rows });
     return rows;
-  } finally { clearTimeout(t); }
+  } catch (e) {
+    if (hit) return hit.rows;                       // stale beats nothing
+    throw e;
+  }
 }
 
 /** "Earnings announcement* for NVDA: Nov 18, 2026" → '2026-11-18' (null when absent). */
@@ -76,70 +108,72 @@ export function parseNextDate(json) {
 }
 
 const nextCache = new Map();             // symbol → { at, date }
-async function fetchNext(symbol, fetchImpl) {
+async function fetchNext(symbol, fetchImpl, opts = {}) {
   const hit = nextCache.get(symbol);
   if (hit && Date.now() - hit.at < FRESH_MS) return hit.date;
-  const f = fetchImpl || globalThis.fetch;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const r = await f(`https://api.nasdaq.com/api/analyst/${encodeURIComponent(symbol)}/earnings-date`, {
-      headers: { 'User-Agent': UA, Accept: 'application/json, text/plain, */*', Origin: 'https://www.nasdaq.com', Referer: 'https://www.nasdaq.com/' },
-      signal: ctrl.signal,
-    });
-    if (!r.ok) throw new Error('Nasdaq ' + r.status);
-    const date = parseNextDate(await r.json());
+    const date = parseNextDate(await polite(() => getNasdaq(`https://api.nasdaq.com/api/analyst/${encodeURIComponent(symbol)}/earnings-date`, fetchImpl), opts));
     nextCache.set(symbol, { at: Date.now(), date });
     return date;
-  } finally { clearTimeout(t); }
+  } catch (e) {
+    if (hit) return hit.date;
+    throw e;
+  }
 }
 
 /**
- * Earnings for the given symbols between two dates.
- *
- * Nasdaq's day calendar only lists about five weeks ahead; past that every day
- * fails. A run of failures at the END of the window is that horizon, not an error:
- * it is reported as `horizon` (the last day it lists), and for each symbol with no
- * report found before it, the company's next expected date is read instead and
- * added when it falls inside the window (marked estimated).
- * @returns { events: [{ symbol, name, date, time, estimated? }], checked, failed (gaps
- *            inside the listed range), horizon, unchecked (symbols past the horizon with
- *            no next date), complete, why }
+ * Earnings for the given symbols between two dates — with as few requests as it
+ * takes, because Nasdaq refuses bursts:
+ *   1. each symbol's next expected report date (one request per symbol)
+ *   2. the day calendar for the first two weekdays of the window (a 0DTE's
+ *      reaction day: yesterday after the close, today before the open) and for
+ *      each next date that falls inside the window (for before/after the market
+ *      and to confirm it)
+ *   3. a symbol whose next-date request failed: the day calendar for every day in
+ *      the window, one at a time — the slow path, only when needed
+ * A report found only from the next-date page is marked estimated.
+ * @returns { events: [{ symbol, name, date, time, estimated? }], checked (days read),
+ *            failed (days that could not be read), unchecked (symbols with no date
+ *            found and no full sweep), complete, why }
  */
-export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, concurrency = 4 } = {}) {
-  const want = new Set((symbols || []).map(s => String(s).trim().toUpperCase()).filter(Boolean));
-  const days = weekdays(fromISO, toISO);
-  const failedAll = [], ok = [], events = [];
+export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, delayMs = 300, retries = 2, backoff } = {}) {
+  const want = [...new Set((symbols || []).map(s => String(s).trim().toUpperCase()).filter(Boolean))];
+  const opts = { retries, backoff: backoff || (delayMs ? [800, 2000] : [0]) };
+  const all = weekdays(fromISO, toISO);
+  const failed = new Set(), read = new Set();
   let why = '';
-  let i = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, days.length) }, async () => {
-    while (i < days.length) {
-      const d = days[i++];
-      try { (await fetchDay(d, fetchImpl)).forEach(e => { if (!want.size || want.has(e.symbol)) events.push(e); }); ok.push(d); }
-      catch (e) { failedAll.push(d); if (!why) why = e.message; }
-    }
-  }));
-  ok.sort(); failedAll.sort();
-  const lastOk = ok.length ? ok[ok.length - 1] : null;
-  // Failures after the last listed day are the calendar's horizon; earlier ones are gaps.
-  const failed = lastOk ? failedAll.filter(d => d < lastOk) : failedAll;
-  const pastHorizon = lastOk ? failedAll.filter(d => d > lastOk) : [];
-  const horizon = pastHorizon.length ? lastOk : null;
-  const unchecked = [];
-  if (horizon) {
-    const found = new Set(events.map(e => e.symbol));
-    for (const sym of want) {
-      if (found.has(sym)) continue;           // its next report is already inside the listed range
-      try {
-        const date = await fetchNext(sym, fetchImpl);
-        if (date && date >= fromISO && date <= toISO) events.push({ symbol: sym, name: '', date, time: 'unknown', estimated: true });
-        else if (!date) unchecked.push(sym);
-      } catch (e) { unchecked.push(sym); }
-    }
+  const note = e => { if (!why) why = reason(e); };
+  const pause = () => (delayMs ? sleep(delayMs) : null);
+
+  // 1. next expected dates
+  const next = {}, nextFailed = [];
+  for (const sym of want) {
+    try { next[sym] = await fetchNext(sym, fetchImpl, opts); } catch (e) { nextFailed.push(sym); note(e); }
+    await pause();
   }
+  // 2. the days that matter; 3. a full sweep only for symbols we could not place
+  const days = new Set(all.slice(0, 2));
+  Object.values(next).forEach(d => { if (d && d >= fromISO && d <= toISO) days.add(d); });
+  if (nextFailed.length) all.forEach(d => days.add(d));
+  const byDay = {};
+  for (const d of [...days].sort()) {
+    try { byDay[d] = await fetchDay(d, fetchImpl, opts); read.add(d); } catch (e) { failed.add(d); note(e); }
+    await pause();
+  }
+  const events = [], seen = new Set();
+  Object.entries(byDay).forEach(([d, rows]) => rows.forEach(e => {
+    if (want.includes(e.symbol)) { events.push(e); seen.add(e.symbol + '|' + d); }
+  }));
+  for (const sym of want) {
+    const d = next[sym];
+    if (d && d >= fromISO && d <= toISO && !seen.has(sym + '|' + d)) events.push({ symbol: sym, name: '', date: d, time: 'unknown', estimated: true });
+  }
+  // A symbol we could not place: unchecked unless every day of the window was read.
+  const sweptAll = all.every(d => read.has(d));
+  const unchecked = want.filter(sym => !(sym in next) && !sweptAll);
   events.sort((a, b) => a.date.localeCompare(b.date) || a.symbol.localeCompare(b.symbol));
-  return { events, checked: days.length, failed, horizon, unchecked,
-    complete: failed.length === 0 && unchecked.length === 0 && (lastOk != null || !days.length), why };
+  return { events, checked: read.size + failed.size, failed: [...failed].sort(), horizon: null, unchecked,
+    complete: failed.size === 0 && unchecked.length === 0, why };
 }
 
 export const _nextCacheForTests = nextCache;
