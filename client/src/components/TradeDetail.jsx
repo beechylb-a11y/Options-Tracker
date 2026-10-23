@@ -68,6 +68,8 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
     return buildBook({ open: [row], decisions: hist.decisions, closes: hist.closes, raw, todayYmd })[0] || null;
   }, [hist, raw, row, todayYmd]);
 
+  const [spotHint, setSpotHint] = useState(null);
+  const spotAt = useRef(0);
   const pull = useCallback(async () => {
     if (!p) return;
     setNow(new Date());
@@ -77,6 +79,13 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
     const g = await getJson(`${bridgeUrl}/api/option-greeks?underlying=${encodeURIComponent(p.underlying)}&expiry=${nearExp}&legs=`
       + encodeURIComponent(JSON.stringify(p.legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
     setQuotes(g && !g.error && Array.isArray(g.legs) ? g : null);
+    // No underlying price on the quotes (an older bridge, or TWS left it empty):
+    // read it from market data in the background — slow (~8s), so at most once a minute.
+    if (!(g && g.undPrice > 0) && Date.now() - spotAt.current > 60000) {
+      spotAt.current = Date.now();
+      getJson(`${bridgeUrl}/api/market-data?underlying=${encodeURIComponent(p.underlying)}`, 20000)
+        .then(m => { if (m && m.price > 0) setSpotHint(Number(m.price)); }).catch(() => {});
+    }
     setNote(g && g.error ? `No quotes (${g.error}) — valued with a model.` : '');
     setAt(new Date()); setNow(new Date());
     setStatus('ready');
@@ -96,11 +105,11 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   const view = useMemo(() => {
     if (!p || !p.legs) return null;
     const pv = p.live > 0 ? p : { ...p, live: p.qty || 1 };      // a working order: as if filled
-    const r = positionRisk(pv, quotes, { now });
+    const r = positionRisk(pv, quotes, { now, spotHint });
     if (!r || !(r.spot > 0)) return { r, series: null };
     const series = payoffSeries(p, r.legs, r.spot, { now });
     return { r, series, where: whereIsPrice(series, r.spot) };
-  }, [p, quotes, now]);
+  }, [p, quotes, now, spotHint]);
 
   const plan = row && row.timestamp ? loadPlan(row.timestamp) : null;
   const stop = p ? stopFor(p.live > 0 ? p : { ...p, live: p.qty || 1 }, plan) : null;

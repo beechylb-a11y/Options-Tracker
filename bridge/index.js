@@ -1310,12 +1310,30 @@ app.get('/api/option-greeks', async (req, res) => {
 
     const _leg0 = results.find(r => r.greeks);
     const _md = _leg0 && _leg0.greeks ? _leg0.greeks.mdType : null;
+    // The underlying's price: TWS puts it on the model-greeks tick, but on some lines
+    // (QQQ on the paper account, Oct 2026) that field arrives empty while the quotes
+    // are real-time — and the app then drew the payoff at the ENTRY price. Any leg's
+    // value will do; failing that, a quick snapshot of the underlying itself.
+    let _und = (results.find(r => r.greeks && r.greeks.undPrice > 0) || {}).greeks;
+    _und = _und ? _und.undPrice : null;
+    let _undSource = _und ? 'model' : null;
+    if (!_und) {
+      try {
+        const uc = contractOf(underlying);
+        if (uc) {
+          try { ib.reqMarketDataType(3); } catch (e) {}
+          const sn = await Promise.race([getSnapshot(uc), new Promise(r => setTimeout(() => r(null), 4000))]).catch(() => null);
+          const v = sn && (sn.mid > 0 ? sn.mid : sn.last > 0 ? sn.last : 0);
+          if (v > 0) { _und = +Number(v).toFixed(2); _undSource = sn.mid > 0 ? 'mid' : 'last'; }
+        }
+      } catch (e) { /* the app falls back to its own price read */ }
+    }
     const _MDLBL = { 1: 'Real-time', 2: 'Frozen (last)', 3: 'Delayed ~15m', 4: 'Delayed-frozen' };
     const dataType = _md === 1 ? 'realtime' : _md === 2 ? 'frozen' : _md === 3 ? 'delayed' : _md === 4 ? 'delayed-frozen' : 'unknown';
     res.json({ underlying, expiry, legs: results, net: netOut,
       greekSource, greeksMixed,
       dataType, dataTypeLabel: _MDLBL[_md] || 'Unknown',
-      undPrice: _leg0 && _leg0.greeks ? _leg0.greeks.undPrice : null,
+      undPrice: _und, undPriceSource: _undSource,
       asOf: new Date().toISOString(),
       notSubscribed: anyNotSubscribed && !netOut,
       message: (anyNotSubscribed && !netOut)

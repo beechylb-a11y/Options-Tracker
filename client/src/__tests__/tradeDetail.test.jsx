@@ -83,6 +83,21 @@ describe('trade detail panel', () => {
     expect(onSell).toHaveBeenCalledWith(ROW);
   });
 
+  it('quotes without an underlying price: reads it from market data instead of drawing at entry', async () => {
+    const base = global.fetch;
+    global.fetch = vi.fn(url => {
+      const u = String(url);
+      if (u.includes('/api/market-data')) { const b = { price: 6745.2 }; return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify(b)), json: () => Promise.resolve(b) }); }
+      return base(url).then(r => r.json()).then(b => {
+        const body = u.includes('/api/option-greeks') ? { ...b, undPrice: null } : b;
+        return { ok: true, text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) };
+      });
+    });
+    render(<TradeDetail row={ROW} onClose={() => {}} onSell={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('trade-detail').textContent).toMatch(/SPX 6745/));
+    expect(screen.getByTestId('trade-detail').textContent).not.toMatch(/No live price/);
+  });
+
   it('opens from the dashboard row', async () => {
     render(<OpenPositions authenticated account="all" compact maxOpenRisk={5000} />);
     await waitFor(() => expect(screen.getByTestId('op-details')).toBeTruthy());
