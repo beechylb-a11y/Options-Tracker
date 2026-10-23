@@ -478,7 +478,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     return api.logDecision(data)
       .then(result => {
         if (result && result.ok) {
-          showToast('Trade logged to Options Tracker', 'success');
+          showToast('Trade logged to Shadowbook', 'success');
           loadDecisions();
           return true;
         }

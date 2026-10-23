@@ -1324,5 +1324,5 @@ app.post('/api/reconcile', requireAuth, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Options Tracker server running on port ${PORT}`);
+  console.log(`Shadowbook server running on port ${PORT}`);
 });

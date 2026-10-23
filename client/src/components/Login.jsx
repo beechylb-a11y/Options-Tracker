@@ -38,7 +38,7 @@ export default function Login({ notice }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={submit} className="card w-full max-w-sm">
-        <h1 className="font-display text-lg font-bold tracking-tight">Options Tracker</h1>
+        <h1 className="font-display text-lg font-bold tracking-tight">Shadowbook</h1>
         <p className="text-[12.5px] text-text-faint mt-0.5 mb-5">Sign in to continue</p>
         {notice && <div className="text-xs text-amber mb-3">{notice}</div>}
         <label className="text-[12.5px] text-text-muted block mb-1">Email</label>

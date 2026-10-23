@@ -2780,7 +2780,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       '<div class="row"><span class="label">Regime</span><span class="value white">' + r.regimeScore + '/100 — ' + r.regimeGrade + '</span></div>' +
       '</div>' +
       '<div class="section"><div class="section-title">Signals</div>' + signalsHtml + '</div>' +
-      '<div class="timestamp">Generated ' + new Date().toLocaleString('en-AU') + ' \u2014 Options Tracker Decision Engine</div>' +
+      '<div class="timestamp">Generated ' + new Date().toLocaleString('en-AU') + ' \u2014 Shadowbook Decision Engine</div>' +
       '</body></html>';
 
     var win = window.open('', '_blank');

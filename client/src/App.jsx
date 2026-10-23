@@ -163,7 +163,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-[220px] bg-bg-card border-r border-bg-border flex flex-col fixed h-full z-10">
         <div className="p-5 border-b border-bg-border">
-          <h1 className="font-display text-lg font-bold tracking-tight">Options Tracker</h1>
+          <h1 className="font-display text-lg font-bold tracking-tight">Shadowbook</h1>
           <p className="text-[12.5px] text-text-faint mt-0.5">Portfolio & Decision Engine</p>
         </div>
 
