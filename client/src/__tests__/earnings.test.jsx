@@ -3,6 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { earningsRisk0DTE, earningsRisk45DTE, earningsSymbols, earningsWindow, prevWeekday, isSingleStock } from '../engine/earnings';
 import { parseDay, timeOf, weekdays, earningsBetween, parseNextDate, _cacheForTests, _nextCacheForTests } from '../../../bridge/earnings.js';
+import { finnhubEarnings, parseFinnhub } from '../../../server/earnings.js';
 
 const ok = events => ({ status: 'ok', events, failed: [] });
 
@@ -105,7 +106,7 @@ describe('bridge calendar reader', () => {
     const r = await earningsBetween(['NVDA'], '2026-10-21', '2026-12-04', { fetchImpl, delayMs: 0 });
     expect(r.events).toEqual([expect.objectContaining({ symbol: 'NVDA', date: '2026-11-18', estimated: true })]);
     expect(r.failed).toEqual(['2026-10-21', '2026-10-22', '2026-11-18']);
-    expect(r.why).toBe('fetch failed: ECONNRESET');
+    expect(r.why).toMatch(/^fetch failed: ECONNRESET/);
     expect(r.complete).toBe(false);
   });
   it('a company with no date found is unchecked, and the engine says so', async () => {
@@ -132,6 +133,30 @@ import React from 'react';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { calc45DTE } from '../engine/calc45dte';
 import EnginePanel from '../components/EnginePanel';
+
+describe('bridge: fail fast when Nasdaq is not answering', () => {
+  it('stops after three timeouts in a row instead of asking for every day', async () => {
+    _cacheForTests.clear(); _nextCacheForTests.clear();
+    const fetchImpl = vi.fn(async () => { const e = new Error('fetch failed'); e.cause = { code: 'ETIMEDOUT' }; throw e; });
+    const r = await earningsBetween(['TSLA'], '2026-10-22', '2026-12-07', { fetchImpl, delayMs: 0, retries: 0 });
+    expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(r.unchecked).toEqual(['TSLA']);
+    expect(r.why).toMatch(/ETIMEDOUT — Nasdaq not answering this machine/);
+  });
+});
+
+describe('server: Finnhub', () => {
+  it('reads Finnhub’s calendar per symbol, and says when there is no key', async () => {
+    expect(parseFinnhub({ earningsCalendar: [{ date: '2026-10-21', hour: 'amc', symbol: 'TSLA', quarter: 3, year: 2026, epsEstimate: 0.22 }] }, 'TSLA'))
+      .toEqual([expect.objectContaining({ symbol: 'TSLA', date: '2026-10-21', time: 'amc', fiscalQuarter: 'Q3/2026' })]);
+    const fetchImpl = vi.fn(async url => ({ ok: true, json: async () => ({ earningsCalendar: url.includes('symbol=NVDA') ? [{ date: '2026-11-18', hour: '', symbol: 'NVDA' }] : [] }) }));
+    const r = await finnhubEarnings(['nvda', 'AAPL'], '2026-10-22', '2026-12-07', { key: 'k', fetchImpl });
+    expect(r.events.map(e => `${e.symbol} ${e.date} ${e.time}`)).toEqual(['NVDA 2026-11-18 unknown']);
+    expect(r.complete).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await expect(finnhubEarnings(['X'], '2026-10-22', '2026-10-23', { key: '' })).rejects.toThrow(/FINNHUB_KEY/);
+  });
+});
 
 describe('in the engine and on the verdict', () => {
   it('a 45DTE ticket on a stock with earnings inside the hold trades with caution, and says why', () => {

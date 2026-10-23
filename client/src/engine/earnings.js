@@ -36,7 +36,7 @@ export function earningsSymbols(underlying) {
   return h ? Object.keys(h) : [];
 }
 
-const TIME = { bmo: 'before the open', amc: 'after the close', unknown: 'time not given' };
+const TIME = { bmo: 'before the open', amc: 'after the close', dmh: 'during market hours', unknown: 'time not given' };
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dayLabel = iso => `${+iso.slice(8, 10)} ${MON[+iso.slice(5, 7) - 1]}`;
 const addDaysISO = (iso, n) => new Date(Date.parse(iso + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10);

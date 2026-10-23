@@ -24,6 +24,7 @@ import {
 import { pnlFromFills, commissionRate } from '../client/src/utils/commission.js';
 import { captureStats } from '../client/src/engine/capture.js';
 import { parseCSV, processCSV } from './csvParser.js';
+import { finnhubEarnings } from './earnings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -593,6 +594,21 @@ app.post('/api/tradelog/rebuild', requireAuth, async (req, res) => {
 });
 
 // The sale log: every tranche, newest first.
+// ── Earnings dates (Oct 2026) ──
+// From Finnhub when FINNHUB_KEY is set (see earnings.js); otherwise 501 and the
+// client asks the bridge (Nasdaq) instead.
+app.get('/api/earnings', requireAuth, async (req, res) => {
+  try {
+    const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    const from = iso.test(req.query.from || '') ? req.query.from : new Date().toISOString().slice(0, 10);
+    const to = iso.test(req.query.to || '') ? req.query.to : from;
+    if (!symbols.length) return res.status(400).json({ error: 'symbols required' });
+    if (!process.env.FINNHUB_KEY) return res.status(501).json({ error: 'FINNHUB_KEY not set' });
+    res.json({ ...(await finnhubEarnings(symbols, from, to)), from, to });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/closes', requireAuth, async (req, res) => {
   try {
     const rows = await getCloses();

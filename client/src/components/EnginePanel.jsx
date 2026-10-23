@@ -1051,15 +1051,33 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (!syms.length) { setEarningsCal({ und: earnUnd, status: 'n/a', events: [] }); return; }
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
-    if (!bridgeUrl) { setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'no bridge set' }); return; }
     const w = earningsWindow(tradingSession().dateISO, 75);
     setEarningsCal({ und: earnUnd, status: 'loading', events: [] });
     let live = true;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 60000);
-    fetch(`${bridgeUrl}/api/earnings?symbols=${encodeURIComponent(syms.join(','))}&from=${w.from}&to=${w.to}`,
-      { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal })
-      .then(r => r.text()).then(txt => {
+    // A calendar reply → what the engines read. Unread days are gaps; a symbol with
+    // no date found is unchecked; nothing read at all is "unavailable".
+    const take = (d, src) => {
+      const allFailed = (d.checked > 0 && !d.horizon && d.failed && d.failed.length >= d.checked)
+        || (d.unchecked && d.unchecked.length >= syms.length && !(d.events || []).length);
+      setEarningsCal({ und: earnUnd, events: d.events, failed: d.failed || [], horizon: d.horizon || null, unchecked: d.unchecked || [], why: d.why || '', source: src,
+        status: allFailed ? 'unavailable' : (d.failed || []).length || (d.unchecked || []).length ? 'partial' : 'ok',
+        error: allFailed ? `${src === 'finnhub' ? 'Finnhub' : 'Nasdaq'} calendar not reachable${d.why ? ' (' + d.why + ')' : ''}` : null });
+    };
+    (async () => {
+      // 1. Finnhub through the server, when a key is set there: needs no bridge.
+      try {
+        const d = await api.getEarnings(syms, w.from, w.to);
+        if (live && d && Array.isArray(d.events)) { take(d, 'finnhub'); return; }
+      } catch (e) { /* no key, or the server could not reach Finnhub: try the bridge */ }
+      if (!live) return;
+      // 2. Nasdaq through the bridge.
+      if (!bridgeUrl) { setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'no bridge set and no Finnhub key' }); return; }
+      try {
+        const r = await fetch(`${bridgeUrl}/api/earnings?symbols=${encodeURIComponent(syms.join(','))}&from=${w.from}&to=${w.to}`,
+          { headers: { 'ngrok-skip-browser-warning': '1' }, signal: ctrl.signal });
+        const txt = await r.text();
         let d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
         if (!live) return;
         if (!d || d.error || !Array.isArray(d.events)) {
@@ -1067,15 +1085,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             error: d && d.error ? d.error : txt.trim().startsWith('<') || /Cannot GET/.test(txt) ? 'bridge has no earnings route yet — pull and restart it' : 'no reply' });
           return;
         }
-        // Days past Nasdaq's listing horizon are not failures (the bridge fills them
-        // from each company's next expected date); only gaps inside it are.
-        const allFailed = d.checked > 0 && !d.horizon && d.failed && d.failed.length >= d.checked;
-        setEarningsCal({ und: earnUnd, events: d.events, failed: d.failed || [], horizon: d.horizon || null, unchecked: d.unchecked || [],
-          status: allFailed ? 'unavailable' : (d.failed || []).length ? 'partial' : 'ok',
-          error: allFailed ? `Nasdaq calendar not reachable${d.why ? ' (' + d.why + ')' : ''}` : null });
-      })
-      .catch(() => { if (live) setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'bridge not reachable' }); })
-      .finally(() => clearTimeout(t));
+        take(d, 'nasdaq');
+      } catch (e) { if (live) setEarningsCal({ und: earnUnd, status: 'unavailable', events: [], error: 'bridge not reachable' }); }
+      finally { clearTimeout(t); }
+    })();
     return () => { live = false; ctrl.abort(); clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [earnUnd]);

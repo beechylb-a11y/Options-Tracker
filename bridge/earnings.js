@@ -144,11 +144,19 @@ export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, dela
   let why = '';
   const note = e => { if (!why) why = reason(e); };
   const pause = () => (delayMs ? sleep(delayMs) : null);
+  // Fail fast: three network failures in a row (timeouts, resets — not an HTTP
+  // answer) mean Nasdaq is not talking to this machine right now; asking 30 more
+  // times only makes the ticket wait minutes for the same answer.
+  let netFails = 0;
+  const NET_LIMIT = 3;
+  const down = () => netFails >= NET_LIMIT;
+  const track = e => { if (e && e.status) netFails = 0; else netFails++; };
 
   // 1. next expected dates
   const next = {}, nextFailed = [];
   for (const sym of want) {
-    try { next[sym] = await fetchNext(sym, fetchImpl, opts); } catch (e) { nextFailed.push(sym); note(e); }
+    if (down()) { nextFailed.push(sym); continue; }
+    try { next[sym] = await fetchNext(sym, fetchImpl, opts); netFails = 0; } catch (e) { nextFailed.push(sym); note(e); track(e); }
     await pause();
   }
   // 2. the days that matter; 3. a full sweep only for symbols we could not place
@@ -157,7 +165,8 @@ export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, dela
   if (nextFailed.length) all.forEach(d => days.add(d));
   const byDay = {};
   for (const d of [...days].sort()) {
-    try { byDay[d] = await fetchDay(d, fetchImpl, opts); read.add(d); } catch (e) { failed.add(d); note(e); }
+    if (down()) { failed.add(d); continue; }
+    try { byDay[d] = await fetchDay(d, fetchImpl, opts); read.add(d); netFails = 0; } catch (e) { failed.add(d); note(e); track(e); }
     await pause();
   }
   const events = [], seen = new Set();
@@ -173,7 +182,7 @@ export async function earningsBetween(symbols, fromISO, toISO, { fetchImpl, dela
   const unchecked = want.filter(sym => !(sym in next) && !sweptAll);
   events.sort((a, b) => a.date.localeCompare(b.date) || a.symbol.localeCompare(b.symbol));
   return { events, checked: read.size + failed.size, failed: [...failed].sort(), horizon: null, unchecked,
-    complete: failed.size === 0 && unchecked.length === 0, why };
+    complete: failed.size === 0 && unchecked.length === 0, why: down() && why ? `${why} — Nasdaq not answering this machine; stopped asking` : why };
 }
 
 export const _nextCacheForTests = nextCache;

@@ -143,6 +143,8 @@ export const api = {
     method: 'POST', body: JSON.stringify(data)
   }),
   getDecisions: () => fetchJSON('/api/decisions'),
+  // Earnings dates from the server's Finnhub key (Oct 2026); 501 when no key is set.
+  getEarnings: (symbols, from, to) => fetchJSON(`/api/earnings?symbols=${encodeURIComponent(symbols.join(','))}&from=${from}&to=${to}`),
 
   // Comparison
   getComparison: () => fetchJSON('/api/comparison'),
