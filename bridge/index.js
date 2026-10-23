@@ -909,16 +909,19 @@ app.get('/api/history', async (req, res) => {
     // the expiry-day close, gets nothing, and leaves those rows pending for ever while
     // the equity underlyings in the same pass settle normally. (23 Oct 2026.)
     //
-    // The repo disagrees with itself about the cause. getVolHistory says "Indices have no
-    // TRADES history here"; /api/market-data says "SPX index has no MIDPOINT historical
-    // data". Both cannot be right, and this route picked MIDPOINT. An index has no bid or
-    // ask, so there is nothing for a midpoint to be the middle OF — which points at the
-    // market-data comment being the accurate one — but that is reasoning, not evidence,
-    // and reasoning is how the QQQ outage got the wrong fix first.
+    // The repo disagreed with itself about the cause. getVolHistory said "Indices have no
+    // TRADES history here"; /api/market-data said "SPX index has no MIDPOINT historical
+    // data". This route had picked MIDPOINT. Measured, rather than argued:
     //
-    // So: ask for the series we believe in, and if an index comes back empty, try the
-    // other one before giving up. The response says which one actually produced the bars,
-    // so the next person reads an answer instead of re-deriving the argument.
+    //   /api/history?underlying=SPX&barSize=1 day&months=1  ->  22 bars, TRADES, no errors
+    //
+    // TRADES is what an index serves. An index has no bid or ask, so MIDPOINT has nothing
+    // to be the middle OF; the index print comes through as TRADES. The getVolHistory
+    // comment was simply wrong and has been corrected at its source.
+    //
+    // The fallback stays. It costs nothing when the first series answers, it keeps this
+    // route working if IBKR ever changes which series an instrument serves, and the
+    // response says which one produced the bars so nobody has to re-derive the argument.
     const ALLOWED = { TRADES: WhatToShow.TRADES, MIDPOINT: WhatToShow.MIDPOINT };
     const asked = String(req.query.whatToShow || '').toUpperCase();
     const explicit = ALLOWED[asked] || null;
@@ -1486,14 +1489,36 @@ async function getVolHistory(underlying) {
   try { iv = pct(await getHistoricalBars(c, '1 Y', '1 day', WhatToShow.OPTION_IMPLIED_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface IV history:', e.message); }
   try { hv = pct(await getHistoricalBars(c, '3 M', '1 day', WhatToShow.HISTORICAL_VOLATILITY)); } catch (e) { console.log('[BRIDGE] vol-surface HV history:', e.message); }
   // Daily OHLC for the 45DTE trend read (SMA 20/50, ADX 14, stretch, HV10/HV60).
-  // Indices have no TRADES history here, so SPX/XSP read SPY and RUT reads IWM —
-  // every trend number is a ratio or a %, so the proxy's scale does not matter.
-  const dailySource = (underlying === 'SPX' || underlying === 'XSP') ? 'SPY' : underlying === 'RUT' ? 'IWM' : underlying;
-  try {
-    const bars = await getHistoricalBars(contracts[dailySource] || c, '1 Y', '1 day', WhatToShow.TRADES);
-    daily = bars.filter(b => b && b.close > 0 && b.high > 0 && b.low > 0)
+  //
+  // The comment that stood here said "Indices have no TRADES history here, so SPX/XSP
+  // read SPY and RUT reads IWM". That is FALSE, and it was load-bearing: it is why
+  // /api/history asked for MIDPOINT on an index, which returns nothing, which is why the
+  // shadow loop never settled an SPX or XSP verdict. Measured 23 Oct 2026:
+  //
+  //   /api/history?underlying=SPX&barSize=1 day&months=1  ->  22 bars, TRADES, no errors
+  //
+  // An index has no bid or ask, so MIDPOINT has nothing to be the middle of; TRADES
+  // carries the index print. /api/market-data's comment — "SPX index has no MIDPOINT
+  // historical data" — was the accurate one of the pair.
+  //
+  // So ask the index for its OWN bars and keep the proxy only as a fallback. It matters
+  // beyond the trend read, where a proxy was harmless because every number there is a
+  // ratio: resolveSpot will only accept a daily close as a spot fallback when the bars
+  // are the underlying's own, since SPY x10 is not SPX. With real SPX bars, SPX finally
+  // gets the same stale-but-labelled price fallback QQQ got.
+  const proxyFor = u => (u === 'SPX' || u === 'XSP') ? 'SPY' : u === 'RUT' ? 'IWM' : null;
+  let dailySource = underlying;
+  const readDaily = async (sym) => {
+    const bars = await getHistoricalBars(contracts[sym] || contractOf(sym) || c, '1 Y', '1 day', WhatToShow.TRADES);
+    return bars.filter(b => b && b.close > 0 && b.high > 0 && b.low > 0)
       .map(b => [String(b.date).slice(0, 8), +b.open || +b.close, +b.high, +b.low, +b.close]);
-  } catch (e) { console.log('[BRIDGE] vol-surface daily bars:', e.message); }
+  };
+  try { daily = await readDaily(underlying); } catch (e) { console.log('[BRIDGE] vol-surface daily bars:', e.message); }
+  if (!daily.length && proxyFor(underlying)) {
+    dailySource = proxyFor(underlying);
+    console.log(`[BRIDGE] vol-surface daily: ${underlying} gave no bars — falling back to ${dailySource} (trend only; not a price)`);
+    try { daily = await readDaily(dailySource); } catch (e) { console.log('[BRIDGE] vol-surface daily proxy:', e.message); }
+  }
   if (!hv.length) {
     closes = daily.length ? daily.map(b => b[4]) : [];
     if (!closes.length) {
