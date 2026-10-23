@@ -11,6 +11,7 @@ import {
 } from '../utils/ticketMath';
 import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
+import RollOrderPanel from './RollOrderPanel';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -251,7 +252,11 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // Partial roll: some legs move, the rest carry across. TWS only trades the moved
   // legs, so the two prices are for those; the carried legs' entry price is needed
   // to split the result correctly between the old and new tickets (see rollSummary).
-  const partial = changedLegs > 0 && changedLegs < oldStrikes.length;
+  // Rolling out in time moves every leg, strike changed or not (the order panel knows
+  // the old expiry and reports it).
+  const [rollShape, setRollShape] = useState({ allMoved: false, carried: null });
+  const expiryMovesAll = !!roll.expiry && rollShape.allMoved;
+  const partial = !expiryMovesAll && changedLegs > 0 && changedLegs < oldStrikes.length;
   const carriedStrikes = oldStrikes.filter((s, i) => Number(roll.strikes[i]) === s);
   const carriedAbs = parseFloat(roll.carried);
   const carriedNcd = partial ? (isFinite(carriedAbs) ? (roll.carriedSide === 'cr' ? carriedAbs : -carriedAbs) : null) : 0;
@@ -555,6 +560,9 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
               })}
             </div>
           </div>
+
+          <RollOrderPanel pos={pos} roll={roll} oldStrikes={oldStrikes} lots={rq || 1} tick={tick} onShape={setRollShape}
+            onUse={p => setRoll(r => ({ ...r, closeAt: p.closeAt, openAt: p.openAt, openSide: p.openSide }))} />
 
           {partial && (
             <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #9e6a03' }}>
