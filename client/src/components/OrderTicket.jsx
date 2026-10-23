@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../utils/api';
-import { unitsFromTicket, roundTripCommission } from '../utils/commission';
+import { unitsFromTicket, roundTripCommission, oneSideCommission } from '../utils/commission';
 import { useCommissionRate } from '../utils/useCommissionRate';
 import { fmt$, pnlColor } from '../utils/format';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
@@ -100,7 +100,19 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const [commission, setCommission] = useState(acctRate);
   useEffect(() => { setCommission(acctRate); }, [acctRate]);
   const units = unitsFromTicket(pos.legs, pos.strategyRaw || pos.strategy) || 1;
+  // A trade that EXPIRED did not trade out, so there is no closing leg and no closing
+  // commission — and it was not a target fill either. Logged as an ordinary tranche the
+  // record said "T1 128% target" on a trade whose T1 was +25% and which simply ran to
+  // the bell, and charged a round trip on a cash settlement. Both the SPX 7620/7660/7700
+  // and the IWM 272/275/279 of 22 Oct went in that way. An expiry mislabelled as a target
+  // is worse than the $2.60: it tells the exit-rule review that a rule fired when none
+  // did, in the direction that flatters the rule. (Oct 2026.)
+  const [expired, setExpired] = useState(false);
   const rtFees = q => roundTripCommission(units, q, commission);
+  // What the contracts being recorded actually cost. The stop line below keeps the round
+  // trip either way — a stop IS a trade out, so it pays both sides whatever this ticket
+  // is being used for right now.
+  const exitFees = q => expired ? oneSideCommission(units, q, commission) : rtFees(q);
   const [closeDate, setCloseDate] = useState(lastSessionDate());   // NY session date, not UTC
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -137,7 +149,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const overAllocated = allocated > pos.qtyOpen;
   const filled = rows.filter(r => r.status === 'Filled' && Number(r.qty) > 0);
   const rowFill = r => parseFloat(r.status === 'Filled' && r.fill !== '' ? r.fill : r.price);
-  const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - rtFees(q) : 0; };
+  const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - exitFees(q) : 0; };
   const planNet = rows.reduce((a, r) => a + rowNet(r), 0);
   const filledNet = filled.reduce((a, r) => a + rowNet(r), 0);
   // Quantity-weighted average fill of the tranches being recorded, as % on entry.
@@ -197,12 +209,17 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
       // what is still open, so two in flight would both see the same open qty.
       for (let i = 0; i < filled.length; i++) {
         const r = filled[i], q = Number(r.qty), p = rowFill(r);
-        const fees = rtFees(q);
+        const fees = exitFees(q);
         const n = rows.indexOf(r) + 1;
+        // An expiry has no target and no limit price to name — it has a settlement
+        // value. Say that, so the exit-reason review can tell the two apart.
+        const label = expired
+          ? `Expired — settlement value ${isFinite(p) ? p.toFixed(2) : '—'}`
+          : `T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${parseFloat(r.price).toFixed(2)} ${side}`;
         await api.closeTicket(pos.ticketRef, {
           closeDate, closePrice: p, qtyClosed: q, fees,
           grossPnl: pnlAt(pos, p, q),
-          notes: [`T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${parseFloat(r.price).toFixed(2)} ${side}`, notes].filter(Boolean).join(' — '),
+          notes: [label, notes].filter(Boolean).join(' — '),
           account: pos.account,
           ...(i === 0 ? {
             sessionHigh: snapV.sessionHigh ?? null, sessionLow: snapV.sessionLow ?? null,
@@ -376,17 +393,43 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             ))}
             <button onClick={() => setRows(r => [...r, mkRow(Math.max(1, pos.qtyOpen - allocated), 50)])}
               style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #2f81f7', background: 'transparent', color: '#58a6ff', cursor: 'pointer' }}>+ Tranche</button>
+            {/* An expiry takes every contract still open, at once — there is no such
+                thing as a partial expiry — so turning this on collapses the ladder to a
+                single all-in row and asks for the settlement value instead of a fill. */}
+            <button onClick={() => {
+                const on = !expired;
+                setExpired(on);
+                if (on) setRows([{ qty: pos.qtyOpen || 1, pct: '', price: '', status: 'Filled', fill: '' }]);
+                else setRows(ladder(pos.qtyOpen || 1, PRESETS[Object.keys(PRESETS)[0]].pcts).map(r => mkRow(r.qty, r.pct)));
+              }}
+              title="The trade ran to the bell instead of being traded out: no closing leg, no closing commission, and no target was hit."
+              style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, cursor: 'pointer', fontWeight: expired ? 700 : 400,
+                border: `1px solid ${expired ? '#9e6a03' : '#30363d'}`,
+                background: expired ? '#1f1a0d' : 'transparent', color: expired ? '#d29922' : '#c9d1d9' }}>
+              {expired ? '✓ Expired' : 'Expired'}
+            </button>
             {!isManual && (
               <button onClick={fetchFills} style={{ marginLeft: 'auto', fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #2f81f7', background: '#0d1a2e', color: '#58a6ff', cursor: 'pointer' }}>⚡ TWS fills</button>
             )}
           </div>
 
+          {expired && (
+            <div style={{ padding: 8, borderRadius: 6, background: '#1f1a0d', border: '1px solid #9e6a03', color: '#d29922', fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+              Recording an expiry on all {pos.qtyOpen} open. Put the structure's <b>settlement value</b> in Fill @ —
+              what the legs were worth at the close, not zero unless it really expired worthless.
+              Commission is the entry only; there is no closing leg to pay for.
+              {' '}{/^(SPX|XSP|RUT|NDX|VIX)$/i.test(pos.underlying || '')
+                ? `${pos.underlying} is cash settled, so this is the whole story.`
+                : `${pos.underlying || 'This underlying'} settles into shares — any ITM leg is exercised or assigned, so check what stock position that left you holding.`}
+            </div>
+          )}
+
           <table className="w-full" style={{ fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ color: '#8b949e', fontSize: 11.5, textAlign: 'left' }}>
                 <th style={{ padding: 4 }}>#</th><th style={{ padding: 4, width: 60 }}>Qty</th>
-                <th style={{ padding: 4, width: 80 }}>{pctHead}</th><th style={{ padding: 4, width: 92 }}>LMT {side}</th>
-                <th style={{ padding: 4 }}>Status</th><th style={{ padding: 4, width: 92 }}>Fill @</th>
+                <th style={{ padding: 4, width: 80 }}>{pctHead}</th><th style={{ padding: 4, width: 92 }}>{expired ? '' : `LMT ${side}`}</th>
+                <th style={{ padding: 4 }}>Status</th><th style={{ padding: 4, width: 92 }}>{expired ? 'Settled @' : 'Fill @'}</th>
                 <th style={{ padding: 4, textAlign: 'right' }}>P&L</th><th></th>
               </tr>
             </thead>
@@ -406,7 +449,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                       <td style={{ padding: 4, color: '#8b949e' }}>T{i + 1}</td>
                       <td style={{ padding: 4 }}><input type="number" min="1" value={r.qty} onChange={e => setRow(i, { qty: e.target.value })} style={inp} /></td>
                       <td style={{ padding: 4 }}><input type="number" step="5" value={r.pct} onChange={e => onPct(i, e.target.value)} style={inp} /></td>
-                      <td style={{ padding: 4 }}><input type="number" step={tick} value={r.price} onChange={e => onPrice(i, e.target.value)} style={inp} /></td>
+                      <td style={{ padding: 4 }}><input type="number" step={tick} value={r.price} disabled={expired} placeholder={expired ? '—' : ''}
+                        onChange={e => onPrice(i, e.target.value)} style={{ ...inp, opacity: expired ? 0.3 : 1 }} /></td>
                       <td style={{ padding: 4 }}>
                         <button onClick={() => setRow(i, { status: r.status === 'Filled' ? 'Working' : 'Filled', fill: r.fill || r.price })}
                           style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', border: '1px solid',
@@ -416,6 +460,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                       </td>
                       <td style={{ padding: 4 }}>
                         <input type="number" step={tick} disabled={r.status !== 'Filled'} value={r.status === 'Filled' ? r.fill : ''}
+                          data-testid={expired ? 'settle-value' : `fill-${i}`}
                           placeholder="—" onChange={e => setRow(i, { fill: e.target.value })} style={{ ...inp, opacity: r.status === 'Filled' ? 1 : 0.4 }} />
                       </td>
                       <td className="mono" style={{ padding: 4, textAlign: 'right', lineHeight: 1.25 }}>
@@ -563,7 +608,9 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           {tab === 'close' ? (<>
             <button onClick={recordFills} disabled={busy || !filled.length || overAllocated || noEntry}
               style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: '#da3633', color: '#fff', opacity: busy || !filled.length || overAllocated || noEntry ? 0.45 : 1 }}>
-              {busy ? 'Recording…' : filled.length ? `Record ${filled.reduce((a, r) => a + Number(r.qty), 0)} filled of ${pos.qtyOpen} · ${fmt$(filledNet)}` : 'Mark a tranche Filled to record it'}
+              {busy ? 'Recording…'
+                : expired ? (isFinite(rowFill(rows[0] || {})) ? `Record expiry · ${pos.qtyOpen} contract${pos.qtyOpen !== 1 ? 's' : ''} · ${fmt$(filledNet)}` : 'Enter the settlement value to record the expiry')
+                : filled.length ? `Record ${filled.reduce((a, r) => a + Number(r.qty), 0)} filled of ${pos.qtyOpen} · ${fmt$(filledNet)}` : 'Mark a tranche Filled to record it'}
             </button>
             <button onClick={() => { persistPlan(rows.filter(r => r.status !== 'Filled'), pos.qtyOpen); setMsg({ text: 'Plan saved — it reopens with this ticket.' }); }}
               style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', fontSize: 13, cursor: 'pointer' }}>Save plan</button>
