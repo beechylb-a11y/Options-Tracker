@@ -7,7 +7,8 @@ import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import { lastSessionDate } from '../engine/session';
 import {
   normalisePosition, withEntryFill, avgOfFills, targetToPrice, priceToTarget, pnlAt, ibkrLines,
-  ladder, LADDER_PRESETS, rollSummary, carriedFromTws, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts
+  ladder, LADDER_PRESETS, rollSummary, carriedFromTws, pnlPct, snap, defaultTick, loadPlan, savePlan, round2, stopToPrice, ruleLadderPcts,
+  basisFromNotes,
 } from '../utils/ticketMath';
 import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
@@ -260,7 +261,20 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const carriedStrikes = oldStrikes.filter((s, i) => Number(roll.strikes[i]) === s);
   const carriedAbs = parseFloat(roll.carried);
   const carriedNcd = partial ? (isFinite(carriedAbs) ? (roll.carriedSide === 'cr' ? carriedAbs : -carriedAbs) : null) : 0;
-  const rs = isFinite(closeAt) && openNcd != null && carriedNcd != null ? rollSummary(pos, rq, closeAt, openNcd, carriedNcd) : null;
+  // A ticket that was itself rolled carries its running basis in its notes; the
+  // open-positions row doesn't have notes, so read them from its Decisions row.
+  const [priorBasis, setPriorBasis] = useState(pos.priorBasis ?? null);
+  useEffect(() => {
+    if (pos.priorBasis != null || !pos.ticketRef || !api.getDecisions) return;
+    let live = true;
+    Promise.resolve().then(() => api.getDecisions()).then(d => {
+      const r = (Array.isArray(d) ? d : []).find(x => Number(x._rowIndex) === Number(pos.ticketRef));
+      const b = basisFromNotes(r && (r.Notes || r.notes));
+      if (live && b != null) setPriorBasis(b);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [pos.ticketRef]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const rs = isFinite(closeAt) && openNcd != null && carriedNcd != null ? rollSummary({ ...pos, priorBasis }, rq, closeAt, openNcd, carriedNcd) : null;
   const rollFees = rtFees(rq);   // the old ticket's round trip: its entry and this close
   const [carriedMsg, setCarriedMsg] = useState('');
   async function carriedFromBridge() {
@@ -592,7 +606,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
               <div>Net roll: <b className="mono" style={{ color: rs.net >= 0 ? '#3fb950' : '#f85149' }}>{Math.abs(rs.net).toFixed(2)} {rs.net >= 0 ? 'credit' : 'debit'}</b> per share · {fmt$(rs.net * 100 * rq)} on {rq}</div>
               <div className="mono" style={{ color: '#a8b2be' }}>IBKR roll combo: {rs.net >= 0 ? `SELL @ ${rs.net.toFixed(2)}  (or BUY @ −${rs.net.toFixed(2)})` : `BUY @ ${Math.abs(rs.net).toFixed(2)}`}</div>
               <div>Old ticket closes at <b className="mono">{rs.closeFull.toFixed(2)} {side}</b> · new ticket opens at <b className="mono">{Math.abs(rs.openFull).toFixed(2)} {rs.openFull >= 0 ? 'cr' : 'db'}</b>{partial && <span style={{ color: '#8b949e' }}> (moved legs ± carried {Math.abs(carriedNcd).toFixed(2)} {carriedNcd >= 0 ? 'cr' : 'db'})</span>}</div>
-              <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: '#8b949e' }}>(entry {Math.abs(pos.ncd || 0).toFixed(2)} {pos.isCredit ? 'cr' : 'db'} ± this roll)</span></div>
+              <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: '#8b949e' }}>({priorBasis != null ? `${Math.abs(priorBasis).toFixed(2)} ${priorBasis >= 0 ? 'cr' : 'db'} across earlier rolls` : `entry ${Math.abs(pos.ncd || 0).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`} ± this roll)</span></div>
               {rq < pos.qtyOpen && <div style={{ color: '#d29922' }}>{pos.qtyOpen - rq} contract{pos.qtyOpen - rq > 1 ? 's' : ''} stay on the old legs.</div>}
             </div>
           )}

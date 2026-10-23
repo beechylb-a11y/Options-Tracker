@@ -114,6 +114,10 @@ export function normalisePosition(src = {}) {
     realised: num(g('realisedPnl')) || 0,
     ncd,                                           // per share, + credit / − debit
     isCredit: ncd != null ? ncd > 0 : null,
+    // A rolled ticket's running credit across every roll so far ("cumulative basis
+    // 4.72 cr" in its notes). Its own entry (ncd) is only the current legs' price, so
+    // a second roll's cumulative basis builds on this, not on ncd.
+    priorBasis: basisFromNotes(g('notes', 'Notes')),
     maxProfitPerContract: maxProfitPos != null && qty ? maxProfitPos / qty : null,
     maxRiskPerContract: maxRiskPos != null && qty ? maxRiskPos / qty : null,
     // What a "% target" is a percentage OF (Sep 2026):
@@ -253,6 +257,11 @@ export const LADDER_PRESETS = {
 // four-leg condor at 2.49 — so the check-up read −$1,250 and "stop hit" against a
 // TWS P&L of −$620. With the puts' 1.28 cr carried: old closes at 1.50 (+0.94 a lot,
 // TWS realised $472), new opens at 3.77 (TWS avg 3.745). (Oct 2026.)
+export function basisFromNotes(notes) {
+  const m = /cumulative basis ([\d.]+) (cr|db)/i.exec(String(notes || ''));
+  return m ? (m[2].toLowerCase() === 'cr' ? 1 : -1) * Number(m[1]) : null;
+}
+
 export function rollSummary(pos, qty, closeAt, openNcd, carriedNcd = 0) {
   const c = Number(carriedNcd) || 0;
   const closeFull = round2(pos.isCredit ? closeAt + c : closeAt - c);  // close-side units, like closeAt
@@ -260,7 +269,8 @@ export function rollSummary(pos, qty, closeAt, openNcd, carriedNcd = 0) {
   const realised = pnlAt(pos, closeFull, qty);
   const closeSigned = pos.isCredit ? -closeAt : closeAt;  // cash in (+) / out (−) per share
   const net = round2(closeSigned + openNcd);              // + = roll for a credit
-  const cumulative = round2((pos.ncd || 0) + net);        // running basis across the roll
+  const prior = pos.priorBasis != null ? pos.priorBasis : (pos.ncd || 0);
+  const cumulative = round2(prior + net);                  // running basis across every roll
   return { realised, net, cumulative, closeFull, openFull };
 }
 
