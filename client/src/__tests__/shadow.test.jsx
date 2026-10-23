@@ -64,6 +64,32 @@ describe('settle pass', () => {
     // held to expiry, less the entry commission (4 legs × $0.65; nothing to pay at expiry)
     expect(settled).toEqual([{ id: 1, settleDate: '20261008', settlePrice: 760, pnlPerCt: 578.4, commission: 2.6, source: 'close-net' }]);
   });
+
+  /* Every SPX and XSP verdict sat unsettled for weeks. The pass was running and working:
+     it settled the equities in the same batch and reported "N settled · M still waiting
+     for a close", which is what it also says about a trade that has not expired yet. The
+     bridge returned no bars for the index underlyings and nothing named them. */
+  it('names the underlyings whose bars never arrived, instead of calling them pending', async () => {
+    SHADOW = [
+      { id: 1, underlying: 'IWM', expiry: '20261022', entry_net: -1.52, legs: shadowLegs(condorLegs) },
+      { id: 2, underlying: 'SPX', expiry: '20261022', entry_net: -16.05, legs: shadowLegs(condorLegs) },
+      { id: 3, underlying: 'XSP', expiry: '20261021', entry_net: -2.5, legs: shadowLegs(condorLegs) },
+    ];
+    global.fetch = vi.fn(async (u) => ({
+      text: async () => JSON.stringify(/IWM/.test(u) ? { bars: [{ date: '20261022', close: 276.67 }] } : { bars: [] }),
+    }));
+    const res = await settleShadows('acct', { bridgeUrl: 'http://bridge', now: new Date('2026-10-23T15:00:00Z') });
+    expect(res.settled).toBe(1);
+    expect(res.noBars.sort()).toEqual(['SPX', 'XSP']);
+    expect(settled.map(s => s.id)).toEqual([1]);
+  });
+
+  it('reports no empty underlyings when every request answers', async () => {
+    SHADOW = [{ id: 1, underlying: 'QQQ', expiry: '20261008', entry_net: 5.81, legs: shadowLegs(condorLegs) }];
+    global.fetch = vi.fn(async () => ({ text: async () => JSON.stringify({ bars: [{ date: '20261008', close: 760 }] }) }));
+    const res = await settleShadows('acct', { bridgeUrl: 'http://bridge', now: new Date('2026-10-09T15:00:00Z') });
+    expect(res.noBars).toEqual([]);
+  });
 });
 
 const base = {

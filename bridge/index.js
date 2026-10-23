@@ -900,33 +900,73 @@ app.get('/api/history', async (req, res) => {
     const months = Math.max(1, Math.min(12, parseInt(req.query.months || '3', 10)));
     const contract = contractOf(underlying);
     if (!contract) return res.status(400).json({ error: `Unknown underlying ${underlying}` });
-    const whatToShow = (contract.secType === SecType.IND) ? WhatToShow.MIDPOINT : WhatToShow.TRADES;
+    const isIndex = contract.secType === SecType.IND;
+
+    // WHICH SERIES TO ASK FOR, and why there is a fallback.
+    //
+    // Every SPX and XSP request through this route came back with 0 bars, which is why
+    // the shadow loop has never settled an index verdict: settleShadows asks here for
+    // the expiry-day close, gets nothing, and leaves those rows pending for ever while
+    // the equity underlyings in the same pass settle normally. (23 Oct 2026.)
+    //
+    // The repo disagrees with itself about the cause. getVolHistory says "Indices have no
+    // TRADES history here"; /api/market-data says "SPX index has no MIDPOINT historical
+    // data". Both cannot be right, and this route picked MIDPOINT. An index has no bid or
+    // ask, so there is nothing for a midpoint to be the middle OF — which points at the
+    // market-data comment being the accurate one — but that is reasoning, not evidence,
+    // and reasoning is how the QQQ outage got the wrong fix first.
+    //
+    // So: ask for the series we believe in, and if an index comes back empty, try the
+    // other one before giving up. The response says which one actually produced the bars,
+    // so the next person reads an answer instead of re-deriving the argument.
+    const ALLOWED = { TRADES: WhatToShow.TRADES, MIDPOINT: WhatToShow.MIDPOINT };
+    const asked = String(req.query.whatToShow || '').toUpperCase();
+    const explicit = ALLOWED[asked] || null;
+    const order = explicit ? [explicit]
+      : isIndex ? [WhatToShow.TRADES, WhatToShow.MIDPOINT]
+      : [WhatToShow.TRADES];
 
     const pad = n => String(n).padStart(2, '0');
     const stamp = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
-    const seen = new Set();
-    const all = [];
     const errors = [];
-    let end = new Date();
-
-    for (let i = 0; i < months; i++) {
-      try {
-        const chunk = await getHistoricalBars(contract, '1 M', barSize, whatToShow, stamp(end));
-        console.log(`[BRIDGE] history chunk ${i + 1}/${months} ending ${stamp(end)}: ${chunk.length} bars`);
-        // Chunks overlap at the seams; dedupe on the timestamp rather than assuming.
-        for (const b of chunk) { if (!seen.has(b.date)) { seen.add(b.date); all.push(b); } }
-        if (!chunk.length) { errors.push(`chunk ending ${stamp(end)} returned no bars`); break; }
-      } catch (e) {
-        errors.push(`chunk ending ${stamp(end)}: ${e.message}`);
+    // One pass over the month chunks for a given series.
+    const pull = async (whatToShow) => {
+      const seen = new Set();
+      const all = [];
+      let end = new Date();
+      for (let i = 0; i < months; i++) {
+        try {
+          const chunk = await getHistoricalBars(contract, '1 M', barSize, whatToShow, stamp(end));
+          // The symbol and the series were missing from this line, so a log full of
+          // "0 bars" could not say WHICH underlying was failing. That cost a round trip.
+          console.log(`[BRIDGE] history ${underlying}/${barSize}/${whatToShow} chunk ${i + 1}/${months}`
+            + ` ending ${stamp(end)}: ${chunk.length} bars`);
+          for (const b of chunk) { if (!seen.has(b.date)) { seen.add(b.date); all.push(b); } }
+          if (!chunk.length) { errors.push(`${whatToShow}: chunk ending ${stamp(end)} returned no bars`); break; }
+        } catch (e) {
+          errors.push(`${whatToShow}: chunk ending ${stamp(end)}: ${e.message}`);
+        }
+        end = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
+        if (i < months - 1) await new Promise(r => setTimeout(r, 2000));  // IBKR pacing
       }
-      end = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
-      if (i < months - 1) await new Promise(r => setTimeout(r, 2000));  // IBKR pacing
+      return all;
+    };
+
+    let all = [], used = null;
+    for (const what of order) {
+      all = await pull(what);
+      used = what;
+      if (all.length) break;
+      if (order.length > 1) console.log(`[BRIDGE] history ${underlying}: ${what} gave nothing — trying the other series`);
     }
 
     all.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     res.json({
       underlying, barSize, months, bars: all, count: all.length,
+      // Which series produced these bars. An index that answers on one and not the other
+      // is the whole story here, so the caller should not have to guess.
+      whatToShow: used, triedSeries: order,
       first: all[0]?.date || null, last: all[all.length - 1]?.date || null,
       // Partial results are returned WITH their errors rather than thrown away — a short
       // history is usable for a backtest as long as you know it is short.

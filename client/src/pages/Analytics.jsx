@@ -138,9 +138,12 @@ function ShadowVerdicts({ account }) {
   async function settle() {
     setSettling(true); setNote('');
     const res = await settleShadows(account);
+    // A pending row reads the same whether the trade has not expired yet or the bridge
+    // returned no bars for its underlying. Name the ones that came back empty.
+    const blind = (res.noBars || []).length ? ` · no bars for ${res.noBars.join(', ')} — those stay pending until the bridge serves their history` : '';
     setNote(res.error === 'no bridge' ? `${res.pending} waiting — set the bridge URL to settle against the close.`
       : res.error ? `Settle failed: ${res.error}`
-      : `${res.settled} settled${res.pending ? ` · ${res.pending} still waiting for a close` : ''}.`);
+      : `${res.settled} settled${res.pending ? ` · ${res.pending} still waiting for a close` : ''}${blind}.`);
     setSettling(false);
     load();
   }

@@ -42,6 +42,12 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   const items = new Map();
   const item = id => { if (!items.has(id)) items.set(id, { id }); return items.get(id); };
   let skipped = 0;
+  // An underlying whose bars never arrive leaves its rows pending for ever, and
+  // "still waiting for a close" reads exactly like a trade that has not expired yet.
+  // Every SPX and XSP verdict sat in that state for weeks because nothing said which
+  // underlying was failing — the pass settled the equities beside them and looked fine.
+  // (23 Oct 2026.)
+  const noBars = new Set();
 
   // Daily closes: held outcomes and 45DTE managed.
   const dailyNeed = [...heldDue, ...man45];
@@ -50,6 +56,7 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   for (const [und, list] of dailyBy) {
     const d = await getJson(`${url}/api/history?underlying=${encodeURIComponent(und)}&barSize=${encodeURIComponent('1 day')}&months=${monthsFor(list)}`, 60000);
     const bars = d && Array.isArray(d.bars) ? d.bars : [];
+    if (!bars.length) noBars.add(und);
     for (const r of list) {
       const legs = Array.isArray(r.legs) ? r.legs : [];
       const entry = Number(r.entry_net);
@@ -75,6 +82,7 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   for (const [und, list] of intraBy) {
     const d = await getJson(`${url}/api/history?underlying=${encodeURIComponent(und)}&barSize=${encodeURIComponent('5 mins')}&months=${Math.min(3, monthsFor(list))}`, 90000);
     const bars = d && Array.isArray(d.bars) ? d.bars : [];
+    if (!bars.length) noBars.add(und);
     for (const r of list) {
       const m = managed0(r, bars);
       if (m) item(r.id).managed = m; else skipped++;
@@ -86,5 +94,5 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   if (list.length) {
     try { settled = (await api.settleShadow(list)).settled || 0; } catch (e) { return { settled: 0, pending: due.size, error: e.message }; }
   }
-  return { settled, pending: Math.max(0, due.size - list.length), skipped };
+  return { settled, pending: Math.max(0, due.size - list.length), skipped, noBars: [...noBars] };
 }
