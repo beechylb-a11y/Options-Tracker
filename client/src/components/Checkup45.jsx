@@ -7,6 +7,7 @@ import { computeTrend, trendLabel } from '../engine/trend';
 import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../utils/positionMatch';
 import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
 import { tradingSession, sessionDateOf } from '../engine/session';
+import TradeDetail from './TradeDetail';
 
 // ── Open 45DTE check-up (Oct 2026) ──
 // One card per open 45DTE ticket: what to do now (hold / take profit / roll /
@@ -173,7 +174,8 @@ export default function Checkup45({ tickets, openPositions }) {
           }
         } catch (e) { roll = null; }   // a roll suggestion is a convenience, never a blocker
       }
-      out.push({ t, legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
+      out.push({ t, openRow: openByTs[t.key] || null,
+        legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
         spot: now.spot, roll,
         // The greeks' undPrice overrides the surface spot where it exists, so a stale
         // surface price only stands if the greeks had none either.
@@ -262,6 +264,7 @@ export function summaryLine(m, chain, qty) {
 
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
+  const [detail, setDetail] = useState(false);
   const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll, spotStale, spotAsOf, priceNote } = row;
   const chain = t.chain || null;
   const m = rv.metrics || {};
@@ -346,6 +349,11 @@ function CheckupCard({ row }) {
           {rv.warnings.map((w, i) => <li key={i}>{w}</li>)}
         </ul>
       )}
+      {row.openRow && (
+        <button onClick={() => setDetail(true)} data-testid="checkup-details" style={{ marginTop: 8, marginRight: 14, fontSize: 12.5, color: '#58a6ff' }}>
+          Payoff diagram and details →</button>
+      )}
+      {detail && row.openRow && <TradeDetail row={row.openRow} onClose={() => setDetail(false)} />}
       {(rv.steps.length > 1 || rv.reasons.length > 0) && (
         <div style={{ marginTop: 8 }}>
           <button onClick={() => setMore(!more)} style={{ fontSize: 12.5, color: '#58a6ff', display: 'inline-flex', alignItems: 'center', gap: 4 }}>

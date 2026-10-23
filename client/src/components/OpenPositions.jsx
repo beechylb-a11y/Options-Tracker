@@ -4,6 +4,7 @@ import { exposure, STATUS } from '../engine/fills';
 import OrderTicket from './OrderTicket';
 import FillReconcile from './FillReconcile';
 import EditTicketModal from './EditTicketModal';
+import TradeDetail from './TradeDetail';
 import { normalisePosition, stopToPrice, targetToPrice, pnlAt, loadPlan, withEntryFill } from '../utils/ticketMath';
 import { exitRuleFor } from '../engine/data';
 import { ticketExpiry, daysBetweenYmd } from '../utils/ticketExpiry';
@@ -98,6 +99,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [reconciling, setReconciling] = useState(false);   // true = all working, or one row
   const [cancelling, setCancelling] = useState(null);
   const [editing, setEditing] = useState(null);   // the row being corrected
+  const [detail, setDetail] = useState(null);     // the row whose details are open
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
   const [chains, setChains] = useState({});     // ticketRef → what earlier rolled tickets banked
   const [expiries, setExpiries] = useState({}); // ticketRef → { expiry, source, startYmd }
@@ -374,6 +376,10 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       {/* A working order has nothing to sell. Cancelling it is the
                           only action that makes sense, and without it the committed
                           risk never clears. (Oct 2026.) */}
+                      <button onClick={e => { e.stopPropagation(); setDetail(r); }} data-testid="op-details"
+                        title="Payoff diagram, where price is against the strikes, target, stop and greeks — click the chart to test a price"
+                        className="text-[12px] px-2 py-0.5 rounded mr-1"
+                        style={{ border: '1px solid #1f6feb', color: '#58a6ff', background: 'transparent', cursor: 'pointer' }}>Details</button>
                       <button onClick={e => { e.stopPropagation(); setEditing(r); }} data-testid="op-edit"
                         title="Correct what was logged — contracts, strikes, entry price, limit, max risk/profit"
                         className="text-[12px] px-2 py-0.5 rounded mr-1"
@@ -427,6 +433,11 @@ export default function OpenPositions({ authenticated, account, compact = false,
         <OrderTicket position={ticket.row} initialTab={ticket.tab}
           onClose={() => setTicket(null)}
           onDone={() => { setTicket(null); setReload(x => x + 1); }} />
+      )}
+      {detail && (
+        <TradeDetail row={detail} account={account} onClose={() => setDetail(null)}
+          onSell={r => { setDetail(null); setTicket({ row: r, tab: 'close' }); }}
+          onRoll={r => { setDetail(null); setTicket({ row: r, tab: 'roll' }); }} />
       )}
       {editing && (
         <EditTicketModal position={editing} onClose={() => setEditing(null)}
