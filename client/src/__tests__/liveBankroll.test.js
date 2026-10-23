@@ -43,4 +43,17 @@ describe('live bankroll', () => {
     expect(fresh).toMatchObject({ startingBankroll: 1000, bankroll: 1000, realisedPnl: 0 });
     expect(stripLive([paper])[0]).not.toHaveProperty('realisedPnl');
   });
+  it('risk limits follow the bankroll, at the ratio each account was set at', () => {
+    const accts = [
+      { id: 'paper', startingBankroll: 25000, maxDailyLoss: 5000, maxOpenRisk: 10000, journalSince: '2026-07-01' },   // 20% / 40%
+      { id: 'ibkr', startingBankroll: 3000, maxDailyLoss: 300, maxOpenRisk: 450, bankrollSince: '2026-10-01' },       // 10% / 15%
+      { id: 'set', startingBankroll: 10000, maxDailyLossPct: 5, maxOpenRiskPct: 25 },
+      { id: 'bare', startingBankroll: 2000 },
+    ];
+    const [paper, ibkr, set, bare] = withLiveBankroll(accts, items);
+    expect(paper).toMatchObject({ bankroll: 26827, maxDailyLossPct: 20, maxDailyLoss: 5365, maxOpenRiskPct: 40, maxOpenRisk: 10731 });
+    expect(ibkr).toMatchObject({ bankroll: 3000, maxDailyLossPct: 10, maxDailyLoss: 300, maxOpenRiskPct: 15, maxOpenRisk: 450 });
+    expect(set).toMatchObject({ maxDailyLoss: 500, maxOpenRisk: 2500 });
+    expect(bare).toMatchObject({ maxDailyLossPct: 20, maxDailyLoss: 400, maxOpenRiskPct: 40, maxOpenRisk: 800 });
+  });
 });

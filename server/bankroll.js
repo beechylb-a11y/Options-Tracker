@@ -60,9 +60,23 @@ export function realisedItems({ decRows, closeRows, trackerRows }) {
 /** The date an account's P&L counts from: its own setting, else when its journal starts. */
 export const bankrollSinceOf = a => (a && (a.bankrollSince || a.journalSince)) || '';
 
+// Risk limits follow the bankroll (Oct 2026): each is a % of the live bankroll. An
+// account set up before that has only dollar limits; its % is the ratio it was set
+// at (dollars ÷ starting bankroll), so nothing jumps on the day this ships — the
+// limits just start moving with P&L from there.
+export const DEFAULT_LOSS_PCT = 20, DEFAULT_RISK_PCT = 40;
+const pctOf = (pct, dollars, start, dflt) => {
+  const p = num(pct);
+  if (p != null && p > 0) return p;
+  const d = num(dollars);
+  if (d != null && d > 0 && start > 0) return Math.round(d / start * 1000) / 10;
+  return dflt;
+};
+
 /**
- * Accounts with live bankrolls: bankroll = startingBankroll + realised since bankrollSince.
- * Adds realisedPnl, realisedCount, bankrollSince, lastTradeDate.
+ * Accounts with live bankrolls: bankroll = startingBankroll + realised since bankrollSince,
+ * and maxDailyLoss / maxOpenRisk as their % of that bankroll.
+ * Adds realisedPnl, realisedCount, bankrollSince, lastTradeDate, maxDailyLossPct, maxOpenRiskPct.
  */
 export function withLiveBankroll(accounts, items) {
   return (accounts || []).map(a => {
@@ -70,7 +84,13 @@ export function withLiveBankroll(accounts, items) {
     const mine = items.filter(i => i.account === a.id && (!since || i.date >= since));
     const realised = Math.round(mine.reduce((s, i) => s + i.pnl, 0) * 100) / 100;
     const start = num(a.startingBankroll) ?? num(a.bankroll) ?? 0;
-    return { ...a, startingBankroll: start, bankroll: Math.round((start + realised) * 100) / 100,
+    const bankroll = Math.round((start + realised) * 100) / 100;
+    const lossPct = pctOf(a.maxDailyLossPct, a.maxDailyLoss, start, DEFAULT_LOSS_PCT);
+    const riskPct = pctOf(a.maxOpenRiskPct, a.maxOpenRisk, start, DEFAULT_RISK_PCT);
+    return { ...a, startingBankroll: start, bankroll,
+      maxDailyLossPct: lossPct, maxOpenRiskPct: riskPct,
+      maxDailyLoss: Math.max(0, Math.round(bankroll * lossPct / 100)),
+      maxOpenRisk: Math.max(0, Math.round(bankroll * riskPct / 100)),
       realisedPnl: realised, realisedCount: mine.length, bankrollSince: since,
       lastTradeDate: mine.map(i => i.date).sort().pop() || '' };
   });
