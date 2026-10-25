@@ -321,11 +321,17 @@ function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fe
   const spec = (DELTA_TARGETS['0dte'] || {})[strat];
   const tgt = spec ? Object.values(spec.shorts)[0].t : null;
   const shortOf = legs => (legs || []).find(l => /short/i.test(l.label || ''));
-  const tip = {
+  const tip = isDebit ? {
     engine: 'Strikes from the expected move left today by VIX (the full-day EM scaled to the hours left), slid by the pullback buffer.',
     em1d: 'Same rule, from VIX1D — the market\u2019s one-day vol. Usually tighter than VIX on a quiet day, wider on an event day.',
     v1d: isDebit ? 'Whole spread slid toward the money by EM remaining (VIX1D), capped at 40% of its width — break-even comes down through spot; the debit rises.' : 'Short pushed a further EM remaining (VIX1D) out of the money — safer, less credit.',
     vix: isDebit ? 'Whole spread slid toward the money by EM remaining (VIX), capped at 40% of its width.' : 'Short pushed a further EM remaining (VIX) out of the money.',
+  } : {
+    // Credit spreads (Oct 2026): every choice is a short-strike distance at one fixed width.
+    engine: 'Short at the IVX expected move — the 0DTE straddle × 0.85, tastytrade\u2019s brown bar. The anchor tastylive\u2019s 3-year 0DTE study found paid best. Fixed width.',
+    half1d: 'Short at half the VIX1D expected move (VIX1D ÷ √365). The other anchor that paid best in the study; usually a little nearer the money than IVX.',
+    em1d: 'Short at a full VIX1D expected move — further out, higher win rate, much smaller credit. The study called this "likely too far" in normal markets; it held up best on down-trend days in our replay.',
+    vix: 'The old default: a full VIX expected move on the √252 ruler — past every anchor in the study. Kept for comparison.',
   };
   const tile = (id, label, strikes, sub, title, disabled) => {
     const on = active === id;
@@ -343,7 +349,7 @@ function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fe
   };
   const subOf = v => {
     if (isDebit) return v.rrCeil != null ? `long ${v.intrinsic.toFixed(2)} ITM · ≤${v.rrCeil.toFixed(2)}:1` : `${v.width} wide · long at/above spot`;
-    return v.otmEM != null ? `short ${v.otmEM.toFixed(1)}× EM OTM` : '';
+    return v.otmEM != null ? `short ${v.otmEM.toFixed(1)}× ${v.otmRuler === 'IVX' ? 'IVX' : 'EM'} OTM${v.width ? ` · ${v.width} wide` : ''}` : '';
   };
   const ds = plan && plan.moves && plan.moves[0];
   return (
@@ -3675,6 +3681,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   <div><span style={{color:'#a8b2be'}}>Session</span> (move-consumed, regime, % EM): {r.emSessionDetail}</div>
                 </div>
               )}
+              {(r.em365VIX > 0 || r.ivxEM > 0) && (
+                <div data-testid="em-tasty" style={{marginTop:4,fontSize:12.5,lineHeight:1.4,color:'#a8b2be',fontFamily:'JetBrains Mono,monospace'}}
+                  title="tastytrade quotes the VIX and VIX1D expected moves as price × vol ÷ √365 (a 24-hour day). This engine's own rulers use √252 (a trading day), so they read about 1.2× larger for the same VIX. IVX is the 0DTE straddle × 0.85 — the brown bar.">
+                  tastytrade EM (÷√365): VIX ±{(r.em365VIX || 0).toFixed(0)} · VIX1D ±{(r.em365V1D || 0).toFixed(0)}{r.ivxEM > 0 ? ` · IVX ±${r.ivxEM.toFixed(0)}` : ''}
+                  <span style={{fontFamily:'inherit',color:'#6e7681'}}> — engine's rulers (÷√252) read ~1.2× these</span>
+                </div>
+              )}
               {r.emAgreeDetail && (
                 <div style={{marginTop:4,fontSize:12.5,lineHeight:1.4,color: r.emDisagree ? '#e3a008' : '#a8b2be'}}>
                   {r.emDisagree ? '\u26a0 ' : ''}{r.emAgreeDetail}
@@ -4146,6 +4159,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             <ProfitTaker ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
               contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
               engine={is0 ? '0DTE' : '45DTE'} kelly={r.kellyContracts ?? r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
+              targetOverride={is0 && r.exitTarget ? r.exitTarget : null}
               tastyFly={flyTastyOk ? tastyFly : null} onTastyFly={setTastyFly}
               closeDte={!is0 ? (r.closeDte || null) : null} onCloseDte={setTsClose} />
           )}

@@ -772,6 +772,30 @@ export function calc0DTE(inputs) {
   const dVixRem = emVIX > 0 ? Math.max(emVIX * remScale, roundTo * 2) : D;
   const dV1dRem = emV1D > 0 ? Math.max(emV1D * remScale, roundTo * 2) : D;
 
+  // ── Credit verticals: IVX anchor and a fixed width (Oct 2026) ──
+  // tastylive's 3-year 0DTE SPX study ("We Tested Every Strike Distance", Mar 2026)
+  // sold one $20-wide put spread a day at 10:00 ET with the short at ATM, ½ / 1 × the
+  // VIX1D expected move, ½ / 1 × the VIX EM, or the IVX EM. The IVX (the 0DTE straddle
+  // and near strangle, × 0.85 — tastytrade's brown bar) and ½ VIX1D anchors paid best;
+  // a full VIX1D EM was "likely too far"; the VIX EM collected ~$13–15 a trade. Their
+  // EMs are price × vol ÷ √365 (a 24h day). This engine's credit verticals sat at a full
+  // VIX EM on the √252 ruler — past the study's farthest anchor — and were as wide as
+  // that distance (60–80 SPX points), so a 1-lot risked several thousand dollars for a
+  // credit of 1–3% of the width. Our own modelled replay (Jan 2024 – Oct 2026, 694
+  // sessions; tools/odte-spread-bt.js) agreed on both counts.
+  //   ivxEM      0.85 × the ATM straddle when the bridge has one; else 0.63 × the
+  //              √365 VIX1D EM (the ratio read on the show at 10:00 ET), time-scaled.
+  //   creditW    ~0.3% of spot on the strike grid: $20 SPX, $2 XSP / SPY / QQQ, $1 IWM.
+  const SQRT365 = Math.sqrt(365);
+  const tScale = Math.min(1, Math.sqrt(Math.max(0.05, (hours > 0 ? hours : 6)) / 6));
+  const em365V1D = price > 0 && vix1d > 0 ? price * vix1d / 100 / SQRT365 : 0;
+  const em365VIX = price > 0 && vix > 0 ? price * vix / 100 / SQRT365 : 0;
+  const ivxEM = straddleTotal > 0 ? 0.85 * straddleTotal
+    : em365V1D > 0 ? 0.63 * em365V1D * tScale
+    : dVixRem * 0.55;
+  const gridStep = roundTo > 0 ? roundTo : 0.5;
+  const creditW = Math.max(gridStep, Math.round(price * 0.003 / gridStep) * gridStep);
+
   // ── Pullback buffer on 0DTE verticals (Aug 2026) ──
   // A debit vertical put its long leg at spot, so its cliff was zero points away: one tick
   // of pullback and the structure is OTM and bleeding the whole debit. On a day the engine
@@ -856,18 +880,12 @@ export function calc0DTE(inputs) {
       legs = skewUp
         ? [leg('Long put', p-wideW-D), leg('Short put', p-wideW), leg('Short call', p+tightW), leg('Long call', p+tightW+D)]
         : [leg('Long put', p-tightW-D), leg('Short put', p-tightW), leg('Short call', p+wideW), leg('Long call', p+wideW+D)];
-    } else if (legStrat === 'Bull put spread') {
-      // Two strike sets: EM(VIX)/2 based and EM(VIX1D) based. Both slide DOWN by the
-      // pullback buffer — a bull structure fears a pullback, so the room goes below.
-      legs = [
-        leg('Short put (VIX)', p - dVixRem - vBufVix), leg('Long put (VIX)', p - dVixRem * 2 - vBufVix),
-        leg('Short put (VIX1D)', p - dV1dRem - vBufV1d), leg('Long put (VIX1D)', p - dV1dRem * 2 - vBufV1d)
-      ];
-    } else if (legStrat === 'Bear call spread') {
-      legs = [
-        leg('Short call (VIX)', p + dVixRem + vBufVix), leg('Long call (VIX)', p + dVixRem * 2 + vBufVix),
-        leg('Short call (VIX1D)', p + dV1dRem + vBufV1d), leg('Long call (VIX1D)', p + dV1dRem * 2 + vBufV1d)
-      ];
+    } else if (legStrat === 'Bull put spread' || legStrat === 'Bear call spread') {
+      // Short at the IVX EM (plus the pullback buffer, which pushes it further out),
+      // long a fixed creditW beyond it. The other anchors are strike choices below.
+      const isPut = legStrat === 'Bull put spread', dir = isPut ? -1 : 1, nm = isPut ? 'put' : 'call';
+      const sh = R(p + dir * (ivxEM + ivxEM * vBufFrac));
+      legs = [{ label: `Short ${nm}`, strike: sh }, { label: `Long ${nm}`, strike: sh + dir * creditW }];
     } else if (legStrat === 'Bull call spread') {
       // Long leg no longer sits at spot: the whole spread drops by the buffer, so the
       // 0.5 EM width survives and the long has room beneath it before it goes OTM.
@@ -891,6 +909,8 @@ export function calc0DTE(inputs) {
         + (isDebitVert
           ? `the long leg starts ITM, so the debit — and therefore max loss — rises and max profit falls by the same amount`
           : `the short leg is further OTM, so the credit is smaller and max loss (width − credit) rises slightly`);
+      if (!isDebitVert) skewNote = `Short strike pushed ${(vBufFrac * 100).toFixed(0)}% of the IVX EM further ${bufSide} spot — `
+        + `${(moveConsumed * 100).toFixed(0)}% of the expected move already consumed. Width stays ${creditW}; the credit is smaller.`;
     }
   }
   // ── Max-profit strike may not cross spot (Aug 2026) ──
@@ -1024,8 +1044,40 @@ export function calc0DTE(inputs) {
       { ...variant('v1d', `${shiftWord} · VIX1D`, dV1dRem, dV1dRem), basis: 'shift' },
       { ...variant('vix', `${shiftWord} · VIX`, dVixRem, dVixRem), basis: 'shift' },
     ].filter(Boolean);
+    if (!isDebitVert) {
+      // Credit verticals (Oct 2026): every choice is a short-strike DISTANCE at the same
+      // fixed width; the study's anchors, nearest first after the default. The old
+      // default (a full VIX EM, √252) stays on the list so the change is visible.
+      const buf = ivxEM * vBufFrac;
+      const credit = (id, label, dist) => {
+        const sh = R(p + dir * (dist + buf));
+        const pair = [leg(`Short ${right}`, sh), { label: `Long ${right}`, strike: sh + dir * creditW }];
+        return { id, label, basis: 'anchor', shift: 0, dRem: ivxEM, legs: pair, width: creditW,
+          otmEM: ivxEM > 0 ? Math.abs(sh - p) / ivxEM : 0, otmRuler: 'IVX' };
+      };
+      vertVariants = [
+        credit('engine', 'IVX EM', ivxEM),
+        em365V1D > 0 ? credit('half1d', '½ VIX1D EM', 0.5 * em365V1D * tScale) : null,
+        em365V1D > 0 ? credit('em1d', 'VIX1D EM · further', em365V1D * tScale) : null,
+        credit('vix', 'VIX EM · old default', dVixRem),
+      ].filter(Boolean);
+    }
     const chosen = vertVariants.find(v => v.id === vertVariantId) || vertVariants[0];
     legs = chosen.legs.map(l => ({ ...l }));
+  }
+
+  // ── Profit target by distance (Oct 2026) ──
+  // Same study: positions nearer the money (win rates in the 80s–low 90s) did better
+  // taking 25%; the far-OTM, ~97–99% win-rate ones needed 50% to be worth the risk —
+  // a small credit has to be mostly kept. Credit verticals only; everything else keeps
+  // its EXIT_RULES default.
+  let exitTarget = null;
+  if ((legStrat === 'Bull put spread' || legStrat === 'Bear call spread') && price > 0 && ivxEM > 0) {
+    const shortLeg = legs.find(l => /short/i.test(l.label || ''));
+    const otm = shortLeg ? Math.abs(shortLeg.strike - price) / ivxEM : null;
+    if (otm != null) exitTarget = otm > 1.4
+      ? { target: 50, otm, why: `short ${otm.toFixed(1)}× IVX EM out — far OTM, small credit: keep half of it (tastylive 0DTE strike-distance study)` }
+      : { target: 25, otm, why: `short ${otm.toFixed(1)}× IVX EM out — near the expected move: take 25% (tastylive 0DTE strike-distance study)` };
   }
 
   // ── Max-profit strike may not cross spot (Aug 2026) ──
@@ -1333,7 +1385,9 @@ export function calc0DTE(inputs) {
 
   const wingTxt = D > 0
     ? isSpread
-      ? `EM rem(VIX)=${dVixRem.toFixed(1)} | EM rem(VIX1D)=${dV1dRem.toFixed(1)} · ${(sessionFrac*5.5).toFixed(1)}h left (session ${emVIX>0?emVIX.toFixed(0):'--'}/${emV1D>0?emV1D.toFixed(0):'--'})`
+      ? ((legStrat === 'Bull put spread' || legStrat === 'Bear call spread')
+        ? `IVX EM=${ivxEM.toFixed(1)}${straddleTotal > 0 ? ' (0DTE straddle × 0.85)' : ' (0.63 × VIX1D EM)'} · width ${creditW} · ${(sessionFrac*5.5).toFixed(1)}h left`
+        : `EM rem(VIX)=${dVixRem.toFixed(1)} | EM rem(VIX1D)=${dV1dRem.toFixed(1)} · ${(sessionFrac*5.5).toFixed(1)}h left (session ${emVIX>0?emVIX.toFixed(0):'--'}/${emV1D>0?emV1D.toFixed(0):'--'})`)
       : (strikesEdited && editedWingWidth != null && Math.abs(editedWingWidth - D) >= 0.05)
         ? `D=${editedWingWidth.toFixed(1)} pts (edited · engine ${D.toFixed(1)}, base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
         : `D=${D.toFixed(1)} pts (base ${baseDistance.toFixed(1)} x ${distMult.toFixed(2)})`
@@ -1569,7 +1623,9 @@ export function calc0DTE(inputs) {
       targetLabel = `Target debit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
       targetIsCredit = false;
     } else if (legStrat.includes('Bull put') || legStrat.includes('Bear call') || legStrat.includes('Credit')) {
-      targetLow = width * 0.25; targetHigh = width * 0.40;
+      // OTM at about the IVX EM a $20 SPX spread fetched $3.30–3.90 on the show
+      // (16–20% of width); 25–40% is an at-the-money credit. (Oct 2026.)
+      targetLow = width * 0.12; targetHigh = width * 0.25;
       targetCredit = (targetLow + targetHigh) / 2;
       targetLabel = `Target credit: $${targetLow.toFixed(2)}–$${targetHigh.toFixed(2)}`;
       targetIsCredit = true;
@@ -2519,7 +2575,7 @@ export function calc0DTE(inputs) {
         + `— max profit is at best ${v.maxProfitCeil.toFixed(2)} against ${v.intrinsic.toFixed(2)} at risk `
         + `(${v.rrCeil.toFixed(2)}:1 before time value). The shift has priced out the upside`);
     } else if (v && v.otmEM != null && v.otmEM > 2.5) {
-      warnings.push(`${v.label}: short strike ${v.otmEM.toFixed(1)}× EM remaining OTM — credit will be negligible`);
+      warnings.push(`${v.label}: short strike ${v.otmEM.toFixed(1)}× ${v.otmRuler === 'IVX' ? 'the IVX EM' : 'EM remaining'} OTM — credit will be negligible`);
     }
   }
   // ── Scheduled macro events (Aug 2026) ──
@@ -2784,6 +2840,7 @@ export function calc0DTE(inputs) {
     deltaCheck, deltaPlan,
     eventsToday: _ev0.events, notices, earningsRisk,
     wingTxt, skewNote, emIsStraddle, emDetail, D, baseDistance, distMult, bodyShift,
+    ivxEM, em365V1D, em365VIX, creditW, exitTarget,
     holdToExpiry, pullbackFrac, pullbackApplied: isSpread ? vBufFrac : 0,
     // Expected move — two rulers, presented separately (Jul 2026)
     emRemaining, emSession, emSessionModel, emStraddleSD, emStraddleSessionVol,

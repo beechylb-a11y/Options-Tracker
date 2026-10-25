@@ -81,7 +81,7 @@ describe('roll order panel', () => {
     render(<RollOrderPanel pos={pos} roll={{ strikes: ['699', '709', '755', '765'], expiry: '' }} oldStrikes={OLD} lots={5} onUse={onUse} />);
     await waitFor(() => expect(screen.getAllByTestId('roll-leg').length).toBe(4));
     await waitFor(() => expect(screen.getByTestId('roll-net').textContent).toMatch(/1\.97 CREDIT/), { timeout: 3000 });
-    expect(screen.getByTestId('roll-limit').value).toBe('1.97');
+    await waitFor(() => expect(screen.getByTestId('roll-limit').value).toBe('1.97'));
     expect(screen.getByTestId('roll-text').textContent).toMatch(/SELL the combo @ 1\.97/);
     fireEvent.click(screen.getByTestId('roll-use'));
     expect(onUse).toHaveBeenCalledWith({ closeAt: '0.20', openAt: '2.17', openSide: 'cr' });

@@ -28,14 +28,18 @@ const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
 export default function ProfitTaker({ ncd, win, contracts, kelly = null, underlying, legs, onPlan, engine = '0DTE', commRate, strategy,
-  tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte }) {
+  tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte, targetOverride = null }) {
   const is0 = !/45/.test(engine);
   // Per-strategy target and basis (Oct 2026): tastylive's numbers, not one 50% for all.
   // tastyFly (0DTE long flies only; null = not offered): switch to tastylive's
   // 25–50% of MAX PROFIT instead of the % return on the debit.
   const baseRule = exitRuleFor(engine, strategy);
+  // targetOverride (Oct 2026): the engine's distance-based target for 0DTE credit
+  // spreads — 25% near the expected move, 50% far out of the money.
   const rule = tastyFly ? { ...baseRule, basis: 'max', target: 25, chips: [25, 35, 50],
-    why: 'long fly: 25–50% of max profit' } : baseRule;
+    why: 'long fly: 25–50% of max profit' }
+    : targetOverride && targetOverride.target ? { ...baseRule, target: targetOverride.target, why: targetOverride.why || baseRule.why }
+    : baseRule;
   const qty = Math.max(1, Number(contracts) || 1);
   const pos = useMemo(() => normalisePosition({
     qty, qtyOpen: qty, entryPrice: ncd, maxProfit: win > 0 ? win * qty : '', underlying,
@@ -62,7 +66,7 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
     setTarget({ pct: rule.target, price: '' });
     setRows(ladder(qty, ladderPcts));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategy, engine, tastyFly]);
+  }, [strategy, engine, tastyFly, targetOverride && targetOverride.target]);
   // The stop starts at the 100%-of-premium guide; clear it for no stop.
   const [stopPct, setStopPct] = useState(String(STOP_LOSS_PCT));
   useEffect(() => { setRows(rs => ladder(qty, rs.length ? rs.map(r => r.pct) : [25, 50, 100])); }, [qty]);
