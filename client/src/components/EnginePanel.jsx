@@ -5210,7 +5210,13 @@ function profitIfText(pay, underlying) {
   const f = v => Math.round(v);
   if (bes.length === 2) return at((bes[0] + bes[1]) / 2) > 0
     ? `${u} stays ${f(bes[0])}–${f(bes[1])}` : `${u} breaks out of ${f(bes[0])}–${f(bes[1])}`;
-  if (bes.length === 1) return at(bes[0] + 1) > 0 ? `${u} holds above ${f(bes[0])}` : `${u} holds below ${f(bes[0])}`;
+  // One breakeven: which SIDE of it pays is read from the ends of the curve. Probing
+  // one point past the breakeven could read the losing side — a bull put showed
+  // "holds below". (Oct 2026.)
+  if (bes.length === 1) {
+    const pts = pay.points, hiSide = pts[pts.length - 1].pnl, loSide = pts[0].pnl;
+    return hiSide > loSide ? `${u} holds above ${f(bes[0])}` : `${u} holds below ${f(bes[0])}`;
+  }
   return '';
 }
 
