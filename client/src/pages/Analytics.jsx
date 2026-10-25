@@ -12,6 +12,7 @@ import { EXIT_RULES } from '../engine/data';
 import { shadowSummary } from '../engine/shadow';
 import { calibrate, headlines, DIMENSIONS, MIN_N, SOLID_N } from '../engine/calibration';
 import { suggestions as suggestFrom, SUGGEST_N } from '../engine/suggest';
+import { gridTable, exitTable, REGIMES, EXIT_LABEL, EXITS } from '../engine/learn';
 import { settleShadows } from '../utils/shadowSettle';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
@@ -186,6 +187,7 @@ function ShadowVerdicts({ account }) {
         </tbody>
       </table>
       {rows.length > 0 && <Calibration rows={rows} />}
+      {rows.length > 0 && <LearnCard rows={rows} />}
       {rows.length > 0 && (
         <div style={{ overflowX: 'auto' }}>
           <div className="font-semibold mt-6 mb-2">Recent verdicts</div>
@@ -322,6 +324,87 @@ function Calibration({ rows }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// Strike distance × exit, learned from our own 0DTE sessions (Oct 2026, step 4).
+// The questions of the tastylive strike-distance study, answered on the engine's own
+// looks: where a credit spread's short belongs and whether to close at 25%, 50% or
+// hold — and the same three exits on every verdict's own legs.
+function LearnCard({ rows }) {
+  const [regime, setRegime] = useState('all');
+  const g = useMemo(() => gridTable(rows, { regime }), [rows, regime]);
+  const ex = useMemo(() => exitTable(rows), [rows]);
+  const pill = on => `text-xs px-2.5 py-1 rounded border ${on ? 'border-accent text-text bg-accent/20' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`;
+  const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
+  const r2 = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const tone = c => c.read.tone === 'good' ? 'win' : c.read.tone === 'bad' ? 'loss' : '';
+  // Best exit per row once there is enough to read, so the eye lands on it.
+  const bestOf = row => { const ok = EXITS.filter(e => row[e].n >= 10 && row[e].pnl); return ok.length ? ok.reduce((a, b) => (row[b].pnl.m > row[a].pnl.m ? b : a)) : null; };
+  return (
+    <div data-testid="learn-card" className="mt-6">
+      <div className="font-semibold mb-1">Strike distance × exit — learned from your sessions</div>
+      <div className="text-text-muted text-xs mb-3" style={{ maxWidth: 780 }}>
+        Every settled 0DTE look also prices what a credit spread would have done that day with its short at
+        ½ the VIX1D expected move, the IVX expected move, or a full VIX1D move — put side and call side, a fixed width ($20 SPX,
+        $2 XSP/SPY/QQQ) — closed at 25%, at 50%, or held. The path is the day's real 5-minute bars; prices are modelled
+        from the ticket's own remaining-session move (the 0DTE straddle when there was one), at mid with commission. One look per
+        session and underlying counts. The tastylive study and our 2024–26 replay are the prior; this is where your own data
+        confirms or overturns them. Not read under 10 sessions; early under 30.
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-2 items-center">
+        <span className="text-xs text-text-faint mr-1">Regime</span>
+        {Object.entries(REGIMES).map(([k, d]) => <button key={k} className={pill(regime === k)} onClick={() => setRegime(k)}>{d.label}</button>)}
+        <span className="text-xs text-text-muted ml-2">{g.sessions} session{g.sessions === 1 ? '' : 's'} learned</span>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="w-full text-sm" data-testid="learn-grid">
+          <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
+            <th className="text-left py-1.5">Side</th><th className="text-left">Short at</th><th className="text-right">Avg credit</th>
+            {EXITS.map(e => <th key={e} className="text-right">{EXIT_LABEL[e]}</th>)}</tr></thead>
+          <tbody>
+            {g.rows.map(row => {
+              const best = bestOf(row);
+              return (
+                <tr key={row.side + row.anchor} style={{ borderTop: '1px solid #21262d' }}>
+                  <td className="py-1.5">{row.side === 'put' ? 'Bull put' : 'Bear call'}</td>
+                  <td>{row.anchor} EM{row.anchor === 'IVX' ? <span className="text-text-faint"> · engine default</span> : null}</td>
+                  <td className="text-right mono">{row.credit == null ? '—' : row.credit.toFixed(2)}</td>
+                  {EXITS.map(e => {
+                    const c = row[e];
+                    return (
+                      <td key={e} className={'text-right mono ' + tone(c)} title={c.R && c.R.lo != null ? `${r2(c.R.m)} (95% ${r2(c.R.lo)} to ${r2(c.R.hi)}) · ${c.read.text}` : c.read.text}
+                        style={best === e ? { fontWeight: 700, textDecoration: 'underline' } : null}>
+                        {c.n ? <>{money(c.pnl.m)} <span className="text-text-faint">{(c.win.p * 100).toFixed(0)}% · {c.n}</span></> : '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {!g.sessions && <tr><td colSpan={6} className="py-3 text-text-muted">Nothing learned yet — press Settle expired once a 0DTE session has closed.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div className="font-semibold text-sm mt-4 mb-1">Your verdicts' own legs: when to close</div>
+      <div className="text-text-muted text-xs mb-2">The structure the engine actually showed, closed at 25% or 50% of the entry premium (else held), against holding and against the current managed rule. Average R per trade.</div>
+      <table className="w-full text-sm" data-testid="learn-exits">
+        <thead><tr className="text-text-faint text-[12px] uppercase tracking-wider">
+          <th className="text-left py-1.5">Structure</th>{['t25', 't50', 'hold', 'current'].map(e => <th key={e} className="text-right">{EXIT_LABEL[e]}</th>)}</tr></thead>
+        <tbody>
+          {ex.map(x => (
+            <tr key={x.group} style={{ borderTop: '1px solid #21262d' }}>
+              <td className="py-1.5">{x.group}</td>
+              {['t25', 't50', 'hold', 'current'].map(e => (
+                <td key={e} className={'text-right mono ' + tone(x[e])} title={x[e].read.text}>
+                  {x[e].n && x[e].R ? <>{r2(x[e].R.m)} <span className="text-text-faint">· {x[e].n}</span></> : '—'}</td>
+              ))}
+            </tr>
+          ))}
+          {!ex.length && <tr><td colSpan={5} className="py-3 text-text-muted">Nothing learned yet.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }

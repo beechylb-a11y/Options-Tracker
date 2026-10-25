@@ -9,6 +9,7 @@
 import { api } from './api';
 import { closeOn, expiryPassed, pnlAtExpiry } from '../engine/shadow';
 import { managed0, managed45, commissionPerCt } from '../engine/managed';
+import { learnFrom } from '../engine/learn';
 
 function getJson(url, ms) {
   const ctrl = new AbortController();
@@ -35,8 +36,10 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   const heldDue = rows.filter(r => !r.settled_at && r.expiry && expiryPassed(String(r.expiry), now));
   const man0Due = rows.filter(r => !r.managed_at && r.engine === '0DTE' && r.expiry && expiryPassed(String(r.expiry), now));
   const man45 = rows.filter(r => !r.managed_at && r.engine === '45DTE');
+  // Step 4 (Oct 2026): strike distance × exit from each 0DTE session (engine/learn.js).
+  const learnDue = rows.filter(r => !r.learned_at && r.engine === '0DTE' && r.expiry && expiryPassed(String(r.expiry), now));
   const due = new Set([...heldDue, ...man0Due].map(r => r.id));
-  if (!heldDue.length && !man0Due.length && !man45.length) return { settled: 0, pending: 0 };
+  if (!heldDue.length && !man0Due.length && !man45.length && !learnDue.length) return { settled: 0, pending: 0 };
   if (!url) return { settled: 0, pending: due.size, error: 'no bridge' };
 
   const items = new Map();
@@ -50,13 +53,17 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
   const noBars = new Set();
 
   // Daily closes: held outcomes and 45DTE managed.
-  const dailyNeed = [...heldDue, ...man45];
+  const dailyNeed = [...new Set([...heldDue, ...man45, ...learnDue])];
+  const dailyBars = new Map();
   const dailyBy = new Map();
   dailyNeed.forEach(r => { if (!dailyBy.has(r.underlying)) dailyBy.set(r.underlying, []); dailyBy.get(r.underlying).push(r); });
   for (const [und, list] of dailyBy) {
-    const d = await getJson(`${url}/api/history?underlying=${encodeURIComponent(und)}&barSize=${encodeURIComponent('1 day')}&months=${monthsFor(list)}`, 60000);
+    // A learned row's regime needs the 20 sessions BEFORE it, so reach a month further back.
+    const months = Math.min(12, monthsFor(list) + (list.some(r => learnDue.includes(r)) ? 1 : 0));
+    const d = await getJson(`${url}/api/history?underlying=${encodeURIComponent(und)}&barSize=${encodeURIComponent('1 day')}&months=${months}`, 60000);
     const bars = d && Array.isArray(d.bars) ? d.bars : [];
     if (!bars.length) noBars.add(und);
+    dailyBars.set(und, bars);
     for (const r of list) {
       const legs = Array.isArray(r.legs) ? r.legs : [];
       const entry = Number(r.entry_net);
@@ -78,18 +85,24 @@ export async function settleShadows(account, { bridgeUrl, now = new Date() } = {
 
   // 5-min bars: 0DTE managed, one request per underlying.
   const intraBy = new Map();
-  man0Due.forEach(r => { if (!intraBy.has(r.underlying)) intraBy.set(r.underlying, []); intraBy.get(r.underlying).push(r); });
+  [...new Set([...man0Due, ...learnDue])].forEach(r => { if (!intraBy.has(r.underlying)) intraBy.set(r.underlying, []); intraBy.get(r.underlying).push(r); });
   for (const [und, list] of intraBy) {
     const d = await getJson(`${url}/api/history?underlying=${encodeURIComponent(und)}&barSize=${encodeURIComponent('5 mins')}&months=${Math.min(3, monthsFor(list))}`, 90000);
     const bars = d && Array.isArray(d.bars) ? d.bars : [];
     if (!bars.length) noBars.add(und);
     for (const r of list) {
-      const m = managed0(r, bars);
-      if (m) item(r.id).managed = m; else skipped++;
+      if (!r.managed_at && man0Due.includes(r)) {
+        const m = managed0(r, bars);
+        if (m) item(r.id).managed = m; else skipped++;
+      }
+      if (!r.learned_at && learnDue.includes(r)) {
+        const L = learnFrom(r, bars, dailyBars.get(und) || []);
+        if (L) item(r.id).learn = L;
+      }
     }
   }
 
-  const list = [...items.values()].filter(it => it.pnlPerCt != null || it.managed);
+  const list = [...items.values()].filter(it => it.pnlPerCt != null || it.managed || it.learn);
   let settled = 0;
   if (list.length) {
     try { settled = (await api.settleShadow(list)).settled || 0; } catch (e) { return { settled: 0, pending: due.size, error: e.message }; }

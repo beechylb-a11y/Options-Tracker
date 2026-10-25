@@ -13,6 +13,7 @@
 import { calibrate, outcomeOf } from './calibration.js';
 import { MOVE_COST_BANDS } from './calc0dte.js';
 import { STRATEGY_CASH_TYPE } from './data.js';
+import { learnSuggestions } from './learn.js';
 
 export const SUGGEST_N = 30;
 const MIN_SIDE = 10;               // allowed trades needed in each half to judge a threshold
@@ -180,6 +181,10 @@ export function suggestions(rows, { outcome = 'managed' } = {}) {
   if (pos && pos.n >= SUGGEST_N && pos.R && pos.R.hi < 0) out.push({ id: 'ev-pos', tone: 'change', title: 'The EV model is too optimistic',
     evidence: `${pos.n} tickets it priced at EV > 0 averaged ${fmtR(pos.R.m)} (95% ${fmtR(pos.R.lo)} to ${fmtR(pos.R.hi)}).` });
   if ((!neg || neg.n < SUGGEST_N) && (!pos || pos.n < SUGGEST_N)) waiting.push({ what: 'EV model check', n: Math.max(neg ? neg.n : 0, pos ? pos.n : 0) });
+
+  // 6. Strike distance × exit for 0DTE credit spreads, learned from our own sessions.
+  const ls = learnSuggestions(rows, { minN: SUGGEST_N });
+  out.push(...ls.suggestions); waiting.push(...ls.waiting);
 
   return { suggestions: out, waiting, settled: settled.length };
 }

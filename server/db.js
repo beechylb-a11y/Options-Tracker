@@ -1488,7 +1488,7 @@ export async function upsertShadow(v) {
 export async function listShadow({ account, unsettled, limit } = {}) {
   const where = [], args = [];
   if (account && account !== 'all') { args.push(account); where.push(`account = $${args.length}`); }
-  if (unsettled) where.push('(settled_at is null or managed_at is null)');
+  if (unsettled) where.push("(settled_at is null or managed_at is null or (engine = '0DTE' and learned_at is null))");
   args.push(Math.min(5000, Number(limit) || 1000));
   const { rows } = await q(`select * from options.shadow_verdicts ${where.length ? 'where ' + where.join(' and ') : ''}
     order by session_date desc, last_seen desc limit $${args.length}`, args);
@@ -1511,6 +1511,12 @@ export async function settleShadow(items) {
       const r = await q(`update options.shadow_verdicts set pnl_managed = $2, exit_reason = $3, exit_at = $4,
         managed_at = now() where id = $1 and managed_at is null`,
         [it.id, Number(it.managed.pnl), it.managed.reason || null, it.managed.at || null]);
+      n += r.rowCount || 0;
+    }
+    // Step 4 (Oct 2026): strike distance × exit, learned once per verdict.
+    if (it.learn && typeof it.learn === 'object') {
+      const r = await q(`update options.shadow_verdicts set learn = $2, learned_at = now() where id = $1 and learned_at is null`,
+        [it.id, JSON.stringify(it.learn)]);
       n += r.rowCount || 0;
     }
   }

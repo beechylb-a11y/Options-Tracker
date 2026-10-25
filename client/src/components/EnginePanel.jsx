@@ -1609,7 +1609,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             // horizon the scores were never calculated against.
             hours: fv(i0, 'hours') || null, hoursToBell: ses.hoursToBell ?? null,
             sessionBasis: ses.basis,
-            delta: fv(i0, 'delta'), gamma: fv(i0, 'gamma'), theta: fv(i0, 'theta'), regime: r.regime || null, dir: r.dirLabel || null }
+            delta: fv(i0, 'delta'), gamma: fv(i0, 'gamma'), theta: fv(i0, 'theta'), regime: r.regime || null, dir: r.dirLabel || null,
+            // Strike-distance learning (Oct 2026): the anchors the credit spreads are built on.
+            ivxEM: r.ivxEM > 0 ? +r.ivxEM.toFixed(2) : null, em365V1D: r.em365V1D > 0 ? +r.em365V1D.toFixed(2) : null,
+            exitTarget: r.exitTarget ? r.exitTarget.target : null }
         : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null, sessionBasis: ses.basis },
       decisionTs: extra.decisionTs || null,
     };

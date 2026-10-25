@@ -84,6 +84,26 @@ describe('settle pass', () => {
     expect(settled.map(s => s.id)).toEqual([1]);
   });
 
+  // Step 4 (Oct 2026): an already settled and managed 0DTE verdict still gets its
+  // strike-distance × exit lesson, once, from the day's 5-minute bars.
+  it('learns strike distance × exit from a 0DTE session already settled', async () => {
+    SHADOW = [{ id: 7, engine: '0DTE', underlying: 'SPX', strategy: 'Bull put spread', session_date: '2026-10-23', expiry: '20261023',
+      first_seen: '2026-10-23T14:30:00Z', spot: 6600, entry_net: 3.5, settled_at: 'x', managed_at: 'x',
+      legs: [{ strike: 6560, right: 'P', qty: -1 }, { strike: 6540, right: 'P', qty: 1 }],
+      inputs: { sdLeft: 45, hours: 5.5, vix1d: 15, vix: 17, emSource: 'straddle' } }];
+    const intraday = [];
+    for (let m = 570; m <= 960; m += 5) intraday.push({ date: `20261023  ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00`, close: 6600 + (m - 570) / 20 });
+    global.fetch = vi.fn(async (u) => ({ text: async () => JSON.stringify({ bars: /5%20mins/.test(u) ? intraday : [{ date: '20261023', close: 6619.5 }] }) }));
+    const res = await settleShadows('acct', { bridgeUrl: 'http://bridge', now: new Date('2026-10-24T15:00:00Z') });
+    expect(res.settled).toBe(1);
+    expect(settled).toHaveLength(1);
+    expect(settled[0].id).toBe(7);
+    expect(settled[0].pnlPerCt).toBeUndefined();
+    expect(settled[0].learn.grid).toHaveLength(6);
+    expect(settled[0].learn.exits.hold.pnl).toBe(349);
+    expect(settled[0].learn.model.close).toBe(6619.5);
+  });
+
   it('reports no empty underlyings when every request answers', async () => {
     SHADOW = [{ id: 1, underlying: 'QQQ', expiry: '20261008', entry_net: 5.81, legs: shadowLegs(condorLegs) }];
     global.fetch = vi.fn(async () => ({ text: async () => JSON.stringify({ bars: [{ date: '20261008', close: 760 }] }) }));
