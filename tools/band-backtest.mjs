@@ -59,14 +59,17 @@ if (data.errors) data.errors.forEach(e => console.error('  ⚠ ' + e));
 console.log(`Got ${data.count} bars, ${data.first} → ${data.last}\n`);
 
 // ── Group into sessions ──────────────────────────────────────────────────────
-// Bar timestamps are "yyyymmdd  hh:mm:ss" in EXCHANGE-local time (US/Eastern here),
-// not UTC. Parsing them as dates would silently shift them; split the string instead.
+// Bar timestamps are "yyyymmdd  hh:mm:ss <zone>" in EXCHANGE-local time, not UTC:
+// US/Eastern for ETFs, US/Central for CBOE indices (SPX, XSP). Entry and exit times
+// are New York, so a Chicago bar is moved an hour on. (Oct 2026.)
+const TZ_TO_NY = { 'US/Eastern': 0, 'America/New_York': 0, 'US/Central': 60, 'America/Chicago': 60 };
 const sessions = new Map();
 for (const b of data.bars) {
-  const m = /^(\d{4})(\d{2})(\d{2})\s+(\d{2}):(\d{2})/.exec(String(b.date));
+  const m = /^(\d{4})(\d{2})(\d{2})\s+(\d{2}):(\d{2})(?::\d{2})?\s*([A-Za-z_/]+)?/.exec(String(b.date));
   if (!m) continue;
   const day = `${m[1]}-${m[2]}-${m[3]}`;
-  const hhmm = `${m[4]}:${m[5]}`;
+  const mins = +m[4] * 60 + +m[5] + (TZ_TO_NY[m[6]] || 0);
+  const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
   if (!sessions.has(day)) sessions.set(day, new Map());
   sessions.get(day).set(hhmm, b.close);
 }

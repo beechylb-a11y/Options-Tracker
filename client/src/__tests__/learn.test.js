@@ -86,3 +86,23 @@ describe('reading it back', () => {
     expect(learnSuggestions(rows.slice(0, 10)).waiting.map(w => w.what)).toContain('Exit for 0DTE credit spreads');
   });
 });
+
+import { barTimeET } from '../engine/managed';
+describe('bar zones', () => {
+  it('reads a CBOE index bar stamped in Chicago as New York time', () => {
+    expect(barTimeET('20261015 08:30:00 US/Central')).toEqual({ ymd: '20261015', min: 9 * 60 + 30 });
+    expect(barTimeET('20261015 14:55:00 US/Central').min).toBe(15 * 60 + 55);
+    expect(barTimeET('20261015 09:30:00 US/Eastern').min).toBe(9 * 60 + 30);
+    expect(barTimeET('20261015  09:30:00').min).toBe(9 * 60 + 30);
+  });
+  it('an SPX verdict recorded after 15:00 New York still learns from Chicago bars', () => {
+    const bars = []; for (let m = 510; m <= 900; m += 5) bars.push({ date: `20261015 ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}:00 US/Central`, close: 7720 });
+    const r = { id: 18, engine: '0DTE', underlying: 'SPX', strategy: 'Asymmetric butterfly', session_date: '2026-10-15', expiry: '20261015',
+      first_seen: '2026-10-15T19:23:05Z', spot: 7722.63, entry_net: -14.5,
+      legs: [{ qty: 1, right: 'P', strike: 7750 }, { qty: -2, right: 'P', strike: 7725 }, { qty: 1, right: 'P', strike: 7670 }],
+      inputs: { sdLeft: 34, hours: 2.2, vix1d: 11.15, vix: 16.85 } };
+    const L = learnFrom(r, bars, []);
+    expect(L).not.toBeNull();
+    expect(L.model.from).toBe('20261015 15:23');
+  });
+});

@@ -80,10 +80,18 @@ export function walkExit({ steps, entryNet, target, basis, stopPct = STOP_LOSS_P
 // IBKR history bars: "yyyymmdd  hh:mm:ss" in New York exchange time (see the bridge's
 // /api/history note), or epoch seconds. → { ymd, min } minutes after midnight ET.
 const ET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+// The bridge stamps bars in the EXCHANGE's zone, and says so after the time:
+// "20261015 08:30:00 US/Central" is SPX's 9:30 New York open — CBOE indices are
+// Chicago. Read as New York, every SPX and XSP bar sat an hour early: the 9:30 bar
+// fell before the open, the walk stopped at 14:55, and a verdict recorded after
+// 15:00 New York had no path at all. (Found back-filling the learning loop, 26 Oct.)
+const TZ_TO_NY = { 'US/Eastern': 0, 'America/New_York': 0, EST: 0, EDT: 0,
+  'US/Central': 60, 'America/Chicago': 60, CST: 60, CDT: 60,
+  'US/Mountain': 120, 'America/Denver': 120, 'US/Pacific': 180, 'America/Los_Angeles': 180 };
 export function barTimeET(date) {
   const s = String(date ?? '').trim();
-  const m = /^(\d{4})(\d{2})(\d{2})[\s-]+(\d{2}):(\d{2})/.exec(s);
-  if (m) return { ymd: m[1] + m[2] + m[3], min: +m[4] * 60 + +m[5] };
+  const m = /^(\d{4})(\d{2})(\d{2})[\s-]+(\d{2}):(\d{2})(?::\d{2})?\s*([A-Za-z_/]+)?/.exec(s);
+  if (m) return { ymd: m[1] + m[2] + m[3], min: +m[4] * 60 + +m[5] + (TZ_TO_NY[m[6]] || 0) };
   if (/^\d{9,11}$/.test(s)) {
     const p = Object.fromEntries(ET.formatToParts(new Date(+s * 1000)).map(x => [x.type, x.value]));
     return { ymd: p.year + p.month + p.day, min: (p.hour === '24' ? 0 : +p.hour) * 60 + +p.minute };
