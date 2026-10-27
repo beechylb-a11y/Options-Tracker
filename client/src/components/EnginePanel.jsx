@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ProfitTaker from './ProfitTaker';
+import { VerdictTitle, EdgeRow, ExitPlanStrip, MoreMenu, METRIC } from './EngineVisual';
 import { normalisePosition, planText, savePlan } from '../utils/ticketMath';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
@@ -984,7 +985,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       { k:'Move consumed',  now:pct(r.moveConsumed),       alt:pct(a.moveConsumed) },
       { k:'Regime',         now:r.regime || '--',          alt:a.regime || '--' },
       { k:'Best strategy',  now:r.bestStrat || '--',       alt:a.bestStrat || '--' },
-      { k:'P(max loss)',    now:p1(r.pMaxLoss),            alt:p1(a.pMaxLoss) },
+      { k:'Max-loss chance', now:p1(r.pMaxLoss),            alt:p1(a.pMaxLoss) },
       { k:'EV / contract',  now:dol(r.ev),                 alt:dol(a.ev) },
       { k:'Confidence',     now:num(r.tradeConfidence),    alt:num(a.tradeConfidence) }
     ];
@@ -1235,6 +1236,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   // 45DTE close-by line for the logged exit plan: N DTE on the (front) expiry and the
   // calendar date that falls on.
+  // 0DTE: the managed exit is 15:00 ET; the hours box is "3pm ET minus now".
+  function exitWhen0() {
+    const h = parseFloat(i0.hours);
+    return { label: 'exit by 15:00 ET', hours: isFinite(h) && h >= 0 ? h : null };
+  }
   function planCloseBy() {
     if (is0 || !exitPlan || !exitPlan.closeDte) return null;
     const exp = isTimeSpread ? nearExp : singleExp;
@@ -1711,11 +1717,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     actions: [{ label: 'Use feed values', onClick: releaseHolds }, openInputsAct] });
   if (!hasBlocker && r.legs.length > 0 && r.pMaxLoss == null) needs.push({ key: 'greeks', tone: 'warn',
     title: 'No greeks for these strikes yet',
-    detail: 'Chance of max loss and the greeks gauges need them.',
+    detail: 'Max-loss chance and the greeks gauges need them.',
     actions: [{ label: 'Fetch greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
   else if (is0 && sessionOpen && greeksAgeMin != null && greeksAgeMin >= 10) needs.push({ key: 'greeksAge', tone: 'warn',
     title: `Greeks are ${greeksAgeMin} minutes old`,
-    detail: 'Chance of max loss is still using the earlier wing deltas.',
+    detail: 'Max-loss chance is still using the earlier wing deltas.',
     actions: [{ label: 'Refresh greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
 
   // Keep the row you are typing in until you leave it, shown as done.
@@ -1792,7 +1798,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     { id: 'sizing', label: 'Sizing & price', dot: missingInputs ? '#484f58' : r.ev > 0 ? '#3fb950' : '#f85149',
       meta: missingInputs ? 'needs sizing' : `EV $${Math.round(r.ev || 0)}` },
     { id: 'greeks', label: 'Greeks & tail', dot: pmlNow == null ? '#484f58' : pmlNow <= 0.15 ? '#3fb950' : pmlNow <= 0.30 ? '#d29922' : '#f85149',
-      meta: pmlNow == null ? 'none yet' : `${(pmlNow * 100).toFixed(0)}% max loss` },
+      meta: pmlNow == null ? 'none yet' : `${(pmlNow * 100).toFixed(1)}% max-loss chance` },
     { id: 'timing', label: 'Payoff & timing', dot: '#58a6ff', meta: '' },
     { id: 'regime', label: 'Regime & signals', dot: '#58a6ff', meta: r.regime || '' },
     ...(is0 && fvs !== undefined ? [{ id: 'value', label: 'Fair value', meta: String(fvs),
@@ -3132,7 +3138,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             {r.legs?.map(l => l.strike).join(' / ')}
           </span>
           <span style={{marginLeft:'auto',display:'flex',gap:14,alignItems:'baseline'}}>
-            <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>COMP </span>
+            <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>EDGE </span>
               <span style={{color:dcColor,fontWeight:700}}>{compositeScore}</span></span>
             <span className="mono"><span style={{color:'#a8b2be',fontSize:11}}>EV </span>
               <span style={{color:r.ev>0?'#3fb950':'#f85149',fontWeight:700}}>
@@ -3160,26 +3166,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 title={missingInputs
                   ? 'Setup quality only — the edge score needs win, risk and POP.'
                   : 'Composite edge score: setup quality blended with Kelly, vol, Sharpe, POP margin and EV per unit of risk. The same number ranks the trade tabs.'} />
-              <div style={{display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
-                <span style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:vTone.color}}>Engine verdict</span>
-                {/* The instrument at headline size (Oct 2026): with several tabs open the
-                    verdict read the same on every one until the small print was found. */}
-                <span style={{display:'flex',alignItems:'baseline',gap:12,flexWrap:'wrap'}}>
-                  <span data-testid="verdict-ticker" title={`${secBag.underlying}${fv(secBag,'price') ? ' @ ' + fv(secBag,'price') : ''}`}
-                    style={{fontSize:30,fontWeight:800,lineHeight:1.08,color:'#79c0ff',letterSpacing:'0.01em',
-                      paddingRight:12,borderRight:'2px solid #30363d'}}>{secBag.underlying}</span>
-                  <span data-testid="verdict" style={{fontSize:30,fontWeight:700,lineHeight:1.08,color:'#fff',letterSpacing:'-0.01em'}}>{verdict.word}</span>
-                </span>
-                <span style={{fontSize:15,color:'#e6edf3',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              {/* Verdict badge, then the trade on one bold line — the same title line as the
+                  board, the check-up and the Sell ticket (Oct 2026). */}
+              <div style={{display:'flex',flexDirection:'column',gap:6,minWidth:0}}>
+                <VerdictTitle word={verdict.word} tone={vTone.color} underlying={secBag.underlying}
+                  price={fv(secBag,'price') || null}
+                  strikes={r.hardBlocker ? [] : [...new Set((r.legs || []).map(l => Number(l.strike)))].sort((x, y) => x - y)}
+                  strategy={r.hardBlocker ? null : String(effectiveStrat || '').replace(/\s*-\s*Normal\b/i, '')}
+                  qty={r.hardBlocker || missingInputs ? null : r.contracts}
+                  expiry={r.hardBlocker ? null : is0 ? todayYmd : ((r.legs || []).map(l => legExpiryOf(l)).filter(Boolean).sort()[0] || null)} />
+                <span style={{fontSize:13,color:'#e6edf3',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                   {r.hardBlocker ? <span style={{color:'#a8b2be'}}>{verdict.sub}</span> : <>
-                    <span>{fv(secBag,'price') ? <span className="mono" style={{color:'#a8b2be'}}>@ {fv(secBag,'price')} · </span> : null}{effectiveStrat}{missingInputs ? '' : <> · <span className="mono">{r.contracts}</span>x</>}</span>
                     {(() => {
                       const net = parseFloat(ticketNet);
                       const hasNet = !isNaN(net) && net !== 0;
                       const label = cashType === 'credit' ? 'CREDIT' : cashType === 'debit' ? 'DEBIT' : 'CREDIT / DEBIT';
                       const bg = cashType === 'credit' ? '#0d2818' : cashType === 'debit' ? '#2d1a0d' : '#1c2128';
                       const fg = cashType === 'credit' ? '#3fb950' : cashType === 'debit' ? '#e3a008' : '#a8b2be';
-                      const hint = hasNet ? ` ${net > 0 ? '+' : '−'}$${Math.abs(net).toFixed(2)}` : '';
+                      // Per share, so no $ sign — it read "CREDIT +$3.70" on a 3.70 credit.
+                      const hint = hasNet ? ` ${Math.abs(net).toFixed(2)}` : '';
                       return <span title={cashType==='varies' ? 'This structure can be credit or debit — enter the net to resolve' : (cashType==='credit'?'You collect premium at entry':'You pay premium at entry')}
                         style={{fontSize:12,fontWeight:700,padding:'2px 8px',borderRadius:4,background:bg,color:fg,letterSpacing:'0.04em'}}>{label}{hint}</span>;
                     })()}
@@ -3198,6 +3203,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 {skewClause ? ` — ${skewClause}.` : '.'}
                 {r.behaviour ? <> Profits if: {r.behaviour}</> : null}
               </div>
+            )}
+            {!r.hardBlocker && (
+              <EdgeRow ev={missingInputs ? null : r.ev} pml={r.pMaxLoss} needsSizing={!!missingInputs}
+                pop={(() => { const x = parseFloat(is0 ? i0.pop : i45.pop); return isFinite(x) && x > 0 ? x : null; })()}
+                kellyCt={r.kellyContracts ?? r.contracts} kellyDollar={r.kellyDollar} />
             )}
 
         {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
@@ -3394,6 +3404,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       {!r.hardBlocker && (
         <section data-testid="execution" style={{display:'flex',flexWrap:'wrap',alignItems:'stretch',gap:16,padding:'14px 16px',
           borderRadius:12,background:'#161b22',border:'1px solid #21262d'}}>
+          {/* The exit, visible before you log (Oct 2026) — targets and stop lived only in
+              the closed Evidence drawer. Edit them there; this is what gets saved. */}
+          <div style={{flexBasis:'100%',paddingBottom:12,borderBottom:'1px solid #21262d'}}>
+            <ExitPlanStrip net={signedNet(ticketNet, cashType)} win={parseFloat(is0 ? i0.win : i45.win) || 0} qty={r.contracts} plan={exitPlan}
+              onEdit={() => setDrawerTab('inputs')}
+              when={is0 ? exitWhen0() : (() => { const cb = planCloseBy(); const exp = isTimeSpread ? nearExp : singleExp;
+                const d = cb && exp ? dteBetween(todayYmd, addDaysYmd(exp, -cb.closeDte)) : null;
+                return cb ? { label: `close by ${cb.date || ''} (${cb.closeDte} DTE)`, days: d } : null; })()} />
+          </div>
           <div style={{flex:'1 1 130px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
             <span style={EX_LBL}>Size</span>
             {missingInputs ? <span style={{fontSize:13,color:'#8b949e'}}>after sizing</span> : <SizeInput
@@ -3408,7 +3427,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
               placeholder="—" className="mono"
               style={{width:'100%',maxWidth:140,padding:'7px 10px',borderRadius:8,border:'1px solid #30363d',background:'#0d1117',
-                color: parseFloat(ticketNet) > 0 ? '#3fb950' : parseFloat(ticketNet) < 0 ? '#f85149' : '#e6edf3',fontSize:16,fontWeight:700,outline:'none'}} />
+                color: parseFloat(ticketNet) > 0 ? '#3fb950' : parseFloat(ticketNet) < 0 ? '#e3a008' : '#e6edf3',fontSize:16,fontWeight:700,outline:'none'}} />
             {r.priceCheck && r.priceCheck.ratio != null && !r.priceCheck.arb && (
               <span style={{fontSize:12.5,color: r.priceCheck.ratio >= 1.15 ? '#d29922' : '#a8b2be'}}>
                 fair {r.priceCheck.fair.toFixed(2)} · {r.priceCheck.ratio.toFixed(2)}× fair
@@ -3473,28 +3492,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 )}
               </div>
             )}
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              {isOverride && (
-                <button onClick={() => setOverrideStrat(null)} style={EX_GHOST}>Clear override</button>
-              )}
-              <button onClick={handlePrint} style={EX_GHOST}>Print summary</button>
-              {/* Save for review (Oct 2026). The 20-second auto-capture is a
-                  convenience, not a guarantee: it needs the ticket to settle, the
-                  POST to succeed, and the page to stay put. This is the one that
-                  can be relied on, and it reports what happened either way. */}
-              <button data-testid="save-review" onClick={() => recordVerdict(true)}
-                disabled={!!shadowWhyNot || shadowSave.state === 'saving'}
-                title={shadowWhyNot
-                  ? `Cannot record this ticket: ${shadowWhyNot}`
-                  : 'Record this verdict now, so the learning loop judges it later whether or not you trade it'}
-                style={{ ...EX_GHOST, cursor: shadowWhyNot ? 'not-allowed' : 'pointer',
-                  opacity: shadowWhyNot ? 0.5 : 1,
-                  borderColor: shadowSave.state === 'saved' ? '#238636' : shadowSave.state === 'error' ? '#6e2427' : undefined,
-                  color: shadowSave.state === 'saved' ? '#3fb950' : shadowSave.state === 'error' ? '#f85149' : undefined }}>
-                {shadowSave.state === 'saving' ? 'Saving…'
-                  : shadowSave.state === 'saved' ? '✓ Saved for review'
-                  : 'Save for review'}
-              </button>
+            {/* One button; the rest behind ⋯ (Oct 2026). */}
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              {shadowSave.state === 'saved' && <span data-testid="save-review-done" style={{fontSize:12,color:'#3fb950'}}>✓ Saved for review</span>}
+              <MoreMenu items={[
+                { label: shadowSave.state === 'saving' ? 'Saving…' : shadowSave.state === 'saved' ? '✓ Saved for review' : 'Save for review',
+                  testid: 'save-review', onClick: () => recordVerdict(true), disabled: !!shadowWhyNot || shadowSave.state === 'saving',
+                  title: shadowWhyNot ? `Cannot record this ticket: ${shadowWhyNot}` : 'Record this verdict now, so the learning loop judges it later whether or not you trade it' },
+                { label: 'Print summary', testid: 'print-summary', onClick: handlePrint },
+                isOverride && { label: 'Clear override', testid: 'clear-override', onClick: () => setOverrideStrat(null), color: '#d29922' },
+              ]} />
             </div>
             {(shadowWhyNot || shadowSave.state === 'error') && (
               <span data-testid="save-review-why" style={{ fontSize: 12, color: shadowSave.state === 'error' ? '#f85149' : '#8b949e' }}>
@@ -4219,7 +4226,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
           {r.pMaxLoss != null && (
             <div style={{marginTop:8,padding:'10px 12px',borderRadius:8,background:'#0d1117',border:'1px solid #21262d',fontSize:13,lineHeight:1.5,color:'#c9d1d9'}}>
-              <span style={{color:'#fff',fontWeight:700,fontSize:14}}>P(max loss): {(r.pMaxLoss*100).toFixed(1)}%</span>
+              <span style={{color:'#fff',fontWeight:700,fontSize:14}}>{METRIC.pml}: {(r.pMaxLoss*100).toFixed(1)}%</span>
               <span style={{marginLeft:8,padding:'2px 7px',borderRadius:4,fontSize:12,fontWeight:600,
                 background: r.pMaxLossSource==='blend'?'#0d2818':r.pMaxLossSource==='delta'?'#1f1a0d':'#161b22',
                 color: r.pMaxLossSource==='blend'?'#3fb950':r.pMaxLossSource==='delta'?'#d29922':'#a8b2be'}}>
@@ -4324,7 +4331,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                       { label: 'EV / trade', render: c => c.res.ev
                           ? <span style={{color: c.res.ev>0?'#3fb950':'#f85149'}}>${c.res.ev.toFixed(0)}</span>
                           : '--' },
-                      { label: 'P(max loss)', render: c => c.res.pMaxLoss != null
+                      { label: 'Max-loss chance', render: c => c.res.pMaxLoss != null
                           ? <span style={{color: c.res.pMaxLoss<=0.15?'#3fb950':c.res.pMaxLoss<=0.30?'#d29922':'#f85149'}}>{(c.res.pMaxLoss*100).toFixed(1)}%</span>
                           : '--' },
                       { label: 'Net cr/dr (target)', render: c => c.res.targetCredit != null
