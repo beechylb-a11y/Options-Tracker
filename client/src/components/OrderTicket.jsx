@@ -14,6 +14,9 @@ import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 import RollOrderPanel from './RollOrderPanel';
 import { rollChain } from '../engine/rollChain';
+import { checkupFor } from './Checkup45';
+import { TicketHeader, PnlLadder, RollBeforeAfter } from './TicketVisual';
+import { legsFromNotes } from '../utils/positionMatch';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -268,6 +271,12 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // What the tickets this one was rolled from banked — part of the position's
   // result, so "Banked" shows it (it read "—" on QQQ with +$1,081 banked). (Oct 2026.)
   const [rollBanked, setRollBanked] = useState(null);
+  // The ticket's Decisions row, and the 45DTE check-up for it — the same verdict, P&L
+  // and price the Dashboard board shows (shared pass, one-minute cache). (Oct 2026.)
+  const [decRow, setDecRow] = useState(null);
+  const [check, setCheck] = useState(null);
+  const [rollLegs, setRollLegs] = useState(null);
+  const [rollMid, setRollMid] = useState(null);
   useEffect(() => {
     if (!pos.ticketRef || !api.getDecisions) return;
     let live = true;
@@ -281,6 +290,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
       if (live && b != null && pos.priorBasis == null) setPriorBasis(b);
       const c = r ? rollChain(r, { decisions: decs, closes: Array.isArray(cl) ? cl : [] }) : null;
       if (live && c) setRollBanked(c.banked);
+      if (live && r) setDecRow(r);
+      if (r) checkupFor(r, position).then(x => { if (live) setCheck(x); }).catch(() => {});
     }).catch(() => {});
     return () => { live = false; };
   }, [pos.ticketRef]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -360,39 +371,35 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   );
 
   const noEntry = pos.ncd == null || pos.ncd === 0;
+  // Live numbers from the check-up: this ticket's P&L, what it would cost to close now,
+  // and the whole position with what the rolls (and any tranches) banked.
+  const cm = check && check.review && check.review.metrics ? check.review.metrics : {};
+  const bankedAll = (pos.realised || 0) + (rollBanked || 0);
+  const ticketPnlNow = cm.pnl$ != null ? cm.pnl$ : null;
+  const posPnlNow = ticketPnlNow != null ? ticketPnlNow + bankedAll : null;
+  const nowClosePrice = cm.pnlShare != null && !noEntry ? Math.max(0, pos.isCredit ? Math.abs(pos.ncd) - cm.pnlShare : Math.abs(pos.ncd) + cm.pnlShare) : null;
+  const titleExpiry = cm.nearExp || (() => { const l = decRow ? legsFromNotes(decRow.Notes) : null; return l && l.length ? l.map(x => String(x.expiry)).sort()[0] : null; })();
+  // Roll picture: the legs held now (check-up, else the order panel's), and the same
+  // legs with the moved strikes swapped in. Position entry per share includes what the
+  // rolls banked; after the roll it adds the roll's mid once it is quoted.
+  const legsNow = (check && check.legs) || rollLegs;
+  const legsAfter = legsNow ? legsNow.map(l => { const i = oldStrikes.indexOf(Number(l.strike)); const k = i >= 0 ? Number(roll.strikes[i]) : Number(l.strike); return { ...l, strike: isFinite(k) && k > 0 ? k : Number(l.strike) }; }) : null;
+  const ncdPosNow = !noEntry && pos.qtyOpen ? pos.ncd + bankedAll / (100 * pos.qtyOpen) : null;
+  const rollPriced = rollMid != null ? rollMid : (rs ? rs.net : null);
+  const ncdPosAfter = ncdPosNow != null && rollPriced != null && changedLegs > 0 ? ncdPosNow + rollPriced : null;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
       <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 20, width: 720, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
 
-        {/* Header — IBKR-style: symbol, structure, position line */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3' }}>
-              <span style={{ background: '#2d0f11', color: '#f85149', borderRadius: 4, padding: '1px 7px', fontSize: 12, marginRight: 8 }}>SELL</span>
-              {pos.underlying} · {pos.strategy}
-            </div>
-            <div className="mono" style={{ fontSize: 12.5, color: '#a8b2be', marginTop: 4 }}>
-              {pos.legs || '—'} · {pos.engine || '—'} · opened {pos.entryDate || '—'} · {pos.account || 'no account'}
-            </div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#a8b2be', cursor: 'pointer', fontSize: 18 }}>×</button>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 12 }}>
-          {[
-            ['Open / Qty', `${pos.qtyOpen} / ${pos.qty}`],
-            ['Entry', noEntry ? '—' : `${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`],
-            ['Max profit / ct', pos.maxProfitPerContract ? fmt$(pos.maxProfitPerContract) : `${fmt$(Math.abs(pos.ncd || 0) * 100)}*`],
-            ['Banked', (pos.realised || rollBanked) ? fmt$((pos.realised || 0) + (rollBanked || 0)) + (rollBanked ? ' incl. rolls' : '') : '—'],
-            ['Close prices as', pos.isCredit ? 'DEBIT' : 'CREDIT'],
-          ].map(([k, v]) => (
-            <div key={k} style={{ background: '#0d1117', borderRadius: 6, padding: '6px 8px' }}>
-              <div style={{ fontSize: 11, color: '#8b949e' }}>{k}</div>
-              <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }}>{v}</div>
-            </div>
-          ))}
-        </div>
+        {/* Header — the board row: verdict, what it is, whole-position P&L (Oct 2026). */}
+        <TicketHeader check={check} fallback={check === null && /45/.test(pos.engine || '') ? 'Checking…' : pos.engine || 'Open'}
+          title={{ underlying: pos.underlying, strikes: oldStrikes, strategy: String(pos.strategy || '').replace(/\s*-\s*Normal\b/i, ''),
+            qty: pos.qtyOpen, expiry: titleExpiry }}
+          sub={<>entry <b className="mono" style={{ color: '#e6edf3' }}>{noEntry ? '—' : `${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`}</b>
+            {' '}· max <span className="mono">{pos.maxProfitPerContract ? fmt$(pos.maxProfitPerContract) : `${fmt$(Math.abs(pos.ncd || 0) * 100)}*`}</span>/ct
+            {' '}· opened {pos.entryDate || '—'} · {pos.account || 'no account'}{pos.qty !== pos.qtyOpen ? ` · ${pos.qty - pos.qtyOpen} of ${pos.qty} closed` : ''}</>}
+          posPnl={posPnlNow} ticketPnl={ticketPnlNow} banked={bankedAll} onClose={onClose} />
         {!pos.maxProfitPerContract && !noEntry && (
           <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: -6, marginBottom: 10 }}>
             * No Max Profit on this ticket — targets use the entry {pos.isCredit ? 'credit' : 'debit'} as the base. Right for credit spreads; understates a debit fly.
@@ -453,6 +460,10 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           )}
 
+          {!expired && !noEntry && (
+            <PnlLadder pos={pos} qtyOpen={pos.qtyOpen} banked={bankedAll} stopPrice={stopPrice} nowPrice={nowClosePrice}
+              targets={rows.map((r, i) => ({ label: `T${i + 1}`, price: parseFloat(r.status === 'Filled' && r.fill !== '' ? r.fill : r.price), qty: Number(r.qty) || 0, filled: r.status === 'Filled' }))} />
+          )}
           <table className="w-full" style={{ fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ color: '#8b949e', fontSize: 11.5, textAlign: 'left' }}>
@@ -553,9 +564,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
         </>)}
 
         {tab === 'roll' && (<>
-          <div style={{ fontSize: 12.5, color: '#a8b2be', marginBottom: 10, lineHeight: 1.5 }}>
-            One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, and the new legs open as a new ticket linked back to it. Change only the strikes that move — untested legs just carry across, and their entry price is asked for so each ticket keeps only its own P&amp;L.
-          </div>
+          <RollAdvice check={check} oldStrikes={oldStrikes}
+            onUse={(from, to) => setRoll(r => ({ ...r, strikes: r.strikes.map((s0, i) => { const j = from.indexOf(oldStrikes[i]); return j >= 0 ? String(to[j]) : s0; }) }))} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
             <div><label style={lbl}>Contracts to roll</label>
               <input type="number" min="1" max={pos.qtyOpen} value={roll.qty} onChange={e => setRoll(r => ({ ...r, qty: e.target.value }))} style={inp} /></div>
@@ -589,7 +599,11 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           </div>
 
+          <RollBeforeAfter oldLegs={legsNow} newLegs={changedLegs > 0 ? legsAfter : null} spot={check ? check.spot : null}
+            ncdOld={ncdPosNow} ncdNew={ncdPosAfter} />
+
           <RollOrderPanel pos={pos} roll={roll} oldStrikes={oldStrikes} lots={rq || 1} tick={tick} onShape={setRollShape}
+            onLegs={setRollLegs} onPrice={setRollMid}
             onUse={p => setRoll(r => ({ ...r, closeAt: p.closeAt, openAt: p.openAt, openSide: p.openSide }))} />
 
           {partial && (
@@ -659,6 +673,43 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// What the check-up says about rolling this position, at the top of the Roll tab:
+// its verdict and next step — "don't roll again" included — and, when it found a
+// roll, the strikes and the net, with a button that puts them in the legs below.
+function RollAdvice({ check, oldStrikes, onUse }) {
+  const rv = check && check.review;
+  if (!rv || rv.action === 'unknown') {
+    return (
+      <details style={{ fontSize: 12.5, color: '#a8b2be', marginBottom: 10 }}>
+        <summary style={{ cursor: 'pointer', color: '#58a6ff' }}>How a roll is recorded</summary>
+        <div style={{ marginTop: 6, lineHeight: 1.5 }}>One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, and the new legs open as a new ticket linked back to it. Change only the strikes that move — untested legs carry across, and their entry price is asked for so each ticket keeps only its own P&amp;L.</div>
+      </details>
+    );
+  }
+  const col = { green: '#3fb950', amber: '#e3b341', red: '#f85149' }[rv.tone] || '#a8b2be';
+  const isRoll = /^roll/.test(rv.action);
+  const r = check.roll;
+  const sh = (rv.metrics && rv.metrics.shorts) || [];
+  const oldShort = r ? sh.find(x => !x.tested && x.right === r.right) : null;
+  const wing = r && oldShort && check.legs ? check.legs.filter(l => l.qty > 0 && l.right === r.right)
+    .sort((a, b) => Math.abs(a.strike - oldShort.strike) - Math.abs(b.strike - oldShort.strike))[0] : null;
+  const canUse = r && oldShort && wing && oldStrikes.includes(Number(oldShort.strike)) && oldStrikes.includes(Number(wing.strike));
+  return (
+    <div data-testid="roll-advice" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: col + '14', border: `1px solid ${col}66` }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: col }}>{isRoll ? '↻ ' : '⚠ '}Check-up: {rv.headline}</div>
+      {rv.steps && rv.steps[0] && <div style={{ fontSize: 12.5, color: '#c9d1d9', marginTop: 4 }}>→ {rv.steps[0]}</div>}
+      {r && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap', fontSize: 13 }}>
+          <span>Suggested: {r.right === 'C' ? 'calls' : 'puts'} <b className="mono">{oldShort ? `${oldShort.strike}/${wing ? wing.strike : '?'} → ` : ''}{r.shortStrike}/{r.longStrike}</b>
+            {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? '#3fb950' : '#f85149' }}>{r.net >= 0 ? '+' : ''}{r.net.toFixed(2)}</b></>}</span>
+          {canUse && <button data-testid="roll-use-suggested" onClick={() => onUse([Number(oldShort.strike), Number(wing.strike)], [r.shortStrike, r.longStrike])}
+            style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 6, border: '1px solid #9e6a03', color: '#d29922', background: 'transparent', cursor: 'pointer' }}>Use these strikes</button>}
+        </div>
+      )}
     </div>
   );
 }

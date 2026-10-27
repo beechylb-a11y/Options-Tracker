@@ -94,11 +94,30 @@ export function runCheckup({ tickets, openPositions, bridgeUrl = bridgeUrlOf(), 
   const key = (tickets || []).map(d => d.Timestamp || d._rowIndex).sort().join('|');
   if (!force && lastRun && lastRun.key === key && Date.now() - lastRun.at < CACHE_MS) return lastRun.promise;
   const promise = runCheckupNow({ tickets, openPositions, bridgeUrl });
-  lastRun = { key, at: Date.now(), promise };
+  lastRun = { key, at: Date.now(), promise, result: null };
+  promise.then(res => { if (lastRun && lastRun.promise === promise) lastRun.result = res; }).catch(() => {});
   promise.catch(() => { if (lastRun && lastRun.promise === promise) lastRun = null; });
   return promise;
 }
 export function clearCheckupCache() { lastRun = null; }
+
+/**
+ * The check-up for ONE ticket — for the Sell / Roll ticket. Reuses the shared pass when
+ * it already holds this ticket and is under a minute old (the Dashboard runs it on
+ * load), so the ticket shows exactly what the board showed; otherwise checks just this
+ * one, without displacing the shared pass. Null for anything that isn't 45DTE.
+ */
+export async function checkupFor(dec, openRow, { bridgeUrl = bridgeUrlOf() } = {}) {
+  if (!dec || !/45/.test(String(dec.Engine || '')) || !bridgeUrl) return null;
+  const key = dec.Timestamp || dec._rowIndex;
+  if (lastRun && Date.now() - lastRun.at < CACHE_MS) {
+    const res = lastRun.result || await lastRun.promise.catch(() => null);
+    const hit = res && (res.list || []).find(x => x.t.key === key);
+    if (hit) return hit;
+  }
+  const res = await runCheckupNow({ tickets: [dec], openPositions: openRow ? [openRow] : null, bridgeUrl }).catch(() => null);
+  return res && res.list && res.list[0] ? res.list[0] : null;
+}
 
 async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
   const list = (tickets || []).filter(d => /45/.test(String(d.Engine || '')));

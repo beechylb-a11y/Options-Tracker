@@ -21,7 +21,7 @@ async function getJson(url, ms = 30000) {
   finally { clearTimeout(t); }
 }
 
-export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.01, onUse, onShape }) {
+export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.01, onUse, onShape, onPrice, onLegs }) {
   const [oldLegs, setOldLegs] = useState(null);       // per lot, signed
   const [legSrc, setLegSrc] = useState('');
   const [quotes, setQuotes] = useState(null);
@@ -74,6 +74,10 @@ export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.0
   }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const price = quotes ? priceRollOrder(order.legs, quotes, lots) : null;
+  // The ticket draws the before/after picture from these: the legs held now, and the
+  // roll's mid (per share, + credit) once quoted.
+  useEffect(() => { onLegs && oldLegs && onLegs(oldLegs); }, [oldLegs]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onPrice && onPrice(price && price.complete ? price.mid : null); }, [quotes, key]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (price && price.complete) setLimit(snapTo(price.mid, tick).toFixed(2)); }, [quotes]);   // eslint-disable-line react-hooks/exhaustive-deps
   const lim = parseFloat(limit);
   const text = order.legs.length ? rollOrderText({ underlying: pos.underlying, legs: order.legs, price, limit: Number.isFinite(lim) ? lim : null, lots }) : '';
