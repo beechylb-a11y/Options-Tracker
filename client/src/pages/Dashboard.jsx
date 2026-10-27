@@ -6,7 +6,7 @@ import OpenPositions from '../components/OpenPositions';
 import { liveRiskTotal } from '../utils/positionLines';
 import UpcomingExpiries from '../components/UpcomingExpiries';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
-import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
+import { filterTracker, computeStats, mergeClosedTrades, rowWl, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
 import { eventOutlook, nowET } from '../engine/events';
 
@@ -112,7 +112,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
     let longestWinStreak = 0, longestLossStreak = 0;
     let tempWin = 0, tempLoss = 0;
     trades.forEach(t => {
-      const wl = t['W / L'];
+      const wl = rowWl(t);
       if (wl === 'Win') {
         tempWin++; tempLoss = 0;
         if (tempWin > longestWinStreak) longestWinStreak = tempWin;
@@ -122,7 +122,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       }
     });
     for (let i = trades.length - 1; i >= 0; i--) {
-      const wl = trades[i]['W / L'];
+      const wl = rowWl(trades[i]);
       if (i === trades.length - 1) { streakType = wl; currentStreak = 1; }
       else if (wl === streakType) currentStreak++;
       else break;
@@ -145,9 +145,9 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
     const pnlByDate = [...dayPnls].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
 
     // Profit factor
-    const totalWins = trades.filter(t => t['W / L'] === 'Win').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
-    const totalLosses = Math.abs(trades.filter(t => t['W / L'] === 'Loss').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0));
-    const profitFactor = totalLosses > 0 ? Math.round(totalWins / totalLosses * 100) / 100 : totalWins > 0 ? 999 : 0;
+    const totalWins = trades.filter(t => rowWl(t) === 'Win').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0);
+    const totalLosses = Math.abs(trades.filter(t => rowWl(t) === 'Loss').reduce((s, t) => s + (parseFloat(t['Total P&L ($)']) || 0), 0));
+    const profitFactor = totalLosses > 0 ? Math.round(totalWins / totalLosses * 100) / 100 : totalWins > 0 ? Infinity : 0;
 
     return {
       totalPnl, battingAvg, avgWin, avgLoss, expectancy,
@@ -276,7 +276,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
 
       {/* KPI Cards - Row 2: secondary metrics + risk (smaller, muted) */}
       <div className="grid grid-cols-6 gap-3 mb-6">
-        <KPI small icon={Activity} label="Profit factor" value={profitFactor.toFixed(2) + 'x'}
+        <KPI small icon={Activity} label="Profit factor" value={Number.isFinite(profitFactor) ? profitFactor.toFixed(2) + 'x' : '∞'}
           cls={profitFactor >= 2 ? 'green' : profitFactor >= 1 ? 'amber' : 'red'} />
         <KPI small icon={Flame} label="Streaks"
           value={`${longestWinStreak}W / ${longestLossStreak}L`}
@@ -347,7 +347,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       {/* Row 3: Daily P&L chart + Upcoming expiries */}
       <div className="grid grid-cols-3 gap-4 mb-4">
         <div className="col-span-2 card">
-          <h3 className="text-sm font-medium text-text-muted mb-3">Daily P&L — Last 30 Trading Days</h3>
+          <h3 className="text-sm font-medium text-text-muted mb-3">Daily P&L — last 30 days with closes</h3>
           {pnlByDate.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={pnlByDate}>

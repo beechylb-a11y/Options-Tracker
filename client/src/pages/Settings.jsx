@@ -13,7 +13,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   // Account management
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
-  const todayISO = () => new Date().toISOString().slice(0, 10);
+  // Local date — toISOString() is UTC, which is yesterday for most of an Australian morning.
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   const [accountForm, setAccountForm] = useState({ name: '', startingBankroll: '3000', bankrollSince: todayISO(), maxDailyLossPct: '20', maxOpenRiskPct: '40', commissionPerContract: String(DEFAULT_COMMISSION) });
 
   // Auto-calc defaults when bankroll changes (only if user hasn't manually edited)
@@ -259,7 +260,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       title="Re-tag ALL trades to this account (overwrites existing)">
                       Re-tag all
                     </button>
-                    <button onClick={() => handleDeleteAccount(a.id)}
+                    <button onClick={() => { if (window.confirm(`Delete the account "${a.name}"? Its trades stay, untagged.`)) handleDeleteAccount(a.id); }}
                       className="text-text-faint hover:text-red p-1"><Trash2 size={14} /></button>
                   </>
                 )}
@@ -267,11 +268,11 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
             ))}
           </div>
         ) : (
-          <p className="text-sm text-text-muted mb-4">No accounts configured. Add an account to track trades across multiple TastyTrade accounts.</p>
+          <p className="text-sm text-text-muted mb-4">No accounts configured. Add an account to track trades across several accounts.</p>
         )}
 
         {backfillResult && (
-          <div className="text-xs text-green mb-3 p-2 rounded bg-green/10 border border-green/20">{backfillResult}</div>
+          <div className={`text-xs mb-3 p-2 rounded ${/^Error/.test(backfillResult) ? 'text-red bg-red/10 border border-red/20' : 'text-green bg-green/10 border border-green/20'}`}>{backfillResult}</div>
         )}
 
         {/* Add account form */}

@@ -26,11 +26,14 @@ const daysUntilExit0 = (now) => {
  *   { lo, hi, xs, expiry[], now[], exit[] | null, exitLabel, breakevens, strikes,
  *     sd (1σ move to expiry, points), lots, ifFilled, nowAt(S), exitAt(S), expiryAt(S) }
  */
-export function payoffSeries(p, legs, spot, { now = new Date(), points = 181 } = {}) {
+// banked: $ the tickets this one was rolled from already took (whole position). Spread
+// over the open contracts it shifts every curve and the break-evens, so the chart is
+// the POSITION's, like the header P&L and the check-up card. (Oct 2026.)
+export function payoffSeries(p, legs, spot, { now = new Date(), points = 181, banked = 0 } = {}) {
   if (!p || !legs || !legs.length || !(spot > 0)) return null;
-  const ncd = Number(p.pos && p.pos.ncd) || 0;
   const ifFilled = !(p.live > 0);
   const lots = (p.live > 0 ? p.live : (p.qty || 1)) * 100;
+  const ncd = (Number(p.pos && p.pos.ncd) || 0) + (Number(banked) || 0) / lots;
   const pp = { ...p, live: lots / 100 };
 
   // The move left: the nearest expiry, at the average leg IV.

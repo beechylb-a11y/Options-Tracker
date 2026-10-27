@@ -3,7 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContai
 import { TrendingUp, Calendar, Clock, Layers, Activity } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, pnlColor, localISODate } from '../utils/format';
-import { filterTracker, BA_GREEN, BA_RED } from '../utils/stats';
+import { filterTracker, mergeClosedTrades, rowWl, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
 import { blendCapture, CAPTURE_K } from '../engine/capture';
 import { assumedCapture0 } from '../engine/calc0dte';
@@ -57,7 +57,10 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
   }, [authenticated]);
 
   const closed = useMemo(() =>
-    filterTracker(tracker, account, accounts).filter(t => t.Status !== 'Open' && t['Total P&L ($)'])
+    // The same closed-trade set as the Dashboard: imported trades plus closed engine
+    // tickets, each engine trade once. Analytics read the tracker alone, so engine
+    // tickets were missing and their per-tranche TICKET- rows counted as trades.
+    mergeClosedTrades(tracker, decisions, account, accounts)
       .map(t => ({
         ...t,
         pnl: parseFloat(t['Total P&L ($)']) || 0,
@@ -65,13 +68,13 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
         closeDate: t['Close Date'] ? new Date(t['Close Date']) : null,
         strategy: t['Strategy (OIC)'] || 'Unknown',
         underlying: t.Underlying || '',
-        wl: t['W / L'] || '',
+        wl: rowWl(t),
         dte: t['Expiry Date'] && t['Entry Date']
           ? Math.ceil((new Date(t['Expiry Date']) - new Date(t['Entry Date'])) / 86400000) : null
       }))
       .filter(t => t.entryDate)
       .sort((a, b) => a.entryDate - b.entryDate)
-  , [tracker, account, accounts]);
+  , [tracker, decisions, account, accounts]);
 
   if (!authenticated) {
     return (
@@ -148,7 +151,7 @@ function ShadowVerdicts({ account }) {
     setSettling(false);
     load();
   }
-  if (err) return <div className="card text-loss text-sm">{err}</div>;
+  if (err) return <div className="card text-red text-sm">{err}</div>;
   if (!rows) return <div className="card text-text-muted text-sm">Loading…</div>;
   const sum = shadowSummary(rows);
   const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
@@ -693,8 +696,9 @@ function TimePatterns({ closed }) {
     <div className="space-y-4">
       {/* KPI row */}
       <div className="grid grid-cols-4 gap-3">
-        <MiniKPI label="Best day of week" value={bestDow.name} sub={fmt$(bestDow.pnl)} cls="text-green" />
-        <MiniKPI label="Worst day of week" value={worstDow.name} sub={fmt$(worstDow.pnl)} cls="text-red" />
+        {/* No trades: show a dash, not −$∞ from the reduce seed. */}
+        <MiniKPI label="Best day of week" value={bestDow.name} sub={Number.isFinite(bestDow.pnl) ? fmt$(bestDow.pnl) : '—'} cls="text-green" />
+        <MiniKPI label="Worst day of week" value={worstDow.name} sub={Number.isFinite(worstDow.pnl) ? fmt$(worstDow.pnl) : '—'} cls="text-red" />
         <MiniKPI label="Most active day" value={mostActiveDow?.name || '--'} sub={`${mostActiveDow?.trades || 0} trades`} />
         <MiniKPI label="Best month" value={bestMonth?.month || '--'} sub={fmt$(bestMonth?.pnl || 0)} cls="text-green" />
       </div>

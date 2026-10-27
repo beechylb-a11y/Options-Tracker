@@ -13,6 +13,7 @@ import {
 import { exitRuleFor, STOP_LOSS_PCT } from '../engine/data';
 import TicketHelp, { OFFSET_TIP } from './TicketHelp';
 import RollOrderPanel from './RollOrderPanel';
+import { rollChain } from '../engine/rollChain';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -264,13 +265,22 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // A ticket that was itself rolled carries its running basis in its notes; the
   // open-positions row doesn't have notes, so read them from its Decisions row.
   const [priorBasis, setPriorBasis] = useState(pos.priorBasis ?? null);
+  // What the tickets this one was rolled from banked — part of the position's
+  // result, so "Banked" shows it (it read "—" on QQQ with +$1,081 banked). (Oct 2026.)
+  const [rollBanked, setRollBanked] = useState(null);
   useEffect(() => {
-    if (pos.priorBasis != null || !pos.ticketRef || !api.getDecisions) return;
+    if (!pos.ticketRef || !api.getDecisions) return;
     let live = true;
-    Promise.resolve().then(() => api.getDecisions()).then(d => {
-      const r = (Array.isArray(d) ? d : []).find(x => Number(x._rowIndex) === Number(pos.ticketRef));
+    Promise.all([
+      Promise.resolve().then(() => api.getDecisions()).catch(() => []),
+      Promise.resolve().then(() => (api.getCloses ? api.getCloses() : [])).catch(() => []),
+    ]).then(([d, cl]) => {
+      const decs = Array.isArray(d) ? d : [];
+      const r = decs.find(x => Number(x._rowIndex) === Number(pos.ticketRef));
       const b = basisFromNotes(r && (r.Notes || r.notes));
-      if (live && b != null) setPriorBasis(b);
+      if (live && b != null && pos.priorBasis == null) setPriorBasis(b);
+      const c = r ? rollChain(r, { decisions: decs, closes: Array.isArray(cl) ? cl : [] }) : null;
+      if (live && c) setRollBanked(c.banked);
     }).catch(() => {});
     return () => { live = false; };
   }, [pos.ticketRef]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -374,7 +384,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             ['Open / Qty', `${pos.qtyOpen} / ${pos.qty}`],
             ['Entry', noEntry ? '—' : `${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`],
             ['Max profit / ct', pos.maxProfitPerContract ? fmt$(pos.maxProfitPerContract) : `${fmt$(Math.abs(pos.ncd || 0) * 100)}*`],
-            ['Banked', pos.realised ? fmt$(pos.realised) : '—'],
+            ['Banked', (pos.realised || rollBanked) ? fmt$((pos.realised || 0) + (rollBanked || 0)) + (rollBanked ? ' incl. rolls' : '') : '—'],
             ['Close prices as', pos.isCredit ? 'DEBIT' : 'CREDIT'],
           ].map(([k, v]) => (
             <div key={k} style={{ background: '#0d1117', borderRadius: 6, padding: '6px 8px' }}>
@@ -510,7 +520,11 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
               <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? 'e.g. 100' : 'e.g. 50'} title={pos.isCredit ? '100 = buy back at 2x the credit' : '50 = sell at half what you paid'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
-              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - rtFees(pos.qtyOpen))} on {pos.qtyOpen}</> : 'No stop set'}
+              {/* The stop's $ is the one every screen quotes (before commission, open
+                  contracts — utils/positionLines.stopOf); fees shown beside it. It said
+                  −$2,021 here while the board and check-up said −$1,995. (Oct 2026.) */}
+              {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen))} on {pos.qtyOpen}
+                <span style={{ color: '#8b949e' }}> · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - rtFees(pos.qtyOpen))} after comm</span></> : 'No stop set'}
             </div>
             <div>
               <label style={lbl}>Close date</label>

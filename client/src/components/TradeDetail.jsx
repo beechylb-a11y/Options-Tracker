@@ -107,7 +107,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
     const pv = p.live > 0 ? p : { ...p, live: p.qty || 1 };      // a working order: as if filled
     const r = positionRisk(pv, quotes, { now, spotHint });
     if (!r || !(r.spot > 0)) return { r, series: null };
-    const series = payoffSeries(p, r.legs, r.spot, { now });
+    const series = payoffSeries(p, r.legs, r.spot, { now, banked: p.chain ? p.chain.banked : 0 });
     return { r, series, where: whereIsPrice(series, r.spot) };
   }, [p, quotes, now, spotHint]);
 
@@ -116,6 +116,12 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   const tgt = p ? targetFor(p.live > 0 ? p : { ...p, live: p.qty || 1 }) : null;
   const banked = p && p.chain ? p.chain.banked : 0;
   const r = view && view.r, series = view && view.series, where = view && view.where;
+  // Everything on this panel is the whole position, rolls included — the header P&L
+  // already was, but the target, stop, "to go" and the chart's dot were this ticket
+  // alone. Same figures as the board and the check-up now. (Oct 2026.)
+  const posPnl = r && r.pnl != null ? r.pnl + banked : null;
+  const stopPos = stop ? { ...stop, loss: stop.loss + banked } : null;
+  const tgtPos = tgt ? { ...tgt, gain: tgt.gain + banked } : null;
   const closeYmd = p ? plannedExit(p) : null;
 
   return (
@@ -172,7 +178,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 290px', gap: 16, marginTop: 12 }}>
             <div>
-              <PayoffDiagram series={series} spot={r.spot} pnlNow={r.pnl} target={tgt ? tgt.gain : null} stop={stop ? stop.loss : null}
+              <PayoffDiagram series={series} spot={r.spot} pnlNow={posPnl} target={tgtPos ? tgtPos.gain : null} stop={stopPos ? stopPos.loss : null}
                 pick={pick} onPick={setPick} underlying={row.underlying} />
               {pick != null && (
                 <div data-testid="detail-pick" style={{ marginTop: 6, fontSize: 13, color: C.text, padding: '8px 10px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
@@ -191,7 +197,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
                 <span>click to pin a price</span>
               </div>
             </div>
-            <Side p={p} r={r} series={series} where={where} stop={stop} tgt={tgt} clock={clock} closeYmd={closeYmd} todayYmd={todayYmd}
+            <Side p={p} r={r} pnl={posPnl} series={series} where={where} stop={stopPos} tgt={tgtPos} clock={clock} closeYmd={closeYmd} todayYmd={todayYmd}
               onSell={onSell ? () => onSell(row) : null} onRoll={onRoll && /45/.test(row.engine || '') && p.live > 0 ? () => onRoll(row) : null} />
           </div>
         )}
@@ -212,10 +218,10 @@ function Stat({ k, v, color, sub, testid }) {
   );
 }
 
-function Side({ p, r, series, where, stop, tgt, clock, closeYmd, todayYmd, onSell, onRoll }) {
+function Side({ p, r, pnl, series, where, stop, tgt, clock, closeYmd, todayYmd, onSell, onRoll }) {
   const nr = where && where.near;
-  const toStop = stop && r.pnl != null ? r.pnl - stop.loss : null;
-  const toTgt = tgt && r.pnl != null ? tgt.gain - r.pnl : null;
+  const toStop = stop && pnl != null ? pnl - stop.loss : null;
+  const toTgt = tgt && pnl != null ? tgt.gain - pnl : null;
   const days = (a, b) => Math.round((Date.UTC(+b.slice(0, 4), +b.slice(4, 6) - 1, +b.slice(6, 8)) - Date.UTC(+a.slice(0, 4), +a.slice(4, 6) - 1, +a.slice(6, 8))) / 86400000);
   const g = r.greeks || {};
   return (

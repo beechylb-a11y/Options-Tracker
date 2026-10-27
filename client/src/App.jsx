@@ -227,7 +227,7 @@ export default function App() {
           {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} />}
           {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} />}
+          {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}

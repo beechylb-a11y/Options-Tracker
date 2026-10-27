@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { directionBadge } from '../utils/stats';
 import { settleShadows } from '../utils/shadowSettle';
 import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
@@ -11,6 +12,7 @@ import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
+const TONE_HEX = { green: '#3fb950', amber: '#e3b341', red: '#f85149', blue: '#58a6ff', grey: '#8b949e' };
 
 // ── Trade tabs (Aug 2026) ──
 // One mounted EnginePanel per tab, inactive ones hidden with display:none so
@@ -730,9 +732,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       </span>
                       <span className="text-sm font-medium">{dec.Underlying}</span>
                       <span className="text-xs text-text-muted flex-1">{stratName}</span>
-                      <span className={`text-xs font-medium ${dec.Direction === 'Trade' ? 'text-green' : dec.Direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>
-                        {dec.Direction === 'Trade' ? '✓ Go' : dec.Direction === 'Trade with caution' ? '⚠ Caution' : '✗ No'}
-                      </span>
+                      {(() => { const b = directionBadge(dec.Direction); return (
+                        <span className="text-xs font-medium" style={{ color: TONE_HEX[b.tone] }} title={dec.Direction || ''}>{b.icon} {b.text}</span>); })()}
                       <span className="mono text-xs text-text-faint">{dec['Setup Score']}</span>
                       {expanded ? <ChevronUp size={14} className="text-text-faint" /> : <ChevronDown size={14} className="text-text-faint" />}
                     </div>
@@ -988,9 +989,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                       <td className="py-2 px-2 font-medium">{m.decision.underlying}</td>
                       <td className="py-2 px-2 text-text-muted text-xs">{engineStrat}</td>
                       <td className="py-2 px-2 text-center">
-                        <span className={`text-xs font-medium ${m.decision.direction === 'Trade' ? 'text-green' : m.decision.direction === 'Trade with caution' ? 'text-amber' : 'text-red'}`}>
-                          {m.decision.direction === 'Trade' ? '✓' : m.decision.direction === 'Trade with caution' ? '⚠' : '✗'}
-                        </span>
+                        {(() => { const b = directionBadge(m.decision.direction); return (
+                          <span className="text-xs font-medium" style={{ color: TONE_HEX[b.tone] }} title={m.decision.direction || ''}>{b.icon}</span>); })()}
                       </td>
                       <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">--</span>}</td>
                       <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : '#8b949e' }}>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Save, FileText, Camera, Edit3, Zap } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor, localISODate } from '../utils/format';
-import { filterTracker, isAggExcluded } from '../utils/stats';
+import { filterTracker, isAggExcluded, mergeClosedTrades, rowWl, battingAverage } from '../utils/stats';
 import { closedPnlEvents, journalSummary } from '../utils/benchmark';
 import JournalBenchmark from '../components/JournalBenchmark';
 import { sessionDateOf } from '../engine/session';
@@ -103,26 +103,24 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
   const filteredTracker = filterTracker(tracker, account, accounts);
   const dayStats = {};
 
-  // 1. CSV / TradeTracker trades
-  filteredTracker.forEach(t => {
-    if (t.Status === 'Open') return;
-    const pnl = parseFloat(t['Total P&L ($)']) || 0;
-    const wl = t['W / L'];
-    const closeDate = (t['Close Date'] || '').split('T')[0];
-    const entryDate = (t['Entry Date'] || '').split('T')[0];
-    const d = closeDate || entryDate;
+  // 1+2. Closed trades — the same set as the Dashboard (utils/stats.mergeClosedTrades):
+  // imported trades plus closed engine tickets, each engine trade once, a $0 result a
+  // scratch. The Journal built its own: it called a $0 ticket a win and dropped every
+  // TICKET- tranche row even when its ticket was still part-closed. (Oct 2026.)
+  mergeClosedTrades(tracker, decisions, account, accounts).forEach(t => {
+    const d = String(t['Close Date'] || t['Entry Date'] || '').split('T')[0];
     if (!d) return;
-    // Skip TICKET rows (they duplicate decision engine data)
-    if ((t['Order #'] || '').startsWith('TICKET-')) return;
+    const pnl = parseFloat(t['Total P&L ($)']) || 0;
+    const wl = rowWl(t);
     if (!dayStats[d]) dayStats[d] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0 };
     dayStats[d].pnl += pnl;
     dayStats[d].count++;
-    dayStats[d].csvCount++;
+    if (t._source === 'ticket') dayStats[d].ticketCount++; else dayStats[d].csvCount++;
     if (wl === 'Win') dayStats[d].wins++;
     if (wl === 'Loss') dayStats[d].losses++;
   });
 
-  // 2. Closed decision engine tickets (filtered by account)
+  // Decisions for this account (the open entries below use them).
   const accountDecisions = (!account || account === 'all')
     ? decisions.filter(d => !isAggExcluded(d.Account || '', accounts))
     : decisions.filter(d => {
@@ -130,20 +128,6 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
     return decAccount === account || !decAccount;
   });
   const closedDecisions = accountDecisions.filter(d => d.Status === 'Closed' && d['Actual P&L']);
-  closedDecisions.forEach(d => {
-    const closeDate = (d['Close Date'] || '').split('T')[0];
-    const entryDate = sessionDateOf(d.Timestamp);
-    const dt = closeDate || entryDate;
-    if (!dt) return;
-    const pnl = parseFloat(d['Actual P&L']) || 0;
-    const isWin = pnl >= 0;
-    if (!dayStats[dt]) dayStats[dt] = { pnl: 0, count: 0, wins: 0, losses: 0, csvCount: 0, ticketCount: 0 };
-    dayStats[dt].pnl += pnl;
-    dayStats[dt].count++;
-    dayStats[dt].ticketCount++;
-    if (isWin) dayStats[dt].wins++;
-    else dayStats[dt].losses++;
-  });
 
   // 3. Open (unmatched) decision engine entries — show on calendar with indicator
   const openDecisions = accountDecisions.filter(d => d.Status !== 'Closed');
@@ -593,7 +577,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
             <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="flex justify-between"><span className="text-text-muted">Trades</span><span className="mono text-white">{monthTrades}</span></div>
-              <div className="flex justify-between"><span className="text-text-muted">BA (ex-scratch)</span><span className="mono text-white">{monthDecided > 0 ? Math.round(monthWins / monthDecided * 100) : 0}%</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Batting avg</span><span className="mono text-white">{Math.round(battingAverage(monthWins, monthTrades))}%</span></div>
               <div className="flex justify-between"><span className="text-green">Wins</span><span className="mono text-white">{monthWins}</span></div>
               <div className="flex justify-between"><span className="text-red">Losses</span><span className="mono text-white">{monthLosses}</span></div>
             </div>
@@ -612,7 +596,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                 {weekStats.map((data, wi) => {
                   if (data.trades === 0) return null;
                   const decided = data.wins + data.losses;
-                  const ba = decided > 0 ? Math.round(data.wins / decided * 100) : 0;
+                  const ba = Math.round(battingAverage(data.wins, data.trades));
                   return (
                     <div key={wi} className="p-3 rounded-lg border border-bg-border">
                       <div className="flex items-center justify-between mb-1">
