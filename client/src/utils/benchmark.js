@@ -24,9 +24,15 @@ const day = s => String(s || '').split('T')[0];
 
 export function closedPnlEvents(tracker = [], decisions = []) {
   const out = [];
+  // A TICKET- tranche row is dropped only when its ticket is here as a closed trade —
+  // the rule utils/stats.mergeClosedTrades uses, so the benchmark's month P&L is the
+  // calendar's and the Dashboard's. (Oct 2026: a part-closed ticket's tranche was
+  // missing here and counted there.)
+  const closedRefs = new Set(decisions.filter(d => d.Status === 'Closed' && d['Actual P&L'] && d._rowIndex != null).map(d => String(d._rowIndex)));
   tracker.forEach(t => {
-    if (t.Status === 'Open') return;
-    if (String(t['Order #'] || '').startsWith('TICKET-')) return;
+    if (t.Status === 'Open' || !t['Total P&L ($)']) return;
+    const m = /^TICKET-(\d+)$/.exec(String(t['Order #'] || '').trim());
+    if (m && closedRefs.has(m[1])) return;
     const date = day(t['Close Date']) || day(t['Entry Date']);
     if (!date) return;
     out.push({ date, pnl: parseFloat(t['Total P&L ($)']) || 0, account: t.Account || '' });

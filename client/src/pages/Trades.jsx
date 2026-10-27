@@ -383,7 +383,7 @@ export default function Trades({ authenticated, account, accounts }) {
                     const ex = r.existing;
                     return (
                       <tr key={i} className="border-b border-bg-border last:border-0">
-                        <td className="py-1.5 pr-2"><span className={`badge text-[8px] ${badgeCls}`}>{r.status.replace('_', ' ')}</span></td>
+                        <td className="py-1.5 pr-2"><span className={`badge text-[11px] ${badgeCls}`}>{r.status.replace('_', ' ')}</span></td>
                         <td className="py-1.5 pr-2 mono text-text-muted">{csv?.entryDate || (ex?.['Entry Date'] || '').split('T')[0]}</td>
                         <td className="py-1.5 pr-2 font-medium">{csv?.underlying || ex?.Underlying}</td>
                         <td className="py-1.5 pr-2 text-text-muted">{r.diffs?.strategy ? <><span className="text-amber">{r.diffs.strategy.csv}</span> / <span className="text-text-faint">{r.diffs.strategy.existing}</span></> : (csv?.strategy || ex?.['Strategy (OIC)'])}</td>
@@ -606,7 +606,9 @@ export default function Trades({ authenticated, account, accounts }) {
                       </td>
                       <td className="py-2.5 px-4">
                         <div className="flex items-center gap-2">
-                          <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>
+                          {/* Status is state, not result: green/red belong to the W/L column. A closed
+                              loser showed a green "Closed". (Oct 2026.) */}
+                          <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : ''}`} style={!isOpen && t.Status !== 'Assigned' ? { color: '#8b949e', border: '1px solid #30363d' } : undefined}>
                             {t.Status}
                           </span>
                           {isOpen && (

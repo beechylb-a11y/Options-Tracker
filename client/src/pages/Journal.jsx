@@ -357,7 +357,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                           <div className="text-[12px] text-amber leading-tight mt-0.5">⚡{data.openCount} open</div>
                         )}
                         {data && data.count > 0 && data.openCount > 0 && (
-                          <div className="absolute bottom-1 right-1"><span className="text-[8px] text-amber">⚡{data.openCount}</span></div>
+                          <div className="absolute bottom-1 right-1"><span className="text-[11px] text-amber">⚡{data.openCount}</span></div>
                         )}
                         {data?.notes && <div className="absolute top-1 right-1"><Edit3 size={8} className="text-accent" /></div>}
                       </div>
@@ -573,8 +573,9 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
             onAccountsChange={onAccountsChange} monthLabel={currentDate.toLocaleString('default', { month: 'long' })}
             isCurrentMonth={isCurrentMonth} />
           <div className="card mb-4">
-            <h3 className="text-sm font-medium text-text mb-3">Month Summary</h3>
-            <div className="mono text-3xl font-bold mb-3" style={{ color: pnlColor(monthPnl) }}>{fmt$(monthPnl)}</div>
+            {/* The month's $ is on the return card above and in the calendar's Month
+                cell — this card is the count and the batting average. (Oct 2026.) */}
+            <h3 className="text-sm font-medium text-text mb-3">Month — trades</h3>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div className="flex justify-between"><span className="text-text-muted">Trades</span><span className="mono text-white">{monthTrades}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">Batting avg</span><span className="mono text-white">{Math.round(battingAverage(monthWins, monthTrades))}%</span></div>

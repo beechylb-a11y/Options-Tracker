@@ -16,7 +16,7 @@ const tracker = [
   { Status: 'Closed', 'Close Date': '2026-10-05', 'Total P&L ($)': '300', Account: 'op-1' },
 ];
 const decisions = [
-  { Status: 'Closed', 'Actual P&L': '120', 'Close Date': '2026-10-04', Account: 'bank-1' },
+  { _rowIndex: 9, Status: 'Closed', 'Actual P&L': '120', 'Close Date': '2026-10-04', Account: 'bank-1' },   // the ticket TICKET-9 belongs to
   { Status: 'Closed', 'Actual P&L': '5000', 'Close Date': '2026-10-04', Account: 'papertrade-1' },
 ];
 

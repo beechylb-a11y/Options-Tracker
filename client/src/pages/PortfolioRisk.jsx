@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare } from 'lucide-react';
 import { api } from '../utils/api';
 import OrderTicket from '../components/OrderTicket';
+import OpenPositions from '../components/OpenPositions';
 import FillReconcile from '../components/FillReconcile';
 import { loadPlan } from '../utils/ticketMath';
 import { tradingSession } from '../engine/session';
@@ -27,8 +28,11 @@ const TONE = {
   blue: { fg: '#58a6ff', bg: '#0c1d36', border: '#1f6feb' },
   grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
 };
-const money = (v, dp = 0) => v == null || !Number.isFinite(v) ? '—'
-  : (v >= 0 ? '+$' : '−$') + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+// Round the SIGNED value first, as every other screen does (−9.5 → −9, not −10), so
+// this page and the board never differ by a dollar.
+const money = (v, dp = 0) => { if (v == null || !Number.isFinite(v)) return '—';
+  const k = 10 ** dp, r = Math.round(v * k) / k;
+  return (r >= 0 ? '+$' : '−$') + Math.abs(r).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp }); };
 const plain$ = v => v == null || !Number.isFinite(v) ? '—' : '$' + Math.round(Math.abs(v)).toLocaleString();
 const pc = v => (v == null ? C.muted : v >= 0 ? C.green : C.red);
 
@@ -216,8 +220,12 @@ export default function PortfolioRisk({ authenticated, account }) {
             Left out (legs not found): {legless.map(p => `${p.underlying} ${p.strategy}`).join(', ')} — max loss {plain$(legless.reduce((a, p) => a + (p.maxRisk > 0 && p.qty ? p.maxRisk * p.live / p.qty : 0), 0))} not modelled.</div>}
         </Section>
 
-        <Section icon={<Shield size={15} color={C.blue} />} title="Positions" testid="risk-positions"
-          sub="Click a row for its Sell ticket (or the fill screen, for an order still working).">
+        {/* The same rows as the Dashboard (verdict, P&L incl. rolls, stop→target, strikes
+            and price, time) — one component, one set of numbers. What this page adds
+            is the greeks, so the table below is only that. (Oct 2026.) */}
+        <div className="mb-4"><OpenPositions authenticated={authenticated} account={account} compact /></div>
+        <Section icon={<Activity size={15} color={C.blue} />} title="Greeks by position" testid="risk-positions"
+          sub="$ for the open contracts. Δ is beta-weighted to a 1% SPX move.">
           <PositionsTable book={book} risks={risks} onAct={act} plan={loadPlan} />
         </Section>
 
@@ -231,7 +239,7 @@ export default function PortfolioRisk({ authenticated, account }) {
             {events.length === 0 ? <div className="text-sm" style={{ color: C.muted }}>No scheduled releases before your positions close.</div>
               : <ul className="space-y-1.5">{events.map(e => (
                 <li key={e.date + e.label} className="text-[13px]">
-                  <span className="mono" style={{ color: C.amber }}>{e.date}{e.time ? ' ' + e.time : ''}</span>
+                  <span className="mono" style={{ color: C.amber }}>{(() => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(e.date || ''); return m ? `${+m[3]} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m[2] - 1]}` : e.date; })()}{e.time ? ' ' + e.time + ' ET' : ''}</span>
                   <span style={{ color: C.text }}> {e.label}</span>
                   <span style={{ color: C.muted }}> — {e.positions.join(', ')}</span>
                 </li>))}</ul>}
@@ -291,8 +299,10 @@ function Tiles({ tot, budget, anyModel }) {
   const used = e.cap ? e.committed / e.cap : null;
   return (
     <div className="grid gap-3 mb-4" data-testid="risk-tiles" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-      <Tile label="Open P&L" value={money(tot.pnl)} tone={pc(tot.pnl)}
-        sub={(tot.banked ? `position ${money(tot.pnl + tot.banked)} incl. ${money(tot.banked)} banked in rolls · ` : '') + (anyModel ? 'some marks modelled' : 'at the mid')} />
+      {/* The position, rolls included — the board's number. The tickets alone read
+          −$1,090 here while the board said −$9. (Oct 2026.) */}
+      <Tile label="Open P&L" value={money(tot.pnl + (tot.banked || 0))} tone={pc(tot.pnl + (tot.banked || 0))}
+        sub={(tot.banked ? `tickets ${money(tot.pnl)} + banked ${money(tot.banked)} · ` : '') + (anyModel ? 'some marks modelled' : 'at the mid')} />
       <Tile label="Delta, SPX-weighted" value={money(tot.spxDelta1)} tone={Math.abs(tot.spxDelta1) < 50 ? C.text : pc(tot.spxDelta1)}
         sub="per 1% SPX move" tip="What the book makes (+) or loses (−) if SPX rises 1% and everything moves with its beta." />
       <Tile label="Theta" value={money(tot.theta)} tone={pc(tot.theta)} sub="per day, nothing moving"
@@ -374,58 +384,37 @@ function StressTable({ grid, sd, book }) {
   );
 }
 
-function PositionsTable({ book, risks, onAct, plan }) {
+function PositionsTable({ book, risks, onAct }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[13px]">
         <thead>
           <tr className="text-left text-[11.5px]" style={{ color: C.muted }}>
             <th className="py-1.5 pr-3 font-normal">Position</th>
-            <th className="py-1.5 pr-3 font-normal">Legs</th>
-            <th className="py-1.5 pr-3 font-normal text-right">Qty</th>
             <th className="py-1.5 pr-3 font-normal text-right">DTE</th>
-            <th className="py-1.5 pr-3 font-normal text-right">Entry</th>
-            <th className="py-1.5 pr-3 font-normal text-right">Now</th>
-            <th className="py-1.5 pr-3 font-normal text-right">P&L</th>
-            <th className="py-1.5 pr-3 font-normal text-right">Stop / target</th>
             <th className="py-1.5 pr-3 font-normal text-right" title="$ per 1% SPX move, beta-weighted">Δ SPX 1%</th>
             <th className="py-1.5 pr-3 font-normal text-right">Θ / day</th>
-            <th className="py-1.5 pr-3 font-normal text-right">Vega</th>
+            <th className="py-1.5 pr-3 font-normal text-right">Vega / vol pt</th>
+            <th className="py-1.5 pr-3 font-normal text-right" title="$ from convexity in a 1% move">Γ 1%</th>
             <th className="py-1.5 font-normal">Source</th>
           </tr>
         </thead>
         <tbody>
           {book.map(p => {
             const r = risks[p.key];
-            const st = stopFor(p, plan(p.timestamp)), tg = targetFor(p);
-            const side = p.pos.isCredit ? 'cr' : 'db';
+            const strikes = [...new Set((p.legs || []).map(l => Number(l.strike)))].sort((a, b) => a - b);
             return (
               <tr key={p.key} className="table-row cursor-pointer" data-testid="risk-row" onClick={() => onAct(p, p.working ? 'fills' : 'sell')}
                 style={{ borderTop: `1px solid ${C.border}` }}>
                 <td className="py-2 pr-3">
-                  <div style={{ color: C.text, fontWeight: 600 }}>{p.underlying} <span style={{ fontWeight: 400 }}>{p.strategy}</span></div>
-                  <div className="text-[11.5px]" style={{ color: C.faint }}>{p.engine} · β {betaOf(p.underlying)}{p.working ? ' · order working' : ''}</div>
+                  <div className="mono" style={{ color: '#fff', fontWeight: 700 }}>{p.underlying} {strikes.length ? strikes.join('/') : (p.row.legs || '')} <span style={{ fontWeight: 400, color: C.text }}>{String(p.strategy || '').replace(/\s*-\s*Normal\b/i, '')} · {p.working ? `${p.resting} wkg` : `${p.live} ct`}</span></div>
+                  <div className="text-[11.5px]" style={{ color: C.faint }}>{p.engine} · β {betaOf(p.underlying)}</div>
                 </td>
-                <td className="py-2 pr-3 mono text-[12px]" style={{ color: p.legs ? C.text : C.amber }}>
-                  {p.legs ? legsText(p.legs) : (p.row.legs || '—')}
-                  {p.expiry && <div className="text-[11px]" style={{ color: C.faint }}>{isoOfYmd(p.expiry)}</div>}
-                </td>
-                <td className="py-2 pr-3 mono text-right">{p.working ? <span style={{ color: C.blue }}>{p.resting} wkg</span> : p.live}</td>
                 <td className="py-2 pr-3 mono text-right" style={{ color: p.dte != null && p.dte < 0 ? C.red : C.text }}>{p.dte == null ? '—' : p.dte < 0 ? 'exp' : p.dte}</td>
-                <td className="py-2 pr-3 mono text-right">{p.pos.ncd ? `${side} ${Math.abs(p.pos.ncd).toFixed(2)}` : '—'}</td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: r && r.markSource === 'model' ? C.muted : C.text }}>
-                  {r && Number.isFinite(r.closePx) ? Math.max(0, r.closePx).toFixed(2) : '—'}{r && r.markSource === 'model' ? '*' : ''}
-                </td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.pnl) }}>{r ? money(r.pnl) : '—'}
-                  {p.chain && <div className="text-[11px]" style={{ color: C.faint }} title={p.chain.links.map(l => `${l.strikes}: ${money(l.realised)}`).join(' · ')}>
-                    pos. <span style={{ color: pc(r && r.pnl != null ? r.pnl + p.chain.banked : p.chain.banked) }}>{money((r && r.pnl != null ? r.pnl : 0) + p.chain.banked)}</span> incl. roll {money(p.chain.banked)}</div>}
-                </td>
-                <td className="py-2 pr-3 mono text-right text-[12px]">
-                  {st ? <span style={{ color: C.red }}>{money(st.loss)}</span> : '—'}{' / '}{tg ? <span style={{ color: C.green }}>{money(tg.gain)}</span> : '—'}
-                </td>
                 <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.spxDelta1) }}>{r && r.spxDelta1 != null ? money(r.spxDelta1) : '—'}</td>
                 <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks && r.greeks.theta) }}>{r && r.greeks ? money(r.greeks.theta) : '—'}</td>
                 <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks && r.greeks.vega) }}>{r && r.greeks ? money(r.greeks.vega) : '—'}</td>
+                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.gamma1) }}>{r && r.gamma1 != null ? money(r.gamma1) : '—'}</td>
                 <td className="py-2 text-[11.5px] whitespace-nowrap" style={{ color: C.muted }}>
                   legs {p.legSource === 'TWS' ? 'TWS' : p.legSource === 'ticket' ? <span style={{ color: C.amber }}>ticket</span> : <span style={{ color: C.amber }}>none</span>}
                   {r && <> · {r.greeksSource === 'quotes' ? 'live' : <span style={{ color: C.amber }}>model</span>}</>}
@@ -435,7 +424,7 @@ function PositionsTable({ book, risks, onAct, plan }) {
           })}
         </tbody>
       </table>
-      <p className="text-[11.5px] mt-2" style={{ color: C.faint }}>* modelled: Black-Scholes at the leg's quoted IV, else the ticket's IV. Stop and target are $ for the open contracts (your saved plan, else 100% of entry; target by the strategy's exit rule).</p>
+      <p className="text-[11.5px] mt-2" style={{ color: C.faint }}>Model greeks: Black-Scholes at the leg's quoted IV, else the ticket's IV.</p>
     </div>
   );
 }

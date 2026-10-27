@@ -13,6 +13,10 @@ import { eventOutlook, nowET } from '../engine/events';
 const RANGE_KEY = 'ot_dash_range';
 const RANGES = ['MTD', '30D', '90D', 'YTD', 'All'];
 
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// 2026-10-27 → 27 Oct, one date format across the app.
+const shortDate = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : String(d || ''); };
+
 export default function Dashboard({ authenticated, account, accounts = [] }) {
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
@@ -230,7 +234,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           onRetry={() => setRetryTick(t => t + 1)}
         />
       )}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h2 className="font-display text-2xl font-bold">Dashboard</h2>
           <p className="text-text-muted text-sm mt-0.5">
@@ -239,7 +243,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
               : `Account: ${account}`}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           <div className="flex border border-bg-border rounded-lg overflow-hidden">
             {RANGES.map(r => (
               <button key={r} onClick={() => changeRange(r)}
@@ -257,45 +261,37 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
 
       <EventBanner />
 
-      {/* KPI Cards - Row 1: performance */}
-      <div className="grid grid-cols-6 gap-3 mb-3">
-        <KPI icon={DollarSign} label="Total P&L" value={fmt$(totalPnl)} cls={totalPnl >= 0 ? 'green' : 'red'} />
-        <KPI icon={Percent} label="ROI" value={calcRoi.toFixed(1) + '%'} cls={calcRoi >= 0 ? 'green' : 'red'}
-          sub={`Start: ${fmt$(startBR)}`} />
-        <KPI icon={Target} label="Batting Avg" value={battingAvg.toFixed(1) + '%'} cls={battingAvg >= BA_GREEN ? 'green' : battingAvg >= BA_RED ? 'amber' : 'red'} />
-        <KPI icon={Activity} label="Expectancy" value={fmt$(expectancy)} cls={expectancy >= 0 ? 'green' : 'red'} />
-        <KPI icon={TrendingUp} label="Avg Win" value={fmt$(avgWin)} cls="green" />
-        <KPI icon={TrendingDown} label="Avg Loss" value={fmt$(avgLoss)} cls="red" />
-      </div>
-
-      {/* Every number above is history. This is the only thing on the Dashboard
-          that is still live, so it sits directly under them. (Sep 2026.) */}
-      <div className="mb-6">
+      {/* Live first: the open positions board is the only thing on the Dashboard that
+          can still change, and it carries the open P&L, risk against the cap and what
+          needs a look. History sits under it as ONE strip of six (Oct 2026 — it was two
+          rows of twelve tiles, and the open-risk tile repeated the board's number). */}
+      <div className="mb-4">
         <OpenPositions authenticated={authenticated} account={account} compact maxOpenRisk={maxOpenRisk} />
       </div>
 
-      {/* KPI Cards - Row 2: secondary metrics + risk (smaller, muted) */}
-      <div className="grid grid-cols-6 gap-3 mb-6">
-        <KPI small icon={Activity} label="Profit factor" value={Number.isFinite(profitFactor) ? profitFactor.toFixed(2) + 'x' : '∞'}
-          cls={profitFactor >= 2 ? 'green' : profitFactor >= 1 ? 'amber' : 'red'} />
-        <KPI small icon={Flame} label="Streaks"
-          value={`${longestWinStreak}W / ${longestLossStreak}L`}
-          cls={streakType === 'Win' ? 'green' : streakType === 'Loss' ? 'red' : ''}
-          sub={streakType ? `Now: ${currentStreak} ${streakType}` : ''} />
-        <KPI small icon={TrendingUp} label="Best day"
-          value={fmt$(bestDay.pnl)}
-          cls="green"
-          sub={bestDay.date !== '--' ? fmtDateShort(bestDay.date) : ''} />
-        <KPI small icon={TrendingDown} label="Worst day"
-          value={fmt$(worstDay.pnl)}
-          cls="red"
-          sub={worstDay.date !== '--' ? fmtDateShort(worstDay.date) : ''} />
-        <KPI small icon={Calendar} label="Trades" value={tradeCount} cls=""
-          sub={`${winDays}W / ${lossDays}L days`} />
-        <KPI small icon={DollarSign} label={aggregated ? 'Open risk est. (all)' : 'Open risk est.'}
-          value={fmt$(openRiskTotal)}
-          cls={maxOpenRisk > 0 ? (openRiskUsedPct >= 100 ? 'red' : openRiskUsedPct >= 75 ? 'amber' : 'green') : ''}
-          sub={maxOpenRisk > 0 ? `Cap: ${fmt$(maxOpenRisk)} (${openRiskUsedPct.toFixed(0)}% used)` : ''} />
+      <div data-testid="perf-strip" className="card mb-6" style={{ padding: '14px 16px' }}>
+        <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+          <span className="text-sm" style={{ fontWeight: 600 }}>Closed trades <span className="text-text-muted" style={{ fontWeight: 400 }}>· {range === 'All' ? 'all time' : range} · {tradeCount}</span></span>
+          <span className="text-[12px] text-text-muted mono">
+            best day <span className="win">{fmt$(bestDay.pnl)}</span>{bestDay.date !== '--' ? ` ${fmtDateShort(bestDay.date)}` : ''}
+            {' · '}worst <span className="loss">{fmt$(worstDay.pnl)}</span>{worstDay.date !== '--' ? ` ${fmtDateShort(worstDay.date)}` : ''}
+            {' · '}{winDays} up / {lossDays} down days
+          </span>
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+          <Stat label="Total P&L" value={fmt$(totalPnl)} tone={totalPnl >= 0 ? 'green' : 'red'}
+            sub={`${calcRoi >= 0 ? '+' : ''}${calcRoi.toFixed(1)}% on ${fmt$(startBR)}`} />
+          <Stat label="Batting avg" value={battingAvg.toFixed(1) + '%'} tone={battingAvg >= BA_GREEN ? 'green' : battingAvg >= BA_RED ? 'amber' : 'red'}
+            bar={battingAvg} sub={`${Math.round(battingAvg * tradeCount / 100)} of ${tradeCount} won`} />
+          <Stat label="Expectancy" value={fmt$(expectancy)} tone={expectancy >= 0 ? 'green' : 'red'}
+            sub={<>win <span className="win">{fmt$(avgWin)}</span> · loss <span className="loss">{fmt$(avgLoss)}</span></>} />
+          <Stat label="Profit factor" value={Number.isFinite(profitFactor) ? profitFactor.toFixed(2) + '×' : '∞'}
+            tone={profitFactor >= 2 ? 'green' : profitFactor >= 1 ? 'amber' : 'red'} sub="$ won ÷ $ lost" />
+          <Stat label="Max drawdown" value={fmt$(-maxDrawdownDollar)} tone={maxDrawdownPct > 20 ? 'red' : maxDrawdownPct > 10 ? 'amber' : 'green'}
+            sub={`${maxDrawdownPct.toFixed(1)}% of start`} />
+          <Stat label="Streak now" value={streakType ? `${currentStreak} ${streakType === 'Win' ? 'W' : streakType === 'Loss' ? 'L' : ''}` : '—'}
+            tone={streakType === 'Win' ? 'green' : streakType === 'Loss' ? 'red' : ''} sub={`longest ${longestWinStreak}W / ${longestLossStreak}L`} />
+        </div>
       </div>
 
       {/* Row 2: Merged Equity Curve + Drawdown */}
@@ -319,13 +315,13 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                   <stop offset="95%" stopColor="#f85149" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
               <YAxis yAxisId="eq" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <YAxis yAxisId="dd" orientation="right" domain={['dataMin', 0]}
                 tick={{ fontSize: 10, fill: '#f85149', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <Tooltip
                 contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: '#a8b2be' }}
+                labelStyle={{ color: '#a8b2be' }} labelFormatter={shortDate}
                 formatter={(v, name) => {
                   if (name === 'drawdown') {
                     return [<span style={{ color: '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(Math.abs(v))}</span>, 'Drawdown'];
@@ -345,17 +341,17 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       </div>
 
       {/* Row 3: Daily P&L chart + Upcoming expiries */}
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        <div className="col-span-2 card">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <div className="lg:col-span-2 card">
           <h3 className="text-sm font-medium text-text-muted mb-3">Daily P&L — last 30 days with closes</h3>
           {pnlByDate.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={pnlByDate}>
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#8b949e' }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
                 <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                 <Tooltip
                   contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#a8b2be' }}
+                  labelStyle={{ color: '#a8b2be' }} labelFormatter={shortDate} labelFormatter={shortDate}
                   formatter={(v) => {
                     const color = v >= 0 ? '#3fb950' : '#f85149';
                     return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'P&L'];
@@ -370,7 +366,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[200px] flex items-center justify-center text-text-faint text-sm">Upload a TastyTrade CSV to see your P&L chart</div>
+            <div className="h-[200px] flex items-center justify-center text-text-faint text-sm">No closed trades in this range</div>
           )}
         </div>
 
@@ -398,14 +394,14 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                 {recentClosed.map((t, i) => {
                   const pnl = parseFloat(t['Total P&L ($)']) || 0;
                   return (
-                    <tr key={i} className="table-row" title="View in Trades">
+                    <tr key={i} className="table-row">
                       <td className="py-2 pr-4 text-text-muted">{fmtDate(t['Close Date'] || t['Entry Date'])}</td>
                       <td className="py-2 pr-4 font-medium">{t.Underlying}</td>
                       <td className="py-2 pr-4 text-text-muted">{t['Strategy (OIC)']}</td>
                       <td className="py-2 pr-4 text-text-muted">{acctName(t.Account)}</td>
                       <td className="py-2 pr-4 text-right mono font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</td>
                       <td className="py-2 pr-4 text-center">
-                        <span className={`badge ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>
+                        {(() => { const wl = rowWl(t); return <span className={`badge ${wl === 'Win' ? 'badge-green' : wl === 'Loss' ? 'badge-red' : ''}`} style={wl === 'Scratch' ? { color: '#8b949e', border: '1px solid #30363d' } : undefined}>{wl}</span>; })()}
                       </td>
                       <td className="py-2 text-text-muted text-xs">{t.Status}</td>
                     </tr>
@@ -473,7 +469,7 @@ function EventBanner() {
                   border: `1px solid ${sev === 'high' ? '#6e2427' : '#21262d'}`,
                   color: sev === 'high' ? '#f85149' : '#a8b2be',
                 }}>
-                {e.date.slice(5)} {e.label}{e.source === 'rule' ? ' ?' : ''}
+                {shortDate(e.date)} {e.label}{e.source === 'rule' ? ' ?' : ''}
               </span>
             );
           })}
@@ -483,6 +479,18 @@ function EventBanner() {
       {o.notices.map((n, i) => (
         <div key={'n' + i} className="text-xs mt-2" style={{ color: '#9aa4b0' }}>{n}</div>
       ))}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone, sub, bar }) {
+  const col = tone === 'green' ? '#3fb950' : tone === 'red' ? '#f85149' : tone === 'amber' ? '#e3b341' : '#e6edf3';
+  return (
+    <div data-testid={'stat-' + label.toLowerCase().replace(/[^a-z]+/g, '-')} style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 10, padding: '10px 12px', minWidth: 0 }}>
+      <div className="text-[11px] uppercase tracking-wider text-text-muted">{label}</div>
+      <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1.2 }}>{value}</div>
+      {bar != null && <div style={{ height: 4, borderRadius: 2, background: '#21262d', marginTop: 4, overflow: 'hidden' }}><div style={{ width: `${Math.max(2, Math.min(100, bar))}%`, height: '100%', background: col }} /></div>}
+      {sub && <div className="text-[12px] text-text-muted mt-1" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
     </div>
   );
 }

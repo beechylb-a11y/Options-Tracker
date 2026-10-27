@@ -116,7 +116,7 @@ export default function Reports({ authenticated, account, accounts = [] }) {
       const mt = fyTrades.filter(t => t._month === m && t._year === y);
       months.push({
         m, y,
-        label: new Date(y, m).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' }),
+        label: new Date(y, m).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }),
         fullLabel: new Date(y, m).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
         pnl: mt.reduce((s, t) => s + t._pnl, 0),
         wins: mt.filter(t => t._pnl > 0).length,
