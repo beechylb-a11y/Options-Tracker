@@ -163,12 +163,25 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
     () => filteredTracker.filter(t => t.Status === 'Open'),
     [filteredTracker]
   );
-  // Open risk proxy: the TradeTracker has no dedicated max-loss column, so we
-  // approximate using net credit at risk on open positions. Shown as a guide.
-  const openRiskTotal = useMemo(() => openTrades.reduce((s, t) => {
+  // Open risk: the engine tickets' live max loss (what the Open positions table shows
+  // as "Risk live") plus a proxy for imported trades — the TradeTracker has no max-
+  // loss column, so net credit stands in. The tile used to read the tracker alone and
+  // showed $0 with $3,785 open on engine tickets. (Oct 2026.)
+  const [engineRisk, setEngineRisk] = useState(0);
+  useEffect(() => {
+    if (!authenticated) return undefined;
+    let live = true;
+    Promise.resolve().then(() => api.getOpenPositions(account)).then(rows => {
+      const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+      const sum = (Array.isArray(rows) ? rows : []).reduce((a, r) => a + (n(r.qty) > 0 ? n(r.maxRisk) * n(r.qtyOpen) / n(r.qty) : 0), 0);
+      if (live) setEngineRisk(sum);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [authenticated, account, retryTick]);
+  const openRiskTotal = useMemo(() => engineRisk + openTrades.reduce((s, t) => {
     const r = parseFloat(t['Net Credit ($)'] || 0);
     return s + (isNaN(r) ? 0 : Math.abs(r));
-  }, 0), [openTrades]);
+  }, 0), [openTrades, engineRisk]);
 
   if (!authenticated) {
     return (
