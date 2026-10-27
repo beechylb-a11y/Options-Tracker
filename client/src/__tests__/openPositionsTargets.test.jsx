@@ -54,7 +54,7 @@ describe('dashboard', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
 
   it('open positions show the target, days in the trade and banked with the roll', async () => {
-    render(<OpenPositions authenticated account="all" compact maxOpenRisk={10000} />);
+    render(<OpenPositions authenticated account="all" maxOpenRisk={10000} />);
     await waitFor(() => expect(screen.getAllByTestId('op-target').length).toBe(2));
     const [qqqT, spxT] = screen.getAllByTestId('op-target').map(e => e.textContent);
     expect(qqqT).toMatch(/buy back @1\.8[89] \+\$94[23]/);         // 50% of max profit on 5 lots

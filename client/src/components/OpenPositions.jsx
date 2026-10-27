@@ -11,63 +11,9 @@ import { ticketExpiry, daysBetweenYmd } from '../utils/ticketExpiry';
 import { tradingSession } from '../engine/session';
 import { STOP_LOSS_PCT } from '../engine/data';
 import { rollChain } from '../engine/rollChain';
-
-// Stop line for an open position: the plan saved at entry, else the 100% guide.
-// What was actually got: the fills' average entry when fills are recorded, else the
-// ticket's entry (Oct 2026 — the row showed the asked 5.81 after a 2.50 fill). Rows
-// are converted once on load, so the Sell/Roll ticket, the stop, live risk and the
-// exposure all read the fill too (withEntryFill also restates max profit / risk).
-const gotEntry = withEntryFill;
-function stopOf(r0) {
-  const r = gotEntry(r0);
-  const pos = normalisePosition(r);
-  if (!(Math.abs(pos.ncd || 0) > 0)) return null;
-  const plan = r.timestamp ? loadPlan(r.timestamp) : null;
-  const pct = plan && plan.stopPct !== '' && plan.stopPct != null ? Math.abs(parseFloat(plan.stopPct)) : STOP_LOSS_PCT;
-  if (!isFinite(pct) || pct <= 0) return null;
-  const price = stopToPrice(pos, pct);
-  // Contracts the stop applies to: what is open, or — for an order still resting —
-  // everything that will be open once it fills. (Was qtyOpen || 1: a working 5-lot
-  // showed the loss on one contract.)
-  const qtyOpen = Number(pos.qtyOpen) || 0, qtyAll = Number(pos.qty) || Number(r.qty) || 1;
-  const qty = qtyOpen > 0 ? qtyOpen : qtyAll;
-  return { pct, price, isCredit: pos.isCredit, side: pos.isCredit ? 'db' : 'cr', qty, ifFilled: !(qtyOpen > 0),
-    loss: pnlAt(pos, price, qty), guide: !plan || plan.stopPct === '' || plan.stopPct == null };
-}
-
-// What you got (or asked for): "cr 5.81" / "db 1.07"; a resting order shows its limit.
-function entryOf(r) {
-  const filled = !!gotEntry(r)._entryFromFills;
-  const pos = normalisePosition(gotEntry(r));
-  const e = Math.abs(pos.ncd || 0);
-  if (!(e > 0)) return null;
-  const asked = parseFloat(r.limitPrice);
-  return { side: pos.isCredit ? 'cr' : 'db', price: e, filled, asked: filled && Number.isFinite(asked) ? Math.abs(asked) : null };
-}
-
-// Profit target for the contracts open (or, for a resting order, all of them once
-// filled): the exit plan saved at entry, else the strategy's rule. Credit: buy back
-// at the price; debit: sell at it. (Oct 2026.)
-function targetOf(r0) {
-  const r = gotEntry(r0);
-  const pos = normalisePosition(r);
-  if (!(Math.abs(pos.ncd || 0) > 0)) return null;
-  const qtyOpen = Number(pos.qtyOpen) || 0;
-  const qty = qtyOpen > 0 ? qtyOpen : (Number(pos.qty) || 1);
-  const plan = r.timestamp ? loadPlan(r.timestamp) : null;
-  const rows = plan && Array.isArray(plan.rows) ? plan.rows.filter(x => Number(x.qty) > 0 && Number(x.pct) > 0) : [];
-  if (rows.length) {
-    const legs = rows.map(x => { const price = targetToPrice(pos, Number(x.pct)); return { pct: Number(x.pct), qty: Number(x.qty), price, gain: pnlAt(pos, price, Number(x.qty)) }; });
-    return { side: pos.isCredit ? 'buy back' : 'sell', price: legs[0].price, last: legs[legs.length - 1].price,
-      gain: legs.reduce((a, x) => a + x.gain, 0), legs, plan: true, basis: pos.basis };
-  }
-  const rule = exitRuleFor(pos.engine || r.engine, pos.strategy);
-  if (!rule || !(rule.target > 0)) return null;
-  const price = targetToPrice(pos, rule.target);
-  if (!(price >= 0)) return null;
-  return { side: pos.isCredit ? 'buy back' : 'sell', price, last: price, gain: pnlAt(pos, price, qty),
-    legs: [{ pct: rule.target, qty, price }], plan: false, basis: pos.basis };
-}
+import { stopOf, entryOf, targetOf, liveRiskOf, liveRiskTotal } from '../utils/positionLines';
+import PositionBoard, { boardRow } from './PositionBoard';
+import { runCheckup, bridgeUrlOf } from './Checkup45';
 
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
 // The server files a trade by its New York session (an after-close log rolls to the
@@ -103,6 +49,8 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const [cap, setCap] = useState(null);         // account open-risk cap, when not passed in
   const [chains, setChains] = useState({});     // ticketRef → what earlier rolled tickets banked
   const [expiries, setExpiries] = useState({}); // ticketRef → { expiry, source, startYmd }
+  const [decisions, setDecisions] = useState(null);   // every ticket, for the check-up
+  const [check, setCheck] = useState({ byTs: {}, at: null, busy: false, err: '' });
 
   // The cap is a property of the account, not of the page that happens to be
   // showing positions. The Dashboard already has it and passes it; everywhere else
@@ -149,9 +97,31 @@ export default function OpenPositions({ authenticated, account, compact = false,
       }
       setChains(out);
       setExpiries(exps);
+      setDecisions(decisions);
     });
     return () => { dead = true; };
   }, [authenticated, rows]);
+
+  // The Dashboard board shows the check-up's verdict for every open 45DTE ticket, so
+  // it runs the same shared pass the Decision Engine's check-up does (one minute
+  // cache: whichever screen asks first, the other reuses it). (Oct 2026.)
+  async function recheck(force = false) {
+    if (!compact || !decisions) return;
+    const tickets = rows.filter(r => /45/.test(r.engine || '') && !(r.status === STATUS.WORKING))
+      .map(r => decisions.find(d => (r.timestamp && d.Timestamp === r.timestamp) || Number(d._rowIndex) === Number(r.ticketRef)))
+      .filter(Boolean);
+    if (!tickets.length) return;
+    if (!bridgeUrlOf()) { setCheck(c => ({ ...c, err: 'no bridge URL — live P&L off' })); return; }
+    setCheck(c => ({ ...c, busy: true, err: '' }));
+    try {
+      const res = await runCheckup({ tickets, openPositions: rows, force });
+      const byTs = {};
+      // Keyed by ticket ref: res.list is in the order of the tickets passed in.
+      (res.list || []).forEach((x, i) => { if (tickets[i]) byTs[Number(tickets[i]._rowIndex)] = x; byTs[x.t.key] = byTs[x.t.key] || x; });
+      setCheck({ byTs, at: res.at || new Date(), busy: false, err: res.posErr ? 'TWS positions: ' + res.posErr : '' });
+    } catch (e) { setCheck(c => ({ ...c, busy: false, err: e.message })); }
+  }
+  useEffect(() => { recheck(false); }, [decisions]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The ticket ref IS the 1-based Decisions row, which is what the status route
   // addresses, so no lookup is needed.
@@ -178,8 +148,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
   // Risk still live is the OPEN portion only — the closed contracts cannot lose
   // any more, and counting them would overstate exposure on every partial.
-  const openRisk = rows.reduce((a, r) =>
-    a + (n(r.qty) > 0 ? n(r.maxRisk) * (n(r.qtyOpen) / n(r.qty)) : 0), 0);
+  const openRisk = liveRiskTotal(rows);
   const realised = rows.reduce((a, r) => a + n(r.realisedPnl), 0);
   const rollBanked = Object.values(chains).reduce((a, c) => a + (c.banked || 0), 0);
   const partials = rows.filter(r => r.status === 'Partial' || r.status === STATUS.PART_CLOSED).length;
@@ -219,6 +188,50 @@ export default function OpenPositions({ authenticated, account, compact = false,
     return <span className="badge" style={{ background: bg, color }}>{s}</span>;
   };
   const money = v => (n(v) >= 0 ? '+$' : '−$') + Math.abs(n(v)).toFixed(0);
+
+  const modals = (
+    <>
+      {ticket && (
+        <OrderTicket position={ticket.row} initialTab={ticket.tab}
+          onClose={() => setTicket(null)}
+          onDone={() => { setTicket(null); setReload(x => x + 1); }} />
+      )}
+      {detail && (
+        <TradeDetail row={detail} account={account} onClose={() => setDetail(null)}
+          onSell={r => { setDetail(null); setTicket({ row: r, tab: 'close' }); }}
+          onRoll={r => { setDetail(null); setTicket({ row: r, tab: 'roll' }); }} />
+      )}
+      {editing && (
+        <EditTicketModal position={editing} onClose={() => setEditing(null)}
+          onDone={() => { setEditing(null); setReload(x => x + 1); }} />
+      )}
+      {reconciling && (
+        <FillReconcile positions={reconciling === true ? rows : [reconciling]} account={account}
+          onClose={() => setReconciling(false)}
+          onDone={() => setReload(x => x + 1)} />
+      )}
+    </>
+  );
+
+  // Dashboard: the board — verdict, P&L, stop→target, price against the strikes, time.
+  if (compact) {
+    const on = (k, r) => {
+      if (k === 'details') setDetail(r);
+      else if (k === 'edit') setEditing(r);
+      else if (k === 'sell') setTicket({ row: r, tab: 'close' });
+      else if (k === 'roll') setTicket({ row: r, tab: 'roll' });
+      else if (k === 'cancel') cancelTicket(r);
+      else if (k === 'reconcile') setReconciling(r);
+    };
+    const board = rows.map(r => boardRow(r, { chain: chains[r.ticketRef] || null, expiry: expiries[r.ticketRef] || null, check: check.byTs[Number(r.ticketRef)] || check.byTs[r.timestamp] || null }));
+    return (
+      <>
+        <PositionBoard rows={board} on={on} cap={exp.cap || null} checkedAt={check.at} checking={check.busy}
+          checkErr={check.err} onRecheck={() => recheck(true)} />
+        {modals}
+      </>
+    );
+  }
 
   return (
     <div className="card">

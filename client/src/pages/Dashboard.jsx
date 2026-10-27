@@ -3,6 +3,7 @@ import { BarChart, Bar, ComposedChart, Area, XAxis, YAxis, Tooltip, ResponsiveCo
 import { TrendingUp, TrendingDown, Target, DollarSign, Percent, Activity, Flame, Calendar } from 'lucide-react';
 import { api } from '../utils/api';
 import OpenPositions from '../components/OpenPositions';
+import { liveRiskTotal } from '../utils/positionLines';
 import UpcomingExpiries from '../components/UpcomingExpiries';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, BA_GREEN, BA_RED } from '../utils/stats';
@@ -172,8 +173,9 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
     if (!authenticated) return undefined;
     let live = true;
     Promise.resolve().then(() => api.getOpenPositions(account)).then(rows => {
-      const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
-      const sum = (Array.isArray(rows) ? rows : []).reduce((a, r) => a + (n(r.qty) > 0 ? n(r.maxRisk) * n(r.qtyOpen) / n(r.qty) : 0), 0);
+      // Same function as the Open positions board, entry restated from fills. (The tile
+      // read $3,803 while the table said $3,785: one used the fills, one did not.)
+      const sum = liveRiskTotal(Array.isArray(rows) ? rows : []);
       if (live) setEngineRisk(sum);
     }).catch(() => {});
     return () => { live = false; };

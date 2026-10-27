@@ -22,7 +22,7 @@ import OpenPositions from '../components/OpenPositions';
 describe('open positions rows', () => {
   afterEach(() => cleanup());
   it('shows entry and an unambiguous stop on all contracts', async () => {
-    render(<OpenPositions authenticated account="acct" compact maxOpenRisk={10000} />);
+    render(<OpenPositions authenticated account="acct" maxOpenRisk={10000} />);
     await waitFor(() => expect(screen.getAllByTestId('op-row').length).toBe(2));
     const [w, o] = screen.getAllByTestId('op-entry').map(e => e.textContent);
     expect(w).toBe('lmt cr 5.81');
@@ -32,12 +32,12 @@ describe('open positions rows', () => {
     expect(st[1]).toMatch(/^sell @0\.00 −\$214$/);
   });
   it('opens the fill screen for a resting order and the Sell ticket for a filled one', async () => {
-    render(<OpenPositions authenticated account="acct" compact maxOpenRisk={10000} />);
+    render(<OpenPositions authenticated account="acct" maxOpenRisk={10000} />);
     await waitFor(() => expect(screen.getAllByTestId('op-row').length).toBe(2));
     fireEvent.click(screen.getAllByTestId('op-row')[0]);
     expect(screen.getByTestId('fill-screen').textContent).toBe('w1');
     cleanup();
-    render(<OpenPositions authenticated account="acct" compact maxOpenRisk={10000} />);
+    render(<OpenPositions authenticated account="acct" maxOpenRisk={10000} />);
     await waitFor(() => expect(screen.getAllByTestId('op-row').length).toBe(2));
     fireEvent.click(screen.getAllByTestId('op-row')[1]);
     expect(screen.getByTestId('sell-ticket').textContent).toBe('o1:close');

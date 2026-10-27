@@ -74,7 +74,10 @@ function valueOf(legs, S, ivShift, dayOffset, todayYmd, underlying, ivOf) {
 export function reviewOpen45(p) {
   const { strategy, legs = [], qtyOpen = 1, entry = {}, now = {}, trend = null, underlying = 'SPX' } = p;
   const fam = familyOf(strategy);
-  const rule = exitRuleFor('45DTE', strategy);
+  // A target saved in the exit plan at entry overrides the strategy's rule, so the
+  // check-up and the Open positions table aim at the same number. (Oct 2026.)
+  const rule0 = exitRuleFor('45DTE', strategy);
+  const rule = p.targetPct > 0 ? { ...rule0, target: Math.round(+p.targetPct) } : rule0;
   const today = now.todayYmd;
   const out = { family: fam, rule, metrics: {}, chips: [], reasons: [], steps: [], warnings: [] };
   if (!legs.length || !today) {

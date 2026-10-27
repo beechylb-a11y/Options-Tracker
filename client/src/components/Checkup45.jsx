@@ -8,6 +8,7 @@ import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../u
 import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
 import { tradingSession, sessionDateOf } from '../engine/session';
 import TradeDetail from './TradeDetail';
+import { withEntryFill, loadPlan } from '../utils/ticketMath';
 import { ActionBadge, PnlMeter, fmtYmd as fmtYmdV, CushionGauge, ClockGauge, PriceMap, Triggers, reasonChips, Reasons, NextStep } from './CheckupVisual';
 
 // ── Open 45DTE check-up (Oct 2026) ──
@@ -23,7 +24,7 @@ const TONE = {
   red: { fg: '#f85149', bg: '#2d0f11', border: '#6e2427' },
   grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
 };
-const ACTION_LABEL = {
+export const ACTION_LABEL = {
   'take-profit': 'Take profit', hold: 'Hold', watch: 'Watch', 'roll-untested': 'Roll untested side',
   'roll-out': 'Roll out', 'roll-short': 'Roll the short', close: 'Close', 'close-or-roll': 'Close or roll', unknown: 'No data',
 };
@@ -42,21 +43,176 @@ async function getJson(url, ms = 30000) {
 }
 
 // Build everything reviewOpen45 needs for one ticket.
+// Entry, max profit and max risk come from the FILLS when they are recorded (the same
+// restatement the Open positions table uses), and stop / target from the exit plan
+// saved at entry — so the check-up and the Dashboard quote the same numbers.
+// (Oct 2026: the Dashboard said stop −$1,995 off the 3.99 fill and the check-up
+// worked off the logged entry with the default stop.)
+export function exitPlanOf(ts) {
+  const plan = ts ? loadPlan(ts) : null;
+  if (!plan) return {};
+  const stopPct = plan.stopPct !== '' && plan.stopPct != null && isFinite(parseFloat(plan.stopPct)) ? Math.abs(parseFloat(plan.stopPct)) : null;
+  const rows = Array.isArray(plan.rows) ? plan.rows.filter(x => Number(x.qty) > 0 && Number(x.pct) > 0) : [];
+  const q = rows.reduce((a, x) => a + Number(x.qty), 0);
+  const targetPct = q ? rows.reduce((a, x) => a + Number(x.pct) * Number(x.qty), 0) / q : null;
+  return { stopPct: stopPct > 0 ? stopPct : null, targetPct };
+}
+
 export function ticketInputs(d, openRow, history = null) {
   const contracts = num(d.Contracts) || 1;
   const qtyOpen = openRow && num(openRow.qtyOpen) != null ? num(openRow.qtyOpen) : contracts;
   const entryIso = sessionDateOf(d.Timestamp) || String(d.Timestamp || '').slice(0, 10);
-  const maxProfit = num(d['Max Profit']), maxRisk = num(d['Max Risk']);
+  const filled = openRow ? withEntryFill(openRow) : null;
+  const fromFills = !!(filled && filled._entryFromFills);
+  const maxProfit = fromFills && num(filled.maxProfit) != null ? num(filled.maxProfit) : num(d['Max Profit']);
+  const maxRisk = fromFills && num(filled.maxRisk) != null ? num(filled.maxRisk) : num(d['Max Risk']);
+  const lots = fromFills ? (num(filled.qty) || contracts) : contracts;
+  const ncd = fromFills ? num(filled.entryPrice) : num(d['Net Debit/Credit']);
   return {
+    plan: exitPlanOf(d.Timestamp),
     key: d.Timestamp || d._rowIndex, underlying: String(d.Underlying || '').toUpperCase(),
     strategy: strategyName(d.Strategy), strikes: d['Wing Strikes'] || '', notes: d.Notes || '',
     qtyOpen, contracts,
-    entry: { ncd: num(d['Net Debit/Credit']) || 0, dateYmd: ymdOfIso(entryIso), spot: num(d.Price), iv: num(d.IV),
+    entry: { ncd: ncd || 0, dateYmd: ymdOfIso(entryIso), spot: num(d.Price), iv: num(d.IV),
       legIvs: legIvsFromNotes(d.Notes),
-      maxProfit: maxProfit != null ? maxProfit / contracts : null, maxRisk: maxRisk != null ? maxRisk / contracts : null },
+      maxProfit: maxProfit != null ? maxProfit / lots : null, maxRisk: maxRisk != null ? maxRisk / lots : null },
     // Earlier tickets this one was rolled from, and what they banked (Oct 2026).
     chain: history ? rollChain(d, history) : null,
   };
+}
+
+// ── One check-up, shared (Oct 2026) ──
+// The Dashboard and the Decision Engine both show the verdict for the same trades.
+// They read ONE pass: whoever asks first runs it, the other reuses it for a minute,
+// so the two screens cannot disagree. force:true always runs a fresh pass.
+const CACHE_MS = 60 * 1000;
+let lastRun = null;   // { key, at, promise }
+export function bridgeUrlOf() {
+  try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; }
+}
+export function runCheckup({ tickets, openPositions, bridgeUrl = bridgeUrlOf(), force = false }) {
+  const key = (tickets || []).map(d => d.Timestamp || d._rowIndex).sort().join('|');
+  if (!force && lastRun && lastRun.key === key && Date.now() - lastRun.at < CACHE_MS) return lastRun.promise;
+  const promise = runCheckupNow({ tickets, openPositions, bridgeUrl });
+  lastRun = { key, at: Date.now(), promise };
+  promise.catch(() => { if (lastRun && lastRun.promise === promise) lastRun = null; });
+  return promise;
+}
+export function clearCheckupCache() { lastRun = null; }
+
+async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
+  const list = (tickets || []).filter(d => /45/.test(String(d.Engine || '')));
+  const todayYmd = tradingSession().yyyymmdd;
+  let open = openPositions;
+  if (!open) { try { open = await api.getOpenPositions(); } catch (e) { open = []; } }
+  const openByTs = {};
+  (open || []).forEach(o => { if (o.timestamp) openByTs[o.timestamp] = o; });
+
+  // Every ticket and close, to follow a rolled ticket back to the first one.
+  const [allDec, allCloses, pos] = await Promise.all([
+    Promise.resolve().then(() => api.getDecisions()).catch(() => []),
+    Promise.resolve().then(() => api.getCloses()).catch(() => []),
+    getJson(bridgeUrl + '/api/positions', 15000),
+  ]);
+  const history = { decisions: Array.isArray(allDec) ? allDec : [], closes: Array.isArray(allCloses) ? allCloses : [] };
+  const raw = pos && Array.isArray(pos.raw) ? pos.raw : [];
+  const posErr = pos && pos.error ? pos.error : null;
+
+  const inputs = list.map(d => ticketInputs(d, openByTs[d.Timestamp], history));
+  const unds = [...new Set(inputs.map(t => t.underlying))];
+  const surf = {};
+  await Promise.all(unds.map(async u => {
+    const vs = await getJson(bridgeUrl + '/api/vol-surface?underlying=' + u, 45000);
+    surf[u] = vs && !vs.error ? { ...vs, trend: computeTrend(vs.daily) } : { error: vs && vs.error };
+  }));
+
+  const out = [];
+  for (const t of inputs) {
+    const m = matchTicketLegs({ ...t, todayYmd }, raw);
+    let legs = m.legs, source = m.legs ? 'TWS' : null;
+    if (!legs) { legs = legsFromNotes(t.notes); source = legs ? 'ticket notes' : null; }
+    const vs = surf[t.underlying] || {};
+    let now = { todayYmd, spot: num(vs.spot), iv: num(vs.iv) };
+    // A vol-surface failure was swallowed here: spot came back undefined, every
+    // short read in the money, and the card recommended a roll with no price
+    // behind it. Say it instead. (Oct 2026.)
+    let quoteErr = vs.error ? `vol surface: ${vs.error}` : null;
+    // Where the price came from, and whether it is today's. The bridge now says so
+    // rather than handing back a bare number or a zero; a check-up run off a stale
+    // close is still worth reading, but only if the reader knows that is what it is.
+    const priceNote = (vs.notes || []).find(n => /no live price|entitlement|no ticks|sent no ticks|no price for/i.test(n)) || null;
+    let spotFromGreeks = false;
+    if (legs) {
+      const nearExp = legs.map(l => l.expiry).sort()[0];
+      const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
+        + '&legs=' + encodeURIComponent(JSON.stringify(legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
+      if (g && !g.error && Array.isArray(g.legs)) {
+        let mark = 0, ok = true;
+        legs = legs.map((l, i) => {
+          const gl = g.legs[i] && g.legs[i].greeks;
+          const mid = gl && gl.bid != null && gl.ask != null ? (gl.bid + gl.ask) / 2 : gl && gl.optPrice;
+          if (mid == null) ok = false; else mark += l.qty * mid;
+          return { ...l, iv: gl ? gl.iv : null, delta: gl ? gl.delta : null };
+        });
+        spotFromGreeks = num(g.undPrice) > 0;
+        now = { ...now, mark: ok ? mark : undefined, spot: num(g.undPrice) || now.spot,
+          delta: g.net ? g.net.delta : undefined, theta: g.net ? g.net.theta : undefined, vega: g.net ? g.net.vega : undefined };
+        if (!ok) quoteErr = 'some legs had no quote — P&L not computed';
+      } else quoteErr = (g && g.error) || 'no quotes';
+    }
+    const review = reviewOpen45({ strategy: t.strategy, legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, now,
+      trend: vs.trend || null, underlying: t.underlying, stopPct: t.plan && t.plan.stopPct, targetPct: t.plan && t.plan.targetPct });
+
+    // "Short to roughly 25-30 delta" left the reader to find the strike. When a roll
+    // is the action, ask the chain which LISTED strike that actually is, and quote
+    // the pair — including what buying the old one back costs, so the credit is the
+    // net and not the gross. Two extra calls, only for a ticket that needs them.
+    let roll = null;
+    if (review.action === 'roll-untested' && legs && now.spot > 0) {
+      try {
+        const sh = (review.metrics.shorts || []);
+        const testedS = sh.find(x => x.tested);
+        const oldShort = sh.find(x => !x.tested && x.untested);
+        const right = oldShort && oldShort.right;
+        const wing = right ? legs.filter(l => l.qty > 0 && l.right === right)
+          .sort((a, b) => Math.abs(a.strike - oldShort.strike) - Math.abs(b.strike - oldShort.strike))[0] : null;
+        const keepWidth = wing ? Math.abs(wing.strike - oldShort.strike) : 0;
+        const exp = oldShort ? oldShort.expiry : null;
+        if (right && keepWidth > 0 && exp) {
+          const ls = await getJson(bridgeUrl + '/api/listed-strikes?underlying=' + t.underlying + '&expiry=' + exp, 30000);
+          const listed = ls && !ls.error ? (right === 'C' ? ls.calls : ls.puts) : null;
+          const cands = rollCandidates({ listed, spot: now.spot, right, keepWidth, oldShort: oldShort.strike });
+          if (cands.length) {
+            // Candidates, their wings, and the pair being replaced — one request.
+            const want = [...new Set([...cands, ...cands.map(k => right === 'C' ? k + keepWidth : k - keepWidth),
+              oldShort.strike, wing.strike])].sort((a, b) => a - b);
+            const q = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + exp
+              + '&legs=' + encodeURIComponent(JSON.stringify(want.map(k => ({ strike: k, right, qty: 1, expiry: exp })))), 40000);
+            if (q && !q.error && Array.isArray(q.legs)) {
+              const mid = gl => (gl && gl.bid != null && gl.ask != null) ? (gl.bid + gl.ask) / 2 : (gl ? gl.optPrice : null);
+              const quoted = want.map((k, i) => {
+                const gl = q.legs[i] && q.legs[i].greeks;
+                return { strike: k, right, delta: gl ? gl.delta : null, bid: gl ? gl.bid : null, ask: gl ? gl.ask : null, optPrice: gl ? gl.optPrice : null, _mid: mid(gl) };
+              });
+              const oS = quoted.find(x => x.strike === oldShort.strike), oL = quoted.find(x => x.strike === wing.strike);
+              const closeOld = (oS && oS._mid != null && oL && oL._mid != null) ? +(oS._mid - oL._mid).toFixed(2) : null;
+              roll = planRoll({ quoted: quoted.filter(x => cands.includes(x.strike) || want.includes(x.strike)),
+                keepWidth, right, spot: now.spot, ncd: review.metrics.ncd,
+                oldShort: oldShort.strike, oldLong: wing.strike,
+                testedShort: testedS ? testedS.strike : null, closeOld });
+            }
+          }
+        }
+      } catch (e) { roll = null; }   // a roll suggestion is a convenience, never a blocker
+    }
+    out.push({ t, openRow: openByTs[t.key] || null,
+      legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
+      spot: now.spot, roll,
+      // The greeks' undPrice overrides the surface spot where it exists, so a stale
+      // surface price only stands if the greeks had none either.
+      spotStale: !!vs.spotStale && !spotFromGreeks, spotAsOf: vs.spotAsOf || null, priceNote });
+  }
+return { list: out, posErr, at: new Date() };
 }
 
 export default function Checkup45({ tickets, openPositions }) {
@@ -68,122 +224,14 @@ export default function Checkup45({ tickets, openPositions }) {
   const list = (tickets || []).filter(d => /45/.test(String(d.Engine || '')));
 
   async function run() {
-    let bridgeUrl = '';
-    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    const bridgeUrl = bridgeUrlOf();
     if (!bridgeUrl) { setErr('Set the IBKR Bridge URL in Settings first — the check-up needs live legs and quotes.'); return; }
     setBusy(true); setErr('');
-    const todayYmd = tradingSession().yyyymmdd;
-    let open = openPositions;
-    if (!open) { try { open = await api.getOpenPositions(); } catch (e) { open = []; } }
-    const openByTs = {};
-    (open || []).forEach(o => { if (o.timestamp) openByTs[o.timestamp] = o; });
-
-    // Every ticket and close, to follow a rolled ticket back to the first one.
-    const [allDec, allCloses, pos] = await Promise.all([
-      Promise.resolve().then(() => api.getDecisions()).catch(() => []),
-      Promise.resolve().then(() => api.getCloses()).catch(() => []),
-      getJson(bridgeUrl + '/api/positions', 15000),
-    ]);
-    const history = { decisions: Array.isArray(allDec) ? allDec : [], closes: Array.isArray(allCloses) ? allCloses : [] };
-    const raw = pos && Array.isArray(pos.raw) ? pos.raw : [];
-    const posErr = pos && pos.error ? pos.error : null;
-
-    const inputs = list.map(d => ticketInputs(d, openByTs[d.Timestamp], history));
-    const unds = [...new Set(inputs.map(t => t.underlying))];
-    const surf = {};
-    await Promise.all(unds.map(async u => {
-      const vs = await getJson(bridgeUrl + '/api/vol-surface?underlying=' + u, 45000);
-      surf[u] = vs && !vs.error ? { ...vs, trend: computeTrend(vs.daily) } : { error: vs && vs.error };
-    }));
-
-    const out = [];
-    for (const t of inputs) {
-      const m = matchTicketLegs({ ...t, todayYmd }, raw);
-      let legs = m.legs, source = m.legs ? 'TWS' : null;
-      if (!legs) { legs = legsFromNotes(t.notes); source = legs ? 'ticket notes' : null; }
-      const vs = surf[t.underlying] || {};
-      let now = { todayYmd, spot: num(vs.spot), iv: num(vs.iv) };
-      // A vol-surface failure was swallowed here: spot came back undefined, every
-      // short read in the money, and the card recommended a roll with no price
-      // behind it. Say it instead. (Oct 2026.)
-      let quoteErr = vs.error ? `vol surface: ${vs.error}` : null;
-      // Where the price came from, and whether it is today's. The bridge now says so
-      // rather than handing back a bare number or a zero; a check-up run off a stale
-      // close is still worth reading, but only if the reader knows that is what it is.
-      const priceNote = (vs.notes || []).find(n => /no live price|entitlement|no ticks|sent no ticks|no price for/i.test(n)) || null;
-      let spotFromGreeks = false;
-      if (legs) {
-        const nearExp = legs.map(l => l.expiry).sort()[0];
-        const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
-          + '&legs=' + encodeURIComponent(JSON.stringify(legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
-        if (g && !g.error && Array.isArray(g.legs)) {
-          let mark = 0, ok = true;
-          legs = legs.map((l, i) => {
-            const gl = g.legs[i] && g.legs[i].greeks;
-            const mid = gl && gl.bid != null && gl.ask != null ? (gl.bid + gl.ask) / 2 : gl && gl.optPrice;
-            if (mid == null) ok = false; else mark += l.qty * mid;
-            return { ...l, iv: gl ? gl.iv : null, delta: gl ? gl.delta : null };
-          });
-          spotFromGreeks = num(g.undPrice) > 0;
-          now = { ...now, mark: ok ? mark : undefined, spot: num(g.undPrice) || now.spot,
-            delta: g.net ? g.net.delta : undefined, theta: g.net ? g.net.theta : undefined, vega: g.net ? g.net.vega : undefined };
-          if (!ok) quoteErr = 'some legs had no quote — P&L not computed';
-        } else quoteErr = (g && g.error) || 'no quotes';
-      }
-      const review = reviewOpen45({ strategy: t.strategy, legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, now,
-        trend: vs.trend || null, underlying: t.underlying });
-
-      // "Short to roughly 25-30 delta" left the reader to find the strike. When a roll
-      // is the action, ask the chain which LISTED strike that actually is, and quote
-      // the pair — including what buying the old one back costs, so the credit is the
-      // net and not the gross. Two extra calls, only for a ticket that needs them.
-      let roll = null;
-      if (review.action === 'roll-untested' && legs && now.spot > 0) {
-        try {
-          const sh = (review.metrics.shorts || []);
-          const testedS = sh.find(x => x.tested);
-          const oldShort = sh.find(x => !x.tested && x.untested);
-          const right = oldShort && oldShort.right;
-          const wing = right ? legs.filter(l => l.qty > 0 && l.right === right)
-            .sort((a, b) => Math.abs(a.strike - oldShort.strike) - Math.abs(b.strike - oldShort.strike))[0] : null;
-          const keepWidth = wing ? Math.abs(wing.strike - oldShort.strike) : 0;
-          const exp = oldShort ? oldShort.expiry : null;
-          if (right && keepWidth > 0 && exp) {
-            const ls = await getJson(bridgeUrl + '/api/listed-strikes?underlying=' + t.underlying + '&expiry=' + exp, 30000);
-            const listed = ls && !ls.error ? (right === 'C' ? ls.calls : ls.puts) : null;
-            const cands = rollCandidates({ listed, spot: now.spot, right, keepWidth, oldShort: oldShort.strike });
-            if (cands.length) {
-              // Candidates, their wings, and the pair being replaced — one request.
-              const want = [...new Set([...cands, ...cands.map(k => right === 'C' ? k + keepWidth : k - keepWidth),
-                oldShort.strike, wing.strike])].sort((a, b) => a - b);
-              const q = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + exp
-                + '&legs=' + encodeURIComponent(JSON.stringify(want.map(k => ({ strike: k, right, qty: 1, expiry: exp })))), 40000);
-              if (q && !q.error && Array.isArray(q.legs)) {
-                const mid = gl => (gl && gl.bid != null && gl.ask != null) ? (gl.bid + gl.ask) / 2 : (gl ? gl.optPrice : null);
-                const quoted = want.map((k, i) => {
-                  const gl = q.legs[i] && q.legs[i].greeks;
-                  return { strike: k, right, delta: gl ? gl.delta : null, bid: gl ? gl.bid : null, ask: gl ? gl.ask : null, optPrice: gl ? gl.optPrice : null, _mid: mid(gl) };
-                });
-                const oS = quoted.find(x => x.strike === oldShort.strike), oL = quoted.find(x => x.strike === wing.strike);
-                const closeOld = (oS && oS._mid != null && oL && oL._mid != null) ? +(oS._mid - oL._mid).toFixed(2) : null;
-                roll = planRoll({ quoted: quoted.filter(x => cands.includes(x.strike) || want.includes(x.strike)),
-                  keepWidth, right, spot: now.spot, ncd: review.metrics.ncd,
-                  oldShort: oldShort.strike, oldLong: wing.strike,
-                  testedShort: testedS ? testedS.strike : null, closeOld });
-              }
-            }
-          }
-        } catch (e) { roll = null; }   // a roll suggestion is a convenience, never a blocker
-      }
-      out.push({ t, openRow: openByTs[t.key] || null,
-        legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
-        spot: now.spot, roll,
-        // The greeks' undPrice overrides the surface spot where it exists, so a stale
-        // surface price only stands if the greeks had none either.
-        spotStale: !!vs.spotStale && !spotFromGreeks, spotAsOf: vs.spotAsOf || null, priceNote });
-    }
-    setRows({ list: out, posErr });
-    setRanAt(new Date());
+    try {
+      const res = await runCheckup({ tickets: list, openPositions, bridgeUrl, force: true });
+      setRows(res);
+      setRanAt(res.at);
+    } catch (e) { setErr(e.message); }
     setBusy(false);
   }
 
@@ -279,7 +327,7 @@ export function pnlSteps(chain, m, q) {
   return rows;
 }
 
-function CheckupCard({ row }) {
+export function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
   const [detail, setDetail] = useState(false);
   const [open, setOpen] = useState(false);

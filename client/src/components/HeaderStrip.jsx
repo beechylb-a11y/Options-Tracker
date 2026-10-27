@@ -98,6 +98,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [decisions, setDecisions] = useState([]);
   const [config, setConfig] = useState(null);
   const [lastSynced, setLastSynced] = useState(null);
+  const [engineOpen, setEngineOpen] = useState(0);   // open engine tickets (Shadowbook)
   const [refreshing, setRefreshing] = useState(false);
   const [sheetsState, setSheetsState] = useState(authenticated ? 'ok' : 'off');
   const [bridgeState, setBridgeState] = useState('off');
@@ -112,8 +113,10 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
     Promise.all([
       api.getTracker().catch(() => null),
       api.getDecisions().catch(() => []),
-      api.getStats(account).catch(() => null)
-    ]).then(([t, d, s]) => {
+      api.getStats(account).catch(() => null),
+      Promise.resolve().then(() => api.getOpenPositions(account)).catch(() => null),
+    ]).then(([t, d, s, op]) => {
+      if (Array.isArray(op)) setEngineOpen(op.filter(r => Number(r.qtyOpen) > 0).length);
       if (t === null) { setSheetsState('err'); return; }
       setSheetsState('ok');
       setTracker(t);
@@ -201,7 +204,9 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
 
   const closedTrades = mergeClosedTrades(tracker, decisions, account, accounts);
   const todayPnl = todayPnlOf(closedTrades);
-  const openCount = filterTracker(tracker, account, accounts).filter(t => t.Status === 'Open').length;
+  // Open = imported trades still open + Shadowbook tickets with contracts open. It
+  // counted the imported tracker alone and read OPEN 0 with two condors on. (Oct 2026.)
+  const openCount = filterTracker(tracker, account, accounts).filter(t => t.Status === 'Open').length + engineOpen;
   const maxDailyLoss = Number(config?.maxDailyLoss) || 0;
   const lossUsedPct = maxDailyLoss > 0 && todayPnl < 0
     ? Math.min(100, Math.abs(todayPnl) / maxDailyLoss * 100) : 0;

@@ -99,7 +99,7 @@ describe('trade detail panel', () => {
   });
 
   it('opens from the dashboard row', async () => {
-    render(<OpenPositions authenticated account="all" compact maxOpenRisk={5000} />);
+    render(<OpenPositions authenticated account="all" maxOpenRisk={5000} />);
     await waitFor(() => expect(screen.getByTestId('op-details')).toBeTruthy());
     fireEvent.click(screen.getByTestId('op-details'));
     await waitFor(() => expect(screen.getByTestId('trade-detail')).toBeTruthy());

@@ -242,7 +242,7 @@ export function ClockGauge({ daysHeld, planDays, daysToClose, closeYmd, events }
     </Gauge>
   );
 }
-function shortEvent(e) {
+export function shortEvent(e) {
   const l = String(e.label || '');
   const name = /FOMC/i.test(l) ? 'FOMC' : /CPI/.test(l) ? 'CPI' : /PCE/.test(l) ? 'PCE' : /payroll|Employment Sit/i.test(l) ? 'NFP'
     : /GDP/.test(l) ? 'GDP' : /PPI/.test(l) ? 'PPI' : l.split(/[ (]/)[0];
