@@ -75,30 +75,100 @@ function Gauge({ icon: Icon, title, children, testid }) {
   );
 }
 
-/** Stop ◀──── $0 ──●now──┊plan──── ▶ target, whole position. */
-export function PnlMeter({ now, stop, target, plan }) {
+/**
+ * P&L between stop and target, whole position. When the ticket was rolled, the bar is
+ * built up the way the trade went: one row per earlier ticket (what it banked when it was
+ * rolled, green gain / red loss, with the roll trade's own net credit or debit as a pill),
+ * then the open ticket, then the position — every row on the same scale, so each segment
+ * starts where the last one ended and the dot lands at the end of the last.
+ *
+ *   ↻ 15 Oct  CR 0.89  ─────■■■■■            +$447
+ *   ↻ 23 Oct  CR 1.54           ■■■■■■■      +$634
+ *   ● open             ■■■■■■■■■■■■■■■■      −$1,165
+ *   position  stop ◀──────●────┊plan──▶ target  −$84
+ */
+export function PnlMeter({ now, stop, target, plan, steps }) {
   if (now == null) return <Gauge icon={Target} title="P&L" testid="gauge-pnl"><div style={{ color: C.grey, fontSize: 13 }}>no live mark</div></Gauge>;
-  const lo = Math.min(stop ?? now, now, 0), hi = Math.max(target ?? now, now, 0);
+  const rows = [];
+  let cum = 0;
+  for (const st of steps || []) {
+    if (st.v == null || !isFinite(st.v)) continue;
+    rows.push({ ...st, from: cum, to: cum + st.v });
+    cum += st.v;
+  }
+  const xs = [stop ?? now, target ?? now, now, 0, plan ?? 0, ...rows.flatMap(r => [r.from, r.to])];
+  const lo = Math.min(...xs), hi = Math.max(...xs);
   const P = v => ((v - lo) / Math.max(1, hi - lo)) * 100;
   const col = now >= 0 ? C.green : C.red;
+  const wide = rows.length > 1;
+  const zero = <div title="$0" style={{ position: 'absolute', left: `${P(0)}%`, top: -3, bottom: -3, width: 1.5, background: C.text, opacity: 0.35, marginLeft: -0.75 }} />;
+  const bar = (
+    <div style={{ position: 'relative', height: 18 }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 6, borderRadius: 3,
+        background: `linear-gradient(90deg, ${C.red} 0%, ${C.red}55 ${P(0)}%, ${C.green}55 ${P(0)}%, ${C.green} 100%)` }} />
+      <div title="$0" style={{ position: 'absolute', left: `${P(0)}%`, top: 1, width: 2, height: 16, background: C.text, opacity: 0.6, marginLeft: -1 }} />
+      {plan != null && <div title={`plan ${money(plan)} — time decay alone`} style={{ position: 'absolute', left: `${P(plan)}%`, top: -2, marginLeft: -5,
+        width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: `7px solid ${C.blue}` }} />}
+      <div style={{ position: 'absolute', left: `${P(now)}%`, top: 2, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
+        background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${col}55` }} />
+    </div>
+  );
+  const ends = (
+    <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
+      <span style={{ color: C.red }}>{stop != null ? `stop ${money(stop)}` : ''}</span>
+      {plan != null && <span style={{ color: C.blue }}>▾ plan {money(plan)}</span>}
+      <span style={{ color: C.green }}>{target != null ? `target ${money(target)}` : ''}</span>
+    </div>
+  );
+  if (!wide) {
+    return (
+      <Gauge icon={Target} title="P&L · stop → target" testid="gauge-pnl">
+        <div className="mono" style={{ fontSize: 24, fontWeight: 800, color: col, lineHeight: 1 }}>{money(now)}</div>
+        <div style={{ marginTop: 10 }}>{bar}</div>
+        {ends}
+      </Gauge>
+    );
+  }
+  const grid = { display: 'grid', gridTemplateColumns: '74px 62px minmax(0,1fr) 70px', alignItems: 'center', columnGap: 10 };
   return (
-    <Gauge icon={Target} title="P&L · stop → target" testid="gauge-pnl">
-      <div className="mono" style={{ fontSize: 24, fontWeight: 800, color: col, lineHeight: 1 }}>{money(now)}</div>
-      <div style={{ position: 'relative', height: 18, marginTop: 10 }}>
-        <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 6, borderRadius: 3,
-          background: `linear-gradient(90deg, ${C.red} 0%, ${C.red}55 ${P(0)}%, ${C.green}55 ${P(0)}%, ${C.green} 100%)` }} />
-        <div title="$0" style={{ position: 'absolute', left: `${P(0)}%`, top: 1, width: 2, height: 16, background: C.text, opacity: 0.6, marginLeft: -1 }} />
-        {plan != null && <div title={`plan ${money(plan)} — time decay alone`} style={{ position: 'absolute', left: `${P(plan)}%`, top: -2, marginLeft: -5,
-          width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: `7px solid ${C.blue}` }} />}
-        <div style={{ position: 'absolute', left: `${P(now)}%`, top: 2, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
-          background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${col}55` }} />
-      </div>
-      <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
-        <span style={{ color: C.red }}>{stop != null ? money(stop) : ''}</span>
-        {plan != null && <span style={{ color: C.blue }}>▾ plan {money(plan)}</span>}
-        <span style={{ color: C.green }}>{target != null ? money(target) : ''}</span>
-      </div>
-    </Gauge>
+    <div style={{ gridColumn: '1 / -1' }}>
+      <Gauge icon={Target} title="P&L · how the position got here · stop → target" testid="gauge-pnl">
+        <div data-testid="roll-history" style={{ display: 'grid', rowGap: 7 }}>
+          {rows.map((r, i) => {
+            const c = r.v >= 0 ? C.green : C.red;
+            const L = Math.min(P(r.from), P(r.to)), Wd = Math.max(1.2, Math.abs(P(r.to) - P(r.from)));
+            const isOpen = r.kind === 'open';
+            return (
+              <div key={i} style={grid} title={r.title || ''} data-testid="pnl-step">
+                <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: isOpen ? C.text : C.grey }}>
+                  {isOpen ? <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.blue, display: 'inline-block' }} /> : <RefreshCw size={12} strokeWidth={2.6} />}
+                  {r.label}
+                </span>
+                <span>{r.net != null && isFinite(r.net) && (
+                  <span data-testid="roll-net" title={r.netTitle || ''} className="mono" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 5, fontSize: 11, fontWeight: 800,
+                    color: r.net >= 0 ? C.green : C.red, background: (r.net >= 0 ? C.green : C.red) + '22', border: `1px solid ${(r.net >= 0 ? C.green : C.red)}88` }}>
+                    {r.net >= 0 ? 'CR' : 'DR'} {Math.abs(r.net).toFixed(2)}
+                  </span>)}</span>
+                <div style={{ position: 'relative', height: 12 }}>
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: 5, height: 2, background: C.line, borderRadius: 1 }} />
+                  {zero}
+                  {i > 0 && <div style={{ position: 'absolute', left: `${P(r.from)}%`, top: -7, height: 7, borderLeft: `1px dashed ${C.dim}` }} />}
+                  <div style={{ position: 'absolute', left: `${L}%`, width: `${Wd}%`, top: 0, height: 12, borderRadius: 3, background: c, opacity: isOpen ? 0.95 : 0.85 }} />
+                </div>
+                <span className="mono" style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: c }}>{money(r.v)}</span>
+              </div>
+            );
+          })}
+          <div style={{ ...grid, borderTop: `1px solid ${C.line}`, paddingTop: 8, marginTop: 2 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.text, textTransform: 'uppercase', letterSpacing: '.04em' }}>Position</span>
+            <span />
+            <div>{bar}</div>
+            <span className="mono" style={{ textAlign: 'right', fontSize: 18, fontWeight: 800, color: col }}>{money(now)}</span>
+          </div>
+          <div style={grid}><span /><span /><div>{ends}</div><span /></div>
+        </div>
+      </Gauge>
+    </div>
   );
 }
 

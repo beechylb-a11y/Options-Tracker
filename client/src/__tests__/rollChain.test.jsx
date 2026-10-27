@@ -95,8 +95,10 @@ describe('check-up card for a rolled position', () => {
     fireEvent.click(screen.getByTestId('checkup-run'));
     await waitFor(() => expect(screen.getAllByTestId('checkup-card').length).toBe(1));
     expect(screen.getByTestId('position-pnl').textContent).toMatch(/−\$13[\s\S]*this ticket −\$460[\s\S]*banked \+\$447/);
-    expect(screen.getByTestId('roll-history').textContent).toMatch(/8 Oct─ rolled 15 Oct \+\$447 ─15 Oct → now/);
-    expect(screen.getByTestId('roll-history').innerHTML).toMatch(/699 \/ 709 \/ 805 \/ 815 · rolled 15 Oct/);
+    expect(screen.getByTestId('roll-history').textContent).toMatch(/15 OctCR 2\.27\+\$447open−\$460Position−\$13/);
+    expect(screen.getByTestId('roll-history').innerHTML).toMatch(/699 \/ 709 \/ 805 \/ 815 · opened 8 Oct · rolled 15 Oct/);
+    expect(screen.getByTestId('roll-net').getAttribute('title')).toMatch(/Roll trade took in \$\d/);
+    expect(screen.getByTestId('checkup-title').textContent).toMatch(/^QQQ [\d/]+$/);
     expect(screen.getByTestId('checkup-summary').textContent).toMatch(/whole position is down \$13/);
     expect(screen.getByTestId('next-step').textContent).toMatch(/Next:/);
     const wf = screen.getByTestId('attribution').textContent;

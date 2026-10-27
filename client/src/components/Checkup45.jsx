@@ -8,7 +8,7 @@ import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../u
 import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
 import { tradingSession, sessionDateOf } from '../engine/session';
 import TradeDetail from './TradeDetail';
-import { ActionBadge, RollTimeline, PnlMeter, CushionGauge, ClockGauge, PriceMap, Triggers, reasonChips, Reasons, NextStep } from './CheckupVisual';
+import { ActionBadge, PnlMeter, fmtYmd as fmtYmdV, CushionGauge, ClockGauge, PriceMap, Triggers, reasonChips, Reasons, NextStep } from './CheckupVisual';
 
 // ── Open 45DTE check-up (Oct 2026) ──
 // One card per open 45DTE ticket: what to do now (hold / take profit / roll /
@@ -263,6 +263,22 @@ export function summaryLine(m, chain, qty) {
   return parts.join(' ');
 }
 
+/** Rows for the P&L meter: what each earlier ticket banked at its roll (with the roll
+ *  trade's net credit/debit), then the open ticket. Null when there was no roll. */
+export function pnlSteps(chain, m, q) {
+  if (!chain || m.pnl$ == null) return null;
+  const rows = chain.links.map((l, i) => {
+    const qty = (chain.links[i + 1] && chain.links[i + 1].qty) || q || l.qty;
+    return {
+      kind: 'roll', label: fmtYmdV(l.closeYmd), v: l.realised, net: l.net,
+      title: `${l.strikes || 'TICKET-' + l.ref} · opened ${fmtYmdV(l.entryYmd)} · rolled ${fmtYmdV(l.closeYmd)} · banked ${money(l.realised)}`,
+      netTitle: l.net != null && qty ? `Roll trade ${l.net >= 0 ? 'took in' : 'paid'} ${money(Math.abs(l.net) * 100 * qty).replace(/^[+−]/, '')} net (${Math.abs(l.net).toFixed(2)} × 100 × ${qty})` : '',
+    };
+  });
+  rows.push({ kind: 'open', label: 'open', v: m.pnl$, title: `this ticket since ${fmtYmdV(m.entryYmd)}` });
+  return rows;
+}
+
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
   const [detail, setDetail] = useState(false);
@@ -295,9 +311,13 @@ function CheckupCard({ row }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <ActionBadge action={rv.action} tone={rv.tone} label={label} />
         <div style={{ minWidth: 0 }}>
-          <div style={{ color: '#e6edf3', fontWeight: 700, fontSize: 16 }}>{t.underlying} <span style={{ fontWeight: 500, color: '#c9d1d9' }}>{t.strategy}</span></div>
-          <div className="mono" style={{ color: '#8b949e', fontSize: 12 }}>{parseStrikes(t.strikes).join(' / ')} · {q} ct</div>
-          <RollTimeline chain={chain} entryYmd={m.entryYmd} />
+          <div data-testid="checkup-title" className="mono" style={{ color: '#ffffff', fontWeight: 800, fontSize: 20, lineHeight: 1.15, letterSpacing: '.01em', whiteSpace: 'nowrap' }}>
+            {t.underlying} {parseStrikes(t.strikes).join('/')}
+          </div>
+          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 3 }}>
+            {t.strategy} · <span className="mono">{q} ct</span>{m.nearExp ? <> · exp <span className="mono">{fmtYmd(m.nearExp)}</span></> : null}
+            {chain ? <> · <span style={{ color: '#a8b2be' }}>{chain.rolls} roll{chain.rolls > 1 ? 's' : ''} since {fmtYmd(chain.startYmd)}</span></> : null}
+          </div>
         </div>
         {posPnl != null && (
           <div style={{ marginLeft: 'auto', textAlign: 'right' }} data-testid="position-pnl">
@@ -313,7 +333,7 @@ function CheckupCard({ row }) {
       {live && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
           <PnlMeter now={posPnl} stop={m.stop$ != null ? banked + m.stop$ : null} target={m.target$ != null ? banked + m.target$ : null}
-            plan={m.plan$ != null ? banked + m.plan$ : null} />
+            plan={m.plan$ != null ? banked + m.plan$ : null} steps={pnlSteps(chain, m, q)} />
           <CushionGauge near={near} />
           <ClockGauge daysHeld={m.daysHeld} planDays={m.planDays} daysToClose={m.daysToClose} closeYmd={closeYmd} events={m.events} />
         </div>
