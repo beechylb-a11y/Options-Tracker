@@ -98,7 +98,7 @@ describe('check-up card for a rolled position', () => {
     expect(screen.getByTestId('roll-history').textContent).toMatch(/15 OctCR 2\.27\+\$447open−\$460Position−\$13/);
     expect(screen.getByTestId('roll-history').innerHTML).toMatch(/699 \/ 709 \/ 805 \/ 815 · opened 8 Oct · rolled 15 Oct/);
     expect(screen.getByTestId('roll-net').getAttribute('title')).toMatch(/Roll trade took in \$\d/);
-    expect(screen.getByTestId('checkup-title').textContent).toMatch(/^QQQ [\d/]+$/);
+    expect(screen.getByTestId('checkup-title').textContent).toMatch(/^QQQ [\d/]+Iron Condor5 ctexp \d+ \w+$/);
     expect(screen.getByTestId('checkup-summary').textContent).toMatch(/whole position is down \$13/);
     expect(screen.getByTestId('next-step').textContent).toMatch(/Next:/);
     const wf = screen.getByTestId('attribution').textContent;

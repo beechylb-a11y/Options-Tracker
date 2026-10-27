@@ -315,13 +315,14 @@ function CheckupCard({ row }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <ActionBadge action={rv.action} tone={rv.tone} label={label} />
         <div style={{ minWidth: 0 }}>
-          <div data-testid="checkup-title" className="mono" style={{ color: '#ffffff', fontWeight: 800, fontSize: 20, lineHeight: 1.15, letterSpacing: '.01em', whiteSpace: 'nowrap' }}>
-            {t.underlying} {parseStrikes(t.strikes).join('/')}
+          <div data-testid="checkup-title" className="mono" style={{ color: '#ffffff', fontWeight: 800, fontSize: 20, lineHeight: 1.25, letterSpacing: '.01em',
+            display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2 }}>
+            <span style={{ whiteSpace: 'nowrap' }}>{t.underlying} {parseStrikes(t.strikes).join('/')}</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{String(t.strategy || '').replace(/\s*-\s*Normal\b/i, '')}</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{q} ct</span>
+            {m.nearExp ? <span style={{ whiteSpace: 'nowrap' }}>exp {fmtYmd(m.nearExp)}</span> : null}
           </div>
-          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 3 }}>
-            {t.strategy} · <span className="mono">{q} ct</span>{m.nearExp ? <> · exp <span className="mono">{fmtYmd(m.nearExp)}</span></> : null}
-            {chain ? <> · <span style={{ color: '#a8b2be' }}>{chain.rolls} roll{chain.rolls > 1 ? 's' : ''} since {fmtYmd(chain.startYmd)}</span></> : null}
-          </div>
+          {chain ? <div style={{ color: '#a8b2be', fontSize: 12, marginTop: 3 }}>{chain.rolls} roll{chain.rolls > 1 ? 's' : ''} since {fmtYmd(chain.startYmd)}</div> : null}
         </div>
         {posPnl != null && (
           <div style={{ marginLeft: 'auto', textAlign: 'right' }} data-testid="position-pnl">
