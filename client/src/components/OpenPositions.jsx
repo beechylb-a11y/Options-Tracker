@@ -118,7 +118,8 @@ export default function OpenPositions({ authenticated, account, compact = false,
       const byTs = {};
       // Keyed by ticket ref: res.list is in the order of the tickets passed in.
       (res.list || []).forEach((x, i) => { if (tickets[i]) byTs[Number(tickets[i]._rowIndex)] = x; byTs[x.t.key] = byTs[x.t.key] || x; });
-      setCheck({ byTs, at: res.at || new Date(), busy: false, err: res.posErr ? 'TWS positions: ' + res.posErr : '' });
+      const offline = res.posErr && /connection failed|nothing listening|not connected|ECONNREFUSED|timed out/i.test(res.posErr);
+      setCheck({ byTs, at: res.at || new Date(), busy: false, err: res.posErr ? (offline ? 'TWS offline — no live prices' : 'TWS: ' + res.posErr.slice(0, 80)) : '' });
     } catch (e) { setCheck(c => ({ ...c, busy: false, err: e.message })); }
   }
   useEffect(() => { recheck(false); }, [decisions]);   // eslint-disable-line react-hooks/exhaustive-deps
