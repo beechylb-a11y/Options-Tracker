@@ -304,6 +304,10 @@ function CheckupCard({ row }) {
   const sdStop = sdExp && m.dte > 0 ? sdExp * Math.sqrt(Math.max(0.5, m.daysToClose || 0) / m.dte) : null;
   const chips = reasonChips({ shorts, events: m.events, ivChange: m.ivChange, shortVega: m.shortVega, trendFit: m.trendFit, warnings: rv.warnings });
   const live = rv.action !== 'unknown';
+  // Rolled: the P&L bar is built roll by roll and gets its own full-width row.
+  const steps = pnlSteps(chain, m, q);
+  const meter = <PnlMeter now={posPnl} stop={m.stop$ != null ? banked + m.stop$ : null} target={m.target$ != null ? banked + m.target$ : null}
+    plan={m.plan$ != null ? banked + m.plan$ : null} steps={steps} />;
   return (
     <div data-testid="checkup-card" data-action={rv.action}
       style={{ border: `1px solid #30363d`, borderLeft: `5px solid ${tone.fg}`, borderRadius: 12, padding: 16, background: '#0d1117' }}>
@@ -330,10 +334,12 @@ function CheckupCard({ row }) {
       </div>
       <div style={{ marginTop: 10, color: tone.fg, fontSize: 15.5, fontWeight: 700 }}>{rv.headline}</div>
 
+      {live && steps && (
+        <div style={{ marginTop: 12 }}>{meter}</div>
+      )}
       {live && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
-          <PnlMeter now={posPnl} stop={m.stop$ != null ? banked + m.stop$ : null} target={m.target$ != null ? banked + m.target$ : null}
-            plan={m.plan$ != null ? banked + m.plan$ : null} steps={pnlSteps(chain, m, q)} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: steps ? 10 : 12 }}>
+          {!steps && meter}
           <CushionGauge near={near} />
           <ClockGauge daysHeld={m.daysHeld} planDays={m.planDays} daysToClose={m.daysToClose} closeYmd={closeYmd} events={m.events} />
         </div>

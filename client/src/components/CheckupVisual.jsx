@@ -88,6 +88,7 @@ function Gauge({ icon: Icon, title, children, testid }) {
  *   position  stop ◀──────●────┊plan──▶ target  −$84
  */
 export function PnlMeter({ now, stop, target, plan, steps }) {
+  const [boxRef, boxW] = useWidth();
   if (now == null) return <Gauge icon={Target} title="P&L" testid="gauge-pnl"><div style={{ color: C.grey, fontSize: 13 }}>no live mark</div></Gauge>;
   const rows = [];
   let cum = 0;
@@ -114,7 +115,7 @@ export function PnlMeter({ now, stop, target, plan, steps }) {
     </div>
   );
   const ends = (
-    <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
+    <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4, gap: 10, flexWrap: 'wrap' }}>
       <span style={{ color: C.red }}>{stop != null ? `stop ${money(stop)}` : ''}</span>
       {plan != null && <span style={{ color: C.blue }}>▾ plan {money(plan)}</span>}
       <span style={{ color: C.green }}>{target != null ? `target ${money(target)}` : ''}</span>
@@ -129,43 +130,63 @@ export function PnlMeter({ now, stop, target, plan, steps }) {
       </Gauge>
     );
   }
+  // Wide: label · pill · track · amount on one row. Narrow (phone): label, pill and
+  // amount on a line, the track full width under it — a 40px track says nothing.
+  const narrow = boxW != null && boxW < 560;
   const grid = { display: 'grid', gridTemplateColumns: '74px 62px minmax(0,1fr) 70px', alignItems: 'center', columnGap: 10 };
+  const Label = ({ r }) => (
+    <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 700, color: r.kind === 'open' ? C.text : C.grey }}>
+      {r.kind === 'open' ? <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.blue, display: 'inline-block' }} /> : <RefreshCw size={12} strokeWidth={2.6} />}
+      {r.label}
+    </span>
+  );
+  const Pill = ({ r }) => (r.net != null && isFinite(r.net) ? (
+    <span data-testid="roll-net" title={r.netTitle || ''} className="mono" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 5, fontSize: 11, fontWeight: 800,
+      color: r.net >= 0 ? C.green : C.red, background: (r.net >= 0 ? C.green : C.red) + '22', border: `1px solid ${(r.net >= 0 ? C.green : C.red)}88` }}>
+      {r.net >= 0 ? 'CR' : 'DR'} {Math.abs(r.net).toFixed(2)}
+    </span>) : null);
+  const Track = ({ r, i }) => {
+    const c = r.v >= 0 ? C.green : C.red;
+    const L = Math.min(P(r.from), P(r.to)), Wd = Math.max(1.2, Math.abs(P(r.to) - P(r.from)));
+    return (
+      <div style={{ position: 'relative', height: 12 }}>
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 5, height: 2, background: C.line, borderRadius: 1 }} />
+        {zero}
+        {i > 0 && <div style={{ position: 'absolute', left: `${P(r.from)}%`, top: -7, height: 7, borderLeft: `1px dashed ${C.dim}` }} />}
+        <div style={{ position: 'absolute', left: `${L}%`, width: `${Wd}%`, top: 0, height: 12, borderRadius: 3, background: c, opacity: r.kind === 'open' ? 0.95 : 0.85 }} />
+      </div>
+    );
+  };
+  const Amt = ({ v, size = 13 }) => <span className="mono" style={{ textAlign: 'right', fontSize: size, fontWeight: 800, color: v >= 0 ? C.green : C.red }}>{money(v)}</span>;
+  const posLabel = <span style={{ fontSize: 12, fontWeight: 800, color: C.text, textTransform: 'uppercase', letterSpacing: '.04em' }}>Position</span>;
   return (
-    <div style={{ gridColumn: '1 / -1' }}>
+    <div ref={boxRef} style={{ gridColumn: '1 / -1' }}>
       <Gauge icon={Target} title="P&L · how the position got here · stop → target" testid="gauge-pnl">
-        <div data-testid="roll-history" style={{ display: 'grid', rowGap: 7 }}>
-          {rows.map((r, i) => {
-            const c = r.v >= 0 ? C.green : C.red;
-            const L = Math.min(P(r.from), P(r.to)), Wd = Math.max(1.2, Math.abs(P(r.to) - P(r.from)));
-            const isOpen = r.kind === 'open';
-            return (
-              <div key={i} style={grid} title={r.title || ''} data-testid="pnl-step">
-                <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: isOpen ? C.text : C.grey }}>
-                  {isOpen ? <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.blue, display: 'inline-block' }} /> : <RefreshCw size={12} strokeWidth={2.6} />}
-                  {r.label}
-                </span>
-                <span>{r.net != null && isFinite(r.net) && (
-                  <span data-testid="roll-net" title={r.netTitle || ''} className="mono" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 5, fontSize: 11, fontWeight: 800,
-                    color: r.net >= 0 ? C.green : C.red, background: (r.net >= 0 ? C.green : C.red) + '22', border: `1px solid ${(r.net >= 0 ? C.green : C.red)}88` }}>
-                    {r.net >= 0 ? 'CR' : 'DR'} {Math.abs(r.net).toFixed(2)}
-                  </span>)}</span>
-                <div style={{ position: 'relative', height: 12 }}>
-                  <div style={{ position: 'absolute', left: 0, right: 0, top: 5, height: 2, background: C.line, borderRadius: 1 }} />
-                  {zero}
-                  {i > 0 && <div style={{ position: 'absolute', left: `${P(r.from)}%`, top: -7, height: 7, borderLeft: `1px dashed ${C.dim}` }} />}
-                  <div style={{ position: 'absolute', left: `${L}%`, width: `${Wd}%`, top: 0, height: 12, borderRadius: 3, background: c, opacity: isOpen ? 0.95 : 0.85 }} />
-                </div>
-                <span className="mono" style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: c }}>{money(r.v)}</span>
+        <div data-testid="roll-history" style={{ display: 'grid', rowGap: narrow ? 6 : 7 }}>
+          {rows.map((r, i) => narrow ? (
+            <div key={i} title={r.title || ''} data-testid="pnl-step" style={{ display: 'grid', rowGap: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Label r={r} /><Pill r={r} /><span style={{ marginLeft: 'auto' }}><Amt v={r.v} /></span></div>
+              <Track r={r} i={i} />
+            </div>
+          ) : (
+            <div key={i} style={grid} title={r.title || ''} data-testid="pnl-step">
+              <Label r={r} /><span><Pill r={r} /></span><Track r={r} i={i} /><Amt v={r.v} />
+            </div>
+          ))}
+          {narrow ? (
+            <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, marginTop: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>{posLabel}<span style={{ marginLeft: 'auto' }}><Amt v={now} size={18} /></span></div>
+              <div style={{ marginTop: 4 }}>{bar}</div>
+              {ends}
+            </div>
+          ) : (
+            <>
+              <div style={{ ...grid, borderTop: `1px solid ${C.line}`, paddingTop: 8, marginTop: 2 }}>
+                {posLabel}<span /><div>{bar}</div><Amt v={now} size={18} />
               </div>
-            );
-          })}
-          <div style={{ ...grid, borderTop: `1px solid ${C.line}`, paddingTop: 8, marginTop: 2 }}>
-            <span style={{ fontSize: 12, fontWeight: 800, color: C.text, textTransform: 'uppercase', letterSpacing: '.04em' }}>Position</span>
-            <span />
-            <div>{bar}</div>
-            <span className="mono" style={{ textAlign: 'right', fontSize: 18, fontWeight: 800, color: col }}>{money(now)}</span>
-          </div>
-          <div style={grid}><span /><span /><div>{ends}</div><span /></div>
+              <div style={grid}><span /><span /><div>{ends}</div><span /></div>
+            </>
+          )}
         </div>
       </Gauge>
     </div>
