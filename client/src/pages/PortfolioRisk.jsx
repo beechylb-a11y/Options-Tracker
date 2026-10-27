@@ -128,7 +128,7 @@ export default function PortfolioRisk({ authenticated, account }) {
       const r = positionRisk(p, live.quotes[p.key] || null, { now });
       if (!r) continue;
       risks[p.key] = r;
-      if (p.engine === '45DTE' && r.markSource === 'quotes') {
+      if (p.engine === '45DTE' && r.markSource === 'quotes' && r.greeks) {
         const ivs = r.legs.map(l => l.iv).filter(x => x > 0);
         reviews[p.key] = reviewOpen45({
           strategy: p.strategy, legs: r.legs, qtyOpen: p.live, underlying: p.underlying,
@@ -423,9 +423,9 @@ function PositionsTable({ book, risks, onAct, plan }) {
                 <td className="py-2 pr-3 mono text-right text-[12px]">
                   {st ? <span style={{ color: C.red }}>{money(st.loss)}</span> : '—'}{' / '}{tg ? <span style={{ color: C.green }}>{money(tg.gain)}</span> : '—'}
                 </td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.spxDelta1) }}>{r ? money(r.spxDelta1) : '—'}</td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks.theta) }}>{r ? money(r.greeks.theta) : '—'}</td>
-                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks.vega) }}>{r ? money(r.greeks.vega) : '—'}</td>
+                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.spxDelta1) }}>{r && r.spxDelta1 != null ? money(r.spxDelta1) : '—'}</td>
+                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks && r.greeks.theta) }}>{r && r.greeks ? money(r.greeks.theta) : '—'}</td>
+                <td className="py-2 pr-3 mono text-right" style={{ color: pc(r && r.greeks && r.greeks.vega) }}>{r && r.greeks ? money(r.greeks.vega) : '—'}</td>
                 <td className="py-2 text-[11.5px] whitespace-nowrap" style={{ color: C.muted }}>
                   legs {p.legSource === 'TWS' ? 'TWS' : p.legSource === 'ticket' ? <span style={{ color: C.amber }}>ticket</span> : <span style={{ color: C.amber }}>none</span>}
                   {r && <> · {r.greeksSource === 'quotes' ? 'live' : <span style={{ color: C.amber }}>model</span>}</>}

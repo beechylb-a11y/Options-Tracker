@@ -11,6 +11,7 @@ import Journal from './pages/Journal';
 import Analytics from './pages/Analytics';
 import Reports from './pages/Reports';
 import PortfolioRisk from './pages/PortfolioRisk';
+import PageBoundary from './components/PageBoundary';
 import Knowledgebase from './pages/Knowledgebase';
 import Documents from './pages/Documents';
 import SettingsPage from './pages/Settings';
@@ -220,6 +221,7 @@ export default function App() {
             an in-progress ticket (cache is still cleared; data refetches on
             next navigation). */}
         <div className="max-w-[1400px] mx-auto p-6" key={tab === 'decision' ? 'decision' : refreshTick}>
+          <PageBoundary key={tab} name={{ dashboard: 'Dashboard', trades: 'Trades', decision: 'Decision Engine', journal: 'Journal', analytics: 'Analytics', reports: 'Reports', risk: 'Portfolio Risk', knowledge: 'Knowledgebase', documents: 'Documents', settings: 'Settings' }[tab]}>
           {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
           {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
@@ -230,6 +232,7 @@ export default function App() {
           {tab === 'knowledge' && <Knowledgebase />}
           {tab === 'documents' && <Documents authenticated={authenticated} />}
           {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogout} accounts={accounts} onAccountsChange={setAccounts} userEmail={userEmail} />}
+          </PageBoundary>
         </div>
       </main>
     </div>

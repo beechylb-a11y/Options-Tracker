@@ -19,7 +19,25 @@ import { eventsInWindow } from './events.js';
 import { exitRuleFor, STOP_LOSS_PCT } from './data.js';
 import { matchTicketLegs, legsFromNotes, strategyName } from '../utils/positionMatch.js';
 import { normalisePosition, stopToPrice, targetToPrice, pnlAt, withEntryFill } from '../utils/ticketMath.js';
-import { rollChain } from './rollChain.js';
+import { rollChain, rolledFromRef } from './rollChain.js';
+
+// Underlying price and IV at entry. A roll ticket is logged from the TWS fills with
+// neither (QQQ TICKET-62, 23 Oct), and with the bridge down the model then had no
+// price to value it at — the page crashed on the missing greeks. Walk back through
+// the tickets it was rolled from for the nearest one that has them. (Oct 2026.)
+function entryMarket(d, decisions) {
+  let spot = num(d && d.Price), iv = num(d && d.IV);
+  const byRef = new Map((decisions || []).map(x => [Number(x._rowIndex), x]));
+  let cur = d;
+  for (let i = 0; i < 10 && (spot == null || iv == null) && cur; i++) {
+    const ref = rolledFromRef(cur.Notes);
+    cur = ref != null ? byRef.get(ref) : null;
+    if (!cur) break;
+    if (spot == null) spot = num(cur.Price);
+    if (iv == null) iv = num(cur.IV);
+  }
+  return { spot, iv };
+}
 
 const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
 const symOf = u => { const s = String(u || '').toUpperCase(); return s === 'SPXW' ? 'SPX' : s; };
@@ -103,7 +121,7 @@ export function buildBook({ open, decisions, raw, todayYmd, closes = [] }) {
       legs, legSource, note,
       expiry, dte: expiry ? daysBetween(todayYmd, expiry) : null,
       pos,                                                  // normalised: ncd, isCredit, basis, maxRisk/ct
-      entry: { ncd: pos.ncd || 0, spot: num(d.Price), iv: num(d.IV), vix1d: num(d.VIX1D), em: num(d.EM), ymd: entryYmd },
+      entry: { ncd: pos.ncd || 0, ...entryMarket(d, decisions), vix1d: num(d.VIX1D), em: num(d.EM), ymd: entryYmd },
       maxRisk: num(row.maxRisk),
       // What the tickets this one was rolled from banked (Oct 2026): part of the
       // position's P&L, though not of this ticket's.
