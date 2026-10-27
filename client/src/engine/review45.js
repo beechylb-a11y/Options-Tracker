@@ -263,8 +263,19 @@ export function reviewOpen45(p) {
       S.push(`Move the ${sideName(other)} spread ${other.right === 'P' ? 'up' : 'down'} toward price — short to roughly 25–30Δ — for extra credit. Same expiry.`);
       S.push('That widens break-even on the tested side by the credit taken in. Keep the tested side as it is.');
     } else if (fam === 'condor' && testedShorts.length >= 2) {
-      act('close', 'red', 'Both sides tested — close or cut size');
-      W.push('Price has run through the body; there is no untested side left to roll for credit.');
+      // Two different situations used to share one headline (Oct 2026). Price THROUGH
+      // a short is a broken condor. Price still BETWEEN the shorts with both reading
+      // ≥30Δ is a condor that has become narrow — typically right after rolling the
+      // untested side in — and "price has run through the body" was simply untrue.
+      const through = testedShorts.find(x => x.itm);
+      if (through) {
+        act('close', 'red', `Through the ${through.strike}${through.right} — close or cut size`);
+        W.push(`Price is past the ${through.strike}${through.right} short and the other side is tested too; there is no untested side left to roll for credit.`);
+      } else {
+        act('watch', 'amber', 'Narrow condor — both shorts near the money');
+        W.push(`Price is still between the shorts, but both read ${testedShorts.map(x => x.absDelta != null ? Math.round(x.absDelta * 100) + 'Δ' : x.strike + x.right).join(' and ')} — little room either way.`);
+        S.push(`Hold to the ${closeDte}-DTE time stop, or cut size. Don't roll again for credit — there is no untested side left.`);
+      }
     } else if (fam === 'condor' && other && !other.untested) {
       act('watch', 'amber', `${sideName(t).replace(/^./, c => c.toUpperCase())} side tested — the other side is too close to roll`);
       W.push(`Rolling the ${other.strike}${other.right} toward price would leave almost no room between the shorts.`);

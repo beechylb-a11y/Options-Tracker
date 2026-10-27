@@ -49,6 +49,14 @@ describe('45DTE check-up panel', () => {
     expect(cards[0].textContent).toMatch(/legsTWS/);
     expect(cards[1].textContent).toMatch(/ticket notes/);             // IWM found from the logged Legs line
     expect(screen.getAllByTestId('plan-track').length).toBe(2);
+    // the visual top of the card (Oct 2026): three gauges, the price map, the triggers
+    expect(screen.getAllByTestId('gauge-pnl').length).toBe(2);
+    expect(screen.getAllByTestId('gauge-cushion')[0].textContent).toMatch(/745P short[\s\S]*pts through|745P short[\s\S]*pts above/);
+    expect(screen.getAllByTestId('price-map').length).toBe(2);
+    expect(screen.getAllByTestId('triggers')[0].textContent).toMatch(/close/);
+    expect(screen.getAllByTestId('checkup-detail-body')[0].style.display).toBe('none');
+    fireEvent.click(screen.getAllByTestId('checkup-more')[0]);
+    expect(screen.getAllByTestId('checkup-detail-body')[0].style.display).toBe('block');
   });
 
   it('asks for the bridge when there is none', () => {

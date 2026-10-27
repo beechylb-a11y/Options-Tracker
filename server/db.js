@@ -1017,8 +1017,39 @@ export async function getOpenPositions() {
       // Full ISO timestamp of the ticket — the key the engine's exit plan is saved
       // under at log time, so the sell ticket opens with the ladder set at entry.
       o.timestamp = (decRows[Number(r[0]) - 1] || [])[0] || '';
+      // A rolled ticket is logged without Max Risk / Max Profit (the roll ticket does
+      // not model leg types), so the dashboard read its live risk as $0 and the open-
+      // risk gauge left a 5-lot condor out. Derive both from the logged legs and the
+      // entry. (Oct 2026.)
+      if (!(Number(o.maxRisk) > 0) || !(Number(o.maxProfit) > 0)) {
+        const hdr = decRows[0] || [];
+        const notes = (decRows[Number(r[0]) - 1] || [])[hdr.indexOf('Notes')] || '';
+        const ext = extremesFromLegs(notes, Number(o.entryPrice));
+        if (ext) {
+          const q = Number(o.qty) || 1;
+          if (!(Number(o.maxRisk) > 0) && ext.maxLoss > 0) { o.maxRisk = Math.round(ext.maxLoss * q); o.maxRiskDerived = true; }
+          if (!(Number(o.maxProfit) > 0) && ext.maxProfit > 0) { o.maxProfit = Math.round(ext.maxProfit * q); o.maxProfitDerived = true; }
+        }
+      }
       return o;
     });
+}
+
+/** Per-contract max loss / max profit at expiry from a "Legs: +1 699P … " notes line and the entry (+ credit). */
+export function extremesFromLegs(notes, entry) {
+  const m = /Legs:\s*([^\n]+)/.exec(String(notes || ''));
+  if (!m || !Number.isFinite(entry)) return null;
+  const legs = [];
+  const re = /([+\-−])(\d+)\s+([\d.]+)([PC])\s+\d{8}/g;
+  let t;
+  while ((t = re.exec(m[1]))) legs.push({ qty: (t[1] === '+' ? 1 : -1) * +t[2], strike: +t[3], right: t[4] });
+  if (!legs.length) return null;
+  const ks = legs.map(l => l.strike), hi = Math.max(...ks), lo = Math.min(...ks);
+  const val = S => legs.reduce((a, l) => a + l.qty * Math.max(0, l.right === 'C' ? S - l.strike : l.strike - S), 0);
+  const pts = [0, lo, ...ks, hi, hi * 2];
+  const pnl = pts.map(S => (val(S) + entry) * 100);
+  if ((val(hi * 4) + entry) < (val(hi * 2) + entry) - 1e-9) return null;   // uncovered short: no defined max loss
+  return { maxLoss: Math.max(0, -Math.min(...pnl)), maxProfit: Math.max(0, Math.max(...pnl)) };
 }
 
 // ════════════════════════════════════════════════════════════════════════

@@ -95,7 +95,8 @@ describe('check-up card for a rolled position', () => {
     fireEvent.click(screen.getByTestId('checkup-run'));
     await waitFor(() => expect(screen.getAllByTestId('checkup-card').length).toBe(1));
     expect(screen.getByTestId('position-pnl').textContent).toMatch(/−\$13[\s\S]*this ticket −\$460[\s\S]*banked \+\$447/);
-    expect(screen.getByTestId('roll-history').textContent).toMatch(/699 \/ 709 \/ 805 \/ 815 → rolled 15 Oct \(\+\$447\)/);
+    expect(screen.getByTestId('roll-history').textContent).toMatch(/8 Oct─ rolled 15 Oct \+\$447 ─15 Oct → now/);
+    expect(screen.getByTestId('roll-history').innerHTML).toMatch(/699 \/ 709 \/ 805 \/ 815 · rolled 15 Oct/);
     expect(screen.getByTestId('checkup-summary').textContent).toMatch(/whole position is down \$13/);
     expect(screen.getByTestId('next-step').textContent).toMatch(/Next:/);
     const wf = screen.getByTestId('attribution').textContent;
@@ -103,5 +104,24 @@ describe('check-up card for a rolled position', () => {
     expect(wf).toMatch(/Position now−\$13/);
     expect(screen.getByTestId('plan-track').textContent).toMatch(/rolled 15 Oct/);
     expect(screen.getByTestId('strip-legend').textContent).toMatch(/13\.5 above the 709P short/);
+  });
+});
+
+describe('narrow condor vs broken condor (Oct 2026)', () => {
+  const legs = (k1, k2, k3, k4, d) => [[k1, 'P', 1], [k2, 'P', -1], [k3, 'C', -1], [k4, 'C', 1]]
+    .map(([strike, right, qty]) => ({ strike, right, qty, expiry: '20261120', iv: 21, delta: d[strike + right] }));
+  const base = { strategy: 'Iron Condor - Normal', qtyOpen: 5, underlying: 'QQQ', entry: { ncd: 3.99, dateYmd: '20261023', spot: 707.8, iv: 21, maxProfit: 399 } };
+  it('price between the shorts, both ≥30Δ: watch, not "through the body"', () => {
+    const r = reviewOpen45({ ...base, legs: legs(699, 709, 735, 745, { '699P': -0.33, '709P': -0.45, '735C': 0.32, '745C': 0.22 }),
+      now: { todayYmd: '20261026', spot: 712.2, iv: 21, mark: -5.65 } });
+    expect(r.action).toBe('watch');
+    expect(r.headline).toMatch(/Narrow condor/);
+    expect(r.reasons.join(' ')).not.toMatch(/run through the body/);
+  });
+  it('price through a short with the other tested too: close', () => {
+    const r = reviewOpen45({ ...base, legs: legs(699, 709, 735, 745, { '699P': -0.45, '709P': -0.62, '735C': 0.31, '745C': 0.2 }),
+      now: { todayYmd: '20261026', spot: 705, iv: 21, mark: -7.4 } });
+    expect(r.action).toBe('close');
+    expect(r.headline).toMatch(/Through the 709P/);
   });
 });

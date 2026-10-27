@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Stethoscope, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Stethoscope, RefreshCw, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 import { reviewOpen45, ymdOfIso, daysBetweenYmd } from '../engine/review45';
 import { rollChain, legIvsFromNotes } from '../engine/rollChain';
@@ -8,6 +8,7 @@ import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../u
 import { positionStrip, rollCandidates, planRoll } from '../engine/positionPlan';
 import { tradingSession, sessionDateOf } from '../engine/session';
 import TradeDetail from './TradeDetail';
+import { ActionBadge, RollTimeline, PnlMeter, CushionGauge, ClockGauge, PriceMap, Triggers, reasonChips, Reasons, NextStep } from './CheckupVisual';
 
 // ── Open 45DTE check-up (Oct 2026) ──
 // One card per open 45DTE ticket: what to do now (hold / take profit / roll /
@@ -265,6 +266,7 @@ export function summaryLine(m, chain, qty) {
 function CheckupCard({ row }) {
   const [more, setMore] = useState(false);
   const [detail, setDetail] = useState(false);
+  const [open, setOpen] = useState(false);
   const { t, review: rv, legs, source, note, quoteErr, trend, spot, roll, spotStale, spotAsOf, priceNote } = row;
   const chain = t.chain || null;
   const m = rv.metrics || {};
@@ -277,97 +279,106 @@ function CheckupCard({ row }) {
   const targetPx = m.target$ != null && m.ncd != null && q
     ? (m.isCredit ? Math.abs(m.ncd) - m.target$ / (100 * q) : Math.abs(m.ncd) + m.target$ / (100 * q)) : null;
   const closeYmd = m.nearExp && m.closeDte != null ? ymdAdd(m.nearExp, -m.closeDte) : null;
+  // The whole position's entry per share: this ticket's plus what the earlier tickets
+  // banked, spread over the open contracts — so break-evens are the position's.
+  const ncdPos = m.ncd != null ? m.ncd + (chain && q ? banked / (100 * q) : 0) : null;
+  const shorts = m.shorts || [];
+  const near = shorts.filter(x => x.cushion != null).sort((a, b) => a.cushion - b.cushion)[0] || null;
+  const sdExp = near && near.cushionSd ? Math.abs(near.cushion / near.cushionSd) : null;
+  const sdStop = sdExp && m.dte > 0 ? sdExp * Math.sqrt(Math.max(0.5, m.daysToClose || 0) / m.dte) : null;
+  const chips = reasonChips({ shorts, events: m.events, ivChange: m.ivChange, shortVega: m.shortVega, trendFit: m.trendFit, warnings: rv.warnings });
+  const live = rv.action !== 'unknown';
   return (
     <div data-testid="checkup-card" data-action={rv.action}
-      style={{ border: `1px solid #30363d`, borderLeft: `4px solid ${tone.fg}`, borderRadius: 10, padding: 14, background: '#0d1117' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
-        <span data-testid="checkup-action" style={{ padding: '4px 10px', borderRadius: 6, fontWeight: 800, fontSize: 13, letterSpacing: '.02em',
-          textTransform: 'uppercase', color: tone.fg, background: tone.bg, border: `1px solid ${tone.border}` }}>{label}</span>
-        <div>
-          <span style={{ color: '#e6edf3', fontWeight: 600 }}>{t.underlying} {t.strategy}</span>
-          <span className="mono" style={{ color: '#8b949e', fontSize: 12.5, marginLeft: 8 }}>{parseStrikes(t.strikes).join(' / ')} · {q} open</span>
-          {chain && <div data-testid="roll-history" className="mono" style={{ fontSize: 12, color: '#a8b2be', marginTop: 2 }}>
-            {chain.links.map(l => `${l.strikes || 'TICKET-' + l.ref} → rolled ${fmtYmd(l.closeYmd)} (${money(l.realised)})`).join(' · ')}
-          </div>}
+      style={{ border: `1px solid #30363d`, borderLeft: `5px solid ${tone.fg}`, borderRadius: 12, padding: 16, background: '#0d1117' }}>
+      {/* verdict · position · P&L */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <ActionBadge action={rv.action} tone={rv.tone} label={label} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: '#e6edf3', fontWeight: 700, fontSize: 16 }}>{t.underlying} <span style={{ fontWeight: 500, color: '#c9d1d9' }}>{t.strategy}</span></div>
+          <div className="mono" style={{ color: '#8b949e', fontSize: 12 }}>{parseStrikes(t.strikes).join(' / ')} · {q} ct</div>
+          <RollTimeline chain={chain} entryYmd={m.entryYmd} />
         </div>
         {posPnl != null && (
           <div style={{ marginLeft: 'auto', textAlign: 'right' }} data-testid="position-pnl">
-            <div className="mono" style={{ fontWeight: 800, fontSize: 18, color: posPnl >= 0 ? '#3fb950' : '#f85149' }}>{money(posPnl)}</div>
-            <div style={{ fontSize: 11.5, color: '#8b949e' }}>
+            <div className="mono" style={{ fontWeight: 800, fontSize: 28, lineHeight: 1, color: posPnl >= 0 ? '#3fb950' : '#f85149' }}>{money(posPnl)}</div>
+            <div style={{ fontSize: 11, color: '#8b949e', marginTop: 3 }}>
               {chain ? <>position · this ticket <span className="mono">{money(m.pnl$)}</span> + banked <span className="mono">{money(banked)}</span></> : 'open P&L'}
             </div>
           </div>
         )}
       </div>
+      <div style={{ marginTop: 10, color: tone.fg, fontSize: 15.5, fontWeight: 700 }}>{rv.headline}</div>
 
-      <div style={{ marginTop: 8, color: tone.fg, fontSize: 14, fontWeight: 600 }}>{rv.headline}</div>
-      {nextStep && <div data-testid="next-step" style={{ marginTop: 3, color: '#e6edf3', fontSize: 13.5 }}>
-        <span style={{ color: '#8b949e' }}>Next: </span>{nextStep}</div>}
-      {rv.action !== 'unknown' && <div data-testid="checkup-summary" style={{ marginTop: 8, color: '#c9d1d9', fontSize: 13 }}>{summaryLine(m, chain, q)}</div>}
-
-      {rv.action !== 'unknown' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, marginTop: 12 }}>
-          <PnLChart m={m} chain={chain} />
-          <Waterfall m={m} chain={chain} qty={q} />
+      {live && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 12 }}>
+          <PnlMeter now={posPnl} stop={m.stop$ != null ? banked + m.stop$ : null} target={m.target$ != null ? banked + m.target$ : null}
+            plan={m.plan$ != null ? banked + m.plan$ : null} />
+          <CushionGauge near={near} />
+          <ClockGauge daysHeld={m.daysHeld} planDays={m.planDays} daysToClose={m.daysToClose} closeYmd={closeYmd} events={m.events} />
         </div>
       )}
-
-      {rv.action !== 'unknown' && (
-        <div data-testid="exits" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
-          {m.target$ != null && <Chip label={chain ? 'target (this ticket)' : 'target'} tone="green" val={`${money(m.target$)}${targetPx != null ? ` · close @${Math.max(0, targetPx).toFixed(2)}` : ''}`}
-            tip={`Take profit at ${m.targetLabel}.`} />}
-          {m.stopPrice != null && <Chip label={chain ? 'stop (this ticket)' : 'stop'} val={`${money(m.stop$)} · close @${m.stopPrice.toFixed(2)}`}
-            tone={m.toStop$ != null && m.toStop$ <= 0 ? 'red' : m.toStop$ != null && m.stop$ && m.toStop$ < Math.abs(m.stop$) * 0.3 ? 'amber' : 'red'}
-            tip={`Stop guide: ${m.stopPct}% of the entry premium.${m.toStop$ != null ? ` ${m.toStop$ > 0 ? money(m.toStop$) + ' of room left' : 'Reached.'}` : ''}${chain ? ` The position would then be ${money(banked + m.stop$)} after the roll.` : ''}`} />}
-          {closeYmd && <Chip label="time stop" val={`${fmtYmd(closeYmd)} · ${m.daysToClose > 0 ? `in ${m.daysToClose}d` : 'now'}`}
-            tone={m.daysToClose <= 0 ? 'red' : m.daysToClose <= 5 ? 'amber' : null} tip={`Close by ${m.closeDte} DTE (${m.dte} DTE now), whatever the P&L.`} />}
-        </div>
+      {live && legs && spot > 0 && ncdPos != null && (
+        <PriceMap legs={legs} spot={spot} ncdPos={ncdPos} qty={q} shorts={shorts} sdStop={sdStop} closeYmd={closeYmd} underlying={t.underlying} />
       )}
-
-      {rv.action !== 'unknown' && legs && spot > 0 && <StrikeStrip legs={legs} spot={spot} shorts={m.shorts || []} ncd={m.ncd} />}
+      {live && legs && spot > 0 && ncdPos != null && <Triggers legs={legs} ncdPos={ncdPos} spot={spot} closeYmd={closeYmd} />}
+      <Reasons chips={chips} />
+      {spotStale && <div data-testid="stale-spot" style={{ marginTop: 8, fontSize: 12, color: '#d29922', display: 'flex', alignItems: 'center', gap: 5 }}>
+        <Clock size={12} /> price is the {spotAsOf ? `${spotAsOf.slice(4, 6)}/${spotAsOf.slice(6, 8)} ` : ''}close, not live</div>}
+      {!(spot > 0) && priceNote && <div data-testid="no-spot-why" style={{ marginTop: 8, fontSize: 12.5, color: '#f85149' }}>{priceNote}</div>}
+      {(note || quoteErr) && <div style={{ marginTop: 6, fontSize: 12, color: '#d29922' }}>{[note, quoteErr].filter(Boolean).join(' · ')}</div>}
+      <NextStep text={nextStep} />
       {roll && <RollPlan roll={roll} />}
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-        {m.ivChange ? <Chip label="IV since entry" val={(m.ivChange > 0 ? '+' : '') + m.ivChange + ' pts'}
-          tone={(m.shortVega && m.ivChange >= 2) || (!m.shortVega && m.ivChange <= -2) ? 'amber' : (m.shortVega && m.ivChange < 0) ? 'green' : null} /> : null}
-        {trend && <Chip label="trend" val={trendLabel(trend)} tone={m.trendFit < 0 ? 'amber' : m.trendFit > 0 ? 'green' : null}
-          tip={(m.trendFit < 0 ? 'Against your delta. ' : m.trendFit > 0 ? 'With your delta. ' : '') + trend.why} />}
-        {m.events && m.events.length > 0 && <Chip label="events" val={m.events.length + ' before time stop'} tone="amber"
-          tip={m.events.map(e => `${e.label} ${e.date}`).join(' · ')} />}
-        {source && <Chip label="legs" val={source} tone={source === 'TWS' ? null : 'amber'} />}
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 10 }}>
+        <button onClick={() => setOpen(!open)} data-testid="checkup-more"
+          style={{ fontSize: 12.5, color: '#58a6ff', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {open ? 'Hide details' : 'Details'}
+        </button>
+        {row.openRow && (
+          <button onClick={() => setDetail(true)} data-testid="checkup-details" style={{ fontSize: 12.5, color: '#58a6ff' }}>
+            Payoff diagram and live P&L →</button>
+        )}
       </div>
-
-      {/* A price that is not today's changes what every delta and IV below it means, so
-          it is said at card level and not buried with the quote notes. */}
-      {spotStale && <div data-testid="stale-spot" style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>
-        Price is the {spotAsOf ? `${spotAsOf.slice(4, 6)}/${spotAsOf.slice(6, 8)} ` : ''}close, not live — deltas and IVs are computed against it.
-      </div>}
-      {!(spot > 0) && priceNote && <div data-testid="no-spot-why" style={{ marginTop: 8, fontSize: 12.5, color: '#f85149' }}>{priceNote}</div>}
-      {(note || quoteErr) && <div style={{ marginTop: 8, fontSize: 12.5, color: '#d29922' }}>{[note, quoteErr].filter(Boolean).join(' · ')}</div>}
-      {rv.warnings.length > 0 && (
-        <ul style={{ marginTop: 8, fontSize: 12.5, color: '#e3b341', paddingLeft: 16, listStyle: 'disc' }}>
-          {rv.warnings.map((w, i) => <li key={i}>{w}</li>)}
-        </ul>
-      )}
-      {row.openRow && (
-        <button onClick={() => setDetail(true)} data-testid="checkup-details" style={{ marginTop: 8, marginRight: 14, fontSize: 12.5, color: '#58a6ff' }}>
-          Payoff diagram and details →</button>
-      )}
       {detail && row.openRow && <TradeDetail row={row.openRow} onClose={() => setDetail(false)} />}
-      {(rv.steps.length > 1 || rv.reasons.length > 0) && (
-        <div style={{ marginTop: 8 }}>
-          <button onClick={() => setMore(!more)} style={{ fontSize: 12.5, color: '#58a6ff', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            {more ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {more ? 'Hide' : 'Why, and other options'}
-          </button>
-          {more && (
-            <div style={{ marginTop: 6, fontSize: 13, color: '#c9d1d9' }}>
-              {rv.steps.slice(1).map((s, i) => <div key={'s' + i} style={{ marginBottom: 4 }}>→ {s}</div>)}
-              {rv.reasons.map((s, i) => <div key={'r' + i} style={{ marginBottom: 4, color: '#a8b2be' }}>{s}</div>)}
-              <div style={{ marginTop: 4, color: '#8b949e', fontSize: 12 }}>Rule: {rv.rule.why || `${rv.rule.target}% target`} · close by {m.closeDte} DTE</div>
-            </div>
-          )}
+
+      {/* Everything that used to be the card, one click away. Kept in the DOM. */}
+      <div data-testid="checkup-detail-body" style={{ display: open ? 'block' : 'none', marginTop: 10, paddingTop: 10, borderTop: '1px solid #21262d' }}>
+        {live && <div data-testid="checkup-summary" style={{ color: '#c9d1d9', fontSize: 13 }}>{summaryLine(m, chain, q)}</div>}
+        {live && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, marginTop: 12 }}>
+            <PnLChart m={m} chain={chain} />
+            <Waterfall m={m} chain={chain} qty={q} />
+          </div>
+        )}
+        {live && (
+          <div data-testid="exits" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+            {m.target$ != null && <Chip label={chain ? 'target (this ticket)' : 'target'} tone="green" val={`${money(m.target$)}${targetPx != null ? ` · close @${Math.max(0, targetPx).toFixed(2)}` : ''}`}
+              tip={`Take profit at ${m.targetLabel}.`} />}
+            {m.stopPrice != null && <Chip label={chain ? 'stop (this ticket)' : 'stop'} val={`${money(m.stop$)} · close @${m.stopPrice.toFixed(2)}`}
+              tone="red" tip={`Stop guide: ${m.stopPct}% of the entry premium.`} />}
+          </div>
+        )}
+        {live && legs && spot > 0 && <StrikeStrip legs={legs} spot={spot} shorts={shorts} ncd={m.ncd} />}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+          {m.ivChange ? <Chip label="IV since entry" val={(m.ivChange > 0 ? '+' : '') + m.ivChange + ' pts'} /> : null}
+          {trend && <Chip label="trend" val={trendLabel(trend)} tone={m.trendFit < 0 ? 'amber' : m.trendFit > 0 ? 'green' : null} tip={trend.why} />}
+          {source && <Chip label="legs" val={source} tone={source === 'TWS' ? null : 'amber'} />}
         </div>
-      )}
+        {rv.warnings.length > 0 && (
+          <ul style={{ marginTop: 8, fontSize: 12.5, color: '#e3b341', paddingLeft: 16, listStyle: 'disc' }}>
+            {rv.warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        )}
+        {(rv.steps.length > 1 || rv.reasons.length > 0) && (
+          <div style={{ marginTop: 8, fontSize: 13, color: '#c9d1d9' }}>
+            {rv.steps.slice(1).map((s2, i) => <div key={'s' + i} style={{ marginBottom: 4 }}>→ {s2}</div>)}
+            {rv.reasons.map((s2, i) => <div key={'r' + i} style={{ marginBottom: 4, color: '#a8b2be' }}>{s2}</div>)}
+            <div style={{ marginTop: 4, color: '#8b949e', fontSize: 12 }}>Rule: {rv.rule.why || `${rv.rule.target}% target`} · close by {m.closeDte} DTE</div>
+          </div>
+        )}
+        {more && null}
+      </div>
     </div>
   );
 }
