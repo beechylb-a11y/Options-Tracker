@@ -39,7 +39,7 @@ function useWidth(initial = 640) {
 
 const ACTION_LABEL = {
   'take-profit': 'Take profit', hold: 'Hold', watch: 'Watch', 'roll-untested': 'Roll untested side',
-  'roll-out': 'Roll out', 'roll-short': 'Roll the short', close: 'Close', 'close-or-roll': 'Close or roll',
+  'roll-out': 'Roll out', 'roll-short': 'Roll the short', close: 'Close', 'close-or-roll': 'Close or roll', 'record-expiry': 'Expired',
 };
 
 /** Badge from the check-up, or a plain one saying why there isn't a verdict. */

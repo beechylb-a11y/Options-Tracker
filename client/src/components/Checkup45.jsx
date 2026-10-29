@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Stethoscope, RefreshCw, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 import { reviewOpen45, ymdOfIso, daysBetweenYmd } from '../engine/review45';
+import { review0, nyMinutes } from '../engine/review0';
 import { rollChain, legIvsFromNotes } from '../engine/rollChain';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { matchTicketLegs, legsFromNotes, strategyName, parseStrikes } from '../utils/positionMatch';
@@ -26,7 +27,7 @@ const TONE = {
 };
 export const ACTION_LABEL = {
   'take-profit': 'Take profit', hold: 'Hold', watch: 'Watch', 'roll-untested': 'Roll untested side',
-  'roll-out': 'Roll out', 'roll-short': 'Roll the short', close: 'Close', 'close-or-roll': 'Close or roll', unknown: 'No data',
+  'roll-out': 'Roll out', 'roll-short': 'Roll the short', close: 'Close', 'close-or-roll': 'Close or roll', 'record-expiry': 'Expired', unknown: 'No data',
 };
 const money = v => v == null ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString();
 const num = v => { const x = parseFloat(v); return isFinite(x) ? x : null; };
@@ -70,6 +71,7 @@ export function ticketInputs(d, openRow, history = null) {
   const ncd = fromFills ? num(filled.entryPrice) : num(d['Net Debit/Credit']);
   return {
     plan: exitPlanOf(d.Timestamp),
+    engine: String(d.Engine || ''),
     key: d.Timestamp || d._rowIndex, underlying: String(d.Underlying || '').toUpperCase(),
     strategy: strategyName(d.Strategy), strikes: d['Wing Strikes'] || '', notes: d.Notes || '',
     qtyOpen, contracts,
@@ -108,7 +110,7 @@ export function clearCheckupCache() { lastRun = null; }
  * one, without displacing the shared pass. Null for anything that isn't 45DTE.
  */
 export async function checkupFor(dec, openRow, { bridgeUrl = bridgeUrlOf() } = {}) {
-  if (!dec || !/45/.test(String(dec.Engine || '')) || !bridgeUrl) return null;
+  if (!dec || !/45|0DTE/i.test(String(dec.Engine || '')) || !bridgeUrl) return null;
   const key = dec.Timestamp || dec._rowIndex;
   if (lastRun && Date.now() - lastRun.at < CACHE_MS) {
     const res = lastRun.result || await lastRun.promise.catch(() => null);
@@ -120,7 +122,9 @@ export async function checkupFor(dec, openRow, { bridgeUrl = bridgeUrlOf() } = {
 }
 
 async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
-  const list = (tickets || []).filter(d => /45/.test(String(d.Engine || '')));
+  // 45DTE and, since Oct 2026, 0DTE: one pass, so the board, the Sell ticket and the
+  // check-up card read the same live mark for every open trade.
+  const list = (tickets || []).filter(d => /45|0DTE/i.test(String(d.Engine || '')));
   const todayYmd = tradingSession().yyyymmdd;
   let open = openPositions;
   if (!open) { try { open = await api.getOpenPositions(); } catch (e) { open = []; } }
@@ -179,8 +183,15 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
         if (!ok) quoteErr = 'some legs had no quote — P&L not computed';
       } else quoteErr = (g && g.error) || 'no quotes';
     }
-    const review = reviewOpen45({ strategy: t.strategy, legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, now,
-      trend: vs.trend || null, underlying: t.underlying, stopPct: t.plan && t.plan.stopPct, targetPct: t.plan && t.plan.targetPct });
+    const is0 = /0DTE/i.test(t.engine || '');
+    // 0DTE: the move left to the bell, from the ATM IV, for "how close is close".
+    const minsLeft = Math.max(1, 16 * 60 - nyMinutes(new Date()));
+    const sd0 = now.spot > 0 && now.iv > 0 ? now.spot * (now.iv / 100) * Math.sqrt(minsLeft / (390 * 252)) : null;
+    const review = is0
+      ? review0({ legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, underlying: t.underlying, strategy: t.strategy,
+          now: { mark: now.mark, spot: now.spot, sd: sd0, at: new Date() }, stopPct: t.plan && t.plan.stopPct, targetPct: t.plan && t.plan.targetPct })
+      : reviewOpen45({ strategy: t.strategy, legs: legs || [], qtyOpen: t.qtyOpen, entry: t.entry, now,
+          trend: vs.trend || null, underlying: t.underlying, stopPct: t.plan && t.plan.stopPct, targetPct: t.plan && t.plan.targetPct });
 
     // "Short to roughly 25-30 delta" left the reader to find the strike. When a roll
     // is the action, ask the chain which LISTED strike that actually is, and quote

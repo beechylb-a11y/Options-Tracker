@@ -38,7 +38,12 @@ export const needsAction = a => URGENCY[a] != null && URGENCY[a] <= 1;
 /** Everything one row shows, from the open-position row, its roll chain, expiry and check-up. */
 export function boardRow(r, { chain = null, expiry = null, check = null } = {}) {
   const pos = normalisePosition(r);
-  const working = r.status === STATUS.WORKING || r.status === STATUS.PART_FILLED;
+  // Only a ticket with NOTHING filled is "working". A part-filled one is a live
+  // position for the contracts that filled, plus an order still resting for the rest —
+  // IWM showed WORKING, "order resting", no P&L with 7 of 9 contracts on. (Oct 2026.)
+  const qf = r.qtyFilled === '' || r.qtyFilled == null ? null : n(r.qtyFilled);
+  const working = r.status === STATUS.WORKING || (r.status === STATUS.PART_FILLED && !(qf > 0));
+  const resting = qf != null ? Math.max(0, n(r.qty) - qf) : 0;
   const rv = check && check.review;
   const m = (rv && rv.metrics) || {};
   const action = working ? 'working' : rv && rv.action !== 'unknown' ? rv.action : (rv ? 'unknown' : 'open');
@@ -58,7 +63,8 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
   return {
     key: r.ticketRef, r, check, action, tone, label, headline: rv && rv.action !== 'unknown' ? rv.headline : null,
     underlying: pos.underlying, strikes: parseStrikes(r.legs || ''), strategy, qtyOpen, qty: n(r.qty),
-    engine: pos.engine, is45: /45/.test(pos.engine || ''),
+    engine: pos.engine, is45: /45/.test(pos.engine || ''), is0: /0DTE/i.test(pos.engine || ''), resting,
+    minutesToExit: m.minutesToExit, minutesToBell: m.minutesToBell, minutesToLastCall: m.minutesToLastCall, settle: m.settle, phase: m.phase,
     expiry: exp, dte, closeYmd, daysToClose, daysHeld: m.daysHeld, planDays: m.planDays, events: m.events || [],
     banked, chain, ticketPnl, posPnl: ticketPnl != null ? ticketPnl + banked : null,
     // The check-up's own numbers when it ran (so this row and the card under it are
@@ -156,7 +162,36 @@ function MiniStrip({ row }) {
   );
 }
 
+// 0DTE: hours to the 15:00 exit (to the bell once past it), and how it settles.
+function ClockRing0({ row }) {
+  const toExit = row.minutesToExit, toBell = row.minutesToBell;
+  const pastExit = toExit != null && toExit <= 0;
+  // Past 15:00 the clock runs to the last moment to act: 15:45 for anything that
+  // settles into shares, the bell for cash-settled.
+  const toEnd = row.settle === 'shares' ? row.minutesToLastCall : toBell;
+  const mins = toExit == null ? null : pastExit ? Math.max(0, toEnd ?? toBell) : toExit;
+  const r = 15, c = 2 * Math.PI * r;
+  const used = mins == null ? 0 : Math.max(0.04, Math.min(1, 1 - mins / (pastExit ? (row.settle === 'shares' ? 45 : 60) : 330)));
+  const col = mins == null ? C.grey : pastExit || mins <= 30 ? (row.settle === 'shares' && pastExit ? C.red : C.amber) : C.blue;
+  const txt = mins == null ? '0d' : mins >= 60 ? `${(mins / 60).toFixed(1)}h` : `${mins}m`;
+  return (
+    <div data-testid="board-time" style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+      title={row.settle === 'cash' ? 'Cash settled — no assignment' : row.settle === 'shares' ? 'Settles into shares — close by 15:45' : ''}>
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r={r} fill="none" stroke="#21262d" strokeWidth="5" />
+        <circle cx="20" cy="20" r={r} fill="none" stroke={col} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 20 20)" />
+        <text x="20" y="24" textAnchor="middle" fontSize={txt.length > 3 ? 10 : 11.5} fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{txt}</text>
+      </svg>
+      <div style={{ fontSize: 11.5, lineHeight: 1.35, color: C.grey }}>
+        <div className="mono" style={{ color: col, fontWeight: 700 }}>{pastExit ? (row.settle === 'shares' ? 'out by 15:45' : 'bell 16:00') : 'exit 15:00'}</div>
+        <div>{row.settle === 'cash' ? 'cash settled' : row.settle === 'shares' ? 'into shares' : ''}</div>
+      </div>
+    </div>
+  );
+}
+
 function TimeRing({ row }) {
+  if (row.is0) return <ClockRing0 row={row} />;
   const days = row.daysToClose != null ? row.daysToClose : row.dte;
   const label = row.daysToClose != null ? `close by ${fmtYmd(row.closeYmd)}` : row.dte != null ? (row.dte <= 0 ? 'expires today' : `expires ${fmtYmd(row.expiry)}`) : '';
   if (days == null) return <span style={{ color: C.dim, fontSize: 12 }}>—</span>;
@@ -197,6 +232,7 @@ function Menu({ row, on }) {
     ['Details', 'details'], ['Edit', 'edit'],
     ...(row.working ? [['Cancel order', 'cancel']] : [['Sell', 'sell']]),
     ...(!row.working && row.is45 ? [['Roll', 'roll']] : []),
+    ...(!row.working && row.resting > 0 ? [['Enter fills', 'reconcile']] : []),
   ];
   return (
     <span style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
@@ -215,6 +251,29 @@ function Menu({ row, on }) {
   );
 }
 
+// The 0DTE check-up, opened under its row: the verdict's advice — what the clock and
+// the settlement style mean for this position right now.
+function Card0({ row }) {
+  const rv = row.check && row.check.review;
+  if (!rv) return null;
+  const m = rv.metrics || {};
+  const col = TONES[rv.tone] || TONES.grey;
+  return (
+    <div data-testid="card0" style={{ border: `1px solid ${C.line}`, borderLeft: `4px solid ${col}`, borderRadius: 10, padding: 12, background: C.panel }}>
+      <div style={{ color: col, fontWeight: 700, fontSize: 14 }}>{rv.headline}</div>
+      <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13, color: '#c9d1d9', lineHeight: 1.5 }}>
+        {rv.steps.map((t, i) => <li key={i}>{t}</li>)}
+      </ul>
+      <div className="mono" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: C.grey, marginTop: 8 }}>
+        {m.closePrice != null && <span>close now @{m.closePrice.toFixed(2)} {m.isCredit ? 'db' : 'cr'}</span>}
+        {m.atExpiry$ != null && <span>if it settles here {m.atExpiry$ >= 0 ? '+' : '−'}${Math.abs(m.atExpiry$).toLocaleString()}</span>}
+        {m.max$ != null && <span>max +${m.max$.toLocaleString()}</span>}
+        <span>{m.settle === 'cash' ? 'cash settled' : 'settles into shares'}</span>
+      </div>
+    </div>
+  );
+}
+
 function BoardRow({ row, on, narrow }) {
   const [open, setOpen] = useState(false);
   const pr = primaryOf(row);
@@ -230,7 +289,10 @@ function BoardRow({ row, on, narrow }) {
         {row.expiry && <span style={{ whiteSpace: 'nowrap' }}>{fmtYmd(row.expiry)}</span>}
       </div>
       <div style={{ fontSize: 12, color: row.headline ? accent : C.grey, marginTop: 2 }}>
-        {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}` : row.is45 ? 'no check-up yet' : `${row.engine || ''} · ${row.entry ? `${row.entry.side} ${row.entry.price.toFixed(2)}` : ''}`)}
+        {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}` : 'no live quote yet')}
+        {!row.working && row.resting > 0 && (
+          <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: '#bc8cff', border: '1px solid #8957e5' }}>+{row.resting} resting</span>
+        )}
       </div>
     </div>
   );
@@ -269,7 +331,7 @@ function BoardRow({ row, on, narrow }) {
         )}
       </div>
       {open && row.check && (
-        <div data-testid="board-checkup" style={{ padding: '0 10px 10px' }}><CheckupCard row={row.check} /></div>
+        <div data-testid="board-checkup" style={{ padding: '0 10px 10px' }}>{row.is0 ? <Card0 row={row} /> : <CheckupCard row={row.check} />}</div>
       )}
     </div>
   );

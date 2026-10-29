@@ -290,3 +290,37 @@ export function positionForTicket(ticket, structures) {
   }
   return null;
 }
+
+/**
+ * The TWS fills that CLOSED a ticket (Oct 2026). The Sell ticket used to record the
+ * close at the tranche's target price and an estimated commission — IWM 278/280/283
+ * was recorded sold at 0.54 when TWS sold it at 0.52. These are the combo fills on the
+ * ticket's strikes, on the other side from the entry, on or after the entry date, and
+ * not already recorded (their key is written into the close's notes).
+ *
+ * @param tranches  comboTranches() output
+ * @param t         { underlying, strikes:[], isCredit, entryDate 'YYYY-MM-DD', recordedNotes:[] }
+ * @returns { tranches, qty, avgPrice (per share, close side, positive), exitFees, time, keys } | null
+ */
+export function closingFills(tranches, { underlying, strikes = [], isCredit, entryDate = '', recordedNotes = [] } = {}) {
+  const want = [...new Set((strikes || []).map(Number).filter(x => x > 0))].sort((a, b) => a - b).join('/');
+  // Exact keys only: the last fill in a second has the plain key, which is a prefix of
+  // the others' suffixed keys, so a substring test would skip the wrong ones.
+  const done = new Set((recordedNotes || []).join(' ').split(/[\s\[\],]+/).filter(Boolean));
+  const mine = (tranches || []).filter(tr =>
+    symOf(tr.underlying) === symOf(underlying)
+    && tr.strikes.join('/') === want
+    // Entry was a credit (+): the close is a debit (−). Entry a debit: the close is a credit.
+    && (isCredit ? tr.netPrice < 0 : tr.netPrice > 0)
+    && (!entryDate || tr.date >= entryDate)
+    && !done.has(tr.key));
+  if (!mine.length) return null;
+  const qty = mine.reduce((a, tr) => a + tr.lots, 0);
+  const avg = mine.reduce((a, tr) => a + Math.abs(tr.netPrice) * tr.lots, 0) / qty;
+  return {
+    tranches: mine, qty, avgPrice: +avg.toFixed(4),
+    exitFees: +mine.reduce((a, tr) => a + (tr.fees || 0), 0).toFixed(2),
+    time: mine[mine.length - 1].time, date: mine[mine.length - 1].date,
+    keys: mine.map(tr => tr.key),
+  };
+}

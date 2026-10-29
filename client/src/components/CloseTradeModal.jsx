@@ -68,7 +68,7 @@ export default function CloseTradeModal({ trade, type, onClose, onClosed, toast 
   // modal shows manual-entry fields mirroring what the fetch would populate,
   // instead of a fetch button that would always come back empty.
   const acct = (trade.Account || trade.account || '').toLowerCase();
-  const MANUAL_ACCOUNT_PREFIXES = ['papertrade']; // extend if other accounts don't use TWS
+  const MANUAL_ACCOUNT_PREFIXES = []; // accounts that never use TWS (PaperTrade does now, via the paper login)
   const isManualAccount = MANUAL_ACCOUNT_PREFIXES.some(p => acct.startsWith(p));
 
   // Derive P&L on the contracts ACTUALLY being closed. This used the whole

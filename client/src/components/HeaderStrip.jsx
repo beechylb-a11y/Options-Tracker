@@ -99,6 +99,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [config, setConfig] = useState(null);
   const [lastSynced, setLastSynced] = useState(null);
   const [engineOpen, setEngineOpen] = useState(0);   // open engine tickets (Shadowbook)
+  const [engineWorking, setEngineWorking] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [sheetsState, setSheetsState] = useState(authenticated ? 'ok' : 'off');
   const [bridgeState, setBridgeState] = useState('off');
@@ -116,7 +117,11 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
       api.getStats(account).catch(() => null),
       Promise.resolve().then(() => api.getOpenPositions(account)).catch(() => null),
     ]).then(([t, d, s, op]) => {
-      if (Array.isArray(op)) setEngineOpen(op.filter(r => Number(r.qtyOpen) > 0).length);
+      if (Array.isArray(op)) {
+        setEngineOpen(op.filter(r => Number(r.qtyOpen) > 0).length);
+        // Working = an order with nothing filled yet; the board lists it too, so say so.
+        setEngineWorking(op.filter(r => !(Number(r.qtyOpen) > 0) && !(Number(r.qtyFilled) > 0) && Number(r.qty) > 0).length);
+      }
       if (t === null) { setSheetsState('err'); return; }
       setSheetsState('ok');
       setTracker(t);
@@ -252,6 +257,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
             <div className="flex items-baseline gap-1.5">
               <span className="text-[12px] text-text-faint uppercase tracking-wider">Open</span>
               <span className="mono text-sm font-bold text-text">{openCount}</span>
+              {engineWorking > 0 && <span className="text-[12px]" style={{ color: '#bc8cff' }}>· {engineWorking} working</span>}
             </div>
           </>
         )}

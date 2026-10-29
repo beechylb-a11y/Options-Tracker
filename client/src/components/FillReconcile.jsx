@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
 import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide, positionForTicket } from '../utils/fillMatch';
 import { fillStats } from '../engine/fills';
+import { strategyWithCount } from './EditTicketModal';
 
 // Reconcile working orders against what TWS actually filled.
 //
@@ -23,6 +24,24 @@ const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; 
 const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
 
 export default function FillReconcile({ positions, account, onClose, onDone }) {
+  const [cancelling, setCancelling] = useState(null);
+  const [cancelMsg, setCancelMsg] = useState('');
+  async function cancelRest(ticket, keep) {
+    if (!(keep > 0)) return;
+    if (!window.confirm(`Cut ticket ${ticket.ticketRef} from ${ticket.qty} to the ${keep} that filled? Cancel the rest of the order in TWS too.`)) return;
+    setCancelling(ticket.ticketRef); setCancelMsg('');
+    const k = keep / Number(ticket.qty);
+    const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+    const patch = { contracts: keep, strategy: strategyWithCount(ticket.strategy || '', keep) };
+    if (num(ticket.maxRisk) != null) patch.maxRisk = Math.round(num(ticket.maxRisk) * k * 100) / 100;
+    if (num(ticket.maxProfit) != null) patch.maxProfit = Math.round(num(ticket.maxProfit) * k * 100) / 100;
+    try {
+      await api.editTicket(ticket.ticketRef, patch);
+      setCancelMsg(`Ticket ${ticket.ticketRef} cut to ${keep} — the rest cancelled.`);
+      onDone && onDone();
+    } catch (e) { setCancelMsg('Could not cut the ticket: ' + e.message); }
+    setCancelling(null);
+  }
   const [phase, setPhase] = useState('pull');        // pull | review | writing | done
   const [err, setErr] = useState(null);
   const [tranches, setTranches] = useState([]);
@@ -200,6 +219,16 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
                             {ticket.legs} · {outstanding} of {ticket.qty} still resting
                             {ticket.limitPrice !== '' && ticket.limitPrice != null && ` · asked ${ticket.limitPrice}`}
                           </span>
+                          {/* Cancel the rest (Oct 2026): an order that will not fill completely is
+                              cut to what filled in one step — no editing the contracts by hand. */}
+                          {outstanding > 0 && outstanding < Number(ticket.qty) && (
+                            <button type="button" data-testid={`cancel-rest-${ticket.ticketRef}`} disabled={phase === 'writing' || cancelling === ticket.ticketRef}
+                              onClick={() => cancelRest(ticket, Number(ticket.qty) - outstanding)}
+                              title="Cancel the unfilled contracts in TWS first. This cuts the ticket to what filled; max profit and risk scale with it."
+                              style={{ marginLeft: 10, padding: '2px 9px', borderRadius: 6, border: '1px solid #8957e5', background: 'transparent', color: '#bc8cff', fontSize: 12, cursor: 'pointer' }}>
+                              {cancelling === ticket.ticketRef ? 'Cutting…' : `Cancel the rest — keep ${Number(ticket.qty) - outstanding}`}
+                            </button>
+                          )}
                         </td>
                       </tr>
                       {!candidates.length && (
@@ -359,6 +388,7 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
               <span style={{ fontSize: 12, color: '#8b949e' }}>
                 Times are as TWS reported them.
               </span>
+              {cancelMsg && <span data-testid="cancel-rest-msg" style={{ fontSize: 12.5, color: /Could not/.test(cancelMsg) ? '#f85149' : '#bc8cff' }}>{cancelMsg}</span>}
             </div>
           </>
         )}

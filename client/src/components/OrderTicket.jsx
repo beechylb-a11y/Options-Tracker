@@ -17,6 +17,7 @@ import { rollChain } from '../engine/rollChain';
 import { checkupFor } from './Checkup45';
 import { TicketHeader, PnlLadder, RollBeforeAfter } from './TicketVisual';
 import { legsFromNotes } from '../utils/positionMatch';
+import { comboTranches, closingFills } from '../utils/fillMatch';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -39,7 +40,10 @@ const inp = {
   color: '#e6edf3', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%'
 };
 const lbl = { fontSize: 11.5, color: '#a8b2be', display: 'block', marginBottom: 3 };
-const MANUAL_ACCOUNT_PREFIXES = ['papertrade'];
+// Accounts that never trade through TWS. PaperTrade used to be one; it trades in the
+// TWS paper login now, so it reads fills like any other account (Oct 2026 — the TWS
+// fills button and the closing-fill lookup were hidden for it).
+const MANUAL_ACCOUNT_PREFIXES = [];
 
 
 // The ticket prices off what was GOT (Oct 2026). OpenPositions rows arrive converted;
@@ -118,11 +122,62 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // What the contracts being recorded actually cost. The stop line below keeps the round
   // trip either way — a stop IS a trade out, so it pays both sides whatever this ticket
   // is being used for right now.
-  const exitFees = q => expired ? oneSideCommission(units, q, commission) : rtFees(q);
+  // Real commissions where TWS has them (Oct 2026): the entry's from the Fills table,
+  // the exit's from the TWS closing fills; the account rate only for what is missing.
+  // IWM was charged $41.60 by the estimate and $31.66 by IBKR.
+  const [entryFeeLot, setEntryFeeLot] = useState(null);   // $ per lot, from recorded fills
+  const [twsClose, setTwsClose] = useState(null);          // closingFills() result
+  const exitFees = q => {
+    const entryPart = entryFeeLot != null ? entryFeeLot * q : oneSideCommission(units, q, commission);
+    if (expired) return round2(entryPart);
+    const exitPart = twsClose && twsClose.qty > 0 ? (twsClose.exitFees / twsClose.qty) * q : oneSideCommission(units, q, commission);
+    return round2(entryPart + exitPart);
+  };
   const [closeDate, setCloseDate] = useState(lastSessionDate());   // NY session date, not UTC
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+
+  // On open: the entry commission actually paid, and whether TWS already closed this.
+  const [twsNote, setTwsNote] = useState('');
+  useEffect(() => {
+    let live = true;
+    if (pos.ticketRef && api.getFills) {
+      Promise.resolve().then(() => api.getFills(pos.account || undefined, pos.ticketRef)).then(rows0 => {
+        const mine = (Array.isArray(rows0) ? rows0 : []).filter(f => String(f['Ticket Ref'] ?? f.ticketRef) === String(pos.ticketRef));
+        const q = mine.reduce((a, f) => a + (parseFloat(f['Qty Filled'] ?? f.qtyFilled) || 0), 0);
+        const fe = mine.reduce((a, f) => a + (parseFloat(f['Fees ($)'] ?? f.feesUsd ?? f.fees) || 0), 0);
+        if (live && q > 0 && fe > 0) setEntryFeeLot(fe / q);
+      }).catch(() => {});
+    }
+    let bridgeUrl = '';
+    try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    if (!bridgeUrl || isManual || !(pos.qtyOpen > 0)) return () => { live = false; };
+    fetch(bridgeUrl + '/api/executions?all=1', { headers: { 'ngrok-skip-browser-warning': '1' } })
+      .then(r => r.json())
+      .then(d => {
+        const c = closingFills(comboTranches(d.fills || []), {
+          underlying: pos.underlying, strikes: String(pos.legs || '').split(/[\/|,\s]+/).map(Number).filter(x => x > 0),
+          isCredit: pos.isCredit, entryDate: pos.entryDate || '',
+          recordedNotes: (position.closes || []).map(c0 => c0.notes || ''),
+        });
+        if (!live || !c) return;
+        setTwsClose(c);
+        // Put them on the ticket straight away — the price TWS got, not the target.
+        const q = Math.min(c.qty, pos.qtyOpen);
+        const px = +c.avgPrice.toFixed(2);
+        const tPct = priceToTarget(pos, px);
+        setRows(rs => {
+          const rest = pos.qtyOpen - q;
+          const out = [{ qty: q, pct: tPct != null ? round2(tPct) : '', price: px, status: 'Filled', fill: px, tws: true }];
+          if (rest > 0) out.push(...rs.filter(r => r.status !== 'Filled').slice(0, 1).map(r => ({ ...r, qty: rest })));
+          return out;
+        });
+        setTwsNote(`TWS ${pos.isCredit ? 'bought back' : 'sold'} ${c.qty} @ ${c.avgPrice.toFixed(2)} at ${c.time} ET · exit commission $${c.exitFees.toFixed(2)} — filled in below`);
+      }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── tranche rows ────────────────────────────────────────────────────────
   // Seeded from the plan saved at entry (engine profit-taker ladder) when there is
@@ -221,7 +276,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
         // value. Say that, so the exit-reason review can tell the two apart.
         const label = expired
           ? `Expired — settlement value ${isFinite(p) ? p.toFixed(2) : '—'}`
-          : `T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${parseFloat(r.price).toFixed(2)} ${side}`;
+          : `T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${p.toFixed(2)} ${side}${Math.abs(p - parseFloat(r.price)) > 0.004 ? ` (limit ${parseFloat(r.price).toFixed(2)})` : ''}`
+            + (r.tws && twsClose ? ` — TWS ${twsClose.date} ${twsClose.time} ET, IBKR commission [${twsClose.keys.join(' ')}]` : '');
         await api.closeTicket(pos.ticketRef, {
           closeDate, closePrice: p, qtyClosed: q, fees,
           grossPnl: pnlAt(pos, p, q),
@@ -460,6 +516,15 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           )}
 
+          {twsNote && (() => {
+            const off = twsClose && rows.some(r => r.status === 'Filled' && r.fill !== '' && Math.abs(parseFloat(r.fill) - twsClose.avgPrice) > 0.004);
+            return (
+              <div data-testid="tws-close" style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 10, fontSize: 12.5,
+                background: off ? '#1f1a0d' : '#0d2818', border: `1px solid ${off ? '#9e6a03' : '#238636'}`, color: off ? '#e3b341' : '#3fb950' }}>
+                ⚡ {twsNote}{off && <> — <b>a fill below differs from TWS ({twsClose.avgPrice.toFixed(2)})</b></>}
+              </div>
+            );
+          })()}
           {!expired && !noEntry && (
             <PnlLadder pos={pos} qtyOpen={pos.qtyOpen} banked={bankedAll} stopPrice={stopPrice} nowPrice={nowClosePrice}
               targets={rows.map((r, i) => ({ label: `T${i + 1}`, price: parseFloat(r.status === 'Filled' && r.fill !== '' ? r.fill : r.price), qty: Number(r.qty) || 0, filled: r.status === 'Filled' }))} />

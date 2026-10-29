@@ -14,6 +14,7 @@ import { rollChain } from '../engine/rollChain';
 import { stopOf, entryOf, targetOf, liveRiskOf, liveRiskTotal } from '../utils/positionLines';
 import PositionBoard, { boardRow } from './PositionBoard';
 import { runCheckup, bridgeUrlOf } from './Checkup45';
+import { nyMinutes } from '../engine/review0';
 
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
 // The server files a trade by its New York session (an after-close log rolls to the
@@ -107,7 +108,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
   // cache: whichever screen asks first, the other reuses it). (Oct 2026.)
   async function recheck(force = false) {
     if (!compact || !decisions) return;
-    const tickets = rows.filter(r => /45/.test(r.engine || '') && !(r.status === STATUS.WORKING))
+    const tickets = rows.filter(r => /45|0DTE/i.test(r.engine || '') && !(r.status === STATUS.WORKING))
       .map(r => decisions.find(d => (r.timestamp && d.Timestamp === r.timestamp) || Number(d._rowIndex) === Number(r.ticketRef)))
       .filter(Boolean);
     if (!tickets.length) return;
@@ -123,6 +124,17 @@ export default function OpenPositions({ authenticated, account, compact = false,
     } catch (e) { setCheck(c => ({ ...c, busy: false, err: e.message })); }
   }
   useEffect(() => { recheck(false); }, [decisions]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A 0DTE position moves by the minute: refresh the shared pass every minute while one
+  // is open and the market is. (45DTE rides along; the pass is cached either way.)
+  useEffect(() => {
+    if (!compact || !rows.some(r => /0DTE/i.test(r.engine || '') && Number(r.qtyOpen) > 0)) return undefined;
+    const id = setInterval(() => {
+      const mins = nyMinutes(new Date());
+      const dow = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short' });
+      if (!/Sat|Sun/.test(dow) && mins >= 9 * 60 + 30 && mins <= 16 * 60 + 5) recheck(true);
+    }, 60000);
+    return () => clearInterval(id);
+  }, [compact, rows, decisions]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // The ticket ref IS the 1-based Decisions row, which is what the status route
   // addresses, so no lookup is needed.
