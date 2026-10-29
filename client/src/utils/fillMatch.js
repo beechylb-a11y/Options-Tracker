@@ -60,6 +60,8 @@ const secsOf = time => {
   const m = /^(\d{4})(\d{2})(\d{2})[\s\-T]*(\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(time || '').trim());
   return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 1000 : null;
 };
+// "00020057.6ae1e1c9.02.01" → "00020057.6ae1e1c9": the same on every leg of one fill.
+const execGroupOf = e => { const m = /^([0-9a-f]+\.[0-9a-f]+)\.\d+\.\d+$/i.exec(String(e && e.execId || '')); return m ? m[1] : null; };
 const legIdOf = e => `${e.strike}|${String(e.right || '').toUpperCase()}|${String(e.expiry || '').slice(0, 8)}`;
 // Legs of one combo fill can straddle a second boundary. A leg joins the open
 // tranche of its order when it is within this many seconds of it and that tranche
@@ -82,18 +84,37 @@ export function comboTranches(executions) {
     if (!(qty > 0) || price == null) continue;
     clean.push({ ...e, qty, price, _ok: orderKeyOf(e), _s: secsOf(e.time) });
   }
-  clean.sort((a, b) => a._ok.localeCompare(b._ok) || (a._s ?? 0) - (b._s ?? 0));
-  const byTranche = new Map();
+  clean.sort((a, b) => a._ok.localeCompare(b._ok) || (a._s ?? 0) - (b._s ?? 0)
+    || String(execGroupOf(a) || '').localeCompare(String(execGroupOf(b) || '')));
+  // Group the legs of each combo fill. TWS gives every leg of one fill the same
+  // execution-id stem ("00020057.6ae1e1c9.02.01" → "00020057.6ae1e1c9"), so that is the
+  // grouping when it is there; the time-and-gap rule is the fallback for payloads
+  // without ids. (Oct 2026: IWM 278/280/283 filled 1 and 5 lots in the SAME second —
+  // the order+second key put both under one id, the second overwrote the first, and
+  // the 1-lot vanished from the reconcile screen.)
+  const groups = [];
   let cur = null;
   for (const e of clean) {
-    const fits = cur && cur.ok === e._ok && e._s != null && cur.s != null
-      && e._s - cur.s <= TRANCHE_GAP_S && !cur.ids.has(legIdOf(e));
-    if (!fits) {
-      cur = { ok: e._ok, s: e._s, ids: new Set(), key: trancheOf(e) };
-      byTranche.set(cur.key, []);
-    }
+    const g = execGroupOf(e);
+    const fits = cur && cur.ok === e._ok && (g && cur.g
+      ? cur.g === g
+      : (e._s != null && cur.s != null && e._s - cur.s <= TRANCHE_GAP_S && !cur.ids.has(legIdOf(e))));
+    if (!fits) { cur = { ok: e._ok, s: e._s, g, ids: new Set(), legs: [] }; groups.push(cur); }
     cur.ids.add(legIdOf(e));
-    byTranche.get(cur.key).push(e);
+    cur.legs.push(e);
+  }
+  // The key (and so the Fills id) stays order@second, as before, so fills already
+  // recorded are still recognised. Only when two fills share that second do the EARLIER
+  // ones get a suffix — the last one keeps the plain key, because the last one is what
+  // the old code kept and may already be recorded under it.
+  const byBase = new Map();
+  groups.forEach(gr => { const k = trancheOf(gr.legs[0]); (byBase.get(k) || byBase.set(k, []).get(k)).push(gr); });
+  const byTranche = new Map();
+  for (const [base, grs] of byBase) {
+    grs.forEach((gr, i) => {
+      const key = i === grs.length - 1 ? base : `${base}#${gr.g || i + 1}`;
+      byTranche.set(key, gr.legs);
+    });
   }
   const out = [];
   for (const [key, legs] of byTranche) {
