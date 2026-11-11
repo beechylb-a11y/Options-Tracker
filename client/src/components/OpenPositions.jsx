@@ -13,7 +13,8 @@ import { STOP_LOSS_PCT } from '../engine/data';
 import { rollChain } from '../engine/rollChain';
 import { stopOf, entryOf, targetOf, liveRiskOf, liveRiskTotal } from '../utils/positionLines';
 import PositionBoard, { boardRow } from './PositionBoard';
-import { runCheckup, bridgeUrlOf } from './Checkup45';
+import { runCheckup, bridgeUrlOf, clearCheckupCache } from './Checkup45';
+import { payoffShape } from '../engine/positionPlan';
 import { nyMinutes } from '../engine/review0';
 
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
@@ -158,6 +159,25 @@ export default function OpenPositions({ authenticated, account, compact = false,
     } finally { setCancelling(null); }
   }
 
+  // The check-up found the position in TWS at other strikes than the ticket says (an
+  // order filled a strike off, or the strikes were logged wrong). One click puts the
+  // ticket on TWS's strikes — the server moves the Legs line with them — and resets max
+  // risk / profit for those strikes at the entry. (Nov 2026.)
+  async function fixStrikes(r, mm) {
+    if (!mm || !mm.tws) return;
+    if (!window.confirm(`Change the ${r.underlying} ticket from ${mm.ticket} to ${mm.tws}, the strikes TWS holds?`)) return;
+    const patch = { wingStrikes: mm.tws.split('/').join(' / ') };
+    const ncd = parseFloat(r.avgEntry || r.entryPrice);
+    const q = parseFloat(r.qty) || 1;
+    const sh = mm.legs && isFinite(ncd) ? payoffShape(mm.legs, ncd) : null;
+    if (sh) { patch.maxProfit = Math.round(sh.maxProfit * 100 * q); patch.maxRisk = Math.round(-sh.maxLoss * 100 * q); }
+    try {
+      await api.editTicket(r.ticketRef, patch);
+      clearCheckupCache();
+      setReload(x => x + 1);
+    } catch (e) { setErr('Could not fix the strikes: ' + e.message); }
+  }
+
   const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
   // Risk still live is the OPEN portion only — the closed contracts cannot lose
   // any more, and counting them would overstate exposure on every partial.
@@ -228,13 +248,14 @@ export default function OpenPositions({ authenticated, account, compact = false,
 
   // Dashboard: the board — verdict, P&L, stop→target, price against the strikes, time.
   if (compact) {
-    const on = (k, r) => {
+    const on = (k, r, extra) => {
       if (k === 'details') setDetail(r);
       else if (k === 'edit') setEditing(r);
       else if (k === 'sell') setTicket({ row: r, tab: 'close' });
       else if (k === 'roll') setTicket({ row: r, tab: 'roll' });
       else if (k === 'cancel') cancelTicket(r);
       else if (k === 'reconcile') setReconciling(r);
+      else if (k === 'fix-strikes') fixStrikes(r, extra);
     };
     const board = rows.map(r => boardRow(r, { chain: chains[r.ticketRef] || null, expiry: expiries[r.ticketRef] || null, check: check.byTs[Number(r.ticketRef)] || check.byTs[r.timestamp] || null }));
     return (

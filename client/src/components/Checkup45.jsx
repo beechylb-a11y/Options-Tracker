@@ -151,7 +151,9 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
 
   const out = [];
   for (const t of inputs) {
-    const m = matchTicketLegs({ ...t, todayYmd }, raw);
+    // Other open tickets' strikes, so a shape match never takes a position that is theirs.
+    const claimed = inputs.filter(o => o !== t && o.underlying === t.underlying).map(o => o.strikes);
+    const m = matchTicketLegs({ ...t, todayYmd, claimed }, raw);
     let legs = m.legs, source = m.legs ? 'TWS' : null;
     if (!legs) { legs = legsFromNotes(t.notes); source = legs ? 'ticket notes' : null; }
     const vs = surf[t.underlying] || {};
@@ -171,16 +173,18 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
         + '&legs=' + encodeURIComponent(JSON.stringify(legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
       if (g && !g.error && Array.isArray(g.legs)) {
         let mark = 0, ok = true;
+        const unquoted = [];
         legs = legs.map((l, i) => {
           const gl = g.legs[i] && g.legs[i].greeks;
           const mid = gl && gl.bid != null && gl.ask != null ? (gl.bid + gl.ask) / 2 : gl && gl.optPrice;
-          if (mid == null) ok = false; else mark += l.qty * mid;
+          if (mid == null) { ok = false; unquoted.push(`${l.strike}${l.right}`); } else mark += l.qty * mid;
           return { ...l, iv: gl ? gl.iv : null, delta: gl ? gl.delta : null };
         });
         spotFromGreeks = num(g.undPrice) > 0;
         now = { ...now, mark: ok ? mark : undefined, spot: num(g.undPrice) || now.spot,
           delta: g.net ? g.net.delta : undefined, theta: g.net ? g.net.theta : undefined, vega: g.net ? g.net.vega : undefined };
-        if (!ok) quoteErr = 'some legs had no quote — P&L not computed';
+        // Name the leg: "some legs had no quote" left nothing to check. (Nov 2026.)
+        if (!ok) quoteErr = `no quote for ${unquoted.join(', ')}`;
       } else quoteErr = (g && g.error) || 'no quotes';
     }
     const is0 = /0DTE/i.test(t.engine || '');
@@ -237,6 +241,7 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
     }
     out.push({ t, openRow: openByTs[t.key] || null,
       legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
+      mismatch: m.legs && m.mismatch ? { ...m.mismatch, legs: m.legs } : null,
       spot: now.spot, roll,
       // The greeks' undPrice overrides the surface spot where it exists, so a stale
       // surface price only stands if the greeks had none either.

@@ -34,7 +34,54 @@ const symOf = u => {
  * @param raw TWS option legs [{ underlying, expiry, strike, right, qty (signed, total) }]
  * @returns   { legs: [{ strike, right, qty per lot, expiry }], source, note } | { legs: null, note }
  */
+const strikeKey = ks => [...new Set(ks.map(Number))].sort((a, b) => a - b).join('/');
+
+/**
+ * The ticket's strikes match nothing in TWS — but the order may simply have filled at
+ * other strikes than were logged (SPY 11 Nov: logged 753/757/762, TWS held 753/756/761,
+ * and the check-up gave up). Find the ONE TWS position in this symbol with the same
+ * shape as the ticket's legs — same rights, same per-lot quantities, strike for strike
+ * from the bottom — that no other open ticket owns. None, or more than one: no guess.
+ */
+export function matchByShape(t, raw) {
+  const shape = legsFromNotes(t.notes);
+  if (!shape) return null;
+  const today = t.todayYmd || '00000000';
+  const claimed = new Set((t.claimed || []).map(s => strikeKey(parseStrikes(s))));
+  const want = [...shape].sort((a, b) => a.expiry.localeCompare(b.expiry) || a.strike - b.strike);
+  const byExp = {};
+  (raw || []).filter(l => symOf(l.underlying) === symOf(t.underlying) && String(l.expiry).slice(0, 8) >= today && l.qty)
+    .forEach(l => { const e = String(l.expiry).slice(0, 8); (byExp[e] = byExp[e] || []).push(l); });
+  const hits = [];
+  for (const e of Object.keys(byExp)) {
+    const merged = {};
+    byExp[e].forEach(l => {
+      const k = `${+l.strike}${l.right}`;
+      merged[k] = merged[k] || { strike: +l.strike, right: l.right, expiry: e, qty: 0 };
+      merged[k].qty += +l.qty;
+    });
+    const legs = Object.values(merged).filter(l => l.qty !== 0).sort((a, b) => a.strike - b.strike);
+    if (legs.length !== want.length) continue;
+    const minAbs = Math.min(...legs.map(l => Math.abs(l.qty)));
+    const same = legs.every((l, i) => l.right === want[i].right && l.qty / minAbs === want[i].qty);
+    if (!same || claimed.has(strikeKey(legs.map(l => l.strike)))) continue;
+    hits.push({ legs: legs.map(l => ({ ...l, qty: l.qty / minAbs })), lots: minAbs, exact: e === want[0].expiry });
+  }
+  const pool = hits.some(h => h.exact) ? hits.filter(h => h.exact) : hits;
+  if (pool.length !== 1) return null;
+  const tws = pool[0].legs.map(l => l.strike).join('/');
+  return { legs: pool[0].legs, source: 'tws',
+    mismatch: { tws, ticket: parseStrikes(t.strikes).join('/') },
+    note: `TWS holds ${tws}; the ticket says ${parseStrikes(t.strikes).join('/')} — reading TWS` };
+}
+
 export function matchTicketLegs(t, raw) {
+  const exact = matchExact(t, raw);
+  if (exact.legs) return exact;
+  return matchByShape(t, raw) || exact;
+}
+
+function matchExact(t, raw) {
   const ks = parseStrikes(t.strikes);
   const uniq = new Set(ks);
   const today = t.todayYmd || '00000000';

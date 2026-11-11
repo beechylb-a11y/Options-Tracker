@@ -75,6 +75,10 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
     entry: entryOf(r), risk: liveRiskOf(r), working,
     legs: check && check.legs, spot: check && check.spot, shorts: m.shorts || [], ncdPos,
     nextStep: rv && rv.steps && rv.steps[0],
+    // Why there is no verdict, in words ("no quote for 762C"), and TWS holding the
+    // position at other strikes than the ticket says. (Nov 2026.)
+    quoteErr: check && check.quoteErr ? check.quoteErr : null,
+    mismatch: check && check.mismatch ? check.mismatch : null,
   };
 }
 
@@ -289,11 +293,22 @@ function BoardRow({ row, on, narrow }) {
         {row.expiry && <span style={{ whiteSpace: 'nowrap' }}>{fmtYmd(row.expiry)}</span>}
       </div>
       <div style={{ fontSize: 12, color: row.headline ? accent : C.grey, marginTop: 2 }}>
-        {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}` : 'no live quote yet')}
+        {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}`
+          : row.quoteErr ? <span data-testid="board-quote-err" style={{ color: C.amber }}>{row.quoteErr}</span>
+          : row.check ? ((row.check.review && row.check.review.headline) || 'no live quote') : (row.is45 || row.is0) ? 'checking…' : 'no live check')}
         {!row.working && row.resting > 0 && (
           <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: '#bc8cff', border: '1px solid #8957e5' }}>+{row.resting} resting</span>
         )}
       </div>
+      {row.mismatch && (
+        <div data-testid="board-mismatch" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 5, fontSize: 12, color: C.amber }}>
+          <span className="mono" style={{ whiteSpace: "nowrap" }}>⚠ TWS {row.mismatch.tws} ≠ ticket {row.mismatch.ticket}</span>
+          <button data-testid="board-fix-strikes" onClick={e => { e.stopPropagation(); on('fix-strikes', row.r, row.mismatch); }}
+            style={{ padding: '2px 8px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, color: C.amber, background: 'transparent', border: `1px solid ${C.amber}` }}>
+            Fix ticket
+          </button>
+        </div>
+      )}
     </div>
   );
   const pnl = (

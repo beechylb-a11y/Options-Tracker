@@ -1273,6 +1273,25 @@ export const EDITABLE_DECISION_FIELDS = {
   underlying: 'Underlying', strategy: 'Strategy', contracts: 'Contracts', wingStrikes: 'Wing Strikes',
   netCreditDebit: 'Net Debit/Credit', limitPrice: 'Limit Price', maxRisk: 'Max Risk', maxProfit: 'Max Profit',
 };
+// The "Legs:" line in a ticket's Notes is what the check-up falls back on when TWS
+// can't be matched. Editing Wing Strikes left it on the old strikes, so SPY 753/757/762
+// (edited from 754) kept "+1 754C" and the check-up priced a position nobody held.
+// (Nov 2026.) Map the line's strikes, lowest to highest, onto the new ones — only when
+// the count of distinct strikes is the same, so a wholly different structure is left
+// alone rather than guessed at.
+export function remapLegsLine(notes, newStrikes) {
+  const text = String(notes || '');
+  const m = /Legs:\s*([^\n]+)/.exec(text);
+  if (!m) return null;
+  const re = /([+\-−])(\d+)\s+([\d.]+)([PC])\s+(\d{8})/g;
+  const olds = [...new Set([...m[1].matchAll(re)].map(x => +x[3]))].sort((a, b) => a - b);
+  const news = [...new Set(String(newStrikes || '').split(/[\/,]/).map(x => parseFloat(x)).filter(x => isFinite(x) && x > 0))].sort((a, b) => a - b);
+  if (!olds.length || olds.length !== news.length || olds.every((k, i) => k === news[i])) return null;
+  const map = new Map(olds.map((k, i) => [k, news[i]]));
+  const line = m[1].replace(re, (all, s, q, k, r, e) => `${s}${q} ${map.get(+k)}${r} ${e}`);
+  return text.slice(0, m.index) + 'Legs: ' + line + text.slice(m.index + m[0].length);
+}
+
 export async function editDecision(rowIndex, patch, now = new Date()) {
   const { table, cols } = T('Decisions');
   const keys = Object.keys(patch || {}).filter(k => EDITABLE_DECISION_FIELDS[k]);
@@ -1290,6 +1309,11 @@ export async function editDecision(rowIndex, patch, now = new Date()) {
     if (before === after) continue;
     await setCells('Decisions', rowIndex, ix, [after]);
     changed.push({ field: k, before, after });
+    if (k === 'wingStrikes') {
+      const nCol = colOf('Notes');
+      const remapped = nCol >= 0 ? remapLegsLine(cur[cols[nCol].col], after) : null;
+      if (remapped != null) await setCells('Decisions', rowIndex, nCol, [remapped]);
+    }
   }
   if (changed.length) {
     const nIx = colOf('Trade Notes');
