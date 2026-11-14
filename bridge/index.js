@@ -1772,6 +1772,53 @@ app.get('/api/vol-surface', async (req, res) => {
 });
 
 // ── Fetch today's executions (fills) from TWS ──
+// ── Light IV Rank for the watchlist (Nov 2026) ─────────────────────────────
+// GET /api/ivr?symbols=SPX,TSLA,NVDA   (up to 20)
+//
+// The watchlist ranks its 45DTE names by IV Rank, so it needs IVR for every name before
+// it knows which ten to scan. /api/vol-surface would get it, but at 3–4 historical
+// requests per name (IV 1Y, HV 3M, daily 1Y, plus option IVs) twenty names run straight
+// into IBKR's ~60-requests-per-10-minutes pacing. This takes ONE request per name — the
+// 1-year OPTION_IMPLIED_VOLATILITY daily series, whose last bar is today's IV — and
+// keeps the answer for the NY day (refreshed after 4 h). A vol-surface pull in the last
+// 30 minutes is reused for free.
+const ivrCache = {};
+app.get('/api/ivr', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const syms = [...new Set(String(req.query.symbols || '').toUpperCase().split(',').map(x => x.trim()).filter(Boolean))].slice(0, 20);
+    const force = req.query.force === '1';
+    const day = nyToday();
+    const out = {};
+    for (const sym of syms) {
+      const hit = ivrCache[sym];
+      if (!force && hit && hit.day === day && Date.now() - hit.at < 4 * 3600 * 1000) { out[sym] = { ...hit.out, cached: true }; continue; }
+      const c = contractOf(sym);
+      if (!c) { out[sym] = { error: 'unknown symbol' }; continue; }
+      try {
+        const vh = vsCache.hist[sym];
+        let iv = vh && Date.now() - vh.at < HIST_TTL_MS && vh.iv && vh.iv.length ? vh.iv : null;
+        if (!iv) {
+          const bars = await getHistoricalBars(c, '1 Y', '1 day', WhatToShow.OPTION_IMPLIED_VOLATILITY);
+          iv = bars.map(b => barClose(b)).filter(x => x > 0).map(x => x * 100);
+        }
+        const st = ivRankStats(iv);
+        if (!st) { out[sym] = { error: 'no IV history' }; continue; }
+        const r = { iv: +st.current.toFixed(2), ivr: Math.round(st.rank), ivPctl: Math.round(st.pctl), low: +st.low.toFixed(2), high: +st.high.toFixed(2), days: st.days };
+        ivrCache[sym] = { day, at: Date.now(), out: r };
+        out[sym] = r;
+      } catch (e) {
+        out[sym] = { error: e.message };
+      }
+    }
+    console.log(`[BRIDGE] ivr ${syms.join(',')}: ` + syms.map(x => `${x}=${out[x] && out[x].ivr != null ? out[x].ivr : 'err'}`).join(' '));
+    res.json({ day, asOf: new Date().toISOString(), ivr: out });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/executions', async (req, res) => {
   try {
     await connectTWS();

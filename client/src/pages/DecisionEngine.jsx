@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { directionBadge } from '../utils/stats';
 import { settleShadows } from '../utils/shadowSettle';
-import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
+import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ListChecks, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
+import WatchlistPanel from '../components/WatchlistPanel';
+import { INDEX_SYMBOLS, ETF_SYMBOLS, assetClassOf, loadWatchlist, saveWatchlist, normalise as normaliseWatch, cachedIvr, cachedChains,
+  fetchIvr, checkChain, fetchEarnings, rankWatchlist, groupList, DEFAULT_WATCHLIST, WATCH_MAX } from '../utils/watchlist';
 import Checkup45 from '../components/Checkup45';
 import { trendLabel } from '../engine/trend';
 import { SCAN_FIELDS, VOL_SCAN_KEYS, fetchScanData, computeScan, newScanCache } from '../utils/multiScan';
@@ -76,19 +79,13 @@ function ModeBadge({ mode, size = 'sm', testid }) {
 // stocks both trade as shares with assignment and dividend risk, but behave very
 // differently (an index-tracking ETF vs one company's earnings), so each gets its own
 // group — and its own default scan list.
-export const INDEX_SYMBOLS = ['SPX', 'SPXW', 'XSP', 'NDX', 'NDXP', 'RUT', 'RUTW', 'VIX', 'OEX', 'XEO', 'DJX'];
-export const ETF_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA', 'GLD', 'SLV', 'TLT', 'HYG', 'XLF', 'XLE', 'XLK', 'SMH', 'EEM', 'EFA', 'ARKK', 'USO', 'IBIT'];
+// The symbol classes live with the watchlist now (Nov 2026); re-exported for old imports.
+export { INDEX_SYMBOLS, ETF_SYMBOLS, assetClassOf };
 export const TAB_GROUP_MAX = 5;
-export const assetClassOf = u => {
-  const x = String(u || 'SPX').toUpperCase();
-  return INDEX_SYMBOLS.includes(x) ? 'index' : ETF_SYMBOLS.includes(x) ? 'etf' : 'stock';
-};
 const CLASS_LABEL = { index: 'Indices', etf: 'ETFs', stock: 'Stocks' };
 const CLASS_DEFAULT = { index: 'SPX', etf: 'SPY', stock: 'AAPL' };
 // Default scan lists per class (editable per group, remembered in this browser).
 export const SCAN_DEFAULTS = { index: ['SPX', 'XSP'], etf: ['SPY', 'QQQ', 'IWM'], stock: ['AAPL', 'NVDA', 'TSLA', 'AMD'] };
-const SCAN_CHOICES = { index: ['SPX', 'XSP', 'NDX', 'RUT'], etf: ['SPY', 'QQQ', 'IWM', 'DIA', 'GLD', 'TLT', 'SMH', 'XLF'],
-  stock: ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'AVGO', 'NFLX', 'PLTR', 'MSTR'] };
 export const CLASSES = ['index', 'etf', 'stock'];
 export const GROUPS = [['0dte', 'index'], ['0dte', 'etf'], ['0dte', 'stock'], ['45dte', 'index'], ['45dte', 'etf'], ['45dte', 'stock']];
 const groupKey = (m, c) => `${m === '0dte' ? '0dte' : '45dte'}|${c}`;
@@ -313,19 +310,70 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Lifted out of the panel so results survive closing it, every group keeps its own,
   // and "Scan everything" can fill all six. { [groupKey]: { results, meta, scannedAt, manualData } }
   const [scans, setScans] = useState({});
-  const [scanLists, setScanLists] = useState(() => {
-    const saved = loadScanLists();
-    const out = {};
-    GROUPS.forEach(([m, c]) => { const g = groupKey(m, c); out[g] = Array.isArray(saved[g]) && saved[g].length ? saved[g] : SCAN_DEFAULTS[c]; });
-    return out;
-  });
-  function setScanList(g, list) {
-    setScanLists(prev => {
-      const next = { ...prev, [g]: list };
-      try { localStorage.setItem(SCAN_LISTS_KEY, JSON.stringify(next)); } catch (e) { /* private mode */ }
-      return next;
+  // ── Watchlist (Nov 2026) ──
+  // One list in the database drives every scan group: each group scans the names of its
+  // asset class that the mode's ranking puts in the top N (utils/watchlist.js). The
+  // per-group lists this browser used to keep are folded in once, on first load.
+  const [watch, setWatch] = useState(() => ({ ...DEFAULT_WATCHLIST, items: DEFAULT_WATCHLIST.items.map(x => ({ ...x })) }));
+  const [wlIvr, setWlIvr] = useState(() => cachedIvr());
+  const [wlChain, setWlChain] = useState(() => cachedChains());
+  const [wlEarn, setWlEarn] = useState({});
+  const [wlIvrBusy, setWlIvrBusy] = useState(false);
+  const [wlIvrAt, setWlIvrAt] = useState(null);
+  const [wlSave, setWlSave] = useState(null);
+  const wlSaveTimer = useRef(null);
+  const bridgeOf = () => { try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; } };
+  useEffect(() => {
+    if (!authenticated) return;
+    let live = true;
+    loadWatchlist(loadScanLists()).then(({ list, stored }) => {
+      if (!live) return;
+      setWatch(list);
+      if (!stored) saveWatchlist(list).catch(() => {});
     });
+    return () => { live = false; };
+  }, [authenticated]);
+  function changeWatch(next) {
+    const w = normaliseWatch(next) || next;
+    setWatch(w);
+    setWlSave('saving');
+    clearTimeout(wlSaveTimer.current);
+    wlSaveTimer.current = setTimeout(() => {
+      saveWatchlist(w).then(() => setWlSave('saved')).catch(() => setWlSave('error'));
+    }, 600);
   }
+  async function refreshIvr(force) {
+    const url = bridgeOf();
+    const syms = watch.items.filter(x => x.on45).map(x => x.sym);
+    if (!url || !syms.length) return;
+    setWlIvrBusy(true);
+    try {
+      setWlIvr(await fetchIvr(url, syms, { force }));
+      setWlIvrAt(new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }));
+    } catch (e) { if (force) showToast('IVR read failed: ' + e.message, 'error'); }
+    setWlIvrBusy(false);
+  }
+  const wlKey = watch.items.map(x => x.sym + (x.on0 ? '0' : '') + (x.on45 ? '4' : '')).join(',');
+  useEffect(() => {
+    if (!authenticated) return;
+    let live = true;
+    refreshIvr(false);
+    fetchEarnings(watch.items.filter(x => x.on45).map(x => x.sym)).then(m => { if (live) setWlEarn(m); }).catch(() => {});
+    // The chain check: once per name per day, one at a time (IBKR pacing).
+    const url = bridgeOf();
+    if (url) (async () => {
+      for (const x of watch.items) {
+        if (!live) return;
+        if (cachedChains()[x.sym]) continue;
+        try { const c = await checkChain(url, x.sym); if (live) setWlChain(prev => ({ ...prev, [x.sym]: c })); } catch (e) { /* bridge down: leave unknown */ }
+      }
+    })();
+    return () => { live = false; };
+  }, [authenticated, wlKey]);
+  const wlCtx = { ivr: wlIvr, earn: wlEarn, chain: wlChain };
+  const rank0 = rankWatchlist('0dte', watch, wlCtx);
+  const rank45 = rankWatchlist('45dte', watch, wlCtx);
+  const scanLists = Object.fromEntries(GROUPS.map(([m, c]) => [groupKey(m, c), groupList(m === '0dte' ? rank0 : rank45, c)]));
   const [scanBusy, setScanBusy] = useState({});
   const [master, setMaster] = useState(null);       // { i, n, label } while Scan everything runs
   const [scanNow, setScanNow] = useState(() => Date.now());
@@ -337,6 +385,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     setScanBusy(b => ({ ...b, [g]: true }));
     try {
       const list = scanLists[g] || [];
+      if (!list.length) {
+        setScans(prev => ({ ...prev, [g]: { results: [], meta: {}, scannedAt: new Date().toISOString(), manualData: {}, empty: true } }));
+        return;
+      }
       const { mergedData, meta, pulledAt } = await fetchScanData({ mode: m, underlyings: list, manualData: typed || {}, bridgeUrl, cache });
       const results = computeScan(m, list, mergedData);
       setScans(prev => ({ ...prev, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData } }));
@@ -588,6 +640,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           <button onClick={() => { setPanel(panel === 'compare' ? null : 'compare'); if (!comparison) loadComparison(); }}
             className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
             <GitCompare size={14} /> Compare
+          </button>
+          <button onClick={() => setPanel(panel === 'watchlist' ? null : 'watchlist')} data-testid="watchlist-toggle"
+            title="The names both engines scan — up to 20, top 10 scanned"
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'watchlist' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <ListChecks size={14} /> Watchlist <span className="mono" style={{ fontSize: 11.5 }}>{watch.items.length}/{WATCH_MAX}</span>
           </button>
           <button onClick={() => setPanel(panel === 'multiscan' ? null : 'multiscan')} data-testid="multiscan-toggle"
             title={`Scan several underlyings for a ${modeUi(mode).short} trade`}
@@ -934,11 +991,17 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         <Checkup45 tickets={openTickets} />
       )}
 
+      {panel === 'watchlist' && (
+        <WatchlistPanel list={watch} onChange={changeWatch} ivr={wlIvr} chain={wlChain} earn={wlEarn} rank0={rank0} rank45={rank45}
+          onRefreshIvr={() => refreshIvr(true)} ivrBusy={wlIvrBusy} ivrAsOf={wlIvrAt} bridgeUrl={bridgeOf()} saveState={wlSave}
+          onCheck={async sym => { const c = await checkChain(bridgeOf(), sym); setWlChain(prev => ({ ...prev, [sym]: c })); return c; }} />
+      )}
+
       {panel === 'multiscan' && (
         <MultiScanPanel mode={mode} cls={groupClass} classLabel={CLASS_LABEL[groupClass]}
           scan={scans[activeGroup] || null} busy={!!scanBusy[activeGroup]} master={master} now={scanNow}
-          underlyings={scanLists[activeGroup] || []} choices={SCAN_CHOICES[groupClass]}
-          onUnderlyings={list => setScanList(activeGroup, list)}
+          underlyings={scanLists[activeGroup] || []} onEditWatchlist={() => setPanel('watchlist')}
+          why={(mode === '0dte' ? rank0 : rank45).why}
           onScan={typed => runGroupScan(activeGroup, null, typed)} onScanAll={runAllScans}
           onRecalc={md => recalcGroup(activeGroup, md)}
           otherScans={GROUPS.map(([m, c]) => ({ g: groupKey(m, c), m, c, s: scans[groupKey(m, c)] })).filter(x => x.g !== activeGroup && x.s)}
@@ -1231,7 +1294,7 @@ const SCAN_ROWS = {
   ],
 };
 
-function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underlyings, choices, onUnderlyings,
+function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underlyings, onEditWatchlist, why,
   onScan, onScanAll, onRecalc, otherScans, onOpenGroup, onSelect }) {
   const scanMode = mode === '0dte' ? '0dte' : '45dte';
   const ui = modeUi(scanMode);
@@ -1255,7 +1318,6 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
     return out;
   };
   const openMeta = r => scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null);
-  const opts = Array.from(new Set([...(choices || []), ...underlyings]));
 
   return (
     <div className="card mb-4 fade-in" data-testid="multiscan" data-mode={scanMode} data-cls={cls}
@@ -1317,26 +1379,14 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
         </div>
       )}
 
-      {/* Underlying selector — this group's list, remembered */}
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {underlyings.map((u, i) => (
-          <div key={i} className="flex items-center gap-1">
-            <select value={u} onChange={e => { const next = [...underlyings]; next[i] = e.target.value; onUnderlyings(next); }}
-              className="px-2 py-1.5 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded text-xs text-white outline-none">
-              {opts.map(x => <option key={x} value={x}>{x}</option>)}
-            </select>
-            {underlyings.length > 1 && (
-              <button onClick={() => onUnderlyings(underlyings.filter((_, j) => j !== i))}
-                className="text-[var(--c-8b949e)] hover:text-red text-xs">×</button>
-            )}
-          </div>
-        ))}
-        {underlyings.length < 6 && (
-          <button onClick={() => onUnderlyings([...underlyings, (opts.find(x => !underlyings.includes(x)) || opts[0])])}
-            className="px-2 py-1.5 border border-dashed border-[var(--c-30363d)] rounded text-xs text-[var(--c-8b949e)] hover:text-white">+</button>
-        )}
-        <button onClick={() => onUnderlyings(SCAN_DEFAULTS[cls])} title={`Back to ${SCAN_DEFAULTS[cls].join(', ')}`}
-          className="px-2 py-1.5 text-xs text-[var(--c-8b949e)] hover:text-white underline">defaults</button>
+      {/* This group's names — from the watchlist (Nov 2026): the mode's top N, this asset class */}
+      <div className="flex gap-2 mb-4 flex-wrap items-center" data-testid="scan-names">
+        {underlyings.length ? underlyings.map(u => (
+          <span key={u} title={(why && why[u]) || ''} className="mono" style={{ padding: '3px 9px', borderRadius: 7, fontSize: 13, fontWeight: 700,
+            color: 'var(--c-ffffff)', border: `1px solid ${ui.border}`, background: ui.bg }}>{u}
+            {why && /^IVR/.test(why[u] || '') && <span style={{ fontSize: 11, fontWeight: 600, color: ui.fg }}> {why[u].replace(/^IVR /, '').replace(/ ·.*/, '')}</span>}</span>
+        )) : <span className="text-xs" style={{ color: 'var(--c-8b949e)' }}>No {classLabel.toLowerCase()} in the {ui.short} top list.</span>}
+        <button onClick={onEditWatchlist} data-testid="edit-watchlist" className="px-2 py-1 text-xs underline" style={{ color: 'var(--c-8b949e)' }}>edit watchlist</button>
       </div>
 
       {showInputs && (
