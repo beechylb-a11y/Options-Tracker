@@ -8,6 +8,7 @@
    (data-theme="light" on <html>) swaps the values below. Status colours go
    darker in day mode so green/red/amber still read on white. (Nov 2026) */
 :root {
+  --c-e6ffed: #e6ffed; /* label on the price map's profit zone; dark green in day mode */
   --c-ffffff: #ffffff; /* headline white — near-black in day mode */
   --rgb-0d1117: 13 17 23;
   --rgb-0d1f0d: 13 31 13;
@@ -128,6 +129,7 @@
 }
 
 :root[data-theme="light"] {
+  --c-e6ffed: #0a3d1a;
   --c-ffffff: #1f2328;
   --rgb-0d1117: 246 248 250;
   --rgb-0d1f0d: 218 251 225;

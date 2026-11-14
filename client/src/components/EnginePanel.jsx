@@ -5592,7 +5592,7 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
     <svg data-testid="price-map" viewBox={`0 0 ${W} 170`} width="100%" role="img"
       aria-label={`${underlying || 'Price'} ${Math.round(price)}; strikes ${ks.join(', ')}${bes.length ? '; breakevens ' + bes.map(Math.round).join(' and ') : ''}${hasEM ? `; expected move ±${em.toFixed(em < 10 ? 1 : 0)} (${(price - em).toFixed(price < 1000 ? 1 : 0)} to ${(price + em).toFixed(price < 1000 ? 1 : 0)})` : ''}`}>
       {cells}
-      {profitMid != null && <text x={profitMid} y="43.5" fill="#e6ffed" fontSize="12" fontWeight="600" textAnchor="middle"
+      {profitMid != null && <text x={profitMid} y="43.5" fill="var(--c-e6ffed)" fontSize="12" fontWeight="600" textAnchor="middle"
         stroke="var(--c-0b3d1a)" strokeWidth="3" paintOrder="stroke" style={S}>Max profit {money(maxP)}</text>}
       {leftLoss != null && <text x={L + 6} y="43.5" fill="var(--c-ffc1bc)" fontSize="11" style={T}>{money(leftLoss)}</text>}
       {rightLoss != null && <text x={R - 6} y="43.5" fill="var(--c-ffc1bc)" fontSize="11" textAnchor="end" style={T}>{money(rightLoss)}</text>}
