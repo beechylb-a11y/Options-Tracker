@@ -24,6 +24,8 @@ import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
 import { RATIO_CHOICES, DEFAULT_RATIO_SPEC, ratioChoice, isProtected, ratioShape } from '../engine/ratioSpread.js';
 import { alpha, themeVarsCss } from '../utils/theme';
+import CreditSpreadPanel from './CreditSpreadPanel';
+import { nyMinutes } from '../engine/review0';
 
 const OUTLOOKS = ['neutral', 'bullish', 'bearish'];
 // '' = unknown. Only used when IV Front/Back are absent — with both present the
@@ -843,7 +845,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
   // The 0DTE argument object, built once so the what-if toggle can re-run the whole
   // engine at the OTHER vol estimate without duplicating twenty input mappings.
+  // The engine's own target credit is written into an empty Net box (see netTarget
+  // below). The price check must know when the number is that target rather than a fill:
+  // a target is not a price anyone was quoted, so it cannot "describe a different trade".
+  const netAutoRef = useRef({ key: null, value: '' });
   const mk0 = (over) => ({
+          netIsTarget: i0.netCreditDebit !== '' && i0.netCreditDebit != null && netAutoRef.current.value === String(i0.netCreditDebit),
           price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
           vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
           // Rolling windows are prices and scale like the rest. Acceptance is a
@@ -1368,7 +1375,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   //
   // Fills once per (engine, structure). Clearing the box by hand keeps it clear --
   // the ref remembers the key, not the emptiness. (Aug 2026.)
-  const netAutoRef = useRef({ key: null, value: '' });
   const netKey = bag + '|' + (effectiveStrat || '');
   const netTarget = (r && r.targetCredit != null && isFinite(r.targetCredit)) ? r.targetCredit : null;
   useEffect(() => {
@@ -2096,6 +2102,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const strip = o => ({ ...o, win: '', risk: '', pop: '', netCreditDebit: '' });
     if (is0) setI0(strip); else setI45(strip);
     setOverrideStrat(next);
+  }
+
+  // Credit spread on purpose (Nov 2026): the panel's side and anchor become the ticket —
+  // a bull put or bear call at the chosen EM distance, EM-built (the study's anchors), so
+  // the 20Δ delta default does not move it on the next greeks fetch.
+  function buildCreditSpread(side, anchor) {
+    const name = side === 'put' ? 'Bull put spread' : 'Bear call spread';
+    if (overrideStrikes[bag]) resetStrikes();
+    setDeltaApplied(null);
+    setVertPick('em');
+    setVertVariant(anchor || 'engine');
+    if ((r.legStrat || r.bestStrat) !== name) switchStructure(name);
+    clearFillForNewStrikes();
+    markGreeksStale();
   }
 
   // ── Price map inputs (Oct 2026) ──
@@ -3008,7 +3028,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       return g ? `${l.strike}${right} ${Number(g.iv).toFixed(2)}` : null;
     });
     const legIvsLine = !isTimeSpread && ivLegs.length && ivLegs.every(Boolean) ? 'Leg IVs: ' + [...new Set(ivLegs)].join(' / ') + '\n' : '';
-    const fullNotes = expiriesLine + legsLine + legIvsLine + engineSummary + planBlock
+    // IVX at entry (Nov 2026): tastytrade's 0DTE expected move — 0.85 × the ATM straddle —
+    // and the ≈1σ (16Δ) range from the same straddle, so trades can be reviewed against
+    // how far the market priced the day at the moment of entry.
+    const ivxLine = is0 && r.ivxEM > 0
+      ? `IVX at entry: ±${r.ivxEM.toFixed(2)}${r.emIsStraddle ? ` · 16Δ ≈ ±${(r.ivxEM / 0.85 * 1.2533).toFixed(2)} (straddle)` : ' (estimated from VIX1D)'} · ${(() => { const m = nyMinutes(); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')} ET`; })()}\n`
+      : '';
+    const fullNotes = expiriesLine + legsLine + legIvsLine + ivxLine + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
@@ -3377,6 +3403,14 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           ))}
         </section>
+      )}
+
+      {/* ── 2a · CREDIT SPREAD ── a 0DTE credit vertical on purpose, whatever the engine
+          picked: side and strike distance from the replay's rules (creditSide.js). */}
+      {is0 && r.decision !== 'Error' && (
+        <CreditSpreadPanel r={r} price={fv(secBag, 'price')} underlying={secBag.underlying}
+          bridgeUrl={(() => { try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; } })()}
+          currentStrat={r.legStrat || r.bestStrat} currentVariant={r.vertVariant} onBuild={buildCreditSpread} />
       )}
 
       {/* ── 2b · YOUR CHOICES ── the engine pick and the next two structures, each a

@@ -83,7 +83,8 @@ describe('credit vertical construction in the engine (Oct 2026)', () => {
     const em1d = 7410 * 12.9 / 100 / Math.sqrt(365);                 // 50.0
     expect(r.em365V1D).toBeCloseTo(em1d, 6);
     expect(r.em365VIX).toBeCloseTo(7410 * 15.8 / 100 / Math.sqrt(365), 6);
-    expect(r.ivxEM).toBeCloseTo(0.63 * em1d * Math.sqrt(5.5 / 6), 6);
+    // time-scaled on tastylive's measured 16Δ curve (1 h in: 0.86 of the open) vs the 10:00 entry (0.93)
+    expect(r.ivxEM).toBeCloseTo(0.63 * em1d * 0.86 / 0.93, 6);
     expect(r.creditW).toBe(20);
     const [sh, lo] = K(r);
     expect(sh - lo).toBe(20);
@@ -102,5 +103,14 @@ describe('credit vertical construction in the engine (Oct 2026)', () => {
     const [sh, lo] = K(q);
     expect(lo - sh).toBe(2);
     expect(sh).toBeGreaterThan(708);
+  });
+
+  it('the engine\'s own target credit is not blocked as a mismatched price; a typed one is (Nov 2026)', () => {
+    const far = { ...base, netCreditDebit: 0.40 };                    // far from fair for these strikes
+    const typed = calc0DTE(far);
+    expect(typed.blockers.some(b => /describe different trades/.test(b))).toBe(true);
+    const target = calc0DTE({ ...far, netIsTarget: true });
+    expect(target.blockers.some(b => /describe different trades/.test(b))).toBe(false);
+    expect(target.warnings.some(w => /engine's target, not a fill/.test(w))).toBe(true);
   });
 });

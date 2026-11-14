@@ -11,6 +11,7 @@ import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
 import { legQty } from './legQty.js';
+import { rangeLeft } from './creditSide';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -787,7 +788,10 @@ export function calc0DTE(inputs) {
   //              √365 VIX1D EM (the ratio read on the show at 10:00 ET), time-scaled.
   //   creditW    ~0.3% of spot on the strike grid: $20 SPX, $2 XSP / SPY / QQQ, $1 IWM.
   const SQRT365 = Math.sqrt(365);
-  const tScale = Math.min(1, Math.sqrt(Math.max(0.05, (hours > 0 ? hours : 6)) / 6));
+  // Time scaling for the VIX1D-based anchors (Nov 2026): tastylive's measured 16Δ range
+  // curve, relative to the study's 10:00 entry — it shrinks faster than √(hours left)
+  // (−14% after the first hour, half by 13:00; √time says −8% and −32%).
+  const tScale = Math.min(1.07, rangeLeft(6.5 - (hours > 0 ? hours : 6)) / rangeLeft(0.5));
   const em365V1D = price > 0 && vix1d > 0 ? price * vix1d / 100 / SQRT365 : 0;
   const em365VIX = price > 0 && vix > 0 ? price * vix / 100 / SQRT365 : 0;
   const ivxEM = straddleTotal > 0 ? 0.85 * straddleTotal
@@ -2507,6 +2511,12 @@ export function calc0DTE(inputs) {
     blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} is outside `
       + `what these strikes can pay (${priceCheck.bareMin.toFixed(2)} to ${priceCheck.bareMax.toFixed(2)}) — impossible at any volatility. `
       + `Usually the strikes moved after the price was entered: enter the fill for these strikes`);
+  } else if (priceCheck?.mismatch && inputs.netIsTarget) {
+    // The Net box holds the engine's own target credit, not a quote: nothing was entered
+    // for these strikes yet, so there is nothing to block — say what fair looks like.
+    // (Nov 2026: every credit spread built from the panel opened Blocked on its target.)
+    warnings.push(`Net ${Math.abs(netCreditDebit).toFixed(2)} is the engine's target, not a fill — about `
+      + `${Math.abs(priceCheck.fair).toFixed(2)} ${priceCheck.fair < 0 ? 'credit' : 'debit'} is fair for these strikes at spot. Enter your broker's price.`);
   } else if (priceCheck?.mismatch) {
     blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} vs `
       + `${priceCheck.fair.toFixed(2)} fair for these strikes at spot (${priceCheck.gap > 0 ? '+' : ''}${priceCheck.gap.toFixed(2)}) — `
