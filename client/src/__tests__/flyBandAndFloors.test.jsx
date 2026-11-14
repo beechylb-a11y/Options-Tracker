@@ -82,10 +82,10 @@ describe('verticals take delta strikes by default once greeks are in', () => {
   });
   it('an EM tile chosen by hand stays when greeks are fetched', async () => {
     mount();
-    fireEvent.click(screen.getByTestId('strike-choice-em1d'));
+    fireEvent.click(screen.getByTestId('strike-choice-half1d'));
     fireEvent.click(within(screen.getByTestId('delta-strip')).getByText('fetch greeks'));
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     await new Promise(r => setTimeout(r, 50));
-    expect(screen.getByTestId('strike-choice-em1d').dataset.on).toBe('1');
+    expect(screen.getByTestId('strike-choice-half1d').dataset.on).toBe('1');
   });
 });

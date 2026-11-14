@@ -335,7 +335,6 @@ function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fe
     engine: 'Short at the IVX expected move — the 0DTE straddle × 0.85, tastytrade\u2019s brown bar. The anchor tastylive\u2019s 3-year 0DTE study found paid best. Fixed width.',
     half1d: 'Short at half the VIX1D expected move (VIX1D ÷ √365). The other anchor that paid best in the study; usually a little nearer the money than IVX.',
     em1d: 'Short at a full VIX1D expected move — further out, higher win rate, much smaller credit. The study called this "likely too far" in normal markets; it held up best on down-trend days in our replay.',
-    vix: 'The old default: a full VIX expected move on the √252 ruler — past every anchor in the study. Kept for comparison.',
   };
   const tile = (id, label, strikes, sub, title, disabled) => {
     const on = active === id;
@@ -362,7 +361,23 @@ function StrikeChoices({ variants, active, strat, plan, check, emRem, onPick, fe
         Strikes — pick one{emRem > 0 ? <span style={{textTransform:'none',letterSpacing:0}}> · EM left today ±{emRem.toFixed(emRem < 10 ? 1 : 0)}</span> : null}
       </div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-        {variants.map(v => tile(v.id, v.label, v.legs.map(l => l.strike).join(' / '), subOf(v), tip[v.id]))}
+        {/* Two anchors that land on the same strikes are one choice, not two (Nov 2026:
+            IVX and ½ VIX1D are ~13% of an EM apart and often round to the same strike).
+            The merged tile keeps the active id if either is on the ticket. */}
+        {(() => {
+          const groups = [];
+          for (const v of variants) {
+            const key = v.legs.map(l => l.strike).join(' / ');
+            const g = groups.find(x => x.key === key);
+            if (g) g.vs.push(v); else groups.push({ key, vs: [v] });
+          }
+          return groups.map(g => {
+            const v = g.vs.find(x => x.id === active) || g.vs[0];
+            const label = g.vs.map(x => x.label.replace(/ · further$/, '')).join(' = ');
+            const title = g.vs.length > 1 ? `Same strikes from ${g.vs.map(x => x.label).join(' and ')} today.\n\n` + g.vs.map(x => tip[x.id]).filter(Boolean).join('\n\n') : tip[v.id];
+            return tile(v.id, label, g.key, subOf(v), title);
+          });
+        })()}
         {tgt != null && tile('delta', `Delta · short ${tgt}Δ${deltaDefault ? ' · default' : ''}`,
           plan ? plan.legs.map(l => l.strike).join(' / ') : (check && check.suspended ? 'off — final hour' : 'fetch greeks'),
           ds ? `short ~${ds.estDelta.toFixed(0)}Δ (now ${ds.curDelta.toFixed(0)}Δ)`

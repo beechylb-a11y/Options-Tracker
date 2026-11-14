@@ -1050,8 +1050,7 @@ export function calc0DTE(inputs) {
     ].filter(Boolean);
     if (!isDebitVert) {
       // Credit verticals (Oct 2026): every choice is a short-strike DISTANCE at the same
-      // fixed width; the study's anchors, nearest first after the default. The old
-      // default (a full VIX EM, √252) stays on the list so the change is visible.
+      // fixed width; the study's anchors, nearest first after the default.
       const buf = ivxEM * vBufFrac;
       const credit = (id, label, dist) => {
         const sh = R(p + dir * (dist + buf));
@@ -1063,7 +1062,9 @@ export function calc0DTE(inputs) {
         credit('engine', 'IVX EM', ivxEM),
         em365V1D > 0 ? credit('half1d', '½ VIX1D EM', 0.5 * em365V1D * tScale) : null,
         em365V1D > 0 ? credit('em1d', 'VIX1D EM · further', em365V1D * tScale) : null,
-        credit('vix', 'VIX EM · old default', dVixRem),
+        // The old default (a full VIX EM on the √252 ruler) was retired 14 Nov 2026: past
+        // every anchor in the study, and the worst row in our replay. A ticket saved on
+        // it falls back to the IVX tile.
       ].filter(Boolean);
     }
     const chosen = vertVariants.find(v => v.id === vertVariantId) || vertVariants[0];

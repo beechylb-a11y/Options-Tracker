@@ -24,7 +24,12 @@ describe('vertical strike choices', () => {
 
   it('puts ONE spread on the ticket and offers the choices in one row', () => {
     mount();
-    ['engine', 'half1d', 'em1d', 'vix', 'delta'].forEach(id => expect(screen.getByTestId('strike-choice-' + id)).toBeTruthy());
+    ['engine', 'half1d', 'delta'].forEach(id => expect(screen.getByTestId('strike-choice-' + id)).toBeTruthy());
+    expect(screen.queryByTestId('strike-choice-vix')).toBeNull();          // old default retired (Nov 2026)
+    // 11:30: a full VIX1D EM (50 × 0.70 of the range left = 35) lands on the IVX strikes (36):
+    // one tile, not two (Nov 2026)
+    expect(screen.queryByTestId('strike-choice-em1d')).toBeNull();
+    expect(screen.getByTestId('strike-choice-engine').textContent).toMatch(/IVX EM = VIX1D EM/);
     expect(screen.getByTestId('strike-choice-engine').dataset.on).toBe('1');
     expect(line().match(/Put/g).length).toBe(2);                  // two legs, not four
     expect(screen.queryByText('EM(1D):')).toBeNull();
@@ -33,9 +38,9 @@ describe('vertical strike choices', () => {
   it('picking a choice changes the strikes and clears the fill priced for the old ones', () => {
     mount();
     const before = line();
-    const want = screen.getByTestId('strike-choice-vix').textContent;
-    fireEvent.click(screen.getByTestId('strike-choice-vix'));
-    expect(screen.getByTestId('strike-choice-vix').dataset.on).toBe('1');
+    const want = screen.getByTestId('strike-choice-half1d').textContent;
+    fireEvent.click(screen.getByTestId('strike-choice-half1d'));
+    expect(screen.getByTestId('strike-choice-half1d').dataset.on).toBe('1');
     const k = want.match(/(\d+) \/ (\d+)/);
     expect(line()).toContain(k[1]);
     expect(line()).not.toBe(before);
@@ -49,10 +54,10 @@ describe('vertical strike choices', () => {
     expect(k[0] - k[1]).toBe(20);
     expect(7410 - k[0]).toBeGreaterThanOrEqual(35);
     expect(7410 - k[0]).toBeLessThanOrEqual(45);
-    // the old default (full VIX EM, √252) is still offered and is further out
-    const old = screen.getByTestId('strike-choice-vix').textContent.match(/(\d+) \/ (\d+)/).slice(1).map(Number);
-    expect(old[0]).toBeLessThan(k[0]);
-    expect(old[0] - old[1]).toBe(20);
+    // ½ VIX1D is the nearer choice, same width
+    const near = screen.getByTestId('strike-choice-half1d').textContent.match(/(\d+) \/ (\d+)/).slice(1).map(Number);
+    expect(near[0]).toBeGreaterThan(k[0]);
+    expect(near[0] - near[1]).toBe(20);
     expect(document.body.textContent).toMatch(/IVX EM out — near the expected move: take 25%/);
     expect(screen.getByTestId('em-tasty').textContent).toMatch(/VIX ±61 · VIX1D ±50 · IVX ±36/);
   });
@@ -94,7 +99,7 @@ describe('credit vertical construction in the engine (Oct 2026)', () => {
   });
 
   it('the far choices take a 50% target, and QQQ gets a $2 width', () => {
-    const far = calc0DTE({ ...base, vertVariant: 'vix' });
+    const far = calc0DTE({ ...base, vertVariant: 'em1d' });
     expect(far.exitTarget).toMatchObject({ target: 50 });
     const q = calc0DTE({ ...base, underlying: 'QQQ', price: 708, high: 709, low: 706, vwap5: 708, vwap5_30: 708, vwapRoll30: 708,
       vwapRoll30Prior: 708, cashOpen: 707, priorDayClose: 706, esClose: 7415, atr: 7, em: 5, atr5: 0.7, atr2h: 2.2,
