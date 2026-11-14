@@ -75,8 +75,11 @@ describe('delta strip', () => {
     await waitFor(() => expect(screen.getByTestId('delta-strip').textContent).toMatch(/on ticket: Delta ✓ confirmed/));
     // bracket call + the refetch for the new legs
     await waitFor(() => expect(greekCalls()).toBe(2));
-    // New strikes clear the old fill (it priced the old strikes) — enter it again.
-    expect(screen.getByTestId('verdict').textContent).toBe('Waiting on sizing');
+    // New strikes clear the old fill (it priced the old strikes); the refetch for the
+    // new legs prices them live (Nov 2026) — but this mock quotes every leg 1.00/1.10,
+    // a 0.00 mid, which is no price, so the boxes stay empty for the fill.
+    await waitFor(() => expect(screen.getByTestId('live-strip').textContent).toMatch(/mid is 0\.00/));
+    expect(document.querySelector('[data-field="netCreditDebit"]').value).toBe('');
     const set = (f, v) => fireEvent.change(document.querySelector(`[data-field="${f}"]`), { target: { value: v } });
     set('netCreditDebit', '5.10'); set('win', '510'); set('risk', '3490'); set('pop', '90');
     const btn = screen.getByTestId('log-trade');

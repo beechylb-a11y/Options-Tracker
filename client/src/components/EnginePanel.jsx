@@ -23,6 +23,7 @@ import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffTimeChart from './PayoffTimeChart';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
+import { livePrice, yearsToExpiry } from '../engine/livePrice.js';
 import { RATIO_CHOICES, DEFAULT_RATIO_SPEC, ratioChoice, isProtected, ratioShape } from '../engine/ratioSpread.js';
 import { alpha, themeVarsCss } from '../utils/theme';
 import CreditSpreadPanel from './CreditSpreadPanel';
@@ -598,6 +599,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // The delta check matches them to legs by strike, so a strike edited afterwards simply
   // reads as "not fetched" rather than borrowing another strike's delta.
   const [legGreeks, setLegGreeks] = useState(init?.legGreeks ?? null);
+  // Live price (Nov 2026): what the last Fetch from TWS made of the combo quote —
+  // Net (mid), Win, Risk and POP — and the values it wrote into the Sizing fields, so a
+  // later fetch or a new net can update them without touching anything typed by hand.
+  // { bag, sig, asOf, dataType, label, qLegs, spot, T, underlying, live, written }
+  const [livePx, setLivePx] = useState(null);
+  const liveRef = useRef({});
+  const legsSig = legs => (legs || []).map(l => `${l.strike}:${l.label || ''}:${l.expiry || ''}`).join('|');
   // Ratio spread construction (R-54): { ratio: '1:2'|'2:3'|'3:4', protect }. A tab
   // keeps its own; protection is on unless switched off.
   const [ratioSpec, setRatioSpec] = useState(init?.ratioSpec ?? DEFAULT_RATIO_SPEC);
@@ -1435,6 +1443,37 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   }
   const ticketNet = is0 ? i0.netCreditDebit : i45.netCreditDebit;
   const cashType = resolveCashType(effectiveStrat, ticketNet); // 'credit' | 'debit' | 'varies'
+  // Live price follows the Net box (Nov 2026): type your own limit, or press "Use mid",
+  // and Win, Risk and POP re-price at it — the way Strategy Builder does — as long as
+  // they still hold what the fetch wrote. A ticket whose strikes changed since the fetch
+  // is left alone (the strip says to refresh).
+  const liveSigNow = legsSig(r && r.legs);
+  const liveOn = !!(livePx && livePx.bag === bag && livePx.sig === liveSigNow);
+  const liveNow = liveOn ? (liveRef.current[bag] || null) : null;
+  const isLive = k => !!(liveNow && liveNow.written && liveNow.written[k] != null && String((is0 ? i0 : i45)[k]) === String(liveNow.written[k]));
+  const LiveTag = ({ k }) => isLive(k) ? <span data-testid={`live-tag-${k}`} title="Filled from the live TWS quote — type over it to use your own number"
+    style={{marginLeft:6,padding:'1px 6px',borderRadius:4,fontSize:10.5,fontWeight:800,letterSpacing:'0.05em',background:'var(--c-0c2d6b)',color:'var(--c-58a6ff)',verticalAlign:'1px'}}>LIVE</span> : null;
+  useEffect(() => {
+    if (!liveOn) return;
+    const cur = liveRef.current[bag];
+    if (!cur || !cur.lp) return;
+    const n = signedNet(ticketNet, cashType);
+    if (!isFinite(n) || Math.abs(n - cur.lp.net) < 0.005) return;
+    const lp = livePrice(livePx.qLegs, { net: n, spot: livePx.spot, T: livePx.T, underlying: livePx.underlying });
+    if (!lp) return;
+    const w = { ...cur.written };
+    const apply = prev => {
+      const patch = {};
+      if (lp.exact) for (const k of ['win', 'risk', 'pop']) {
+        if (lp[k] != null && w[k] != null && String(prev[k]) === String(w[k]) && String(lp[k]) !== String(w[k])) { patch[k] = w[k] = String(lp[k]); }
+      }
+      if (String(prev.netCreditDebit) !== String(w.netCreditDebit)) delete w.netCreditDebit;   // the net is yours now
+      liveRef.current[bag] = { ...cur, written: w, lp };
+      return Object.keys(patch).length ? { ...prev, ...patch } : prev;
+    };
+    if (is0) setI0(apply); else setI45(apply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketNet, liveOn, bag]);
   const effectiveRating = isOverride ? (r.ratings.find(s => s.name === overrideStrat)?.rating || 'MARGINAL') : r.bestRating;
   // ── Composite banner score ── (formula extracted to compositeScoreOf, module
   // scope, so the structure-comparison table scores alternatives identically)
@@ -2240,6 +2279,55 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice,
         greekSource: d.greekSource, greeksMixed: !!d.greeksMixed } : null);
       const freshPx = (d.undPrice != null && d.undPrice > 0) ? String(d.undPrice) : null;
+      // ── Live price → Net, Win, Risk, POP (Nov 2026) ──
+      // The Strategy Builder numbers, from the same quotes: the combo mid fills Net, and
+      // Win, Risk and POP are priced at whatever Net ends up in the box. A field fills
+      // when it is blank, still holds the engine's target, or still holds what the last
+      // fetch wrote — never over a number you typed.
+      if (Array.isArray(d.legs)) {
+        const qLegs = d.legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry,
+          bid: l.greeks ? l.greeks.bid : null, ask: l.greeks ? l.greeks.ask : null, iv: l.greeks ? l.greeks.iv : null }));
+        const spotL = d.undPrice > 0 ? d.undPrice : fv(secBag, 'price');
+        const expL = (legs.find(l => l.expiry) || {}).expiry || yyyymmdd;
+        const T = is0 ? Math.max(0.25, fv(i0, 'hours') || tradingSession().hoursLeft || 6.5) / 8760
+          : Math.max(yearsToExpiry(expL) || 0, 1 / 365);
+        const base = livePrice(qLegs, { spot: spotL, T, underlying });
+        if (base) {
+          const sig = legsSig(legsSrc);
+          const b = bag;
+          const last = (liveRef.current[b] && liveRef.current[b].sig === sig) ? liveRef.current[b].written : null;
+          const free = (prev, k) => {
+            const v = prev[k];
+            if (v === '' || v == null) return true;
+            if (k === 'netCreditDebit' && netAutoRef.current.value === String(v)) return true;
+            return !!(last && last[k] != null && String(last[k]) === String(v));
+          };
+          const apply = prev => {
+            const netFree = free(prev, 'netCreditDebit');
+            const typedNet = signedNet(prev.netCreditDebit, cashType);
+            const lp = netFree || !isFinite(typedNet) ? base : livePrice(qLegs, { net: typedNet, spot: spotL, T, underlying });
+            const written = {};
+            const patch = {};
+            // A 0.00 mid is no price (one-sided or stale quotes): fill nothing from it.
+            const priced = Math.abs(lp.net) >= 0.005;
+            if (netFree && priced) { patch.netCreditDebit = written.netCreditDebit = lp.net.toFixed(2); }
+            // The combo quote, when the bridge's own sum did not come back.
+            if (!(d.net && d.net.bid != null)) { patch.comboBid = String(lp.combo.bid); patch.comboAsk = String(lp.combo.ask); }
+            if (lp.exact && priced) {
+              if (lp.win != null && free(prev, 'win')) { patch.win = written.win = String(lp.win); if (!is0) patch.winSource = 'live'; }
+              if (lp.risk != null && free(prev, 'risk')) { patch.risk = written.risk = String(lp.risk); if (!is0) patch.riskSource = 'live'; }
+              if (lp.pop != null && free(prev, 'pop')) { patch.pop = written.pop = String(lp.pop); if (!is0) patch.popSource = 'live'; }
+            }
+            // Keep earlier live values that are still in place (a typed net leaves Win etc. ours).
+            if (last) for (const k of ['netCreditDebit', 'win', 'risk', 'pop']) if (written[k] == null && String(prev[k]) === String(last[k])) written[k] = last[k];
+            liveRef.current[b] = { sig, written, lp };
+            return { ...prev, ...patch };
+          };
+          if (is0) setI0(apply); else setI45(apply);
+          setLivePx({ bag, sig, asOf: d.asOf || new Date().toISOString(), dataType: d.dataType || '', label: d.dataTypeLabel || '',
+            qLegs, spot: spotL, T, underlying });
+        }
+      }
       // Keep every leg's own delta and IV for the delta cross-check (R-49). Only the
       // wing deltas used to survive this call.
       if (Array.isArray(d.legs)) {
@@ -2331,7 +2419,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (autoApply && fetchedRows && fetchedRows.length && (strikeMethod[bag] === 'delta' || deltaByDefault) && strikesBuiltBy !== 'Manual') {
       const plan = deltaStrikePlan({ legs: fetchedLegs, strat: r.legStrat, horizon: deltaHorizon,
         price: fv(secBag, 'price'), legGreeks: fetchedRows, T: deltaT(), underlying: secBag.underlying, listed: listedNow });
-      if (plan && plan.changed) { await applyDeltaStrikes({ plan, rows: fetchedRows, legs: fetchedLegs }); clearFillForNewStrikes(); }
+      if (plan && plan.changed) { clearFillForNewStrikes({ quiet: true }); await applyDeltaStrikes({ plan, rows: fetchedRows, legs: fetchedLegs }); }
       else if (plan) setDeltaApplied({ bag, strat: r.legStrat || '', map: (ovNow && ovNow.map) || {}, confirmed: true, at: new Date().toISOString() });
     }
   }
@@ -2355,11 +2443,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // New strikes, new trade: the fill typed for the old strikes would price the new
   // ones wrongly (that is what blocked "debit 1.88 on 777/782" — a long 4 pts ITM can't
   // cost 1.88). Clear it, like a structure switch does, and say so.
-  function clearFillForNewStrikes() {
+  function clearFillForNewStrikes(o) {
     const typed = fv(secBag, 'netCreditDebit') !== 0 || fv(secBag, 'win') > 0 || fv(secBag, 'pop') > 0;
     const strip = o => ({ ...o, win: '', risk: '', pop: '', netCreditDebit: '' });
     if (is0) setI0(strip); else setI45(strip);
-    if (typed) notify('Strikes changed — enter the fill, win, risk and POP for the new strikes', 'info');
+    // Quiet when a live refetch is about to price the new strikes itself.
+    if (typed && !(o && o.quiet)) notify('Strikes changed — press ⚡ Fetch from TWS to price the new strikes, or enter the fill, win, risk and POP', 'info');
   }
   // The method buttons now DO something every time (Oct 2026). EM puts the engine's
   // EM strikes back, hand edits included; Delta moves the shorts to their target
@@ -3995,6 +4084,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             collapsed={isCollapsed('sizing')}
             onToggle={() => toggleSection('sizing')}
             onExpand={() => expandSection('sizing')}>
+          <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={!!(livePx && livePx.bag === bag && !liveOn)}
+            vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
+            fetching={fetchingGreeks} canFetch={!!(r && r.legs && r.legs.length)} onFetch={() => handleFetchGreeks()}
+            onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className="text-xs block mb-1" style={{ fontWeight: 600, color: (() => {
@@ -4013,7 +4106,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     letterSpacing:'0.04em',background:'var(--c-3a2d00)',color:'var(--c-e3b341)',verticalAlign:'1px'}}>
                   TARGET — REPLACE WITH FILL
                 </span>
-              )}</label>
+              )}<LiveTag k="netCreditDebit" /></label>
               <input type="number" step="any"
                 value={is0?i0.netCreditDebit:i45.netCreditDebit}
                 data-field="netCreditDebit" onChange={e=>is0?set0('netCreditDebit',e.target.value):set45('netCreditDebit',e.target.value)}
@@ -4036,7 +4129,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             {!is0 && isTimeSpread && <VolViewFlag be={beView} />}
             </div>
             <div>
-              <label className="text-xs text-text-muted block mb-1">POP (%)</label>
+              <label className="text-xs text-text-muted block mb-1">POP (%)<LiveTag k="pop" /></label>
               <input type="number" step="any"
                 value={is0?i0.pop:i45.pop}
                 data-field="pop" onChange={e=>is0?set0('pop',e.target.value):set45('pop',e.target.value)}
@@ -4073,12 +4166,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               )}
             </div>
             <div>
-              <Inp label={!is0 && i45.winSource === 'model' ? 'Win amount ($) — model, curve peak' : 'Win amount ($)'} field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
+              <Inp label={!is0 && i45.winSource === 'model' ? 'Win amount ($) — model, curve peak' : isLive('win') ? <>Win amount ($)<LiveTag k="win" /></> : 'Win amount ($)'} field="win" value={is0?i0.win:i45.win} onChange={v=>is0?set0('win',v):set45('win',v)}/>
               <PrefillChip payoffVal={sizingPay?.maxProfit} fieldVal={is0?i0.win:i45.win}
                 onFill={v=>is0?set0('win',v):set45('win',v)}/>
             </div>
             <div>
-              <label className="text-xs text-text-muted block mb-1">Risk / contract ($)</label>
+              <label className="text-xs text-text-muted block mb-1">Risk / contract ($)<LiveTag k="risk" /></label>
               <input type="number" step="any"
                 value={is0?i0.risk:i45.risk}
                 data-field="risk" onChange={e=>is0?set0('risk',e.target.value):set45('risk',e.target.value)}
@@ -4133,6 +4226,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             const bid = parseFloat(is0 ? i0.comboBid : i45.comboBid);
             const ask = parseFloat(is0 ? i0.comboAsk : i45.comboAsk);
             if (!isFinite(bid) || !isFinite(ask) || ask < bid) return null;
+            if (liveOn) return null;   // the live strip at the top of Sizing says all this, in credit/debit terms
             const mid = (bid + ask) / 2, spread = ask - bid;
             const fair = r.priceCheck ? r.priceCheck.fair : null;
             const ncd = parseFloat(is0 ? i0.netCreditDebit : i45.netCreditDebit);
@@ -6128,6 +6222,94 @@ function Sel({label,value,onChange,options}) {
 // field is empty or disagrees. Click to copy it in — typed values are NEVER
 // overwritten automatically. Win/Risk are sizing fields, outside the held/
 // auto-fill contract, so filling one creates no hold.
+// ── Live price strip (Nov 2026) ──
+// Top of Sizing: what the last Fetch from TWS made of the combo — mid, spread, Win,
+// Risk, POP and breakevens — when it was taken, and whether the boxes below hold it.
+function LivePriceStrip({ on, px, now, stale, vals, fetching, canFetch, onFetch, onNet }) {
+  const box = { margin: '0 0 10px', padding: '9px 11px', borderRadius: 8, border: '1px solid var(--c-1f3a5f)', background: 'var(--c-0d1726)', fontSize: 12.5, lineHeight: 1.5 };
+  const btn = { padding: '4px 10px', borderRadius: 7, border: '1px solid var(--c-58a6ff)', background: 'transparent', color: 'var(--c-58a6ff)', fontWeight: 700, fontSize: 12, cursor: canFetch ? 'pointer' : 'default', opacity: canFetch && !fetching ? 1 : 0.55, whiteSpace: 'nowrap' };
+  const go = <button data-testid="live-fetch" style={btn} disabled={!canFetch || fetching} onClick={onFetch}>{fetching ? 'Pricing…' : on ? '⚡ Refresh' : '⚡ Price from TWS'}</button>;
+  if (!on || !now || !now.lp) {
+    return (
+      <div data-testid="live-strip-off" style={{ ...box, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderStyle: 'dashed' }}>
+        {go}
+        <span style={{ color: 'var(--c-a8b2be)' }}>{stale ? 'Strikes changed since the last price — refresh to price these ones.'
+          : 'Fills Net (the combo mid), Win, Risk and POP from live TWS quotes — no Strategy Builder needed.'}</span>
+      </div>
+    );
+  }
+  const lp = now.lp, c = lp.combo;
+  const credit = lp.net >= 0;
+  const mid = Math.abs(c.mid);
+  const t = new Date(px.asOf);
+  const hhmm = isNaN(t) ? '' : t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' }) + ' ET';
+  const rt = px.dataType === 'realtime';
+  const yoursNet = Math.abs(lp.net - (-c.mid)) >= 0.005;
+  const kept = ['win', 'risk', 'pop'].filter(k => lp[k] != null && vals[k] !== '' && vals[k] != null && String(vals[k]) !== String(lp[k]));
+  const LBL = { win: 'Win', risk: 'Risk', pop: 'POP' };
+  const n = (k, v, col, tid) => (
+    <span data-testid={tid} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
+      <span style={{ color: 'var(--c-8b949e)', fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{k}</span>
+      <b className="mono" style={{ fontSize: 15, color: col || 'var(--c-e6edf3)' }}>{v}</b>
+    </span>
+  );
+  return (
+    <div data-testid="live-strip" style={box}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 11.5, letterSpacing: '0.07em', color: 'var(--c-58a6ff)' }}>⚡ LIVE FROM TWS</b>
+          <span style={{ fontSize: 11.5, color: rt ? 'var(--c-3fb950)' : 'var(--c-d29922)' }}>{px.label || px.dataType}{hhmm ? ` · ${hhmm}` : ''}</span>
+          {!rt && <span style={{ fontSize: 11.5, color: 'var(--c-d29922)' }}>— not a live market; refresh in the session</span>}
+        </span>
+        {go}
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6, alignItems: 'baseline' }}>
+        {n('mid', `${mid.toFixed(2)} ${c.mid <= 0 ? 'cr' : 'db'}`, c.mid <= 0 ? 'var(--c-3fb950)' : undefined, 'live-mid')}
+        {/* As TWS shows the combo: the smaller price first (for a credit, what selling gets you at the bid). */}
+        {n('bid / ask', [Math.abs(c.bid), Math.abs(c.ask)].sort((a, b) => a - b).map(x => x.toFixed(2)).join(' / '), undefined, 'live-ba')}
+        {n('spread', c.spread.toFixed(2), c.spread > 0.25 * mid ? 'var(--c-d29922)' : undefined, 'live-spread')}
+        {lp.exact && n('win', lp.win == null ? 'unlimited' : `+$${lp.win.toLocaleString()}`, 'var(--c-3fb950)', 'live-win')}
+        {lp.exact && n('risk', lp.risk == null ? 'unlimited' : `−$${lp.risk.toLocaleString()}`, 'var(--c-f85149)', 'live-risk')}
+        {lp.exact && n('pop', lp.pop == null ? '—' : `${lp.pop.toFixed(1)}%`, undefined, 'live-pop')}
+        {lp.exact && lp.breakevens.length > 0 && n('breakeven', lp.breakevens.map(b => b.toFixed(1)).join(' · '), 'var(--c-a8b2be)', 'live-be')}
+      </div>
+      {Math.abs(c.mid) >= 0.005 && onNet && (() => {
+        // Limit prices, best to worst for you: the mid, a quarter of the spread toward
+        // the market (the usual prompt fill), and the natural (taking the market).
+        const cr = c.mid < 0, m = Math.abs(c.mid), q = c.spread / 4;
+        const opts = cr ? [['Mid', m], ['Mid − ¼ spread', m - q], ['Natural', Math.min(Math.abs(c.bid), Math.abs(c.ask))]]
+          : [['Mid', m], ['Mid + ¼ spread', m + q], ['Natural', c.ask]];
+        const cur = Math.abs(lp.net);
+        return (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7, alignItems: 'center' }}>
+            <span style={{ color: 'var(--c-8b949e)', fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase', marginRight: 2 }}>your limit</span>
+            {opts.map(([k, v]) => {
+              const on2 = Math.abs(v - cur) < 0.005;
+              return (
+                <button key={k} data-testid={`live-limit-${k.split(' ')[0].toLowerCase()}`} onClick={() => onNet((cr ? v : -v).toFixed(2))}
+                  style={{ padding: '3px 9px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: `1px solid ${on2 ? 'var(--c-58a6ff)' : 'var(--c-30363d)'}`,
+                    background: on2 ? 'var(--c-0c2d6b)' : 'transparent', color: on2 ? 'var(--c-58a6ff)' : 'var(--c-a8b2be)', fontWeight: on2 ? 700 : 500 }}>
+                  {k} <span className="mono">{v.toFixed(2)}</span>
+                </button>
+              );
+            })}
+            <span style={{ fontSize: 11.5, color: 'var(--c-8b949e)' }}>paying the natural costs {(c.spread / 2).toFixed(2)} a contract each way</span>
+          </div>
+        );
+      })()}
+      <div style={{ marginTop: 4, color: 'var(--c-9aa4b0)', fontSize: 12 }}>
+        {Math.abs(c.mid) < 0.005 && <><b style={{ color: 'var(--c-d29922)' }}>The mid is 0.00 — the quotes look one-sided or stale, so nothing was filled.</b> </>}
+        {yoursNet ? <>Priced at your {credit ? 'credit' : 'debit'} <b className="mono">{Math.abs(lp.net).toFixed(2)}</b>, not the mid. </>
+          : <>Net is the mid — set your limit in the box and Win, Risk and POP follow it. </>}
+        {kept.length > 0 && <>Kept as you typed: {kept.map(k => `${LBL[k]} ${vals[k]}`).join(', ')}. </>}
+        {!lp.exact && <>{lp.why}. </>}
+        {lp.exact && lp.why && <>{lp.why}. </>}
+        POP uses each leg’s IV and the skew between them; TWS’s own figure can differ by a point or two.
+      </div>
+    </div>
+  );
+}
+
 function PrefillChip({ payoffVal, fieldVal, onFill }) {
   if (payoffVal == null || !isFinite(payoffVal) || payoffVal <= 0) return null;
   const v = Math.round(payoffVal);
