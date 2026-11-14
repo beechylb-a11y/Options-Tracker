@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ProfitTaker from './ProfitTaker';
-import { VerdictTitle, EdgeRow, ExitPlanStrip, MoreMenu, METRIC } from './EngineVisual';
+import { VerdictTitle, EdgeRow, MoreMenu, METRIC, fmtYmd } from './EngineVisual';
+import ExitPlanCard from './ExitPlanCard';
 import { normalisePosition, planText, savePlan } from '../utils/ticketMath';
 import ReactDOM from 'react-dom';
 import { calc0DTE } from '../engine/calc0dte';
@@ -663,6 +664,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // fill until the fills come back. Deliberately off by default, because the
   // overwhelming case is a trade that already went on. (Oct 2026.)
   const [workingOrder, setWorkingOrder] = useState(false);
+  // The TWS order ref of an entry staged from the exit-plan card (Nov 2026): logged with
+  // the trade so its fills map back, and it pre-ticks "Order sent, not filled yet".
+  const [stagedRef, setStagedRef] = useState('');
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -1756,6 +1760,29 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const commUnitsNow = unitsFromLegs(r.legs);
   const commQtyNow = missingInputs ? 1 : Math.max(1, r.contracts || 1);
   const commTotalNow = roundTripCommission(commUnitsNow, commQtyNow, commRateAcct);
+  // What "Stage in TWS" sends as the combo's legs (Nov 2026): signed per-lot qty, right,
+  // strike and a LISTED expiry (0DTE: today's session; 45DTE: the chain's). Same strike
+  // and right listed twice (a fly's body) merge into one leg — IB rejects duplicates.
+  const stageInfo = (() => {
+    const legs = (r && r.legs) || [];
+    const und = String(secBag.underlying || '').toUpperCase();
+    const byKey = new Map();
+    for (const l of legs) {
+      const lb = String(l.label || '').toLowerCase();
+      const right = lb.includes('put') ? 'P' : 'C';
+      const expiry = legExpiryOf(l) || (is0 ? tradingSession().yyyymmdd : null);
+      const k = `${expiry}|${Number(l.strike)}|${right}`;
+      const q = (/short|sell/.test(lb) ? -1 : 1) * legQty(l);
+      const prev = byKey.get(k);
+      byKey.set(k, prev ? { ...prev, qty: prev.qty + q } : { strike: Number(l.strike), right, qty: q, expiry });
+    }
+    const out = [...byKey.values()].filter(l => l.qty !== 0);
+    const ref = `SB ${und} ${out.map(l => l.strike).sort((a, b) => a - b).join('/')}`.slice(0, 40);
+    if (out.length < 2) return { why: 'Staging takes a 2–4 leg combo — key this one by hand.', ref };
+    if (out.length > 4) return { why: 'TWS combos here take up to 4 legs — key this one by hand.', ref };
+    if (out.some(l => !l.expiry)) return { why: 'No listed expiry yet — once the bridge loads the chain, staging turns on.', ref };
+    return { legs: out, ref };
+  })();
 
   // Log gate. A blocker no longer leaves a green button under a red banner: it
   // turns the button into the reason, with a deliberate "Log anyway" for the cases
@@ -3009,7 +3036,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       return;
     }
     setLogNote('');
-    setWorkingOrder(false);   // an explicit choice each time, never a sticky one
+    setWorkingOrder(!!stagedRef);   // an explicit choice each time — ticked only when this ticket was staged in TWS
     setLogNoteOpen(true);
   }
   // Fingerprint of what is on the ticket right now. Compared against the one captured
@@ -3144,7 +3171,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // and the net above stays what was ASKED until a fill replaces it.
       limitPrice: workingOrder ? (isFinite(ncdSigned) ? ncdSigned : ncdNow) : '',
       workingSince: workingOrder ? logTs : '',
-      orderRef: ''
+      orderRef: workingOrder ? stagedRef : ''
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -3475,11 +3502,25 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       {!r.hardBlocker && (
         <section data-testid="execution" style={{display:'flex',flexWrap:'wrap',alignItems:'stretch',gap:16,padding:'14px 16px',
           borderRadius:12,background:'var(--c-161b22)',border:'1px solid var(--c-21262d)'}}>
-          {/* The exit, visible before you log (Oct 2026) — targets and stop lived only in
-              the closed Evidence drawer. Edit them there; this is what gets saved. */}
-          <div style={{flexBasis:'100%',paddingBottom:12,borderBottom:'1px solid var(--c-21262d)'}}>
-            <ExitPlanStrip net={signedNet(ticketNet, cashType)} win={parseFloat(is0 ? i0.win : i45.win) || 0} qty={r.contracts} plan={exitPlan}
-              onEdit={() => setDrawerTab('inputs')}
+          {/* The exit plan card (Nov 2026): ladder, the target & stop controls inline, the
+              TWS ticket in keying order and "Stage in TWS" (entry + profit target, transmit
+              off; your stop is never sent). It replaced a strip whose edit button led to a
+              drawer. */}
+          <div style={{flexBasis:'100%',paddingBottom:14,borderBottom:'1px solid var(--c-21262d)'}}>
+            <ExitPlanCard net={signedNet(ticketNet, cashType)} win={parseFloat(is0 ? i0.win : i45.win) || 0} qty={r.contracts} plan={exitPlan}
+              maxRisk={r.maxRisk} tif={is0 ? 'DAY' : 'GTC'}
+              head={{ underlying: secBag.underlying, strikes: [...new Set((r.legs || []).map(l => Number(l.strike)))].sort((x, y) => x - y),
+                strategy: String(effectiveStrat || '').replace(/\s*-\s*Normal\b/i, ''),
+                expiryLabel: fmtYmd(is0 ? todayYmd : ((r.legs || []).map(l => legExpiryOf(l)).filter(Boolean).sort()[0] || '')) }}
+              stageLegs={stageInfo.legs || null} stageWhyNot={stageInfo.why} orderRef={stageInfo.ref}
+              onStaged={() => { setStagedRef(stageInfo.ref); setWorkingOrder(true); }}
+              editor={(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 ? (
+                <ProfitTaker variant="card" ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
+                  contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
+                  engine={is0 ? '0DTE' : '45DTE'} kelly={r.kellyContracts ?? r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
+                  targetOverride={is0 && r.exitTarget ? r.exitTarget : null}
+                  tastyFly={flyTastyOk ? tastyFly : null} onTastyFly={setTastyFly}
+                  closeDte={!is0 ? (r.closeDte || null) : null} onCloseDte={setTsClose} />) : null}
               when={is0 ? exitWhen0() : (() => { const cb = planCloseBy(); const exp = isTimeSpread ? nearExp : singleExp;
                 const d = cb && exp ? dteBetween(todayYmd, addDaysYmd(exp, -cb.closeDte)) : null;
                 return cb ? { label: `close by ${cb.date || ''} (${cb.closeDte} DTE)`, days: d } : null; })()} />
@@ -4235,15 +4276,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
 
-          {/* Profit target scale */}
-          {(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 && (
-            <ProfitTaker ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
-              contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}
-              engine={is0 ? '0DTE' : '45DTE'} kelly={r.kellyContracts ?? r.contracts} commRate={commRateAcct} strategy={effectiveStrat}
-              targetOverride={is0 && r.exitTarget ? r.exitTarget : null}
-              tastyFly={flyTastyOk ? tastyFly : null} onTastyFly={setTastyFly}
-              closeDte={!is0 ? (r.closeDte || null) : null} onCloseDte={setTsClose} />
-          )}
+          {/* The profit target & stop moved to the exit-plan card on the Execution section (Nov 2026). */}
 
           </InputSection>
 

@@ -141,7 +141,7 @@ export function ExitPlanStrip({ net, win, qty, plan, when, onEdit }) {
   );
 }
 
-function TimeRing({ days, hours }) {
+export function TimeRing({ days, hours }) {
   const r = 16, c = 2 * Math.PI * r;
   const val = hours != null ? hours : days;
   const span = hours != null ? 6.5 : 45;

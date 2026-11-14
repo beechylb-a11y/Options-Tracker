@@ -28,7 +28,7 @@ const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
 
 export default function ProfitTaker({ ncd, win, contracts, kelly = null, underlying, legs, onPlan, engine = '0DTE', commRate, strategy,
-  tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte, targetOverride = null }) {
+  tastyFly = null, onTastyFly, closeDte: closeDteIn = null, onCloseDte, targetOverride = null, variant = 'full' }) {
   const is0 = !/45/.test(engine);
   // Per-strategy target and basis (Oct 2026): tastylive's numbers, not one 50% for all.
   // tastyFly (0DTE long flies only; null = not offered): switch to tastylive's
@@ -78,11 +78,18 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
 
   // The close-by DTE (45DTE) travels with the plan, so the logged notes carry it.
   const closeBy = !is0 ? (closeDteIn || rule.closeDte || null) : null;
+  // The plan carries its PRICES too (Nov 2026): the exit-plan card draws the ladder and
+  // the TWS ticket from them, so the card and this block can never price differently
+  // (tick-snapped, a typed LMT honoured).
+  const pricedRows = effRows.map((r, i) => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0,
+    price: !split && i === 0 ? tPrice : priceOf(r.pct) }));
   useEffect(() => {
     onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)),
-      basis: pos.basis, closeDte: closeBy, closeLeg: closeBy ? (rule.closeLeg || null) : null });
+      basis: pos.basis, closeDte: closeBy, closeLeg: closeBy ? (rule.closeLeg || null) : null,
+      priced: pricedRows, stopPrice: stop, commRoundTrip: roundTrip(qty), isCredit: pos.isCredit, entry, tick });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(effRows), stopPct, pos.basis, closeBy, rule.closeLeg]);
+  }, [JSON.stringify(pricedRows), stopPct, stop, pos.basis, closeBy, rule.closeLeg, comm, qty, entry]);
+  const [showDetail, setShowDetail] = useState(false);
 
   const closeSide = pos.isCredit ? 'db' : 'cr';
   const basisWord = pos.isCredit ? 'on entry' : pos.basis === 'max' ? 'of max profit' : is0 ? 'on entry' : 'of the debit';
@@ -129,7 +136,7 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
   const btn = on => ({ padding: '3px 10px', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
     borderColor: on ? 'var(--c-238636)' : 'var(--c-30363d)', background: on ? 'var(--c-0d2818)' : 'transparent', color: on ? 'var(--c-3fb950)' : 'var(--c-a8b2be)' });
 
-  return (
+  const full = (
     <div style={{ marginTop: 10, marginBottom: 4, padding: 10, borderRadius: 8, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         <span style={{ background: 'var(--c-0d2818)', color: 'var(--c-3fb950)', borderRadius: 4, padding: '1px 7px', fontSize: 12, fontWeight: 700 }}>BUY</span>
@@ -225,6 +232,66 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
         This plan is saved by the one Log trade button: targets, stop and close-by go into the trade's notes, and the Sell ticket is pre-loaded on this device.
       </div>
       <TicketHelp kind="buy" />
+    </div>
+  );
+  if (variant !== 'card') return full;
+
+  // ── Card variant (Nov 2026): one row of controls on the exit-plan card. The full
+  // block (typed LMT, per-tranche edits, commission, long-fly and close-by options)
+  // is a click away under "details" — same state, so nothing set there is lost.
+  const chip = (on, tone) => ({ display: 'inline-flex', alignItems: 'center', padding: '5px 11px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+    border: `1px solid ${on ? (tone === 'red' ? 'var(--c-f85149)' : 'var(--c-3fb950)') : 'var(--c-30363d)'}`,
+    background: on ? `color-mix(in srgb, ${tone === 'red' ? 'var(--c-f85149)' : 'var(--c-3fb950)'} 16%, transparent)` : 'transparent',
+    color: on ? 'var(--c-ffffff)' : 'var(--c-a8b2be)' });
+  const cap = { fontSize: 11.5, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--c-8b949e)' };
+  const nTr = split ? rows.length : 1;
+  const trancheTo = n => {
+    if (n <= 1) { setSplit(false); return; }
+    const up = [Number(target.pct) || rule.target, ...chips.filter(c => c > (Number(target.pct) || rule.target)), 75, 100, 150].filter((v, i, a) => a.indexOf(v) === i);
+    setRows(ladder(qty, up.slice(0, n)));
+    setSplit(true);
+  };
+  const stopOpts = pos.isCredit ? [50, 100, 200] : [25, 50, 75];
+  return (
+    <div data-testid="pt-card">
+      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start', padding: '12px 14px', borderRadius: 12, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 240px' }}>
+          <span style={cap}>Take profit at{split ? ' (T1)' : ''}</span>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {chips.map(c => (
+              <button key={c} data-testid={`pt-chip-${c}`} onClick={() => { setTarget({ pct: c, price: '' }); if (split) setRows(rs => rs.map((x, j) => j === 0 ? { ...x, pct: c } : x)); }}
+                style={chip(Number(target.pct) === c && target.price === '')}>{c}%</button>
+            ))}
+            <input type="number" step="5" aria-label="Target %" value={target.pct} onChange={e => setTarget({ pct: e.target.value, price: '' })}
+              style={{ ...cell, width: 64 }} />
+            {rule.why && <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>{rule.why}</span>}
+          </div>
+        </div>
+        {qty > 1 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '0 1 170px' }}>
+            <span style={cap}>In tranches</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[1, 2, 3].filter(n => n <= qty).map(n => (
+                <button key={n} data-testid={`pt-tranches-${n}`} onClick={() => trancheTo(n)} style={chip(nTr === n)}>{n}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 260px' }}>
+          <span style={cap}>Your stop <span style={{ textTransform: 'none', letterSpacing: 0 }}>· watched by the check-up, not sent to TWS</span></span>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {stopOpts.map(v => (
+              <button key={v} data-testid={`pt-stop-${v}`} onClick={() => setStopPct(String(v))} style={chip(String(stopPct) === String(v), 'red')}>{v}%</button>
+            ))}
+            <button data-testid="pt-stop-none" onClick={() => setStopPct('')} style={chip(stopPct === '', 'red')}>none</button>
+            <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>of the {pos.isCredit ? 'credit' : 'debit'}</span>
+          </div>
+        </div>
+        <button data-testid="pt-details" onClick={() => setShowDetail(v => !v)}
+          style={{ alignSelf: 'center', marginLeft: 'auto', fontSize: 12.5, color: 'var(--c-58a6ff)', background: 'none', border: 0, cursor: 'pointer' }}>
+          {showDetail ? 'hide details ▴' : 'details ▾'}</button>
+      </div>
+      {showDetail && full}
     </div>
   );
 }

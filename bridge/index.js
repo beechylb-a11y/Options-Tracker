@@ -13,6 +13,7 @@ import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike
   interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
+import { buildStage } from './stageOrder.js';
 
 const app = express();
 app.use(cors({
@@ -1771,7 +1772,73 @@ app.get('/api/vol-surface', async (req, res) => {
   }
 });
 
-// ── Fetch today's executions (fills) from TWS ──
+// ── Stage an order in TWS, untransmitted (Nov 2026) ────────────────────────
+// POST /api/stage-order  { underlying, legs, lots, side, entry, targets, tif, account, orderRef }
+// The combo + its profit target(s) go to TWS with transmit = false: they appear in the
+// order window for the trader to check and Transmit there. No stop is ever sent.
+// Order ids: IB hands out the next valid id on request; the bridge keeps a counter above
+// the highest it has used so two quick stagings never collide.
+let lastOrderId = 0;
+function nextOrderIds(n) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const onId = id => {
+      if (done) return; done = true;
+      ib.removeListener(EventName.nextValidId, onId);
+      const base = Math.max(Number(id) || 0, lastOrderId + 1);
+      lastOrderId = base + n - 1;
+      resolve(Array.from({ length: n }, (_, i) => base + i));
+    };
+    ib.on(EventName.nextValidId, onId);
+    ib.reqIds(1);
+    setTimeout(() => { if (!done) { done = true; ib.removeListener(EventName.nextValidId, onId); reject(new Error('TWS did not hand out an order id')); } }, 5000);
+  });
+}
+
+app.post('/api/stage-order', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const p = req.body || {};
+    const u = String(p.underlying || '').toUpperCase();
+    const plan = buildStage({ ...p, underlying: u });
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (p.account && session.accounts.length && !session.accounts.includes(String(p.account))) {
+      return res.status(400).json({ error: `Account ${p.account} is not in this TWS login (${session.accounts.join(', ')})` });
+    }
+    // Resolve each leg to its conId (trading class from the chain: SPXW, RUTW, XSP…).
+    const chain = await getOptionChain(u).catch(() => null);
+    const comboLegs = [];
+    for (const l of plan.comboLegs) {
+      const [expiry, strike, right] = l.legKey.split('|');
+      const c = buildOptionContract(u, expiry, Number(strike), right);
+      if (chain && chain.tradingClass) c.tradingClass = chain.tradingClass;
+      const conId = await getConId(c);
+      if (!conId) return res.status(400).json({ error: `TWS could not find ${u} ${expiry} ${strike}${right}` });
+      comboLegs.push({ conId, ratio: l.ratio, action: l.action, exchange: l.exchange });
+    }
+    const bag = { symbol: u, secType: SecType.BAG, currency: 'USD', exchange: 'SMART', comboLegs };
+    const ids = await nextOrderIds(1 + plan.children.length);
+    const errors = [];
+    const onErr = (err, code, reqId) => {
+      if (!ids.includes(reqId)) return;
+      if (code >= 2100 && code < 2200) return;           // informational
+      errors.push({ id: reqId, code, message: (err && err.message) || String(err) });
+    };
+    ib.on(EventName.error, onErr);
+    const parent = { ...plan.parent, orderId: ids[0], transmit: false };
+    ib.placeOrder(ids[0], bag, parent);
+    plan.children.forEach((ch, i) => ib.placeOrder(ids[i + 1], bag, { ...ch, orderId: ids[i + 1], parentId: ids[0], transmit: false }));
+    await new Promise(r => setTimeout(r, 1500));          // TWS reports a rejected order within ~1 s
+    ib.removeListener(EventName.error, onErr);
+    console.log(`[BRIDGE] staged (not transmitted) ${plan.summary.join(' | ')} ids ${ids.join(',')}${errors.length ? ' errors ' + JSON.stringify(errors) : ''}`);
+    if (errors.length) return res.status(400).json({ error: errors.map(e => `${e.code}: ${e.message}`).join('; '), ids, staged: false });
+    res.json({ ok: true, staged: true, transmitted: false, ids, parentId: ids[0], summary: plan.summary, account: p.account || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Light IV Rank for the watchlist (Nov 2026) ─────────────────────────────
 // GET /api/ivr?symbols=SPX,TSLA,NVDA   (up to 20)
 //
@@ -1819,6 +1886,7 @@ app.get('/api/ivr', async (req, res) => {
   }
 });
 
+// ── Fetch today's executions (fills) from TWS ──
 app.get('/api/executions', async (req, res) => {
   try {
     await connectTWS();
