@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
 import { rateFromFills, DEFAULT_COMMISSION } from '../utils/commission';
 import { invalidateCommissionRates } from '../utils/useCommissionRate';
+import { ThemeChoice } from '../components/ThemeToggle';
 
 export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
   const [config, setConfig] = useState({});
@@ -136,6 +137,15 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
     <div className="fade-in max-w-2xl">
       <h2 className="font-display text-2xl font-bold mb-6">Settings</h2>
 
+      {/* Theme */}
+      <div className="card mb-6 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="font-display font-semibold">Appearance</h3>
+          <p className="text-xs text-text-muted mt-1">Day for daylight, Night for the evening session, Auto follows your computer.</p>
+        </div>
+        <ThemeChoice />
+      </div>
+
       {/* Auth */}
       <div className="card mb-6">
         <div className="flex items-center gap-3 mb-4">
@@ -256,7 +266,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       } catch (e) { setBackfillResult('Error: ' + e.message); }
                       setBackfilling(false);
                     }} disabled={backfilling}
-                      className="text-[12px] px-2 py-1 border border-[#9e6a03] rounded text-[#d29922] hover:bg-[#1f1a0d] disabled:opacity-50"
+                      className="text-[12px] px-2 py-1 border border-[var(--c-9e6a03)] rounded text-[var(--c-d29922)] hover:bg-[var(--c-1f1a0d)] disabled:opacity-50"
                       title="Re-tag ALL trades to this account (overwrites existing)">
                       Re-tag all
                     </button>
@@ -387,13 +397,13 @@ function CommissionField({ value, onChange, onCalibrate, calib }) {
   return (
     <div className="col-span-3">
       <label className="text-[12px] text-text-muted block mb-0.5">
-        Commission per contract, each way ($) <span style={{color:'#8b949e'}}>used by the engine's EV, the tickets and the tax report</span>
+        Commission per contract, each way ($) <span style={{color:'var(--c-8b949e)'}}>used by the engine's EV, the tickets and the tax report</span>
       </label>
       <div className="flex items-center gap-2 flex-wrap">
         <input type="number" step="0.01" min="0" value={value} onChange={e => onChange(e.target.value)}
           className="w-24 px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
         <button type="button" onClick={onCalibrate} disabled={calib && calib.busy}
-          className="px-2 py-1 text-[12px] border border-[#2f81f7] rounded text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
+          className="px-2 py-1 text-[12px] border border-[var(--c-2f81f7)] rounded text-[var(--c-58a6ff)] hover:bg-[var(--c-0d1a2e)] disabled:opacity-50">
           {calib && calib.busy ? 'Reading fills…' : 'Set from today\u2019s TWS fills'}
         </button>
         {calib && calib.text && <span className="text-[12px] text-green">{calib.text}</span>}

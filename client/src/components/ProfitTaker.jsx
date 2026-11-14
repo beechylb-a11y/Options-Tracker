@@ -21,8 +21,8 @@ import { unitsFromLegs, DEFAULT_COMMISSION } from '../utils/commission';
 //
 // props: ncd (per-share, + credit / − debit), win (max profit $/contract),
 //        contracts (Kelly), underlying, legs, engine ('0DTE'|'45DTE'), onPlan(plan)
-const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid #30363d', background: '#0d1117',
-  color: '#e6edf3', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%' };
+const cell = { padding: '5px 6px', borderRadius: 6, border: '1px solid var(--c-30363d)', background: 'var(--c-0d1117)',
+  color: 'var(--c-e6edf3)', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%' };
 
 const money = x => (x >= 0 ? '+$' : '−$') + Math.abs(x).toFixed(0);
 const pctStr = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(0) + '%';
@@ -102,67 +102,67 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
     const gross = pnlAt(pos, price, q), net = gross - roundTrip(q);
     const over = capPct != null && Number(pct) > capPct + 0.5;
     return (
-      <div className="mono" style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.65, padding: '4px 0 6px' }}>
-        <span style={{ color: '#e6edf3', fontWeight: 700 }}>{closeSide === 'cr' ? 'Sell' : 'Buy back'} @ {price.toFixed(2)}</span>
-        {' '}= <span style={{ color: '#3fb950', fontWeight: 700 }}>{pctStr(pnlPct(pos, price) ?? 0)}</span> on entry
-        {' '}· <span style={{ color: '#3fb950' }}>{money(gross)}</span> on {q}
-        {' '}<span style={{ color: net >= 0 ? '#3fb950' : '#f85149' }}>({money(net)} after comm)</span>
+      <div className="mono" style={{ fontSize: 12.5, color: 'var(--c-a8b2be)', lineHeight: 1.65, padding: '4px 0 6px' }}>
+        <span style={{ color: 'var(--c-e6edf3)', fontWeight: 700 }}>{closeSide === 'cr' ? 'Sell' : 'Buy back'} @ {price.toFixed(2)}</span>
+        {' '}= <span style={{ color: 'var(--c-3fb950)', fontWeight: 700 }}>{pctStr(pnlPct(pos, price) ?? 0)}</span> on entry
+        {' '}· <span style={{ color: 'var(--c-3fb950)' }}>{money(gross)}</span> on {q}
+        {' '}<span style={{ color: net >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>({money(net)} after comm)</span>
         {/* Say where the commission comes from: a butterfly is 4 option contracts per
             unit, charged on the way in AND out, so a 16-lot is 128 contracts. It is
             easy to read $83 off a $256 target as a bug when it is the real cost. */}
         {roundTrip(q) > 0 && (
-          <span style={{ color: '#8b949e' }}><br />
+          <span style={{ color: 'var(--c-8b949e)' }}><br />
             Comm −${roundTrip(q).toFixed(2)} = {q} × {perUnit} contracts × 2 sides × ${Number(comm).toFixed(2)}
-            {gross > 0 && <> · <span style={{ color: roundTrip(q) / gross > 0.2 ? '#d29922' : '#8b949e' }}>{(roundTrip(q) / gross * 100).toFixed(0)}% of the profit</span></>}
+            {gross > 0 && <> · <span style={{ color: roundTrip(q) / gross > 0.2 ? 'var(--c-d29922)' : 'var(--c-8b949e)' }}>{(roundTrip(q) / gross * 100).toFixed(0)}% of the profit</span></>}
             {!pos.isCredit && <> · breakeven after comm: {(entry + roundTrip(1) / 100).toFixed(2)}</>}
           </span>
         )}
-        {over && <span style={{ color: '#f85149' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
+        {over && <span style={{ color: 'var(--c-f85149)' }}> — beyond max profit ({capPct.toFixed(0)}%), can't fill</span>}
         <br />{twsLine(price)}
         {!pos.isCredit && pos.basis === 'max' && Math.abs((pnlPct(pos, price) ?? 0) - Number(pct)) > 10 && (
-          <span style={{ color: '#d29922' }}><br />{is0 ? 'These' : '45DTE'} targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
+          <span style={{ color: 'var(--c-d29922)' }}><br />{is0 ? 'These' : '45DTE'} targets are % of max profit: {pct}% of max = {pctStr(pnlPct(pos, price) ?? 0)} on what you paid. Use the offset in TWS, not {pct}%.</span>
         )}
       </div>
     );
   };
 
   const btn = on => ({ padding: '3px 10px', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
-    borderColor: on ? '#238636' : '#30363d', background: on ? '#0d2818' : 'transparent', color: on ? '#3fb950' : '#a8b2be' });
+    borderColor: on ? 'var(--c-238636)' : 'var(--c-30363d)', background: on ? 'var(--c-0d2818)' : 'transparent', color: on ? 'var(--c-3fb950)' : 'var(--c-a8b2be)' });
 
   return (
-    <div style={{ marginTop: 10, marginBottom: 4, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #21262d' }}>
+    <div style={{ marginTop: 10, marginBottom: 4, padding: 10, borderRadius: 8, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-        <span style={{ background: '#0d2818', color: '#3fb950', borderRadius: 4, padding: '1px 7px', fontSize: 12, fontWeight: 700 }}>BUY</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>Profit taker</span>
-        <span className="mono" style={{ fontSize: 12.5, color: '#c9d1d9' }}>
-          {qty} ct <span style={{ color: '#8b949e' }}>{kelly == null || Number(kelly) === qty ? '(Kelly)' : `(your size · Kelly ${kelly})`}</span> @ {entry.toFixed(2)} {pos.isCredit ? 'cr' : 'db'}
+        <span style={{ background: 'var(--c-0d2818)', color: 'var(--c-3fb950)', borderRadius: 4, padding: '1px 7px', fontSize: 12, fontWeight: 700 }}>BUY</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-e6edf3)' }}>Profit taker</span>
+        <span className="mono" style={{ fontSize: 12.5, color: 'var(--c-c9d1d9)' }}>
+          {qty} ct <span style={{ color: 'var(--c-8b949e)' }}>{kelly == null || Number(kelly) === qty ? '(Kelly)' : `(your size · Kelly ${kelly})`}</span> @ {entry.toFixed(2)} {pos.isCredit ? 'cr' : 'db'}
         </span>
-        <span className="mono" style={{ fontSize: 12, color: '#8b949e' }}>
+        <span className="mono" style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>
           · max {win > 0 ? `$${win.toFixed(0)}/ct` : '—'}{capPct != null && win > 0 ? ` = ${pctStr(capPct)} ${basisWord}` : ''}
         </span>
       </div>
 
       {!split ? (<>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: '#8b949e', marginRight: 2 }}>Target {basisWord}</span>
+          <span style={{ fontSize: 12, color: 'var(--c-8b949e)', marginRight: 2 }}>Target {basisWord}</span>
           {chips.map(p => (
             <button key={p} onClick={() => setTarget({ pct: p, price: '' })} style={btn(Number(target.pct) === p && target.price === '')}>+{p}%</button>
           ))}
           <input type="number" step="5" value={target.pct} style={{ ...cell, width: 64, marginLeft: 6 }} title={`% ${basisWord}`}
             onChange={e => setTarget({ pct: e.target.value, price: '' })} />
-          <span style={{ fontSize: 12, color: '#8b949e' }}>% ⇄ LMT</span>
+          <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>% ⇄ LMT</span>
           <input type="number" step={tick} style={{ ...cell, width: 80 }} value={target.price !== '' ? target.price : priceOf(target.pct)}
             onChange={e => { const p = parseFloat(e.target.value); const t = isFinite(p) ? priceToTarget(pos, p) : null; setTarget({ price: e.target.value, pct: t != null ? round2(t) : '' }); }} />
         </div>
         {tastyFly !== null && onTastyFly && (
           <button type="button" data-testid="tasty-fly-toggle-pt" onClick={() => onTastyFly(!tastyFly)}
             title="Long-fly targets: take 25–50% of MAX PROFIT, not a % of the debit"
-            style={{ ...btn(!!tastyFly), marginTop: 6, borderColor: tastyFly ? '#2f81f7' : '#30363d', color: tastyFly ? '#58a6ff' : '#a8b2be', background: tastyFly ? '#0d1a2b' : 'transparent' }}>
+            style={{ ...btn(!!tastyFly), marginTop: 6, borderColor: tastyFly ? 'var(--c-2f81f7)' : 'var(--c-30363d)', color: tastyFly ? 'var(--c-58a6ff)' : 'var(--c-a8b2be)', background: tastyFly ? 'var(--c-0d1a2b)' : 'transparent' }}>
             {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
           </button>
         )}
         {(rule.why || !is0) && (
-          <div style={{ fontSize: 12, color: '#8b949e', marginTop: 4 }} data-testid="exit-rule">
+          <div style={{ fontSize: 12, color: 'var(--c-8b949e)', marginTop: 4 }} data-testid="exit-rule">
             {rule.why}{rule.why && !is0 ? ' · ' : ''}{!is0 && (closeDteIn || rule.closeDte) ? `close by ${closeDteIn || rule.closeDte} DTE${rule.closeLeg ? ' on the ' + rule.closeLeg : ''} whatever the P&L` : ''}
             {!is0 && Array.isArray(rule.closeOptions) && onCloseDte && (
               <span style={{ marginLeft: 8, display: 'inline-flex', gap: 4 }}>
@@ -176,23 +176,23 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
         <Result q={qty} pct={Number(target.pct) || 0} price={tPrice} />
       </>) : (<>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
-          <span style={{ fontSize: 12, color: '#8b949e' }}>Tranches, target {basisWord}</span>
-          <button style={{ ...btn(false), borderColor: '#2f81f7', color: '#58a6ff' }} onClick={() => setRows(r => [...r, { qty: 1, pct: rule.target }])}>+ Tranche</button>
-          <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: allocated === qty ? '#8b949e' : '#f85149' }}>{allocated} / {qty} allocated</span>
+          <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>Tranches, target {basisWord}</span>
+          <button style={{ ...btn(false), borderColor: 'var(--c-2f81f7)', color: 'var(--c-58a6ff)' }} onClick={() => setRows(r => [...r, { qty: 1, pct: rule.target }])}>+ Tranche</button>
+          <span className="mono" style={{ marginLeft: 'auto', fontSize: 12, color: allocated === qty ? 'var(--c-8b949e)' : 'var(--c-f85149)' }}>{allocated} / {qty} allocated</span>
         </div>
         {rows.map((r, i) => {
           const price = priceOf(r.pct);
           return (
-            <div key={i} style={{ borderTop: i ? '1px solid #21262d' : 'none', paddingTop: 4 }}>
+            <div key={i} style={{ borderTop: i ? '1px solid var(--c-21262d)' : 'none', paddingTop: 4 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: '#8b949e', width: 22 }}>T{i + 1}</span>
+                <span style={{ fontSize: 12, color: 'var(--c-8b949e)', width: 22 }}>T{i + 1}</span>
                 <input type="number" min="1" value={r.qty} style={{ ...cell, width: 56 }} title="contracts"
                   onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>ct at +</span>
+                <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>ct at +</span>
                 <input type="number" step="5" value={r.pct} style={{ ...cell, width: 64 }} title={`% ${basisWord}`}
                   onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, pct: e.target.value } : x))} />
-                <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
-                <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}>×</button>
+                <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>%</span>
+                <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: 'var(--c-8b949e)', cursor: 'pointer' }}>×</button>
               </div>
               <Result q={Number(r.qty) || 0} pct={Number(r.pct) || 0} price={price} />
             </div>
@@ -200,28 +200,28 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
         })}
       </>)}
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid #21262d', paddingTop: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--c-21262d)', paddingTop: 6 }}>
         {qty > 1 && (
           <button onClick={() => setSplit(s => !s)} style={{ ...btn(split), marginRight: 6 }}>
             {split ? '✓ Scaling out' : 'Scale out in tranches'}
           </button>
         )}
-        <span style={{ fontSize: 12, color: '#a8b2be' }}>Stop</span>
+        <span style={{ fontSize: 12, color: 'var(--c-a8b2be)' }}>Stop</span>
         <input type="number" step="25" placeholder="% loss" title={pos.isCredit ? 'Loss as % of the credit — 100 closes at 2× credit' : 'Loss as % of the debit — 50 sells at half what you paid'} value={stopPct} onChange={e => setStopPct(e.target.value)} style={{ ...cell, width: 80 }} />
         {stop != null && (
-          <span className="mono" data-testid="pt-stop" style={{ fontSize: 12, color: '#f85149' }}>
+          <span className="mono" data-testid="pt-stop" style={{ fontSize: 12, color: 'var(--c-f85149)' }}>
             @ {stop.toFixed(2)} {closeSide} = {pctStr(pnlPct(pos, stop) ?? 0)} · {money(pnlAt(pos, stop, qty))}
-            {String(stopPct) === String(STOP_LOSS_PCT) && <span style={{ color: '#8b949e' }}> · guide: {STOP_LOSS_PCT}% of the {pos.isCredit ? 'credit' : 'debit'}</span>}
+            {String(stopPct) === String(STOP_LOSS_PCT) && <span style={{ color: 'var(--c-8b949e)' }}> · guide: {STOP_LOSS_PCT}% of the {pos.isCredit ? 'credit' : 'debit'}</span>}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#a8b2be' }} title="Per contract, each way. Set per account in Settings.">Comm / contract</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--c-a8b2be)' }} title="Per contract, each way. Set per account in Settings.">Comm / contract</span>
         <input type="number" step="0.01" value={comm} style={{ ...cell, width: 60 }}
           onChange={e => setComm(e.target.value)} />
       </div>
       {!(win > 0) && !pos.isCredit && (
-        <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>No Win amount entered, so the max-profit cap isn't known.</div>
+        <div style={{ fontSize: 11.5, color: 'var(--c-8b949e)', marginTop: 4 }}>No Win amount entered, so the max-profit cap isn't known.</div>
       )}
-      <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: 4 }}>
+      <div style={{ fontSize: 11.5, color: 'var(--c-8b949e)', marginTop: 4 }}>
         This plan is saved by the one Log trade button: targets, stop and close-by go into the trade's notes, and the Sell ticket is pre-loaded on this device.
       </div>
       <TicketHelp kind="buy" />

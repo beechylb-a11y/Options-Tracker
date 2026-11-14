@@ -335,7 +335,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                       else if (data.pnl < 0) borderCls = 'border-red/40';
                       if (data.pnl !== 0 && maxAbsDayPnl > 0) {
                         const alpha = 0.08 + 0.37 * Math.min(1, Math.abs(data.pnl) / maxAbsDayPnl);
-                        bg = data.pnl > 0 ? `rgba(63,185,80,${alpha.toFixed(3)})` : `rgba(248,81,73,${alpha.toFixed(3)})`;
+                        bg = `color-mix(in srgb, var(--c-${data.pnl > 0 ? '3fb950' : 'f85149'}) ${Math.round(alpha * 100)}%, transparent)`;
                       }
                     }
                     const dimmed = isWeekend && !hasTrades && !data?.notes && !data?.openCount;
@@ -393,7 +393,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                   {allClosedOnDay.length > 0 && (
                     <div className="flex items-center gap-4 mt-1">
                       <span className="mono text-xl font-bold" style={{ color: pnlColor(selDayPnl) }}>{fmt$(selDayPnl)}</span>
-                      <span className="text-sm text-[#c9d1d9]">{allClosedOnDay.length} closed</span>
+                      <span className="text-sm text-[var(--c-c9d1d9)]">{allClosedOnDay.length} closed</span>
                       <span className="text-sm font-medium text-green">{selDayWins}W</span>
                       <span className="text-sm font-medium text-red">{selDayLosses}L</span>
                     </div>
@@ -421,7 +421,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                             {isEntry && isClose ? 'SAME DAY' : isEntry ? 'ENTRY' : 'CLOSE'}
                           </span>
                           <span className="text-sm font-medium text-white">{t.Underlying}</span>
-                          <span className="text-xs text-[#c9d1d9] flex-1">{t['Strategy (OIC)']}</span>
+                          <span className="text-xs text-[var(--c-c9d1d9)] flex-1">{t['Strategy (OIC)']}</span>
                           {t.Status !== 'Open' && <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>}
                           {t['W / L'] && <span className={`badge text-[12px] ${t['W / L'] === 'Win' ? 'badge-green' : 'badge-red'}`}>{t['W / L']}</span>}
                           <span className={`badge text-[12px] ${t.Status === 'Open' ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : 'badge-green'}`}>{t.Status}</span>
@@ -490,12 +490,12 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                           <div className="flex items-center gap-3">
                             <span className="text-[12px] font-medium px-2 py-0.5 rounded bg-amber-bg text-amber">{d.Engine || 'Engine'}</span>
                             <span className="text-sm font-medium text-white">{d.Underlying}</span>
-                            <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
+                            <span className="text-xs text-[var(--c-c9d1d9)] flex-1">{stratName}</span>
                             <span className="mono text-sm font-bold" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</span>
                             <span className={`badge text-[12px] ${isWin ? 'badge-green' : 'badge-red'}`}>{isWin ? 'Win' : 'Loss'}</span>
                             <span className={`badge text-[12px] ${isMatched ? 'badge-green' : 'badge-amber'}`}>{isMatched ? 'Matched' : 'Unmatched'}</span>
                           </div>
-                          {d.Notes && <div className="text-[12px] text-[#a8b2be] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
+                          {d.Notes && <div className="text-[12px] text-[var(--c-a8b2be)] mt-1.5 whitespace-pre-line leading-relaxed">{d.Notes}</div>}
                           {(() => {
                             const st = replayState[d.Timestamp];
                             return (
@@ -534,10 +534,10 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
                         <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg border border-bg-border">
                           <span className="text-[12px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent">{d.Engine || '0DTE'}</span>
                           <span className="text-sm font-medium text-white">{d.Underlying}</span>
-                          <span className="text-xs text-[#c9d1d9] flex-1">{stratName}</span>
+                          <span className="text-xs text-[var(--c-c9d1d9)] flex-1">{stratName}</span>
                           <span className="text-xs text-text-faint mono">{d['Setup Score']}</span>
                           <button onClick={() => setClosingTrade({ trade: d, type: 'ticket' })}
-                            className="text-[12px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                            className="text-[12px] px-2 py-0.5 border border-[var(--c-238636)] rounded text-[var(--c-3fb950)] hover:bg-[var(--c-0d2818)]">
                             Close
                           </button>
                         </div>
@@ -550,7 +550,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
               {/* Notes */}
               <div>
                 <h4 className="text-[12px] text-text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5"><Edit3 size={10} /> Daily review</h4>
-                {selData?.notes && <div className="text-sm text-[#c9d1d9] mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>}
+                {selData?.notes && <div className="text-sm text-[var(--c-c9d1d9)] mb-2 p-3 bg-bg rounded-lg whitespace-pre-wrap">{selData.notes}</div>}
                 <textarea value={reviewText} onChange={e => setReviewText(e.target.value)} rows={3}
                   placeholder="What went well? What would you do differently?..."
                   className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text placeholder-text-faint outline-none focus:border-accent resize-y" />

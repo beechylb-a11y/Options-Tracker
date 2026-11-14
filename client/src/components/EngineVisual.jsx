@@ -15,8 +15,9 @@
 import React, { useState } from 'react';
 import { MoreHorizontal, Clock } from 'lucide-react';
 import { normalisePosition, targetToPrice, stopToPrice, pnlAt } from '../utils/ticketMath';
+import { alpha } from '../utils/theme';
 
-const C = { green: '#3fb950', red: '#f85149', amber: '#e3b341', blue: '#58a6ff', grey: '#8b949e', text: '#e6edf3', line: '#30363d', bg: '#0d1117', panel: '#161b22' };
+const C = { green: 'var(--c-3fb950)', red: 'var(--c-f85149)', amber: 'var(--c-e3b341)', blue: 'var(--c-58a6ff)', grey: 'var(--c-8b949e)', text: 'var(--c-e6edf3)', line: 'var(--c-30363d)', bg: 'var(--c-0d1117)', panel: 'var(--c-161b22)' };
 const money = v => (v == null || !isFinite(v) ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString());
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const fmtYmd = y => (y && String(y).length === 8 ? `${+String(y).slice(6, 8)} ${MON[+String(y).slice(4, 6) - 1]}` : '');
@@ -29,10 +30,10 @@ export function VerdictTitle({ word, tone, underlying, strikes = [], strategy, q
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span data-testid="verdict" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 8, fontWeight: 800,
-          fontSize: 15, letterSpacing: '.02em', color: tone, background: tone + '1f', border: `1.5px solid ${tone}` }}>{word}</span>
+          fontSize: 15, letterSpacing: '.02em', color: tone, background: alpha(tone, '1f'), border: `1.5px solid ${tone}` }}>{word}</span>
         {price ? <span className="mono" style={{ fontSize: 13, color: C.grey }}>{underlying} @ {price}</span> : null}
       </span>
-      <span data-testid="verdict-title" className="mono" style={{ color: '#fff', fontWeight: 800, fontSize: 21, lineHeight: 1.25, display: 'flex', flexWrap: 'wrap', columnGap: 12 }}>
+      <span data-testid="verdict-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: 21, lineHeight: 1.25, display: 'flex', flexWrap: 'wrap', columnGap: 12 }}>
         <span data-testid="verdict-ticker" style={{ whiteSpace: 'nowrap' }}>{underlying}{strikes.length ? ' ' + strikes.join('/') : ''}</span>
         {strategy && <span style={{ whiteSpace: 'nowrap' }}>{strategy}</span>}
         {qty ? <span style={{ whiteSpace: 'nowrap' }}>{qty} ct</span> : null}
@@ -48,7 +49,7 @@ function Tile({ k, v, sub, col, pct, testid, title }) {
       <div style={{ fontSize: 10.5, letterSpacing: '.07em', textTransform: 'uppercase', color: C.grey }}>{k}</div>
       <div className="mono" style={{ fontSize: 19, fontWeight: 800, color: col || C.text, lineHeight: 1.2 }}>{v}</div>
       {pct != null && (
-        <div style={{ height: 4, borderRadius: 2, background: '#21262d', marginTop: 4, overflow: 'hidden' }}>
+        <div style={{ height: 4, borderRadius: 2, background: 'var(--c-21262d)', marginTop: 4, overflow: 'hidden' }}>
           <div style={{ width: `${Math.max(2, Math.min(100, pct))}%`, height: '100%', background: col || C.blue }} />
         </div>
       )}
@@ -73,7 +74,7 @@ export function EdgeRow({ ev, pml, pop, kellyCt, kellyDollar, needsSizing }) {
         sub="beyond a wing" />
       <Tile testid="edge-pop" k={METRIC.pop} v={pop == null ? '—' : `${Math.round(pop)}%`} col={pop == null ? C.grey : pop >= 60 ? C.green : pop >= 45 ? C.amber : C.red} pct={pop}
         sub="any profit at expiry" />
-      <Tile testid="edge-kelly" k={METRIC.kelly} v={needsSizing ? '—' : !(kellyDollar > 0) ? 'no edge' : `${kellyCt} ct`} col={needsSizing ? C.grey : kellyDollar > 0 ? C.text : '#e3833c'}
+      <Tile testid="edge-kelly" k={METRIC.kelly} v={needsSizing ? '—' : !(kellyDollar > 0) ? 'no edge' : `${kellyCt} ct`} col={needsSizing ? C.grey : kellyDollar > 0 ? C.text : 'var(--c-e3833c)'}
         sub={needsSizing ? 'after sizing' : kellyDollar > 0 ? `$${Math.round(kellyDollar).toLocaleString()} of bankroll` : 'Kelly says size 0'} />
     </div>
   );
@@ -112,7 +113,7 @@ export function ExitPlanStrip({ net, win, qty, plan, when, onEdit }) {
         </div>
         <div style={{ position: 'relative', height: 20, marginTop: 6 }}>
           <div style={{ position: 'absolute', left: 0, right: 0, top: 7, height: 6, borderRadius: 3,
-            background: `linear-gradient(90deg, ${C.red} 0%, ${C.red}55 ${P(0)}%, ${C.green}55 ${P(0)}%, ${C.green} 100%)` }} />
+            background: `linear-gradient(90deg, ${C.red} 0%, ${alpha(C.red, '55')} ${P(0)}%, ${alpha(C.green, '55')} ${P(0)}%, ${C.green} 100%)` }} />
           <div style={{ position: 'absolute', left: `${P(0)}%`, top: 2, width: 2, height: 16, background: C.text, opacity: 0.5, marginLeft: -1 }} />
           {stop != null && <div title={`stop @${stopPrice.toFixed(2)} ${side}`} style={{ position: 'absolute', left: `${P(stop)}%`, top: 3, width: 12, height: 12, marginLeft: -6, borderRadius: '50%', border: `2.5px solid ${C.red}`, background: C.bg }} />}
           {targets.map((t, i) => (
@@ -124,7 +125,7 @@ export function ExitPlanStrip({ net, win, qty, plan, when, onEdit }) {
           <span data-testid="exit-targets" style={{ color: C.green }}>
             {targets.length ? targets.map(t => `${t.label} @${t.price.toFixed(2)}${targets.length > 1 ? ` ×${t.qty}` : ''}`).join(' · ') + ` = ${money(targetAll)}` : 'no target'}
           </span>
-          <span style={{ color: '#2ea043' }}>max {money(max)}</span>
+          <span style={{ color: 'var(--c-2ea043)' }}>max {money(max)}</span>
         </div>
       </div>
       {when && (
@@ -148,7 +149,7 @@ function TimeRing({ days, hours }) {
   const col = val == null ? C.grey : (hours != null ? val <= 1 : val <= 5) ? C.amber : C.blue;
   return (
     <svg width="44" height="44" viewBox="0 0 44 44">
-      <circle cx="22" cy="22" r={r} fill="none" stroke="#21262d" strokeWidth="5" />
+      <circle cx="22" cy="22" r={r} fill="none" stroke="var(--c-21262d)" strokeWidth="5" />
       <circle cx="22" cy="22" r={r} fill="none" stroke={col} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 22 22)" />
       <text x="22" y="26" textAnchor="middle" fontSize="11.5" fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">
         {val == null ? '—' : hours != null ? `${val.toFixed(1)}h` : `${days}d`}</text>

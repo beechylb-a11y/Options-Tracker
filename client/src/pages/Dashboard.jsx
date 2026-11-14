@@ -307,32 +307,32 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
             <ComposedChart data={equityCurve}>
               <defs>
                 <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={cumPnl >= 0 ? '#3fb950' : '#f85149'} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={cumPnl >= 0 ? '#3fb950' : '#f85149'} stopOpacity={0} />
+                  <stop offset="5%" stopColor={cumPnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)'} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={cumPnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)'} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f85149" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#f85149" stopOpacity={0} />
+                  <stop offset="5%" stopColor="var(--c-f85149)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="var(--c-f85149)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
-              <YAxis yAxisId="eq" tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--c-8b949e)' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
+              <YAxis yAxisId="eq" tick={{ fontSize: 10, fill: 'var(--c-8b949e)' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <YAxis yAxisId="dd" orientation="right" domain={['dataMin', 0]}
-                tick={{ fontSize: 10, fill: '#f85149', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                tick={{ fontSize: 10, fill: 'var(--c-f85149)', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
               <Tooltip
-                contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: '#a8b2be' }} labelFormatter={shortDate}
+                contentStyle={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: 'var(--c-a8b2be)' }} labelFormatter={shortDate}
                 formatter={(v, name) => {
                   if (name === 'drawdown') {
-                    return [<span style={{ color: '#f85149', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(Math.abs(v))}</span>, 'Drawdown'];
+                    return [<span style={{ color: 'var(--c-f85149)', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(Math.abs(v))}</span>, 'Drawdown'];
                   }
-                  const color = v >= 0 ? '#3fb950' : '#f85149';
+                  const color = v >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)';
                   return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'Cumulative'];
                 }}
               />
-              <ReferenceLine yAxisId="eq" y={0} stroke="#30363d" strokeDasharray="3 3" />
-              <Area yAxisId="dd" type="monotone" dataKey="drawdown" stroke="#f85149" strokeOpacity={0.5} fill="url(#ddGrad)" strokeWidth={1} dot={false} />
-              <Area yAxisId="eq" type="monotone" dataKey="cumPnl" stroke={cumPnl >= 0 ? '#3fb950' : '#f85149'} fill="url(#eqGrad)" strokeWidth={2} dot={false} />
+              <ReferenceLine yAxisId="eq" y={0} stroke="var(--c-30363d)" strokeDasharray="3 3" />
+              <Area yAxisId="dd" type="monotone" dataKey="drawdown" stroke="var(--c-f85149)" strokeOpacity={0.5} fill="url(#ddGrad)" strokeWidth={1} dot={false} />
+              <Area yAxisId="eq" type="monotone" dataKey="cumPnl" stroke={cumPnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)'} fill="url(#eqGrad)" strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         ) : (
@@ -347,20 +347,20 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           {pnlByDate.length > 0 ? (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={pnlByDate}>
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
-                <YAxis tick={{ fontSize: 10, fill: '#8b949e' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--c-8b949e)' }} axisLine={false} tickLine={false} tickFormatter={shortDate} minTickGap={24} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--c-8b949e)' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + v} />
                 <Tooltip
-                  contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#a8b2be' }} labelFormatter={shortDate} labelFormatter={shortDate}
+                  contentStyle={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: 'var(--c-a8b2be)' }} labelFormatter={shortDate} labelFormatter={shortDate}
                   formatter={(v) => {
-                    const color = v >= 0 ? '#3fb950' : '#f85149';
+                    const color = v >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)';
                     return [<span style={{ color, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>{fmt$(v)}</span>, 'P&L'];
                   }}
                 />
-                <ReferenceLine y={0} stroke="#30363d" strokeDasharray="3 3" />
+                <ReferenceLine y={0} stroke="var(--c-30363d)" strokeDasharray="3 3" />
                 <Bar dataKey="pnl" radius={[3, 3, 0, 0]}>
                   {pnlByDate.map((d, i) => (
-                    <Cell key={i} fill={d.pnl >= 0 ? '#238636' : '#da3633'} />
+                    <Cell key={i} fill={d.pnl >= 0 ? 'var(--c-238636)' : 'var(--c-da3633)'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -401,7 +401,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
                       <td className="py-2 pr-4 text-text-muted">{acctName(t.Account)}</td>
                       <td className="py-2 pr-4 text-right mono font-medium" style={{ color: pnlColor(pnl) }}>{fmt$(pnl)}</td>
                       <td className="py-2 pr-4 text-center">
-                        {(() => { const wl = rowWl(t); return <span className={`badge ${wl === 'Win' ? 'badge-green' : wl === 'Loss' ? 'badge-red' : ''}`} style={wl === 'Scratch' ? { color: '#8b949e', border: '1px solid #30363d' } : undefined}>{wl}</span>; })()}
+                        {(() => { const wl = rowWl(t); return <span className={`badge ${wl === 'Win' ? 'badge-green' : wl === 'Loss' ? 'badge-red' : ''}`} style={wl === 'Scratch' ? { color: 'var(--c-8b949e)', border: '1px solid var(--c-30363d)' } : undefined}>{wl}</span>; })()}
                       </td>
                       <td className="py-2 text-text-muted text-xs">{t.Status}</td>
                     </tr>
@@ -429,8 +429,8 @@ function EventBanner() {
   const o = useMemo(() => eventOutlook(dateISO, minutes, 21), [dateISO, minutes]);
 
   const todayHigh = o.highToday;
-  const border = o.todayWarnings.length ? (todayHigh ? '#6e2427' : '#4b3f7a') : '#21262d';
-  const bg = o.todayWarnings.length ? (todayHigh ? '#1f1214' : '#151327') : '#0d1117';
+  const border = o.todayWarnings.length ? (todayHigh ? 'var(--c-6e2427)' : 'var(--c-4b3f7a)') : 'var(--c-21262d)';
+  const bg = o.todayWarnings.length ? (todayHigh ? 'var(--c-1f1214)' : 'var(--c-151327)') : 'var(--c-0d1117)';
 
   return (
     <div className="mb-3 rounded-lg" style={{ background: bg, border: `1px solid ${border}`, padding: '10px 14px' }}>
@@ -438,7 +438,7 @@ function EventBanner() {
         <Calendar size={14} className="text-text-muted" />
         <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Macro calendar</span>
         {o.nextHigh && (
-          <span className="text-xs mono" style={{ color: '#a8b2be' }}>
+          <span className="text-xs mono" style={{ color: 'var(--c-a8b2be)' }}>
             · next major: {o.nextHigh.label} {o.nextHigh.date}
             {o.daysUntilNextHigh === 0 ? ' (today)' : ` (${o.daysUntilNextHigh}d)`}
           </span>
@@ -447,12 +447,12 @@ function EventBanner() {
 
       {o.todayWarnings.length > 0 ? (
         o.todayWarnings.map((w, i) => (
-          <div key={i} className="text-sm" style={{ color: todayHigh ? '#f0a0a0' : '#b9a7ff', lineHeight: 1.5 }}>
+          <div key={i} className="text-sm" style={{ color: todayHigh ? 'var(--c-f0a0a0)' : 'var(--c-b9a7ff)', lineHeight: 1.5 }}>
             {w}
           </div>
         ))
       ) : (
-        <div className="text-sm" style={{ color: '#a8b2be' }}>
+        <div className="text-sm" style={{ color: 'var(--c-a8b2be)' }}>
           Nothing scheduled inside today's session.
         </div>
       )}
@@ -465,9 +465,9 @@ function EventBanner() {
               <span key={i} title={`${e.label} — ${e.date}${e.time ? ' ' + e.time + ' ET' : ''}${e.source === 'rule' ? ' (inferred, unconfirmed)' : ''}`}
                 className="mono" style={{
                   fontSize: 11, padding: '2px 7px', borderRadius: 4,
-                  background: sev === 'high' ? '#2a1418' : '#161b22',
-                  border: `1px solid ${sev === 'high' ? '#6e2427' : '#21262d'}`,
-                  color: sev === 'high' ? '#f85149' : '#a8b2be',
+                  background: sev === 'high' ? 'var(--c-2a1418)' : 'var(--c-161b22)',
+                  border: `1px solid ${sev === 'high' ? 'var(--c-6e2427)' : 'var(--c-21262d)'}`,
+                  color: sev === 'high' ? 'var(--c-f85149)' : 'var(--c-a8b2be)',
                 }}>
                 {shortDate(e.date)} {e.label}{e.source === 'rule' ? ' ?' : ''}
               </span>
@@ -477,19 +477,19 @@ function EventBanner() {
       )}
 
       {o.notices.map((n, i) => (
-        <div key={'n' + i} className="text-xs mt-2" style={{ color: '#9aa4b0' }}>{n}</div>
+        <div key={'n' + i} className="text-xs mt-2" style={{ color: 'var(--c-9aa4b0)' }}>{n}</div>
       ))}
     </div>
   );
 }
 
 function Stat({ label, value, tone, sub, bar }) {
-  const col = tone === 'green' ? '#3fb950' : tone === 'red' ? '#f85149' : tone === 'amber' ? '#e3b341' : '#e6edf3';
+  const col = tone === 'green' ? 'var(--c-3fb950)' : tone === 'red' ? 'var(--c-f85149)' : tone === 'amber' ? 'var(--c-e3b341)' : 'var(--c-e6edf3)';
   return (
-    <div data-testid={'stat-' + label.toLowerCase().replace(/[^a-z]+/g, '-')} style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: 10, padding: '10px 12px', minWidth: 0 }}>
+    <div data-testid={'stat-' + label.toLowerCase().replace(/[^a-z]+/g, '-')} style={{ background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)', borderRadius: 10, padding: '10px 12px', minWidth: 0 }}>
       <div className="text-[11px] uppercase tracking-wider text-text-muted">{label}</div>
       <div className="mono" style={{ fontSize: 22, fontWeight: 800, color: col, lineHeight: 1.2 }}>{value}</div>
-      {bar != null && <div style={{ height: 4, borderRadius: 2, background: '#21262d', marginTop: 4, overflow: 'hidden' }}><div style={{ width: `${Math.max(2, Math.min(100, bar))}%`, height: '100%', background: col }} /></div>}
+      {bar != null && <div style={{ height: 4, borderRadius: 2, background: 'var(--c-21262d)', marginTop: 4, overflow: 'hidden' }}><div style={{ width: `${Math.max(2, Math.min(100, bar))}%`, height: '100%', background: col }} /></div>}
       {sub && <div className="text-[12px] text-text-muted mt-1" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}
     </div>
   );

@@ -10,9 +10,9 @@ export const OFFSET_TIP =
   'set by amount. A TWS profit taker set by PERCENTAGE takes that % of the entry price — ' +
   'so on a 0DTE ticket (targets are % on entry) the two are the same number.';
 
-const H = ({ children }) => <div style={{ fontSize: 12.5, fontWeight: 700, color: '#e6edf3', marginTop: 10, marginBottom: 3 }}>{children}</div>;
-const P = ({ children }) => <div style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.55, marginBottom: 4 }}>{children}</div>;
-const M = ({ children }) => <span className="mono" style={{ color: '#c9d1d9' }}>{children}</span>;
+const H = ({ children }) => <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--c-e6edf3)', marginTop: 10, marginBottom: 3 }}>{children}</div>;
+const P = ({ children }) => <div style={{ fontSize: 12.5, color: 'var(--c-a8b2be)', lineHeight: 1.55, marginBottom: 4 }}>{children}</div>;
+const M = ({ children }) => <span className="mono" style={{ color: 'var(--c-c9d1d9)' }}>{children}</span>;
 
 function BuyHelp() {
   return (<>
@@ -55,11 +55,11 @@ export default function TicketHelp({ kind }) {
   return (
     <div style={{ marginTop: 8 }}>
       <button onClick={() => setOpen(o => !o)}
-        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: '#58a6ff' }}>
+        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12.5, color: 'var(--c-58a6ff)' }}>
         {open ? '▾' : '▸'} How this ticket works
       </button>
       {open && (
-        <div style={{ marginTop: 6, padding: '4px 12px 10px', borderRadius: 8, background: '#0d1117', border: '1px solid #21262d' }}>
+        <div style={{ marginTop: 6, padding: '4px 12px 10px', borderRadius: 8, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)' }}>
           {kind === 'buy' ? <BuyHelp /> : <SellHelp />}
         </div>
       )}

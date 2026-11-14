@@ -12,11 +12,11 @@ export default class PageBoundary extends React.Component {
     const { error } = this.state;
     if (!error) return this.props.children;
     return (
-      <div data-testid="page-error" className="card" style={{ borderColor: '#6e2427' }}>
-        <div style={{ color: '#f85149', fontWeight: 700, fontSize: 15 }}>{this.props.name || 'This page'} hit an error and could not draw.</div>
-        <div className="mono" style={{ color: '#e6edf3', fontSize: 12.5, marginTop: 6 }}>{String(error && error.message || error)}</div>
-        <div style={{ color: '#8b949e', fontSize: 12.5, marginTop: 6 }}>The other pages still work. Send this message to get it fixed.</div>
-        <button onClick={() => this.setState({ error: null })} style={{ marginTop: 10, fontSize: 13, color: '#58a6ff', border: '1px solid #1f6feb', borderRadius: 6, padding: '4px 10px' }}>Try again</button>
+      <div data-testid="page-error" className="card" style={{ borderColor: 'var(--c-6e2427)' }}>
+        <div style={{ color: 'var(--c-f85149)', fontWeight: 700, fontSize: 15 }}>{this.props.name || 'This page'} hit an error and could not draw.</div>
+        <div className="mono" style={{ color: 'var(--c-e6edf3)', fontSize: 12.5, marginTop: 6 }}>{String(error && error.message || error)}</div>
+        <div style={{ color: 'var(--c-8b949e)', fontSize: 12.5, marginTop: 6 }}>The other pages still work. Send this message to get it fixed.</div>
+        <button onClick={() => this.setState({ error: null })} style={{ marginTop: 10, fontSize: 13, color: 'var(--c-58a6ff)', border: '1px solid var(--c-1f6feb)', borderRadius: 6, padding: '4px 10px' }}>Try again</button>
       </div>
     );
   }

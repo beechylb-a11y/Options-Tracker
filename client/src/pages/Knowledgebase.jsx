@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BookOpen, CheckSquare, Layers, CreditCard, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { alpha } from '../utils/theme';
 
 // ═══════════════════════════════════════════
 //  STRATEGY CARD DATA
@@ -232,12 +233,12 @@ const CHECKLIST_45DTE = [
 //  REGIME QUICK REFERENCE
 // ═══════════════════════════════════════════
 const REGIMES_0DTE = [
-  { band: 'RM < 25%', colour: '#3fb950', strategies: 'Iron Condor, Chicken Condor, Credit spreads', note: 'Trend can still develop. Directional bias strong.' },
-  { band: 'RM 25-50%', colour: '#3fb950', strategies: 'Iron Condor, Chicken Condor, Credit spreads, BWB', note: 'Neutral zone. Confirm direction before selecting.' },
-  { band: 'RM 50-75%', colour: '#2f81f7', strategies: 'Long Condor, BWB, Asymmetric Butterfly', note: 'Transition zone. Mean reversion probability rising.' },
-  { band: 'RM 75-100%', colour: '#d29922', strategies: 'Standard Butterfly, BWB, Iron Butterfly', note: 'Stabilization. Butterfly structures excel.' },
-  { band: 'RM >100% compress', colour: '#a371f7', strategies: 'Standard Butterfly, BWB', note: 'EM exceeded + compression. Strong pin setup.' },
-  { band: 'RM >100% expand', colour: '#f85149', strategies: 'Chicken Condor, BWB only', note: 'EM exceeded + expanding. Avoid centred structures.' },
+  { band: 'RM < 25%', colour: 'var(--c-3fb950)', strategies: 'Iron Condor, Chicken Condor, Credit spreads', note: 'Trend can still develop. Directional bias strong.' },
+  { band: 'RM 25-50%', colour: 'var(--c-3fb950)', strategies: 'Iron Condor, Chicken Condor, Credit spreads, BWB', note: 'Neutral zone. Confirm direction before selecting.' },
+  { band: 'RM 50-75%', colour: 'var(--c-2f81f7)', strategies: 'Long Condor, BWB, Asymmetric Butterfly', note: 'Transition zone. Mean reversion probability rising.' },
+  { band: 'RM 75-100%', colour: 'var(--c-d29922)', strategies: 'Standard Butterfly, BWB, Iron Butterfly', note: 'Stabilization. Butterfly structures excel.' },
+  { band: 'RM >100% compress', colour: 'var(--c-a371f7)', strategies: 'Standard Butterfly, BWB', note: 'EM exceeded + compression. Strong pin setup.' },
+  { band: 'RM >100% expand', colour: 'var(--c-f85149)', strategies: 'Chicken Condor, BWB only', note: 'EM exceeded + expanding. Avoid centred structures.' },
 ];
 
 export default function Knowledgebase() {
@@ -413,7 +414,7 @@ export default function Knowledgebase() {
               {REGIMES_0DTE.map((r, i) => (
                 <div key={i} className="flex items-start gap-3 py-2.5 border-b border-bg-border last:border-0">
                   <div className="flex-shrink-0 w-36">
-                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: r.colour + '15', color: r.colour, border: `0.5px solid ${r.colour}40` }}>
+                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: alpha(r.colour, '15'), color: r.colour, border: `0.5px solid ${alpha(r.colour, '40')}` }}>
                       {r.band}
                     </span>
                   </div>
@@ -432,15 +433,15 @@ export default function Knowledgebase() {
             </h3>
             <div className="space-y-2">
               {[
-                { band: 'IVR < 20', colour: '#f85149', strategies: 'Bull call, Bear put, Calendar, Diagonal', note: 'Premium cheap — debit trades or time spreads only.' },
-                { band: 'IVR 20-40', colour: '#d29922', strategies: 'Calendar, Diagonal, Iron Condor, Credit spreads', note: 'Neutral environment — balanced approach.' },
-                { band: 'IVR 40-60', colour: '#3fb950', strategies: 'Iron Condor, Credit spreads, BWB, Jade lizard', note: 'Premium rich — ideal for selling premium.' },
-                { band: 'IVR > 60', colour: '#3fb950', strategies: 'Iron Condor, Jade lizard, BWB, Iron butterfly', note: 'Very rich — excellent premium selling. Check event risk.' },
-                { band: 'Backwardation', colour: '#f85149', strategies: 'Defined risk credit spreads only', note: 'Term structure inverted — avoid calendars, reduce size.' },
+                { band: 'IVR < 20', colour: 'var(--c-f85149)', strategies: 'Bull call, Bear put, Calendar, Diagonal', note: 'Premium cheap — debit trades or time spreads only.' },
+                { band: 'IVR 20-40', colour: 'var(--c-d29922)', strategies: 'Calendar, Diagonal, Iron Condor, Credit spreads', note: 'Neutral environment — balanced approach.' },
+                { band: 'IVR 40-60', colour: 'var(--c-3fb950)', strategies: 'Iron Condor, Credit spreads, BWB, Jade lizard', note: 'Premium rich — ideal for selling premium.' },
+                { band: 'IVR > 60', colour: 'var(--c-3fb950)', strategies: 'Iron Condor, Jade lizard, BWB, Iron butterfly', note: 'Very rich — excellent premium selling. Check event risk.' },
+                { band: 'Backwardation', colour: 'var(--c-f85149)', strategies: 'Defined risk credit spreads only', note: 'Term structure inverted — avoid calendars, reduce size.' },
               ].map((r, i) => (
                 <div key={i} className="flex items-start gap-3 py-2.5 border-b border-bg-border last:border-0">
                   <div className="flex-shrink-0 w-36">
-                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: r.colour + '15', color: r.colour, border: `0.5px solid ${r.colour}40` }}>
+                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: alpha(r.colour, '15'), color: r.colour, border: `0.5px solid ${alpha(r.colour, '40')}` }}>
                       {r.band}
                     </span>
                   </div>
@@ -457,14 +458,14 @@ export default function Knowledgebase() {
             <h3 className="text-sm font-medium text-text mb-3">VIX1D / VIX Gap Reference</h3>
             <div className="space-y-2">
               {[
-                { band: '< -10% (cheap)', colour: '#f85149', note: 'Short-term vol cheap. Favour long gamma: BWB, Asymmetric, Long Condor.' },
-                { band: '-10% to +10% (neutral)', colour: '#a8b2be', note: 'Balanced. BWB, Asymmetric, Chicken Condor all viable.' },
-                { band: '+10% to +25% (rich)', colour: '#3fb950', note: 'Short-term vol rich. Iron Condor, Iron Butterfly, Chicken Condor favoured.' },
-                { band: '> +25% (very rich)', colour: '#d29922', note: 'Extremely rich — excellent premium selling but check for event risk.' },
+                { band: '< -10% (cheap)', colour: 'var(--c-f85149)', note: 'Short-term vol cheap. Favour long gamma: BWB, Asymmetric, Long Condor.' },
+                { band: '-10% to +10% (neutral)', colour: 'var(--c-a8b2be)', note: 'Balanced. BWB, Asymmetric, Chicken Condor all viable.' },
+                { band: '+10% to +25% (rich)', colour: 'var(--c-3fb950)', note: 'Short-term vol rich. Iron Condor, Iron Butterfly, Chicken Condor favoured.' },
+                { band: '> +25% (very rich)', colour: 'var(--c-d29922)', note: 'Extremely rich — excellent premium selling but check for event risk.' },
               ].map((r, i) => (
                 <div key={i} className="flex items-start gap-3 py-2.5 border-b border-bg-border last:border-0">
                   <div className="flex-shrink-0 w-44">
-                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: r.colour + '15', color: r.colour, border: `0.5px solid ${r.colour}40` }}>
+                    <span className="text-xs font-medium px-2 py-1 rounded" style={{ background: alpha(r.colour, '15'), color: r.colour, border: `0.5px solid ${alpha(r.colour, '40')}` }}>
                       {r.band}
                     </span>
                   </div>
@@ -483,7 +484,7 @@ export default function Knowledgebase() {
 function StrategyDiagram({ name, type }) {
   const W = 180, H = 100;
   const z = 50; // zero line Y
-  const g = '#3fb950', r = '#f85149', gr = '#a8b2be';
+  const g = 'var(--c-3fb950)', r = 'var(--c-f85149)', gr = 'var(--c-a8b2be)';
 
   // Each strategy has a characteristic payoff shape
   const shapes = {
@@ -565,10 +566,10 @@ function StrategyDiagram({ name, type }) {
   if (!shape) {
     return (
       <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
-        <text x={W/2} y={10} textAnchor="middle" fill="#a8b2be" fontSize="8" fontWeight="600">Payoff at expiry</text>
-        <line x1="10" y1={z} x2="170" y2={z} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="2,2"/>
+        <text x={W/2} y={10} textAnchor="middle" fill="var(--c-a8b2be)" fontSize="8" fontWeight="600">Payoff at expiry</text>
+        <line x1="10" y1={z} x2="170" y2={z} stroke="var(--c-8b949e)" strokeWidth="0.5" strokeDasharray="2,2"/>
         <text x={W/2} y={z-6} textAnchor="middle" fill={gr} fontSize="8">No diagram for this strategy</text>
-        <text x={W/2} y={z+12} textAnchor="middle" fill="#8b949e" fontSize="7">See the structure description</text>
+        <text x={W/2} y={z+12} textAnchor="middle" fill="var(--c-8b949e)" fontSize="7">See the structure description</text>
       </svg>
     );
   }
@@ -577,20 +578,20 @@ function StrategyDiagram({ name, type }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto'}}>
-      <text x={W/2} y={10} textAnchor="middle" fill="#a8b2be" fontSize="8" fontWeight="600">Payoff at expiry</text>
+      <text x={W/2} y={10} textAnchor="middle" fill="var(--c-a8b2be)" fontSize="8" fontWeight="600">Payoff at expiry</text>
       {/* Zero line */}
-      <line x1="10" y1={z} x2="170" y2={z} stroke="#8b949e" strokeWidth="0.5" strokeDasharray="2,2"/>
-      <text x="6" y={z+3} textAnchor="end" fill="#8b949e" fontSize="7">$0</text>
+      <line x1="10" y1={z} x2="170" y2={z} stroke="var(--c-8b949e)" strokeWidth="0.5" strokeDasharray="2,2"/>
+      <text x="6" y={z+3} textAnchor="end" fill="var(--c-8b949e)" fontSize="7">$0</text>
       {/* Green profit fill */}
       {shape.fill && <path d={shape.fill} fill={g} fillOpacity="0.2" />}
       {/* Red loss fill */}
       {lossPaths.map((lp, i) => <path key={i} d={lp} fill={r} fillOpacity="0.15" />)}
       {/* P&L line */}
-      <path d={shape.path} fill="none" stroke="#e6edf3" strokeWidth="2" strokeLinejoin="round" />
+      <path d={shape.path} fill="none" stroke="var(--c-e6edf3)" strokeWidth="2" strokeLinejoin="round" />
       {/* Labels */}
-      <text x="10" y={H-2} fill="#8b949e" fontSize="7">Lower</text>
-      <text x={W-10} y={H-2} textAnchor="end" fill="#8b949e" fontSize="7">Higher</text>
-      <text x={W/2} y={H-2} textAnchor="middle" fill="#8b949e" fontSize="7">Price →</text>
+      <text x="10" y={H-2} fill="var(--c-8b949e)" fontSize="7">Lower</text>
+      <text x={W-10} y={H-2} textAnchor="end" fill="var(--c-8b949e)" fontSize="7">Higher</text>
+      <text x={W/2} y={H-2} textAnchor="middle" fill="var(--c-8b949e)" fontSize="7">Price →</text>
     </svg>
   );
 }

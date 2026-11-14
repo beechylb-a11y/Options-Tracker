@@ -4,6 +4,7 @@ import { api, clearApiCache } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { mergeClosedTrades, todayPnlOf, filterTracker } from '../utils/stats';
 import { marketClock } from '../engine/marketClock';
+import ThemeToggle from './ThemeToggle';
 
 // Persistent context strip: account switcher, today P&L, daily-loss gauge,
 // open-position count, data freshness + global refresh, Sheets/bridge status.
@@ -27,7 +28,7 @@ function BridgeControl({ state, title, onAction, busy, note, mode }) {
         <div className={`w-2 h-2 rounded-full ${color} ${busy ? 'animate-pulse' : ''}`} />
         <span className="text-[12.5px] text-text-muted">Bridge</span>
         {state === 'ok' && mode === 'paper' && (
-          <span className="text-[11px] px-1.5 rounded" style={{ background: '#1f1a0d', color: '#d29922', border: '1px solid #9e6a03' }}>PAPER</span>
+          <span className="text-[11px] px-1.5 rounded" style={{ background: 'var(--c-1f1a0d)', color: 'var(--c-d29922)', border: '1px solid var(--c-9e6a03)' }}>PAPER</span>
         )}
         <span className="text-[12.5px] text-text-muted">▾</span>
       </button>
@@ -57,10 +58,10 @@ function BridgeControl({ state, title, onAction, busy, note, mode }) {
 // New York date and time, and where the session stands (Oct 2026). Ticks every
 // 15 s; the tooltip gives your own clock alongside.
 const CLOCK_TONE = {
-  green: { fg: '#3fb950', bg: '#0f2417', border: '#238636' },
-  amber: { fg: '#e3b341', bg: '#1f1a0d', border: '#9e6a03' },
-  blue: { fg: '#58a6ff', bg: '#0c1d36', border: '#1f6feb' },
-  grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
+  green: { fg: 'var(--c-3fb950)', bg: 'var(--c-0f2417)', border: 'var(--c-238636)' },
+  amber: { fg: 'var(--c-e3b341)', bg: 'var(--c-1f1a0d)', border: 'var(--c-9e6a03)' },
+  blue: { fg: 'var(--c-58a6ff)', bg: 'var(--c-0c1d36)', border: 'var(--c-1f6feb)' },
+  grey: { fg: 'var(--c-a8b2be)', bg: 'var(--c-161b22)', border: 'var(--c-30363d)' },
 };
 export function NyClock() {
   const [now, setNow] = useState(() => new Date());
@@ -257,7 +258,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
             <div className="flex items-baseline gap-1.5">
               <span className="text-[12px] text-text-faint uppercase tracking-wider">Open</span>
               <span className="mono text-sm font-bold text-text">{openCount}</span>
-              {engineWorking > 0 && <span className="text-[12px]" style={{ color: '#bc8cff' }}>· {engineWorking} working</span>}
+              {engineWorking > 0 && <span className="text-[12px]" style={{ color: 'var(--c-bc8cff)' }}>· {engineWorking} working</span>}
             </div>
           </>
         )}
@@ -275,6 +276,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
 
         <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
         <BridgeControl state={bridgeState} title={bridgeTitle} onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote} mode={bridgeMode} />
+        <ThemeToggle />
       </div>
     </div>
   );

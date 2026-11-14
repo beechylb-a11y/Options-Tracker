@@ -2,67 +2,324 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme ──
+   Every colour in the app is a variable named after its night-mode value
+   (--c-30363d is the night border). Night is the default; day mode
+   (data-theme="light" on <html>) swaps the values below. Status colours go
+   darker in day mode so green/red/amber still read on white. (Nov 2026) */
+:root {
+  --c-ffffff: #ffffff; /* headline white — near-black in day mode */
+  --rgb-0d1117: 13 17 23;
+  --rgb-0d1f0d: 13 31 13;
+  --rgb-161b22: 22 27 34;
+  --rgb-1c2128: 28 33 40;
+  --rgb-1f0d0d: 31 13 13;
+  --rgb-1f1a0d: 31 26 13;
+  --rgb-1f6feb: 31 111 235;
+  --rgb-238636: 35 134 54;
+  --rgb-2f81f7: 47 129 247;
+  --rgb-30363d: 48 54 61;
+  --rgb-388bfd: 56 139 253;
+  --rgb-3fb950: 63 185 80;
+  --rgb-8b949e: 139 148 158;
+  --rgb-9e6a03: 158 106 3;
+  --rgb-a8b2be: 168 178 190;
+  --rgb-d29922: 210 153 34;
+  --rgb-da3633: 218 54 51;
+  --rgb-e6edf3: 230 237 243;
+  --rgb-f85149: 248 81 73;
+  --c-010409: #010409;
+  --c-0b3d1a: #0b3d1a;
+  --c-0c1d36: #0c1d36;
+  --c-0c2d6b: #0c2d6b;
+  --c-0d1117: #0d1117;
+  --c-0d1a0d: #0d1a0d;
+  --c-0d1a2b: #0d1a2b;
+  --c-0d1a2e: #0d1a2e;
+  --c-0d1f0d: #0d1f0d;
+  --c-0d2818: #0d2818;
+  --c-0f2417: #0f2417;
+  --c-101d14: #101d14;
+  --c-151327: #151327;
+  --c-16130b: #16130b;
+  --c-161b22: #161b22;
+  --c-170f0a: #170f0a;
+  --c-1a160c: #1a160c;
+  --c-1a1726: #1a1726;
+  --c-1a1a1a: #1a1a1a;
+  --c-1a4d24: #1a4d24;
+  --c-1b0d0f: #1b0d0f;
+  --c-1c1333: #1c1333;
+  --c-1c2128: #1c2128;
+  --c-1f0d0d: #1f0d0d;
+  --c-1f1214: #1f1214;
+  --c-1f1a0d: #1f1a0d;
+  --c-1f2937: #1f2937;
+  --c-1f6feb: #1f6feb;
+  --c-21262d: #21262d;
+  --c-238636: #238636;
+  --c-24160c: #24160c;
+  --c-2a1012: #2a1012;
+  --c-2a1418: #2a1418;
+  --c-2a1f00: #2a1f00;
+  --c-2a2410: #2a2410;
+  --c-2d0f0f: #2d0f0f;
+  --c-2d0f11: #2d0f11;
+  --c-2d1a0d: #2d1a0d;
+  --c-2d1e0a: #2d1e0a;
+  --c-2d1f0a: #2d1f0a;
+  --c-2ea043: #2ea043;
+  --c-2f81f7: #2f81f7;
+  --c-30363d: #30363d;
+  --c-39c5cf: #39c5cf;
+  --c-3a2d00: #3a2d00;
+  --c-3d1214: #3d1214;
+  --c-3d1418: #3d1418;
+  --c-3fb950: #3fb950;
+  --c-444c56: #444c56;
+  --c-484f58: #484f58;
+  --c-4b3f7a: #4b3f7a;
+  --c-4d8c2a: #4d8c2a;
+  --c-555: #555555;
+  --c-58a6ff: #58a6ff;
+  --c-5a1e22: #5a1e22;
+  --c-5a3a1a: #5a3a1a;
+  --c-5a4a12: #5a4a12;
+  --c-5c1f1f: #5c1f1f;
+  --c-666: #666666;
+  --c-6e2427: #6e2427;
+  --c-6e7681: #6e7681;
+  --c-79c0ff: #79c0ff;
+  --c-7bc74d: #7bc74d;
+  --c-7d2b2b: #7d2b2b;
+  --c-7ee787: #7ee787;
+  --c-888: #888888;
+  --c-8957e5: #8957e5;
+  --c-8b2025: #8b2025;
+  --c-8b949e: #8b949e;
+  --c-999: #999999;
+  --c-9a4f1c: #9a4f1c;
+  --c-9aa4b0: #9aa4b0;
+  --c-9e6a03: #9e6a03;
+  --c-9ecbff: #9ecbff;
+  --c-a371f7: #a371f7;
+  --c-a8b2be: #a8b2be;
+  --c-b9a7ff: #b9a7ff;
+  --c-bc8cff: #bc8cff;
+  --c-c9d1d9: #c9d1d9;
+  --c-d29922: #d29922;
+  --c-da3633: #da3633;
+  --c-ddd: #dddddd;
+  --c-e3833c: #e3833c;
+  --c-e3a008: #e3a008;
+  --c-e3b341: #e3b341;
+  --c-e6edf3: #e6edf3;
+  --c-eee: #eeeeee;
+  --c-f0883e: #f0883e;
+  --c-f0a0a0: #f0a0a0;
+  --c-f0c040: #f0c040;
+  --c-f0f0f0: #f0f0f0;
+  --c-f5f5f5: #f5f5f5;
+  --c-f778ba: #f778ba;
+  --c-f85149: #f85149;
+  --c-ff7b72: #ff7b72;
+  --c-ffb4b4: #ffb4b4;
+  --c-ffc1bc: #ffc1bc;
+}
+
+:root[data-theme="light"] {
+  --c-ffffff: #1f2328;
+  --rgb-0d1117: 246 248 250;
+  --rgb-0d1f0d: 218 251 225;
+  --rgb-161b22: 255 255 255;
+  --rgb-1c2128: 238 241 244;
+  --rgb-1f0d0d: 255 235 233;
+  --rgb-1f1a0d: 255 248 197;
+  --rgb-1f6feb: 5 80 174;
+  --rgb-238636: 31 136 61;
+  --rgb-2f81f7: 9 105 218;
+  --rgb-30363d: 208 215 222;
+  --rgb-388bfd: 8 96 202;
+  --rgb-3fb950: 26 127 55;
+  --rgb-8b949e: 110 119 129;
+  --rgb-9e6a03: 125 78 0;
+  --rgb-a8b2be: 87 96 106;
+  --rgb-d29922: 154 103 0;
+  --rgb-da3633: 207 34 46;
+  --rgb-e6edf3: 31 35 40;
+  --rgb-f85149: 207 34 46;
+  --c-010409: #eef1f4;
+  --c-0b3d1a: #aceebb;
+  --c-0c1d36: #ddf4ff;
+  --c-0c2d6b: #b6e3ff;
+  --c-0d1117: #f6f8fa;
+  --c-0d1a0d: #dafbe1;
+  --c-0d1a2b: #ddf4ff;
+  --c-0d1a2e: #ddf4ff;
+  --c-0d1f0d: #dafbe1;
+  --c-0d2818: #dafbe1;
+  --c-0f2417: #dafbe1;
+  --c-101d14: #e6f6ea;
+  --c-151327: #fbefff;
+  --c-16130b: #fff8c5;
+  --c-161b22: #ffffff;
+  --c-170f0a: #fff1e5;
+  --c-1a160c: #fff8c5;
+  --c-1a1726: #fbefff;
+  --c-1a1a1a: #eef1f4;
+  --c-1a4d24: #aceebb;
+  --c-1b0d0f: #ffebe9;
+  --c-1c1333: #fbefff;
+  --c-1c2128: #eef1f4;
+  --c-1f0d0d: #ffebe9;
+  --c-1f1214: #ffebe9;
+  --c-1f1a0d: #fff8c5;
+  --c-1f2937: #eef1f5;
+  --c-1f6feb: #0550ae;
+  --c-21262d: #e4e8ec;
+  --c-238636: #1f883d;
+  --c-24160c: #fff1e5;
+  --c-2a1012: #ffebe9;
+  --c-2a1418: #ffebe9;
+  --c-2a1f00: #fff8c5;
+  --c-2a2410: #fff8c5;
+  --c-2d0f0f: #ffebe9;
+  --c-2d0f11: #ffebe9;
+  --c-2d1a0d: #fff1e5;
+  --c-2d1e0a: #fff8c5;
+  --c-2d1f0a: #fff8c5;
+  --c-2ea043: #1f883d;
+  --c-2f81f7: #0969da;
+  --c-30363d: #d0d7de;
+  --c-39c5cf: #1b7c83;
+  --c-3a2d00: #fff8c5;
+  --c-3d1214: #ffd8d3;
+  --c-3d1418: #ffd8d3;
+  --c-3fb950: #1a7f37;
+  --c-444c56: #c4ccd4;
+  --c-484f58: #afb8c1;
+  --c-4b3f7a: #c297ff;
+  --c-4d8c2a: #2f6f1f;
+  --c-555: #afb8c1;
+  --c-58a6ff: #0969da;
+  --c-5a1e22: #ffaba8;
+  --c-5a3a1a: #d4a72c;
+  --c-5a4a12: #d4a72c;
+  --c-5c1f1f: #ffaba8;
+  --c-666: #8c959f;
+  --c-6e2427: #ffcecb;
+  --c-6e7681: #8c959f;
+  --c-79c0ff: #0550ae;
+  --c-7bc74d: #2f8a3c;
+  --c-7d2b2b: #ffaba8;
+  --c-7ee787: #1a7f37;
+  --c-888: #6e7781;
+  --c-8957e5: #8250df;
+  --c-8b2025: #ffaba8;
+  --c-8b949e: #6e7781;
+  --c-999: #6e7781;
+  --c-9a4f1c: #953800;
+  --c-9aa4b0: #5c6670;
+  --c-9e6a03: #7d4e00;
+  --c-9ecbff: #0550ae;
+  --c-a371f7: #8250df;
+  --c-a8b2be: #57606a;
+  --c-b9a7ff: #6639ba;
+  --c-bc8cff: #8250df;
+  --c-c9d1d9: #2f363d;
+  --c-d29922: #9a6700;
+  --c-da3633: #cf222e;
+  --c-ddd: #2f363d;
+  --c-e3833c: #bc4c00;
+  --c-e3a008: #9a6700;
+  --c-e3b341: #8a6100;
+  --c-e6edf3: #1f2328;
+  --c-eee: #1f2328;
+  --c-f0883e: #bc4c00;
+  --c-f0a0a0: #a40e26;
+  --c-f0c040: #8a6100;
+  --c-f0f0f0: #1f2328;
+  --c-f5f5f5: #1f2328;
+  --c-f778ba: #bf3989;
+  --c-f85149: #cf222e;
+  --c-ff7b72: #cf222e;
+  --c-ffb4b4: #a40e26;
+  --c-ffc1bc: #a40e26;
+}
+
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+
+/* Day mode: "text-white" is used both for headings (→ dark text) and for labels
+   on filled buttons (→ stay white). */
+:root[data-theme="light"] .text-white { color: var(--c-e6edf3); }
+:root[data-theme="light"] .hover\:text-white:hover { color: var(--c-e6edf3); }
+:root[data-theme="light"] :is(.bg-accent, .bg-green, .bg-red, .bg-amber, .bg-green-dim, .bg-red-dim, .bg-accent-dim).text-white,
+:root[data-theme="light"] :is(.bg-accent, .bg-green, .bg-red, .bg-amber, .bg-green-dim, .bg-red-dim, .bg-accent-dim) .text-white { color: #fff; }
+:root[data-theme="light"] body { background: var(--c-0d1117); }
+:root[data-theme="light"] .card, :root[data-theme="light"] .kpi { box-shadow: 0 1px 2px rgba(31,35,40,.06); }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: 'DM Sans', system-ui, sans-serif;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--c-0d1117);
+  color: var(--c-e6edf3);
   -webkit-font-smoothing: antialiased;
 }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #484f58; }
+::-webkit-scrollbar-thumb { background: var(--c-30363d); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--c-484f58); }
 
 /* Mono text for numbers */
 .mono { font-family: 'JetBrains Mono', 'SF Mono', monospace; }
 
 /* Card style */
 .card {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--c-161b22);
+  border: 1px solid var(--c-30363d);
   border-radius: 12px;
   padding: 16px 20px;
 }
 
 /* KPI card */
 .kpi {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--c-161b22);
+  border: 1px solid var(--c-30363d);
   border-radius: 10px;
   padding: 12px 16px;
 }
-.kpi-label { font-size: 12.5px; color: #a8b2be; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.kpi-label { font-size: 12.5px; color: var(--c-a8b2be); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
 .kpi-value { font-size: 22px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
-.kpi-value.green { color: #3fb950; }
-.kpi-value.red { color: #f85149; }
-.kpi-value.amber { color: #d29922; }
+.kpi-value.green { color: var(--c-3fb950); }
+.kpi-value.red { color: var(--c-f85149); }
+.kpi-value.amber { color: var(--c-d29922); }
 
 /* Badge */
 .badge {
   font-size: 12px; font-weight: 600; padding: 2px 8px;
   border-radius: 20px; display: inline-block;
 }
-.badge-green { background: #0d1f0d; color: #3fb950; }
-.badge-red { background: #1f0d0d; color: #f85149; }
-.badge-amber { background: #1f1a0d; color: #d29922; }
-.badge-blue { background: #0d1a2e; color: #2f81f7; }
+.badge-green { background: var(--c-0d1f0d); color: var(--c-3fb950); }
+.badge-red { background: var(--c-1f0d0d); color: var(--c-f85149); }
+.badge-amber { background: var(--c-1f1a0d); color: var(--c-d29922); }
+.badge-blue { background: var(--c-0d1a2e); color: var(--c-2f81f7); }
 
 /* Table */
-.table-row { border-bottom: 1px solid #21262d; }
-.table-row:hover { background: #1c2128; }
+.table-row { border-bottom: 1px solid var(--c-21262d); }
+.table-row:hover { background: var(--c-1c2128); }
 
 /* Win/Loss colors */
-.win { color: #3fb950; }
-.loss { color: #f85149; }
+.win { color: var(--c-3fb950); }
+.loss { color: var(--c-f85149); }
 
 /* Tab button */
-.tab { padding: 10px 20px; font-size: 15px; font-weight: 500; color: #a8b2be; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
-.tab:hover { color: #e6edf3; }
-.tab.active { color: #e6edf3; border-bottom-color: #2f81f7; }
+.tab { padding: 10px 20px; font-size: 15px; font-weight: 500; color: var(--c-a8b2be); border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab:hover { color: var(--c-e6edf3); }
+.tab.active { color: var(--c-e6edf3); border-bottom-color: var(--c-2f81f7); }
 
 /* Animate in */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

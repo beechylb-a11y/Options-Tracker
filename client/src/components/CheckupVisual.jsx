@@ -18,8 +18,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, RefreshCw, Target, Clock, Zap, Crosshair,
   TrendingUp, TrendingDown, Activity, ArrowRight, Eye, CircleDollarSign } from 'lucide-react';
 import { positionStrip, valueAt } from '../engine/positionPlan';
+import { alpha } from '../utils/theme';
 
-export const C = { green: '#3fb950', red: '#f85149', amber: '#e3b341', blue: '#58a6ff', grey: '#8b949e', text: '#e6edf3', dim: '#6e7681', line: '#30363d', bg: '#0d1117', panel: '#161b22' };
+export const C = { green: 'var(--c-3fb950)', red: 'var(--c-f85149)', amber: 'var(--c-e3b341)', blue: 'var(--c-58a6ff)', grey: 'var(--c-8b949e)', text: 'var(--c-e6edf3)', dim: 'var(--c-6e7681)', line: 'var(--c-30363d)', bg: 'var(--c-0d1117)', panel: 'var(--c-161b22)' };
 const money = v => v == null || !isFinite(v) ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString();
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const fmtYmd = y => (y && String(y).length === 8 ? `${+String(y).slice(6, 8)} ${MON[+String(y).slice(4, 6) - 1]}` : '—');
@@ -29,7 +30,7 @@ const ACTION_ICON = {
   'take-profit': CircleDollarSign, hold: CheckCircle2, watch: Eye, 'roll-untested': RefreshCw, 'roll-out': RefreshCw,
   'roll-short': RefreshCw, close: XCircle, 'close-or-roll': AlertTriangle, unknown: AlertTriangle,
 };
-const TONE_FG = { green: C.green, amber: C.amber, red: C.red, grey: '#a8b2be' };
+const TONE_FG = { green: C.green, amber: C.amber, red: C.red, grey: 'var(--c-a8b2be)' };
 
 export function ActionBadge({ action, tone, label }) {
   const Icon = ACTION_ICON[action] || AlertTriangle;
@@ -37,7 +38,7 @@ export function ActionBadge({ action, tone, label }) {
   return (
     <span data-testid="checkup-action" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8,
       fontWeight: 800, fontSize: 14, letterSpacing: '.03em', textTransform: 'uppercase', color: fg,
-      background: fg + '1f', border: `1.5px solid ${fg}` }}>
+      background: alpha(fg, '1f'), border: `1.5px solid ${fg}` }}>
       <Icon size={17} strokeWidth={2.5} />{label}
     </span>
   );
@@ -106,12 +107,12 @@ export function PnlMeter({ now, stop, target, plan, steps }) {
   const bar = (
     <div style={{ position: 'relative', height: 18 }}>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 6, borderRadius: 3,
-        background: `linear-gradient(90deg, ${C.red} 0%, ${C.red}55 ${P(0)}%, ${C.green}55 ${P(0)}%, ${C.green} 100%)` }} />
+        background: `linear-gradient(90deg, ${C.red} 0%, ${alpha(C.red, '55')} ${P(0)}%, ${alpha(C.green, '55')} ${P(0)}%, ${C.green} 100%)` }} />
       <div title="$0" style={{ position: 'absolute', left: `${P(0)}%`, top: 1, width: 2, height: 16, background: C.text, opacity: 0.6, marginLeft: -1 }} />
       {plan != null && <div title={`plan ${money(plan)} — time decay alone`} style={{ position: 'absolute', left: `${P(plan)}%`, top: -2, marginLeft: -5,
         width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: `7px solid ${C.blue}` }} />}
       <div style={{ position: 'absolute', left: `${P(now)}%`, top: 2, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
-        background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${col}55` }} />
+        background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${alpha(col, '55')}` }} />
     </div>
   );
   const ends = (
@@ -142,7 +143,7 @@ export function PnlMeter({ now, stop, target, plan, steps }) {
   );
   const Pill = ({ r }) => (r.net != null && isFinite(r.net) ? (
     <span data-testid="roll-net" title={r.netTitle || ''} className="mono" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 5, fontSize: 11, fontWeight: 800,
-      color: r.net >= 0 ? C.green : C.red, background: (r.net >= 0 ? C.green : C.red) + '22', border: `1px solid ${(r.net >= 0 ? C.green : C.red)}88` }}>
+      color: r.net >= 0 ? C.green : C.red, background: alpha((r.net >= 0 ? C.green : C.red), '22'), border: `1px solid ${alpha((r.net >= 0 ? C.green : C.red), '88')}` }}>
       {r.net >= 0 ? 'CR' : 'DR'} {Math.abs(r.net).toFixed(2)}
     </span>) : null);
   const Track = ({ r, i }) => {
@@ -206,7 +207,7 @@ export function CushionGauge({ near }) {
         {through ? '−' : ''}{Math.abs(near.cushion).toFixed(1)}<span style={{ fontSize: 13, fontWeight: 600, color: C.grey }}> pts {through ? 'through' : near.right === 'P' ? 'above' : 'below'}</span>
       </div>
       <div style={{ display: 'flex', gap: 3, marginTop: 10 }}>
-        {[0, 1, 2, 3, 4].map(i => <div key={i} style={{ flex: 1, height: 8, borderRadius: 2, background: i < blocks ? col : '#21262d' }} />)}
+        {[0, 1, 2, 3, 4].map(i => <div key={i} style={{ flex: 1, height: 8, borderRadius: 2, background: i < blocks ? col : 'var(--c-21262d)' }} />)}
       </div>
       <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4, color: C.grey }}>
         <span>{sd != null ? `${sd.toFixed(1)}σ` : ''}</span>
@@ -225,7 +226,7 @@ export function ClockGauge({ daysHeld, planDays, daysToClose, closeYmd, events }
     <Gauge icon={Clock} title="Time" testid="gauge-clock">
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <svg width="54" height="54" viewBox="0 0 54 54" role="img" aria-label={`${daysToClose} days to the time stop`}>
-          <circle cx="27" cy="27" r={r} fill="none" stroke="#21262d" strokeWidth="6" />
+          <circle cx="27" cy="27" r={r} fill="none" stroke="var(--c-21262d)" strokeWidth="6" />
           <circle cx="27" cy="27" r={r} fill="none" stroke={col} strokeWidth="6" strokeLinecap="round"
             strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 27 27)" />
           <text x="27" y="31" textAnchor="middle" fontSize="13" fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{Math.max(0, daysToClose ?? 0)}d</text>
@@ -316,7 +317,7 @@ function PriceMapSvg({ legs, spot, ncdPos, qty, shorts, sdStop, closeYmd, underl
         <path d={area} fill={C.green} opacity="0.28" clipPath={`url(#${id}u)`} />
         <path d={area} fill={C.red} opacity="0.28" clipPath={`url(#${id}d)`} />
         <path d={line} fill="none" stroke={C.text} strokeWidth="2" opacity="0.75" />
-        <line x1={L} x2={W - R} y1={zeroY} y2={zeroY} stroke="#484f58" strokeWidth="1" />
+        <line x1={L} x2={W - R} y1={zeroY} y2={zeroY} stroke="var(--c-484f58)" strokeWidth="1" />
         <text x={L - 8} y={Y(vMax) + 5} fontSize={fs} fill={C.green} textAnchor="end" fontFamily="JetBrains Mono,monospace">{money(vMax)}</text>
         <text x={L - 8} y={zeroY + 5} fontSize={fs} fill={C.grey} textAnchor="end">$0</text>
         <text x={L - 8} y={Y(vMin) + 5} fontSize={fs} fill={C.red} textAnchor="end" fontFamily="JetBrains Mono,monospace">{money(vMin)}</text>
@@ -330,7 +331,7 @@ function PriceMapSvg({ legs, spot, ncdPos, qty, shorts, sdStop, closeYmd, underl
         <line x1={L} x2={W - R} y1={base + 18} y2={base + 18} stroke={C.line} strokeWidth="2" />
         {uniq.map((l, i) => {
           const s = shortOf(l);
-          const col = l.qty < 0 ? (s && (s.tested || s.itm) ? C.red : s && s.pressured ? C.amber : '#f0883e') : C.blue;
+          const col = l.qty < 0 ? (s && (s.tested || s.itm) ? C.red : s && s.pressured ? C.amber : 'var(--c-f0883e)') : C.blue;
           return (
             <g key={'k' + i}>
               <line x1={X(l.strike)} x2={X(l.strike)} y1={base + 10} y2={base + 26} stroke={col} strokeWidth={l.qty < 0 ? 4 : 3} />
@@ -373,12 +374,12 @@ export function Triggers({ legs, ncdPos, spot, closeYmd }) {
       <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: C.grey, marginRight: 2 }}>at expiry</span>
       {items.map((it, i) => (
         <span key={i} className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 7, fontSize: 13, fontWeight: 700,
-          color: it.ok ? C.green : C.red, background: (it.ok ? C.green : C.red) + '17', border: `1px solid ${(it.ok ? C.green : C.red)}66` }}>
+          color: it.ok ? C.green : C.red, background: alpha((it.ok ? C.green : C.red), '17'), border: `1px solid ${alpha((it.ok ? C.green : C.red), '66')}` }}>
           {it.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}{it.t}
         </span>
       ))}
       {closeYmd && <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 7, fontSize: 13, fontWeight: 700,
-        color: C.amber, background: C.amber + '17', border: `1px solid ${C.amber}66` }}><Clock size={14} />close {fmtYmd(closeYmd)}</span>}
+        color: C.amber, background: alpha(C.amber, '17'), border: `1px solid ${alpha(C.amber, '66')}` }}><Clock size={14} />close {fmtYmd(closeYmd)}</span>}
     </div>
   );
 }
@@ -415,7 +416,7 @@ export function NextStep({ text }) {
   if (!text) return null;
   return (
     <div data-testid="next-step" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: '8px 10px', borderRadius: 8,
-      background: '#0c1d36', border: '1px solid #1f6feb55', fontSize: 13.5, color: C.text }}>
+      background: 'var(--c-0c1d36)', border: '1px solid color-mix(in srgb, var(--c-1f6feb) 33%, transparent)', fontSize: 13.5, color: C.text }}>
       <ArrowRight size={16} color={C.blue} style={{ flexShrink: 0, marginTop: 1 }} />
       <span><span style={{ color: C.blue, fontWeight: 700 }}>Next: </span>{text}</span>
     </div>

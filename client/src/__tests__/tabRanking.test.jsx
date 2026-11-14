@@ -56,7 +56,7 @@ describe('tab ranking', () => {
       { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
     // Only one of the two has a confidence.
-    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
+    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' },
                     XSP: { confidence: null, tier: '--', ready: false, blocked: false, composite: null, grade: '--' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
     expect(stripLabels()).toEqual(['SPX 29 Sep', 'XSP 29 Sep']);
@@ -68,8 +68,8 @@ describe('tab ranking', () => {
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
       { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
-    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
-                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
+    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' },
+                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
     // XSP 45 outranks SPX 37 even though SPX was opened first.
     expect(stripLabels()).toEqual(['XSP 29 Sep', 'SPX 29 Sep']);
@@ -86,8 +86,8 @@ describe('tab ranking', () => {
       { id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 },
       { id: 'b', u: 'XSP', label: 'XSP 29 Sep', createdAt: 2 },
     ]);
-    summaryPlan = { SPX: { confidence: 80, tier: 'High', ready: true, blocked: true, composite: 80, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' },
-                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
+    summaryPlan = { SPX: { confidence: 80, tier: 'High', ready: true, blocked: true, composite: 80, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' },
+                    XSP: { confidence: 45, tier: 'Low', ready: true, blocked: false, composite: 45, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
     expect(stripLabels()).toEqual(['SPX 29 Sep', 'XSP 29 Sep']);
     expect(screen.getByText(/⊘\s*80/)).toBeTruthy();
@@ -95,7 +95,7 @@ describe('tab ranking', () => {
 
   it('does not rank a single ticket', async () => {
     seedTabs([{ id: 'a', u: 'SPX', label: 'SPX 29 Sep', createdAt: 1 }]);
-    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: '#161b22', border: '#30363d', color: '#d29922' } };
+    summaryPlan = { SPX: { confidence: 37, tier: 'Low', ready: true, blocked: false, composite: 37, grade: 'Decent', bg: 'var(--c-161b22)', border: 'var(--c-30363d)', color: 'var(--c-d29922)' } };
     render(<DecisionEngine authenticated account="all" accounts={[]} />);
     // No rank ordinal when there is nothing to compare against — the first .mono in
     // the tab is the confidence, not a position.

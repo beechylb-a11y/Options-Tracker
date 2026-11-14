@@ -1,17 +1,18 @@
 /** @type {import('tailwindcss').Config} */
+// Colours are CSS variables (index.css) so the day/night theme swaps them in one place.
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
-        bg: { DEFAULT: '#0d1117', card: '#161b22', hover: '#1c2128', border: '#30363d' },
-        accent: { DEFAULT: '#2f81f7', hover: '#388bfd', dim: '#1f6feb' },
-        green: { DEFAULT: '#3fb950', dim: '#238636', bg: '#0d1f0d' },
-        red: { DEFAULT: '#f85149', dim: '#da3633', bg: '#1f0d0d' },
-        amber: { DEFAULT: '#d29922', dim: '#9e6a03', bg: '#1f1a0d' },
+        bg: { DEFAULT: 'rgb(var(--rgb-0d1117) / <alpha-value>)', card: 'rgb(var(--rgb-161b22) / <alpha-value>)', hover: 'rgb(var(--rgb-1c2128) / <alpha-value>)', border: 'rgb(var(--rgb-30363d) / <alpha-value>)' },
+        accent: { DEFAULT: 'rgb(var(--rgb-2f81f7) / <alpha-value>)', hover: 'rgb(var(--rgb-388bfd) / <alpha-value>)', dim: 'rgb(var(--rgb-1f6feb) / <alpha-value>)' },
+        green: { DEFAULT: 'rgb(var(--rgb-3fb950) / <alpha-value>)', dim: 'rgb(var(--rgb-238636) / <alpha-value>)', bg: 'rgb(var(--rgb-0d1f0d) / <alpha-value>)' },
+        red: { DEFAULT: 'rgb(var(--rgb-f85149) / <alpha-value>)', dim: 'rgb(var(--rgb-da3633) / <alpha-value>)', bg: 'rgb(var(--rgb-1f0d0d) / <alpha-value>)' },
+        amber: { DEFAULT: 'rgb(var(--rgb-d29922) / <alpha-value>)', dim: 'rgb(var(--rgb-9e6a03) / <alpha-value>)', bg: 'rgb(var(--rgb-1f1a0d) / <alpha-value>)' },
         // Contrast on #161b22 (card): DEFAULT 14.6:1, muted 8.1:1, faint 5.6:1.
         // Was muted 5.6:1 and faint 2.09:1 — faint failed every threshold there is.
-        text: { DEFAULT: '#e6edf3', muted: '#a8b2be', faint: '#8b949e' }
+        text: { DEFAULT: 'rgb(var(--rgb-e6edf3) / <alpha-value>)', muted: 'rgb(var(--rgb-a8b2be) / <alpha-value>)', faint: 'rgb(var(--rgb-8b949e) / <alpha-value>)' }
       },
       // Tailwind's default xs/sm are 12px/14px. At 12px, on a dark surface, dense
       // numeric rows are genuinely hard to read — and text-xs alone appears 200+

@@ -49,7 +49,7 @@ export function VerdictBadge({ check, fallback }) {
   const t = fallback || 'Open';
   return (
     <span data-testid="checkup-action" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8,
-      fontWeight: 800, fontSize: 13, letterSpacing: '.03em', textTransform: 'uppercase', color: '#a8b2be', background: '#a8b2be1f', border: '1.5px solid #a8b2be' }}>
+      fontWeight: 800, fontSize: 13, letterSpacing: '.03em', textTransform: 'uppercase', color: 'var(--c-a8b2be)', background: 'color-mix(in srgb, var(--c-a8b2be) 12%, transparent)', border: '1.5px solid var(--c-a8b2be)' }}>
       {/working/i.test(t) && <Hourglass size={15} />}{t}
     </span>
   );
@@ -61,13 +61,13 @@ export function VerdictBadge({ check, fallback }) {
  */
 export function TicketHeader({ check, fallback, title, sub, posPnl, ticketPnl, banked, onClose, side = 'SELL' }) {
   const head = check && check.review && check.review.action !== 'unknown' ? check.review.headline : null;
-  const tone = check && check.review ? ({ green: C.green, amber: C.amber, red: C.red }[check.review.tone] || '#a8b2be') : '#a8b2be';
+  const tone = check && check.review ? ({ green: C.green, amber: C.amber, red: C.red }[check.review.tone] || 'var(--c-a8b2be)') : 'var(--c-a8b2be)';
   return (
     <div data-testid="ticket-header" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <VerdictBadge check={check} fallback={fallback} />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div data-testid="ticket-title" className="mono" style={{ color: '#fff', fontWeight: 800, fontSize: 19, lineHeight: 1.25, display: 'flex', flexWrap: 'wrap', columnGap: 12 }}>
+          <div data-testid="ticket-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: 19, lineHeight: 1.25, display: 'flex', flexWrap: 'wrap', columnGap: 12 }}>
             <span style={{ whiteSpace: 'nowrap' }}>{title.underlying} {(title.strikes || []).join('/')}</span>
             <span style={{ whiteSpace: 'nowrap' }}>{title.strategy}</span>
             <span style={{ whiteSpace: 'nowrap' }}>{title.qty} ct</span>
@@ -84,7 +84,7 @@ export function TicketHeader({ check, fallback, title, sub, posPnl, ticketPnl, b
               {posPnl == null ? 'no live mark' : banked ? <>ticket {money(ticketPnl)} + banked <span style={{ color: banked >= 0 ? C.green : C.red }}>{money(banked)}</span></> : 'open P&L'}
             </div>
           </div>
-          {onClose && <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: '#a8b2be', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>}
+          {onClose && <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--c-a8b2be)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>×</button>}
         </div>
       </div>
       {head && <div data-testid="ticket-headline" style={{ marginTop: 8, color: tone, fontSize: 14, fontWeight: 700 }}>{head}</div>}
@@ -112,7 +112,7 @@ export function PnlLadder({ pos, qtyOpen, banked = 0, targets = [], stopPrice = 
     stopPrice != null && { k: 'stop', label: 'STOP', price: stopPrice, col: C.red },
     { k: 'entry', label: 'ENTRY', price: e, col: C.grey },
     ...targets.filter(t => isFinite(t.price)).map(t => ({ k: t.label, label: w < 560 ? t.label : `${t.label} · ${t.qty} ct`, price: t.price, col: C.green, filled: t.filled })),
-    { k: 'max', label: 'MAX', price: bestPrice, col: '#2ea043' },
+    { k: 'max', label: 'MAX', price: bestPrice, col: 'var(--c-2ea043)' },
   ].filter(Boolean);
   const xs = [...marks.map(m => P(m.price)), nowPrice != null ? P(nowPrice) : null, 0].filter(v => v != null && isFinite(v));
   const lo = Math.min(...xs), hi = Math.max(...xs);
@@ -207,7 +207,7 @@ export function RollBeforeAfter({ oldLegs, newLegs, spot, ncdOld, ncdNew }) {
       <text x={8} y={y + 22} fontSize="11.5" fontWeight="800" fill={C.text}>{label}</text>
       {shape && shape.breakevens.length >= 2 && (
         <rect x={X(shape.breakevens[0])} y={y + 10} width={Math.max(1, X(shape.breakevens[shape.breakevens.length - 1]) - X(shape.breakevens[0]))} height={16} rx="3"
-          fill="rgba(63,185,80,0.16)" stroke="rgba(63,185,80,0.6)" />
+          fill="color-mix(in srgb, var(--c-3fb950) 16%, transparent)" stroke="color-mix(in srgb, var(--c-3fb950) 60%, transparent)" />
       )}
       <line x1={L} x2={w - R} y1={y + 18} y2={y + 18} stroke={C.line} strokeWidth="2" />
       {shape && shape.breakevens.map((b, i) => (
@@ -216,7 +216,7 @@ export function RollBeforeAfter({ oldLegs, newLegs, spot, ncdOld, ncdNew }) {
       {legs.map((l, i) => {
         const short = l.qty < 0;
         const hl = ghostOf ? ghostOf(l) : false;
-        const col = short ? '#f0883e' : '#6e7681';
+        const col = short ? 'var(--c-f0883e)' : 'var(--c-6e7681)';
         return (
           <g key={i} opacity={hl === 'ghost' ? 0.35 : 1}>
             <rect x={X(l.strike) - (short ? 2 : 1.25)} y={y + 6} width={short ? 4 : 2.5} height={24} rx="1" fill={hl === 'new' ? C.amber : col}

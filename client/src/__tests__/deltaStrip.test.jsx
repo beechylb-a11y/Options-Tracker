@@ -53,7 +53,7 @@ describe('delta strip', () => {
 
   it('defaults 0DTE to EM and asks for greeks before it can check', () => {
     mount();
-    expect(screen.getByTestId('method-em').style.color).toBe('rgb(88, 166, 255)');
+    expect(screen.getByTestId('method-em').style.color).toBe('var(--c-58a6ff)');
     expect(screen.getByTestId('delta-strip').textContent).toMatch(/No live deltas yet/);
   });
 

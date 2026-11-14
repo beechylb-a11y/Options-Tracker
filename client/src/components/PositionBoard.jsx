@@ -22,6 +22,7 @@ import { stopOf, targetOf, entryOf, liveRiskOf } from '../utils/positionLines';
 import { daysBetweenYmd } from '../utils/ticketExpiry';
 import { tradingSession } from '../engine/session';
 import { STATUS } from '../engine/fills';
+import { alpha } from '../utils/theme';
 
 const money = v => (v == null || !isFinite(v) ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString());
 const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
@@ -82,14 +83,14 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
   };
 }
 
-const TONES = { green: C.green, amber: C.amber, red: C.red, grey: '#a8b2be', purple: '#bc8cff' };
+const TONES = { green: C.green, amber: C.amber, red: C.red, grey: 'var(--c-a8b2be)', purple: 'var(--c-bc8cff)' };
 
 function Badge({ row }) {
   if (row.action === 'working' || row.action === 'open') {
     const fg = TONES[row.tone] || TONES.grey;
     return (
       <span data-testid="board-action" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8,
-        fontWeight: 800, fontSize: 13, letterSpacing: '.03em', textTransform: 'uppercase', color: fg, background: fg + '1f', border: `1.5px solid ${fg}` }}>
+        fontWeight: 800, fontSize: 13, letterSpacing: '.03em', textTransform: 'uppercase', color: fg, background: alpha(fg, '1f'), border: `1.5px solid ${fg}` }}>
         {row.action === 'working' ? <Hourglass size={15} strokeWidth={2.5} /> : null}{row.label}
       </span>
     );
@@ -109,10 +110,10 @@ function MiniMeter({ row }) {
     <div data-testid="board-meter" title={`stop ${money(stop)} · now ${money(now)} · target ${money(target)} — whole position`}>
       <div style={{ position: 'relative', height: 16 }}>
         <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 5, borderRadius: 3,
-          background: `linear-gradient(90deg, ${C.red} 0%, ${C.red}55 ${P(0)}%, ${C.green}55 ${P(0)}%, ${C.green} 100%)` }} />
+          background: `linear-gradient(90deg, ${C.red} 0%, ${alpha(C.red, '55')} ${P(0)}%, ${alpha(C.green, '55')} ${P(0)}%, ${C.green} 100%)` }} />
         <div style={{ position: 'absolute', left: `${P(0)}%`, top: 2, width: 2, height: 13, background: C.text, opacity: 0.5, marginLeft: -1 }} />
         {now != null && <div style={{ position: 'absolute', left: `${P(now)}%`, top: 1, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
-          background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${col}55` }} />}
+          background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${alpha(col, '55')}` }} />}
       </div>
       <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2, gap: 6 }}>
         <span style={{ color: C.red }}>{stop != null ? money(stop) : ''}</span>
@@ -146,11 +147,11 @@ function MiniStrip({ row }) {
     <div ref={ref} data-testid="board-strip">
       <svg width={w} height={H} role="img" aria-label={`${row.underlying} ${strip.spot.value} ${strip.spot.inProfit ? 'inside' : 'outside'} the break-evens`}>
         {strip.zone && <rect x={X(strip.zone.x0)} y={14} width={Math.max(1, X(strip.zone.x1) - X(strip.zone.x0))} height={10} rx="2"
-          fill="rgba(63,185,80,0.18)" stroke="rgba(63,185,80,0.55)" />}
+          fill="color-mix(in srgb, var(--c-3fb950) 18%, transparent)" stroke="color-mix(in srgb, var(--c-3fb950) 55%, transparent)" />}
         <line x1="4" x2={w - 4} y1="19" y2="19" stroke={C.line} strokeWidth="2" />
         {uniq.map((k, i) => {
           const s2 = shortOf(k);
-          const col = k.short ? (s2 && s2.tested ? C.red : s2 && s2.pressured ? C.amber : '#f0883e') : '#6e7681';
+          const col = k.short ? (s2 && s2.tested ? C.red : s2 && s2.pressured ? C.amber : 'var(--c-f0883e)') : 'var(--c-6e7681)';
           return (
             <g key={i}>
               <rect x={X(k.x) - (k.short ? 1.75 : 1)} y={k.short ? 9 : 12} width={k.short ? 3.5 : 2} height={k.short ? 20 : 14} fill={col} rx="1" />
@@ -182,7 +183,7 @@ function ClockRing0({ row }) {
     <div data-testid="board-time" style={{ display: 'flex', alignItems: 'center', gap: 8 }}
       title={row.settle === 'cash' ? 'Cash settled — no assignment' : row.settle === 'shares' ? 'Settles into shares — close by 15:45' : ''}>
       <svg width="40" height="40" viewBox="0 0 40 40">
-        <circle cx="20" cy="20" r={r} fill="none" stroke="#21262d" strokeWidth="5" />
+        <circle cx="20" cy="20" r={r} fill="none" stroke="var(--c-21262d)" strokeWidth="5" />
         <circle cx="20" cy="20" r={r} fill="none" stroke={col} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 20 20)" />
         <text x="20" y="24" textAnchor="middle" fontSize={txt.length > 3 ? 10 : 11.5} fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{txt}</text>
       </svg>
@@ -207,7 +208,7 @@ function TimeRing({ row }) {
   return (
     <div data-testid="board-time" style={{ display: 'flex', alignItems: 'center', gap: 8 }} title={label}>
       <svg width="40" height="40" viewBox="0 0 40 40">
-        <circle cx="20" cy="20" r={r} fill="none" stroke="#21262d" strokeWidth="5" />
+        <circle cx="20" cy="20" r={r} fill="none" stroke="var(--c-21262d)" strokeWidth="5" />
         <circle cx="20" cy="20" r={r} fill="none" stroke={col} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 20 20)" />
         <text x="20" y="24" textAnchor="middle" fontSize="11.5" fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{Math.max(0, days)}d</text>
       </svg>
@@ -223,7 +224,7 @@ function TimeRing({ row }) {
 // The one thing to do, from the verdict. Everything else lives in the ⋯ menu.
 function primaryOf(row) {
   const a = row.action;
-  if (a === 'working') return { text: 'Enter fills', act: 'reconcile', col: '#bc8cff' };
+  if (a === 'working') return { text: 'Enter fills', act: 'reconcile', col: 'var(--c-bc8cff)' };
   if (a === 'close' || a === 'close-or-roll') return { text: a === 'close' ? 'Close' : 'Close or roll', act: 'sell', col: C.red };
   if (a === 'take-profit') return { text: 'Take profit', act: 'sell', col: C.green };
   if (/^roll/.test(a)) return { text: 'Roll', act: 'roll', col: C.amber };
@@ -265,7 +266,7 @@ function Card0({ row }) {
   return (
     <div data-testid="card0" style={{ border: `1px solid ${C.line}`, borderLeft: `4px solid ${col}`, borderRadius: 10, padding: 12, background: C.panel }}>
       <div style={{ color: col, fontWeight: 700, fontSize: 14 }}>{rv.headline}</div>
-      <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13, color: '#c9d1d9', lineHeight: 1.5 }}>
+      <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13, color: 'var(--c-c9d1d9)', lineHeight: 1.5 }}>
         {rv.steps.map((t, i) => <li key={i}>{t}</li>)}
       </ul>
       <div className="mono" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: C.grey, marginTop: 8 }}>
@@ -285,7 +286,7 @@ function BoardRow({ row, on, narrow }) {
   const pnlCol = row.posPnl == null ? C.grey : row.posPnl >= 0 ? C.green : C.red;
   const title = (
     <div style={{ minWidth: 0 }}>
-      <div data-testid="board-title" className="mono" style={{ color: '#fff', fontWeight: 800, fontSize: narrow ? 16.5 : 16, lineHeight: 1.3,
+      <div data-testid="board-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: narrow ? 16.5 : 16, lineHeight: 1.3,
         display: 'flex', flexWrap: 'wrap', columnGap: 10 }}>
         <span style={{ whiteSpace: 'nowrap' }}>{row.underlying} {row.strikes.join('/')}</span>
         <span style={{ whiteSpace: 'nowrap' }}>{row.strategy}</span>
@@ -297,7 +298,7 @@ function BoardRow({ row, on, narrow }) {
           : row.quoteErr ? <span data-testid="board-quote-err" style={{ color: C.amber }}>{row.quoteErr}</span>
           : row.check ? ((row.check.review && row.check.review.headline) || 'no live quote') : (row.is45 || row.is0) ? 'checking…' : 'no live check')}
         {!row.working && row.resting > 0 && (
-          <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: '#bc8cff', border: '1px solid #8957e5' }}>+{row.resting} resting</span>
+          <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: 'var(--c-bc8cff)', border: '1px solid var(--c-8957e5)' }}>+{row.resting} resting</span>
         )}
       </div>
       {row.mismatch && (
@@ -322,7 +323,7 @@ function BoardRow({ row, on, narrow }) {
   const button = (
     <button data-testid="board-primary" onClick={e => { e.stopPropagation(); if (pr.act === 'expand') setOpen(o => !o); else on(pr.act, row.r); }}
       style={{ padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
-        color: pr.act === 'expand' ? pr.col : '#0d1117', background: pr.act === 'expand' ? 'transparent' : pr.col, border: `1.5px solid ${pr.col}` }}>
+        color: pr.act === 'expand' ? pr.col : 'var(--c-0d1117)', background: pr.act === 'expand' ? 'transparent' : pr.col, border: `1.5px solid ${pr.col}` }}>
       {pr.text}{pr.act === 'expand' ? (open ? ' ▴' : ' ▾') : ''}
     </button>
   );

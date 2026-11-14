@@ -18,7 +18,7 @@ const addDays = (y, n) => {
   const d = new Date(Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, +y.slice(6, 8)) + n * 86400000);
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
 };
-const TONE = { red: ['#2d0f11', '#f85149'], amber: ['#1f1a0d', '#e3b341'], blue: ['#0c1d36', '#58a6ff'], grey: ['#161b22', '#a8b2be'] };
+const TONE = { red: ['var(--c-2d0f11)', 'var(--c-f85149)'], amber: ['var(--c-1f1a0d)', 'var(--c-e3b341)'], blue: ['var(--c-0c1d36)', 'var(--c-58a6ff)'], grey: ['var(--c-161b22)', 'var(--c-a8b2be)'] };
 
 /** One row's badge and note from its expiry, engine and the clock. */
 export function expiryRow({ expiry, engine, strategy, todayYmd, clock }) {
@@ -102,8 +102,8 @@ export default function UpcomingExpiries({ authenticated, account }) {
                   <span className="mono text-[12px] font-bold rounded px-1.5 py-0.5 text-center" style={{ background: bg, color: fg, minWidth: 52 }}>{r.badge}</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[13px] truncate"><b>{r.underlying}</b> <span className="text-text-muted">{r.strategy}</span>
-                      {r.status === 'Working' && <span className="text-[11px] ml-1" style={{ color: '#bc8cff' }}>working</span>}</div>
-                    <div className="text-[11.5px]" style={{ color: r.tone === 'red' || r.tone === 'amber' ? fg : '#8b949e' }}>
+                      {r.status === 'Working' && <span className="text-[11px] ml-1" style={{ color: 'var(--c-bc8cff)' }}>working</span>}</div>
+                    <div className="text-[11.5px]" style={{ color: r.tone === 'red' || r.tone === 'amber' ? fg : 'var(--c-8b949e)' }}>
                       {r.expiry ? `${fmt(r.expiry)} · ` : ''}{r.note}</div>
                   </div>
                 </div>

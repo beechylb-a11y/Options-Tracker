@@ -9,7 +9,7 @@ import { api } from '../utils/api';
 //
 // props: position (an open-positions row), onClose, onDone
 const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
-const field = { padding: '6px 8px', borderRadius: 6, border: '1px solid #30363d', background: '#0d1117', color: '#e6edf3',
+const field = { padding: '6px 8px', borderRadius: 6, border: '1px solid var(--c-30363d)', background: 'var(--c-0d1117)', color: 'var(--c-e6edf3)',
   fontSize: 13.5, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%' };
 
 // "QQQ - Iron Condor - Normal - 5 contracts" carries the count; keep it in step.
@@ -112,23 +112,23 @@ export default function EditTicketModal({ position: p, onClose, onDone }) {
     }
   }
 
-  const label = { fontSize: 12, color: '#8b949e', marginBottom: 4, display: 'block' };
+  const label = { fontSize: 12, color: 'var(--c-8b949e)', marginBottom: 4, display: 'block' };
   const pill = on => ({ padding: '5px 10px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer',
-    border: `1px solid ${on ? '#58a6ff' : '#30363d'}`, background: on ? '#58a6ff22' : 'transparent', color: on ? '#e6edf3' : '#a8b2be' });
+    border: `1px solid ${on ? 'var(--c-58a6ff)' : 'var(--c-30363d)'}`, background: on ? 'color-mix(in srgb, var(--c-58a6ff) 13%, transparent)' : 'transparent', color: on ? 'var(--c-e6edf3)' : 'var(--c-a8b2be)' });
   const L = (txt, k, el) => <label style={{ display: 'block' }}><span style={label}>{txt}</span>{el || <input style={field} value={f[k]} onChange={e => set(k, e.target.value)} aria-label={txt} />}</label>;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={() => (changedFills && onDone ? onDone() : onClose())}>
-      <div data-testid="edit-ticket" style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 20, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }}
+      <div data-testid="edit-ticket" style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#e6edf3' }}>Edit logged trade</div>
-            <div style={{ fontSize: 12.5, color: '#a8b2be', marginTop: 4 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--c-e6edf3)' }}>Edit logged trade</div>
+            <div style={{ fontSize: 12.5, color: 'var(--c-a8b2be)', marginTop: 4 }}>
               Correct what was entered wrong. The change is noted on the ticket (old → new) and the open positions recalculate.
             </div>
           </div>
-          <button onClick={() => (changedFills && onDone ? onDone() : onClose())} aria-label="Close" style={{ background: 'none', border: 'none', color: '#a8b2be', cursor: 'pointer', fontSize: 18 }}>×</button>
+          <button onClick={() => (changedFills && onDone ? onDone() : onClose())} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--c-a8b2be)', cursor: 'pointer', fontSize: 18 }}>×</button>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
@@ -144,15 +144,15 @@ export default function EditTicketModal({ position: p, onClose, onDone }) {
             </span>
           </label>
           {working && L('Limit sent, per contract', 'limit')}
-          {working && <span style={{ fontSize: 12, color: '#8b949e', alignSelf: 'end' }}>Signed the same way as the entry.</span>}
+          {working && <span style={{ fontSize: 12, color: 'var(--c-8b949e)', alignSelf: 'end' }}>Signed the same way as the entry.</span>}
           {L('Max profit ($, all contracts)', 'maxProfit')}
           {L('Max risk ($, all contracts)', 'maxRisk')}
         </div>
 
         {fills && fills.length > 0 && (
-          <div data-testid="edit-fills" style={{ marginTop: 16, borderTop: '1px solid #21262d', paddingTop: 12 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: '#e6edf3' }}>Fills recorded</div>
-            <div style={{ fontSize: 12, color: '#a8b2be', margin: '2px 0 8px' }}>
+          <div data-testid="edit-fills" style={{ marginTop: 16, borderTop: '1px solid var(--c-21262d)', paddingTop: 12 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--c-e6edf3)' }}>Fills recorded</div>
+            <div style={{ fontSize: 12, color: 'var(--c-a8b2be)', margin: '2px 0 8px' }}>
               The average entry comes from these, not from the entry above. Correct a price or quantity, or remove a fill entered by mistake.
             </div>
             {fills.map(x => {
@@ -163,40 +163,40 @@ export default function EditTicketModal({ position: p, onClose, onDone }) {
               const busy = fillBusy === id;
               const small = { ...field, width: 64, padding: '4px 6px', fontSize: 12.5 };
               return (
-                <div key={id} data-testid="fill-row" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 0', borderTop: '1px solid #21262d' }}>
+                <div key={id} data-testid="fill-row" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 0', borderTop: '1px solid var(--c-21262d)' }}>
                   <input type="date" style={{ ...small, width: 130 }} value={e.date || ''} aria-label="Fill date"
                     onChange={ev => setFillEdit(m => ({ ...m, [id]: { ...m[id], date: ev.target.value } }))} />
                   <input style={{ ...small, width: 48 }} value={e.qty || ''} aria-label="Fill quantity"
                     onChange={ev => setFillEdit(m => ({ ...m, [id]: { ...m[id], qty: ev.target.value } }))} />
-                  <span style={{ fontSize: 12.5, color: '#8b949e' }}>ct @</span>
+                  <span style={{ fontSize: 12.5, color: 'var(--c-8b949e)' }}>ct @</span>
                   <input style={small} value={e.price || ''} aria-label="Fill price"
                     onChange={ev => setFillEdit(m => ({ ...m, [id]: { ...m[id], price: ev.target.value } }))} />
                   <button type="button" style={pill(e.side === 'cr')} onClick={() => setFillEdit(m => ({ ...m, [id]: { ...m[id], side: 'cr' } }))}>cr</button>
                   <button type="button" style={pill(e.side === 'db')} onClick={() => setFillEdit(m => ({ ...m, [id]: { ...m[id], side: 'db' } }))}>db</button>
-                  <span style={{ fontSize: 11.5, color: '#8b949e' }}>{/^MANUAL-/.test(id) ? 'by hand' : 'from TWS'}</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--c-8b949e)' }}>{/^MANUAL-/.test(id) ? 'by hand' : 'from TWS'}</span>
                   <span style={{ flex: 1 }} />
                   <button type="button" data-testid="fill-save" disabled={!dirty || busy} onClick={() => saveFill(x)}
                     style={{ padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: 12.5, fontWeight: 600,
-                      background: dirty ? '#238636' : '#1c2128', color: dirty ? '#fff' : '#8b949e', cursor: dirty && !busy ? 'pointer' : 'default' }}>
+                      background: dirty ? 'var(--c-238636)' : 'var(--c-1c2128)', color: dirty ? '#fff' : 'var(--c-8b949e)', cursor: dirty && !busy ? 'pointer' : 'default' }}>
                     {busy ? '…' : 'Save fill'}</button>
                   <button type="button" data-testid="fill-remove" disabled={busy} onClick={() => removeFill(x)}
-                    style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #6e2427', background: 'transparent', color: '#f85149', fontSize: 12.5, cursor: 'pointer' }}>
+                    style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-6e2427)', background: 'transparent', color: 'var(--c-f85149)', fontSize: 12.5, cursor: 'pointer' }}>
                     Remove</button>
                 </div>
               );
             })}
           </div>
         )}
-        {(bad || err) && <div style={{ marginTop: 12, fontSize: 12.5, color: '#f85149' }}>{bad || err}</div>}
+        {(bad || err) && <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--c-f85149)' }}>{bad || err}</div>}
 
         <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
           <button data-testid="edit-save" onClick={save} disabled={!nChanges || !!bad || saving}
             style={{ padding: '9px 16px', borderRadius: 8, border: 'none', fontSize: 13.5, fontWeight: 700,
-              background: nChanges && !bad ? '#238636' : '#1c2128', color: nChanges && !bad ? '#fff' : '#8b949e',
+              background: nChanges && !bad ? 'var(--c-238636)' : 'var(--c-1c2128)', color: nChanges && !bad ? '#fff' : 'var(--c-8b949e)',
               cursor: nChanges && !bad && !saving ? 'pointer' : 'default' }}>
             {saving ? 'Saving…' : nChanges ? `Save ${nChanges} change${nChanges === 1 ? '' : 's'}` : 'No changes'}
           </button>
-          <button onClick={() => (changedFills && onDone ? onDone() : onClose())} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>{changedFills ? 'Done' : 'Cancel'}</button>
+          <button onClick={() => (changedFills && onDone ? onDone() : onClose())} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-a8b2be)', fontSize: 13, cursor: 'pointer' }}>{changedFills ? 'Done' : 'Cancel'}</button>
         </div>
       </div>
     </div>

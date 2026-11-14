@@ -211,13 +211,13 @@ export default function OpenPositions({ authenticated, account, compact = false,
   // of the trade; purple marks a ticket that is not a position yet at all, because
   // reading a resting order as open is the mistake this whole table exists to stop.
   const PILL = {
-    [STATUS.WORKING]: ['#1c1333', '#bc8cff'],
-    [STATUS.PART_FILLED]: ['#1f1a0d', '#d29922'],
-    [STATUS.PART_CLOSED]: ['#1f1a0d', '#d29922'],
-    Partial: ['#1f1a0d', '#d29922'],
+    [STATUS.WORKING]: ['var(--c-1c1333)', 'var(--c-bc8cff)'],
+    [STATUS.PART_FILLED]: ['var(--c-1f1a0d)', 'var(--c-d29922)'],
+    [STATUS.PART_CLOSED]: ['var(--c-1f1a0d)', 'var(--c-d29922)'],
+    Partial: ['var(--c-1f1a0d)', 'var(--c-d29922)'],
   };
   const Pill = ({ s }) => {
-    const [bg, color] = PILL[s] || ['#0d1a2e', '#2f81f7'];
+    const [bg, color] = PILL[s] || ['var(--c-0d1a2e)', 'var(--c-2f81f7)'];
     return <span className="badge" style={{ background: bg, color }}>{s}</span>;
   };
   const money = v => (n(v) >= 0 ? '+$' : '−$') + Math.abs(n(v)).toFixed(0);
@@ -284,13 +284,13 @@ export default function OpenPositions({ authenticated, account, compact = false,
               + `If every one fills, committed risk is $${exp.committed.toFixed(0)}`
               + (exp.cap ? ` against a $${exp.cap} cap.` : '.')}>
               <span className="text-text-muted">Working </span>
-              <b style={{ color: exp.overIfFilled ? '#d29922' : undefined }}>
+              <b style={{ color: exp.overIfFilled ? 'var(--c-d29922)' : undefined }}>
                 ${exp.working.toFixed(0)}
               </b>
             </span>
           )}
           {exp.cap && exp.overIfFilled && (
-            <span style={{ color: exp.overNow ? '#f85149' : '#d29922' }}>
+            <span style={{ color: exp.overNow ? 'var(--c-f85149)' : 'var(--c-d29922)' }}>
               {exp.overNow
                 ? `over the $${exp.cap} cap now`
                 : `$${exp.committed.toFixed(0)} if all fill · cap $${exp.cap}`}
@@ -305,7 +305,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
             <button onClick={() => setReconciling(true)}
               title="Pull today's TWS executions and match them to these working orders — nothing is written until you confirm"
               className="text-[12px] px-2 py-0.5 rounded"
-              style={{ border: '1px solid #8957e5', color: '#bc8cff', background: 'transparent', cursor: 'pointer' }}>
+              style={{ border: '1px solid var(--c-8957e5)', color: 'var(--c-bc8cff)', background: 'transparent', cursor: 'pointer' }}>
               Reconcile fills
             </button>
           )}
@@ -345,7 +345,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
                   <tr data-testid="op-row" data-status={r.status}
                     onClick={() => openRow(r)}
                     className="op-row"
-                    style={{ borderTop: '1px solid #21262d', cursor: 'pointer' }}
+                    style={{ borderTop: '1px solid var(--c-21262d)', cursor: 'pointer' }}
                     title={isWaiting(r) ? 'Order not filled yet — click to enter the fills' : 'Click to open the Sell ticket'}>
                     {(() => { const o = openedOf(r); return (
                       <td className="py-2 pr-2 text-text-muted" style={{ whiteSpace: 'nowrap' }}
@@ -370,38 +370,38 @@ export default function OpenPositions({ authenticated, account, compact = false,
                         <td className="py-2 pr-2 text-right mono" data-testid="op-days" style={{ whiteSpace: 'nowrap' }}
                           title={`${total != null ? `${total} days since the first ticket opened, ${held} since the roll` : `${held ?? '—'} days in the trade`}${ex.expiry ? ` · expires ${ex.expiry.slice(0, 4)}-${ex.expiry.slice(4, 6)}-${ex.expiry.slice(6, 8)} (${dte} DTE)` : ' · expiry not known — no Legs line on the ticket'}`}>
                           {total != null ? total : held != null ? held : '—'}d
-                          {dte != null && <div className="text-[11px]" style={{ color: dte <= 0 ? '#f85149' : '#8b949e' }}>{dte <= 0 ? (dte === 0 ? 'expires today' : 'expired') : `${dte} DTE`}</div>}
+                          {dte != null && <div className="text-[11px]" style={{ color: dte <= 0 ? 'var(--c-f85149)' : 'var(--c-8b949e)' }}>{dte <= 0 ? (dte === 0 ? 'expires today' : 'expired') : `${dte} DTE`}</div>}
                         </td>);
                     })()}
                     <td className="py-2 pr-2 text-right mono">
                       <b>{r.qtyOpen}</b><span className="text-text-muted"> / {r.qty}</span>
                       {resting > 0 && (
-                        <span style={{ color: '#bc8cff' }} title={`${resting} contract${resting === 1 ? '' : 's'} still resting at ${r.limitPrice || 'the limit'}`}>
+                        <span style={{ color: 'var(--c-bc8cff)' }} title={`${resting} contract${resting === 1 ? '' : 's'} still resting at ${r.limitPrice || 'the limit'}`}>
                           {' '}+{resting}
                         </span>
                       )}
                     </td>
                     {(() => { const en = entryOf(r); return (
-                      <td className="py-2 pr-2 text-right mono" data-testid="op-entry" style={{ whiteSpace: 'nowrap', color: en ? (en.side === 'cr' ? '#3fb950' : '#e3b341') : '#8b949e' }}
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-entry" style={{ whiteSpace: 'nowrap', color: en ? (en.side === 'cr' ? 'var(--c-3fb950)' : 'var(--c-e3b341)') : 'var(--c-8b949e)' }}
                         title={en && en.filled ? `Average of the recorded fills${en.asked != null ? ` (asked ${en.asked.toFixed(2)})` : ''} — Edit to correct a fill` : 'Entry as logged'}>
                         {en ? <>{isWaiting(r) && <span className="text-text-faint">lmt </span>}{en.side} {en.price.toFixed(2)}</> : '—'}
                       </td>); })()}
                     <td className="py-2 pr-2 text-right mono">
                       ${liveRisk.toFixed(0)}
                       {resting > 0 && (
-                        <span style={{ color: '#bc8cff', fontSize: 11.5 }}
+                        <span style={{ color: 'var(--c-bc8cff)', fontSize: 11.5 }}
                           title="Risk committed but not yet carried — it lands the moment the rest fills">
                           {' '}+{(n(r.qty) > 0 ? n(r.maxRisk) * (resting / n(r.qty)) : 0).toFixed(0)}
                         </span>
                       )}
                     </td>
                     {(() => { const st = stopOf(r); return (
-                      <td className="py-2 pr-2 text-right mono" data-testid="op-stop" style={{ color: st ? '#f85149' : '#8b949e', whiteSpace: 'nowrap' }}
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-stop" style={{ color: st ? 'var(--c-f85149)' : 'var(--c-8b949e)', whiteSpace: 'nowrap' }}
                         title={st ? `Stop: ${st.isCredit ? 'buy the spread back' : 'sell it'} at ${st.price.toFixed(2)} — ${st.pct}% of the ${st.isCredit ? 'credit' : 'debit'}${st.guide ? ' (guide)' : ' (your plan)'}; ${money(st.loss)} on ${st.qty} contract${st.qty === 1 ? '' : 's'}${st.ifFilled ? ' once filled' : ''}` : 'No entry price on the ticket'}>
                         {st ? <><span className="text-text-faint">{st.isCredit ? 'buy back ' : 'sell '}</span>@{st.price.toFixed(2)} <span className="text-text-muted">{money(st.loss)}</span></> : '—'}
                       </td>); })()}
                     {(() => { const tg = targetOf(r); return (
-                      <td className="py-2 pr-2 text-right mono" data-testid="op-target" style={{ color: tg ? '#3fb950' : '#8b949e', whiteSpace: 'nowrap' }}
+                      <td className="py-2 pr-2 text-right mono" data-testid="op-target" style={{ color: tg ? 'var(--c-3fb950)' : 'var(--c-8b949e)', whiteSpace: 'nowrap' }}
                         title={tg ? tg.legs.map((x, i) => `${tg.legs.length > 1 ? `T${i + 1}: ` : ''}${x.qty}x ${tg.side} @ ${x.price.toFixed(2)} (+${x.pct}% of ${tg.basis === 'entry' ? 'entry' : 'max profit'})`).join('\n') + (tg.plan ? '\n(your exit plan)' : '\n(strategy rule)') : 'No entry price on the ticket'}>
                         {tg ? <><span className="text-text-faint">{tg.side} </span>@{tg.price.toFixed(2)}{tg.legs.length > 1 ? `→${tg.last.toFixed(2)}` : ''} <span>{money(tg.gain)}</span></> : '—'}
                       </td>); })()}
@@ -411,7 +411,7 @@ export default function OpenPositions({ authenticated, account, compact = false,
                         ? <span className={n(r.realisedPnl) + chains[r.ticketRef].banked >= 0 ? 'win' : 'loss'}>{money(n(r.realisedPnl) + chains[r.ticketRef].banked)}</span>
                         : r.realisedPnl === '' ? '—' : money(r.realisedPnl)}
                       {chains[r.ticketRef] && (
-                        <div data-testid="op-roll-banked" className="text-[11px]" style={{ color: chains[r.ticketRef].banked >= 0 ? '#3fb950' : '#f85149' }}
+                        <div data-testid="op-roll-banked" className="text-[11px]" style={{ color: chains[r.ticketRef].banked >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}
                           title={'Banked by the ticket' + (chains[r.ticketRef].rolls > 1 ? 's' : '') + ' this was rolled from: '
                             + chains[r.ticketRef].links.map(l => `${l.strikes} ${money(l.realised)}`).join(' · ')}>
                           {n(r.realisedPnl) ? <>incl. {money(chains[r.ticketRef].banked)} roll</> : 'from the roll'}
@@ -426,34 +426,34 @@ export default function OpenPositions({ authenticated, account, compact = false,
                       <button onClick={e => { e.stopPropagation(); setDetail(r); }} data-testid="op-details"
                         title="Payoff diagram, where price is against the strikes, target, stop and greeks — click the chart to test a price"
                         className="text-[12px] px-2 py-0.5 rounded mr-1"
-                        style={{ border: '1px solid #1f6feb', color: '#58a6ff', background: 'transparent', cursor: 'pointer' }}>Details</button>
+                        style={{ border: '1px solid var(--c-1f6feb)', color: 'var(--c-58a6ff)', background: 'transparent', cursor: 'pointer' }}>Details</button>
                       <button onClick={e => { e.stopPropagation(); setEditing(r); }} data-testid="op-edit"
                         title="Correct what was logged — contracts, strikes, entry price, limit, max risk/profit"
                         className="text-[12px] px-2 py-0.5 rounded mr-1"
-                        style={{ border: '1px solid #30363d', color: '#a8b2be', background: 'transparent', cursor: 'pointer' }}>Edit</button>
+                        style={{ border: '1px solid var(--c-30363d)', color: 'var(--c-a8b2be)', background: 'transparent', cursor: 'pointer' }}>Edit</button>
                       {r.status === STATUS.WORKING ? (
                         <button onClick={e => { e.stopPropagation(); cancelTicket(r); }}
                           title="Mark this order cancelled — it stops counting against the open-risk cap"
                           className="text-[12px] px-2 py-0.5 rounded"
-                          style={{ border: '1px solid #8957e5', color: '#bc8cff', background: 'transparent', cursor: 'pointer' }}>
+                          style={{ border: '1px solid var(--c-8957e5)', color: 'var(--c-bc8cff)', background: 'transparent', cursor: 'pointer' }}>
                           {cancelling === r.ticketRef ? 'Cancelling…' : 'Cancel'}
                         </button>
                       ) : (
                       <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'close' }); }}
                         title="Sell ticket — close in tranches"
                         className="text-[12px] px-2 py-0.5 rounded"
-                        style={{ border: '1px solid #da3633', color: '#f85149', background: 'transparent', cursor: 'pointer' }}>Sell</button>
+                        style={{ border: '1px solid var(--c-da3633)', color: 'var(--c-f85149)', background: 'transparent', cursor: 'pointer' }}>Sell</button>
                       )}
                       {r.status !== STATUS.WORKING && /45/.test(r.engine || '') && (
                         <button onClick={e => { e.stopPropagation(); setTicket({ row: r, tab: 'roll' }); }}
                           title="Roll — close old legs, open new ones as one combo"
                           className="text-[12px] px-2 py-0.5 rounded ml-1"
-                          style={{ border: '1px solid #9e6a03', color: '#d29922', background: 'transparent', cursor: 'pointer' }}>Roll</button>
+                          style={{ border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)', background: 'transparent', cursor: 'pointer' }}>Roll</button>
                       )}
                     </td>
                   </tr>
                   {isOpen && r.closes.map((c, i) => (
-                    <tr key={c.closeId || i} style={{ background: '#0d1117' }}>
+                    <tr key={c.closeId || i} style={{ background: 'var(--c-0d1117)' }}>
                       <td className="py-1.5 pr-2 text-text-faint text-[12px]">{c.closeDate}</td>
                       <td className="py-1.5 pr-2 text-text-muted text-[12px]" colSpan={compact ? 1 : 2}>
                         &nbsp;&nbsp;&nbsp;tranche {i + 1}{c.notes ? ` — ${c.notes}` : ''}

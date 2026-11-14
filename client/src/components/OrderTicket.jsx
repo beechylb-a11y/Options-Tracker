@@ -18,6 +18,7 @@ import { checkupFor } from './Checkup45';
 import { TicketHeader, PnlLadder, RollBeforeAfter } from './TicketVisual';
 import { legsFromNotes } from '../utils/positionMatch';
 import { comboTranches, closingFills } from '../utils/fillMatch';
+import { alpha } from '../utils/theme';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
 //
@@ -36,10 +37,10 @@ import { comboTranches, closingFills } from '../utils/fillMatch';
 //
 // props: position (Journal decision row OR OpenPositions row), onClose, onDone
 const inp = {
-  padding: '6px 8px', borderRadius: 6, border: '1px solid #30363d', background: '#0d1117',
-  color: '#e6edf3', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%'
+  padding: '6px 8px', borderRadius: 6, border: '1px solid var(--c-30363d)', background: 'var(--c-0d1117)',
+  color: 'var(--c-e6edf3)', fontSize: 13, fontFamily: 'JetBrains Mono,monospace', outline: 'none', width: '100%'
 };
-const lbl = { fontSize: 11.5, color: '#a8b2be', display: 'block', marginBottom: 3 };
+const lbl = { fontSize: 11.5, color: 'var(--c-a8b2be)', display: 'block', marginBottom: 3 };
 // Accounts that never trade through TWS. PaperTrade used to be one; it trades in the
 // TWS paper login now, so it reads fills like any other account (Oct 2026 — the TWS
 // fills button and the closing-fill lookup were hidden for it).
@@ -75,7 +76,7 @@ export default function OrderTicket(props) {
   if (!resolved) {
     return (
       <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={props.onClose}>
-        <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 20, color: '#a8b2be', fontSize: 13 }}>Loading the fills…</div>
+        <div style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, color: 'var(--c-a8b2be)', fontSize: 13 }}>Loading the fills…</div>
       </div>
     );
   }
@@ -421,8 +422,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const Tab = ({ id, children }) => (
     <button onClick={() => setTab(id)} style={{
       padding: '6px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', border: 'none',
-      borderBottom: `2px solid ${tab === id ? (id === 'close' ? '#f85149' : '#d29922') : 'transparent'}`,
-      background: 'transparent', color: tab === id ? '#e6edf3' : '#8b949e'
+      borderBottom: `2px solid ${tab === id ? (id === 'close' ? 'var(--c-f85149)' : 'var(--c-d29922)') : 'transparent'}`,
+      background: 'transparent', color: tab === id ? 'var(--c-e6edf3)' : 'var(--c-8b949e)'
     }}>{children}</button>
   );
 
@@ -446,31 +447,31 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 12, padding: 20, width: 720, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, width: 720, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
 
         {/* Header — the board row: verdict, what it is, whole-position P&L (Oct 2026). */}
         <TicketHeader check={check} fallback={check === null && /45/.test(pos.engine || '') ? 'Checking…' : pos.engine || 'Open'}
           title={{ underlying: pos.underlying, strikes: oldStrikes, strategy: String(pos.strategy || '').replace(/\s*-\s*Normal\b/i, ''),
             qty: pos.qtyOpen, expiry: titleExpiry }}
-          sub={<>entry <b className="mono" style={{ color: '#e6edf3' }}>{noEntry ? '—' : `${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`}</b>
+          sub={<>entry <b className="mono" style={{ color: 'var(--c-e6edf3)' }}>{noEntry ? '—' : `${Math.abs(pos.ncd).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`}</b>
             {' '}· max <span className="mono">{pos.maxProfitPerContract ? fmt$(pos.maxProfitPerContract) : `${fmt$(Math.abs(pos.ncd || 0) * 100)}*`}</span>/ct
             {' '}· opened {pos.entryDate || '—'} · {pos.account || 'no account'}{pos.qty !== pos.qtyOpen ? ` · ${pos.qty - pos.qtyOpen} of ${pos.qty} closed` : ''}</>}
           posPnl={posPnlNow} ticketPnl={ticketPnlNow} banked={bankedAll} onClose={onClose} />
         {!pos.maxProfitPerContract && !noEntry && (
-          <div style={{ fontSize: 11.5, color: '#8b949e', marginTop: -6, marginBottom: 10 }}>
+          <div style={{ fontSize: 11.5, color: 'var(--c-8b949e)', marginTop: -6, marginBottom: 10 }}>
             * No Max Profit on this ticket — targets use the entry {pos.isCredit ? 'credit' : 'debit'} as the base. Right for credit spreads; understates a debit fly.
           </div>
         )}
         {noEntry && (
-          <div style={{ padding: 8, borderRadius: 6, background: '#1f1a0d', border: '1px solid #9e6a03', color: '#d29922', fontSize: 12.5, marginBottom: 10 }}>
+          <div style={{ padding: 8, borderRadius: 6, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)', fontSize: 12.5, marginBottom: 10 }}>
             This ticket has no Net Debit/Credit, so targets and P&L can't be derived. Enter P&L by hand via the Journal close, or re-log from the engine.
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #21262d', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--c-21262d)', marginBottom: 12 }}>
           <Tab id="close">Close · scale out</Tab>
           {is45 && <Tab id="roll">Roll · 45DTE</Tab>}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#a8b2be' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--c-a8b2be)' }}>
             <span title="Per contract, each way. Set per account in Settings.">Comm / contract</span>
             <input type="number" step="0.01" value={commission} style={{ ...inp, width: 64 }}
               onChange={e => setCommission(e.target.value)} />
@@ -479,12 +480,12 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
         {tab === 'close' && (<>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: '#8b949e' }}>Ladder:</span>
+            <span style={{ fontSize: 12, color: 'var(--c-8b949e)' }}>Ladder:</span>
             {Object.entries(PRESETS).map(([k, p]) => (
-              <button key={k} onClick={() => applyPreset(k)} style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', cursor: 'pointer' }}>{p.label}</button>
+              <button key={k} onClick={() => applyPreset(k)} style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-c9d1d9)', cursor: 'pointer' }}>{p.label}</button>
             ))}
             <button onClick={() => setRows(r => [...r, mkRow(Math.max(1, pos.qtyOpen - allocated), 50)])}
-              style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #2f81f7', background: 'transparent', color: '#58a6ff', cursor: 'pointer' }}>+ Tranche</button>
+              style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--c-2f81f7)', background: 'transparent', color: 'var(--c-58a6ff)', cursor: 'pointer' }}>+ Tranche</button>
             {/* An expiry takes every contract still open, at once — there is no such
                 thing as a partial expiry — so turning this on collapses the ladder to a
                 single all-in row and asks for the settlement value instead of a fill. */}
@@ -496,17 +497,17 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
               }}
               title="The trade ran to the bell instead of being traded out: no closing leg, no closing commission, and no target was hit."
               style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, cursor: 'pointer', fontWeight: expired ? 700 : 400,
-                border: `1px solid ${expired ? '#9e6a03' : '#30363d'}`,
-                background: expired ? '#1f1a0d' : 'transparent', color: expired ? '#d29922' : '#c9d1d9' }}>
+                border: `1px solid ${expired ? 'var(--c-9e6a03)' : 'var(--c-30363d)'}`,
+                background: expired ? 'var(--c-1f1a0d)' : 'transparent', color: expired ? 'var(--c-d29922)' : 'var(--c-c9d1d9)' }}>
               {expired ? '✓ Expired' : 'Expired'}
             </button>
             {!isManual && (
-              <button onClick={fetchFills} style={{ marginLeft: 'auto', fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid #2f81f7', background: '#0d1a2e', color: '#58a6ff', cursor: 'pointer' }}>⚡ TWS fills</button>
+              <button onClick={fetchFills} style={{ marginLeft: 'auto', fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--c-2f81f7)', background: 'var(--c-0d1a2e)', color: 'var(--c-58a6ff)', cursor: 'pointer' }}>⚡ TWS fills</button>
             )}
           </div>
 
           {expired && (
-            <div style={{ padding: 8, borderRadius: 6, background: '#1f1a0d', border: '1px solid #9e6a03', color: '#d29922', fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+            <div style={{ padding: 8, borderRadius: 6, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)', fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
               Recording an expiry on all {pos.qtyOpen} open. Put the structure's <b>settlement value</b> in Fill @ —
               what the legs were worth at the close, not zero unless it really expired worthless.
               Commission is the entry only; there is no closing leg to pay for.
@@ -520,7 +521,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             const off = twsClose && rows.some(r => r.status === 'Filled' && r.fill !== '' && Math.abs(parseFloat(r.fill) - twsClose.avgPrice) > 0.004);
             return (
               <div data-testid="tws-close" style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 10, fontSize: 12.5,
-                background: off ? '#1f1a0d' : '#0d2818', border: `1px solid ${off ? '#9e6a03' : '#238636'}`, color: off ? '#e3b341' : '#3fb950' }}>
+                background: off ? 'var(--c-1f1a0d)' : 'var(--c-0d2818)', border: `1px solid ${off ? 'var(--c-9e6a03)' : 'var(--c-238636)'}`, color: off ? 'var(--c-e3b341)' : 'var(--c-3fb950)' }}>
                 ⚡ {twsNote}{off && <> — <b>a fill below differs from TWS ({twsClose.avgPrice.toFixed(2)})</b></>}
               </div>
             );
@@ -531,7 +532,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           )}
           <table className="w-full" style={{ fontSize: 13, borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ color: '#8b949e', fontSize: 11.5, textAlign: 'left' }}>
+              <tr style={{ color: 'var(--c-8b949e)', fontSize: 11.5, textAlign: 'left' }}>
                 <th style={{ padding: 4 }}>#</th><th style={{ padding: 4, width: 60 }}>Qty</th>
                 <th style={{ padding: 4, width: 80 }}>{pctHead}</th><th style={{ padding: 4, width: 92 }}>{expired ? '' : `LMT ${side}`}</th>
                 <th style={{ padding: 4 }}>Status</th><th style={{ padding: 4, width: 92 }}>{expired ? 'Settled @' : 'Fill @'}</th>
@@ -550,8 +551,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                 const isFilled = r.status === 'Filled';
                 return (
                   <React.Fragment key={i}>
-                    <tr style={{ borderTop: '1px solid #21262d' }}>
-                      <td style={{ padding: 4, color: '#8b949e' }}>T{i + 1}</td>
+                    <tr style={{ borderTop: '1px solid var(--c-21262d)' }}>
+                      <td style={{ padding: 4, color: 'var(--c-8b949e)' }}>T{i + 1}</td>
                       <td style={{ padding: 4 }}><input type="number" min="1" value={r.qty} onChange={e => setRow(i, { qty: e.target.value })} style={inp} /></td>
                       <td style={{ padding: 4 }}><input type="number" step="5" value={r.pct} onChange={e => onPct(i, e.target.value)} style={inp} /></td>
                       <td style={{ padding: 4 }}><input type="number" step={tick} value={r.price} disabled={expired} placeholder={expired ? '—' : ''}
@@ -559,9 +560,9 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                       <td style={{ padding: 4 }}>
                         <button onClick={() => setRow(i, { status: r.status === 'Filled' ? 'Working' : 'Filled', fill: r.fill || r.price })}
                           style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', border: '1px solid',
-                            borderColor: r.status === 'Filled' ? '#238636' : '#9e6a03',
-                            background: r.status === 'Filled' ? '#0d2818' : '#1f1a0d',
-                            color: r.status === 'Filled' ? '#3fb950' : '#d29922' }}>{r.status}</button>
+                            borderColor: r.status === 'Filled' ? 'var(--c-238636)' : 'var(--c-9e6a03)',
+                            background: r.status === 'Filled' ? 'var(--c-0d2818)' : 'var(--c-1f1a0d)',
+                            color: r.status === 'Filled' ? 'var(--c-3fb950)' : 'var(--c-d29922)' }}>{r.status}</button>
                       </td>
                       <td style={{ padding: 4 }}>
                         <input type="number" step={tick} disabled={r.status !== 'Filled'} value={r.status === 'Filled' ? r.fill : ''}
@@ -574,11 +575,11 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                       </td>
                       <td style={{ padding: 4 }}>
                         <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} title="Remove tranche"
-                          style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}>×</button>
+                          style={{ background: 'none', border: 'none', color: 'var(--c-8b949e)', cursor: 'pointer' }}>×</button>
                       </td>
                     </tr>
                     {ib && (
-                      <tr><td></td><td colSpan={7} className="mono" style={{ padding: '0 4px 6px', fontSize: 11.5, color: '#8b949e' }}>
+                      <tr><td></td><td colSpan={7} className="mono" style={{ padding: '0 4px 6px', fontSize: 11.5, color: 'var(--c-8b949e)' }}>
                         {isFilled
                           ? <>Achieved {px.toFixed(2)} {side} = <b style={{ color: pnlColor(rowPct) }}>{rowPct >= 0 ? '+' : '−'}{Math.abs(rowPct).toFixed(0)}%</b> on entry {Math.abs(pos.ncd).toFixed(2)}</>
                           : <span title={OFFSET_TIP} style={{ cursor: 'help' }}>TWS: {pos.isCredit ? 'BUY' : 'SELL'} LMT {p.toFixed(2)} · offset {(pos.isCredit ? Math.abs(pos.ncd) - p : p - Math.abs(pos.ncd)).toFixed(2)}</span>}
@@ -595,12 +596,12 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
               <label style={lbl}>Stop (loss as % of entry)</label>
               <input type="number" step="25" value={stopPct} placeholder={pos.isCredit ? 'e.g. 100' : 'e.g. 50'} title={pos.isCredit ? '100 = buy back at 2x the credit' : '50 = sell at half what you paid'} onChange={e => setStopPct(e.target.value)} style={inp} />
             </div>
-            <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? '#f85149' : '#8b949e' }}>
+            <div className="mono" style={{ fontSize: 12.5, color: stopPrice != null ? 'var(--c-f85149)' : 'var(--c-8b949e)' }}>
               {/* The stop's $ is the one every screen quotes (before commission, open
                   contracts — utils/positionLines.stopOf); fees shown beside it. It said
                   −$2,021 here while the board and check-up said −$1,995. (Oct 2026.) */}
               {stopPrice != null ? <>Stop LMT {stopPrice.toFixed(2)} {side} ({(pnlPct(pos, stopPrice) ?? 0).toFixed(0)}%) · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen))} on {pos.qtyOpen}
-                <span style={{ color: '#8b949e' }}> · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - rtFees(pos.qtyOpen))} after comm</span></> : 'No stop set'}
+                <span style={{ color: 'var(--c-8b949e)' }}> · {fmt$(pnlAt(pos, stopPrice, pos.qtyOpen) - rtFees(pos.qtyOpen))} after comm</span></> : 'No stop set'}
             </div>
             <div>
               <label style={lbl}>Close date</label>
@@ -608,19 +609,19 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           </div>
 
-          <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: '#0d1117', border: `1px solid ${overAllocated ? '#da3633' : '#21262d'}`, display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13 }}>
-            <span>Allocated <b className="mono" style={{ color: overAllocated ? '#f85149' : '#e6edf3' }}>{allocated} / {pos.qtyOpen}</b></span>
+          <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'var(--c-0d1117)', border: `1px solid ${overAllocated ? 'var(--c-da3633)' : 'var(--c-21262d)'}`, display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 13 }}>
+            <span>Allocated <b className="mono" style={{ color: overAllocated ? 'var(--c-f85149)' : 'var(--c-e6edf3)' }}>{allocated} / {pos.qtyOpen}</b></span>
             <span>If all fill <b className="mono" style={{ color: pnlColor(planNet) }}>{fmt$(planNet)}</b></span>
             <span>Recording now <b className="mono" style={{ color: pnlColor(filledNet) }}>{filled.length} tranche{filled.length !== 1 ? 's' : ''} · {fmt$(filledNet)}</b>
               {filledAvgPct != null && <b className="mono" style={{ color: pnlColor(filledAvgPct) }}> ({filledAvgPct >= 0 ? '+' : '−'}{Math.abs(filledAvgPct).toFixed(0)}% avg)</b>}</span>
-            {overAllocated && <span style={{ color: '#f85149' }}>More contracts than are open.</span>}
+            {overAllocated && <span style={{ color: 'var(--c-f85149)' }}>More contracts than are open.</span>}
           </div>
 
           {fills && (
-            <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#0d1117', border: '1px solid #21262d', fontSize: 12.5 }}>
-              {fills.length === 0 ? <span style={{ color: '#a8b2be' }}>No {pos.underlying} fills today.</span> : fills.map((f, i) => (
-                <div key={i} className="mono" style={{ color: '#c9d1d9' }}>
-                  <span style={{ color: f.side === 'BOT' ? '#3fb950' : '#f85149' }}>{f.side}</span> {f.qty}x {f.strike}{f.right} @{f.price?.toFixed(2)}
+            <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)', fontSize: 12.5 }}>
+              {fills.length === 0 ? <span style={{ color: 'var(--c-a8b2be)' }}>No {pos.underlying} fills today.</span> : fills.map((f, i) => (
+                <div key={i} className="mono" style={{ color: 'var(--c-c9d1d9)' }}>
+                  <span style={{ color: f.side === 'BOT' ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{f.side}</span> {f.qty}x {f.strike}{f.right} @{f.price?.toFixed(2)}
                   {f.realizedPnl && f.realizedPnl < 1e300 ? <span style={{ color: pnlColor(f.realizedPnl) }}> {fmt$(f.realizedPnl)}</span> : null}
                 </div>
               ))}
@@ -650,14 +651,14 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           <div style={{ marginTop: 12 }}>
             <label style={lbl}>Legs — old → new ({changedLegs} moved)</label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {oldStrikes.length === 0 && <span style={{ fontSize: 12.5, color: '#d29922' }}>No strikes on this ticket — type the new legs into the notes.</span>}
+              {oldStrikes.length === 0 && <span style={{ fontSize: 12.5, color: 'var(--c-d29922)' }}>No strikes on this ticket — type the new legs into the notes.</span>}
               {oldStrikes.map((s, i) => {
                 const moved = Number(roll.strikes[i]) !== s;
                 return (
-                  <div key={i} style={{ background: '#0d1117', border: `1px solid ${moved ? '#d29922' : '#21262d'}`, borderRadius: 6, padding: 6, width: 110 }}>
-                    <div className="mono" style={{ fontSize: 11.5, color: '#8b949e' }}>{s} →</div>
+                  <div key={i} style={{ background: 'var(--c-0d1117)', border: `1px solid ${moved ? 'var(--c-d29922)' : 'var(--c-21262d)'}`, borderRadius: 6, padding: 6, width: 110 }}>
+                    <div className="mono" style={{ fontSize: 11.5, color: 'var(--c-8b949e)' }}>{s} →</div>
                     <input type="number" value={roll.strikes[i]} onChange={e => setRoll(r => { const st = [...r.strikes]; st[i] = e.target.value; return { ...r, strikes: st }; })}
-                      style={{ ...inp, color: moved ? '#d29922' : '#e6edf3' }} />
+                      style={{ ...inp, color: moved ? 'var(--c-d29922)' : 'var(--c-e6edf3)' }} />
                   </div>
                 );
               })}
@@ -672,8 +673,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             onUse={p => setRoll(r => ({ ...r, closeAt: p.closeAt, openAt: p.openAt, openSide: p.openSide }))} />
 
           {partial && (
-            <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #9e6a03' }}>
-              <div style={{ fontSize: 12.5, color: '#a8b2be', lineHeight: 1.5, marginBottom: 8 }}>
+            <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'var(--c-0d1117)', border: '1px solid var(--c-9e6a03)' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--c-a8b2be)', lineHeight: 1.5, marginBottom: 8 }}>
                 Partial roll — enter the two prices above for the <b>moved legs only</b> (what the TWS roll combo traded).
                 The {carriedStrikes.join(' / ')} legs carry across, so their entry price goes here: the old ticket then banks only what the moved legs made, and the new ticket starts from the carried legs' entry plus the new credit.
               </div>
@@ -686,21 +687,21 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
                     </select>
                   </div></div>
                 <button onClick={carriedFromBridge} type="button"
-                  style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', fontSize: 12.5, cursor: 'pointer' }}>From TWS</button>
+                  style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-c9d1d9)', fontSize: 12.5, cursor: 'pointer' }}>From TWS</button>
               </div>
-              {carriedMsg && <div style={{ fontSize: 12, color: '#8b949e', marginTop: 6 }}>{carriedMsg}</div>}
-              {!isFinite(carriedAbs) && <div style={{ fontSize: 12, color: '#d29922', marginTop: 6 }}>Needed to record the roll.</div>}
+              {carriedMsg && <div style={{ fontSize: 12, color: 'var(--c-8b949e)', marginTop: 6 }}>{carriedMsg}</div>}
+              {!isFinite(carriedAbs) && <div style={{ fontSize: 12, color: 'var(--c-d29922)', marginTop: 6 }}>Needed to record the roll.</div>}
             </div>
           )}
 
           {rs && (
-            <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#0d1117', border: '1px solid #21262d', fontSize: 13, lineHeight: 1.7 }}>
-              <div>Realised on old ({rq}): <b className="mono" style={{ color: pnlColor(rs.realised) }}>{fmt$(rs.realised - rollFees)}</b> <span style={{ color: '#8b949e' }}>after {fmt$(rollFees, 2)} comm (entry + close)</span></div>
-              <div>Net roll: <b className="mono" style={{ color: rs.net >= 0 ? '#3fb950' : '#f85149' }}>{Math.abs(rs.net).toFixed(2)} {rs.net >= 0 ? 'credit' : 'debit'}</b> per share · {fmt$(rs.net * 100 * rq)} on {rq}</div>
-              <div className="mono" style={{ color: '#a8b2be' }}>IBKR roll combo: {rs.net >= 0 ? `SELL @ ${rs.net.toFixed(2)}  (or BUY @ −${rs.net.toFixed(2)})` : `BUY @ ${Math.abs(rs.net).toFixed(2)}`}</div>
-              <div>Old ticket closes at <b className="mono">{rs.closeFull.toFixed(2)} {side}</b> · new ticket opens at <b className="mono">{Math.abs(rs.openFull).toFixed(2)} {rs.openFull >= 0 ? 'cr' : 'db'}</b>{partial && <span style={{ color: '#8b949e' }}> (moved legs ± carried {Math.abs(carriedNcd).toFixed(2)} {carriedNcd >= 0 ? 'cr' : 'db'})</span>}</div>
-              <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: '#8b949e' }}>({priorBasis != null ? `${Math.abs(priorBasis).toFixed(2)} ${priorBasis >= 0 ? 'cr' : 'db'} across earlier rolls` : `entry ${Math.abs(pos.ncd || 0).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`} ± this roll)</span></div>
-              {rq < pos.qtyOpen && <div style={{ color: '#d29922' }}>{pos.qtyOpen - rq} contract{pos.qtyOpen - rq > 1 ? 's' : ''} stay on the old legs.</div>}
+            <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)', fontSize: 13, lineHeight: 1.7 }}>
+              <div>Realised on old ({rq}): <b className="mono" style={{ color: pnlColor(rs.realised) }}>{fmt$(rs.realised - rollFees)}</b> <span style={{ color: 'var(--c-8b949e)' }}>after {fmt$(rollFees, 2)} comm (entry + close)</span></div>
+              <div>Net roll: <b className="mono" style={{ color: rs.net >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{Math.abs(rs.net).toFixed(2)} {rs.net >= 0 ? 'credit' : 'debit'}</b> per share · {fmt$(rs.net * 100 * rq)} on {rq}</div>
+              <div className="mono" style={{ color: 'var(--c-a8b2be)' }}>IBKR roll combo: {rs.net >= 0 ? `SELL @ ${rs.net.toFixed(2)}  (or BUY @ −${rs.net.toFixed(2)})` : `BUY @ ${Math.abs(rs.net).toFixed(2)}`}</div>
+              <div>Old ticket closes at <b className="mono">{rs.closeFull.toFixed(2)} {side}</b> · new ticket opens at <b className="mono">{Math.abs(rs.openFull).toFixed(2)} {rs.openFull >= 0 ? 'cr' : 'db'}</b>{partial && <span style={{ color: 'var(--c-8b949e)' }}> (moved legs ± carried {Math.abs(carriedNcd).toFixed(2)} {carriedNcd >= 0 ? 'cr' : 'db'})</span>}</div>
+              <div>Cumulative basis after roll: <b className="mono">{Math.abs(rs.cumulative).toFixed(2)} {rs.cumulative >= 0 ? 'cr' : 'db'}</b> <span style={{ color: 'var(--c-8b949e)' }}>({priorBasis != null ? `${Math.abs(priorBasis).toFixed(2)} ${priorBasis >= 0 ? 'cr' : 'db'} across earlier rolls` : `entry ${Math.abs(pos.ncd || 0).toFixed(2)} ${pos.isCredit ? 'cr' : 'db'}`} ± this roll)</span></div>
+              {rq < pos.qtyOpen && <div style={{ color: 'var(--c-d29922)' }}>{pos.qtyOpen - rq} contract{pos.qtyOpen - rq > 1 ? 's' : ''} stay on the old legs.</div>}
             </div>
           )}
           <div style={{ marginTop: 10, width: 200 }}>
@@ -717,25 +718,25 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
         <TicketHelp kind="sell" />
 
-        {msg && <div style={{ marginTop: 8, fontSize: 12.5, color: msg.err ? '#f85149' : '#3fb950' }}>{msg.text}</div>}
+        {msg && <div style={{ marginTop: 8, fontSize: 12.5, color: msg.err ? 'var(--c-f85149)' : 'var(--c-3fb950)' }}>{msg.text}</div>}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
           {tab === 'close' ? (<>
             <button onClick={recordFills} disabled={busy || !filled.length || overAllocated || noEntry}
-              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: '#da3633', color: '#fff', opacity: busy || !filled.length || overAllocated || noEntry ? 0.45 : 1 }}>
+              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: 'var(--c-da3633)', color: '#fff', opacity: busy || !filled.length || overAllocated || noEntry ? 0.45 : 1 }}>
               {busy ? 'Recording…'
                 : expired ? (isFinite(rowFill(rows[0] || {})) ? `Record expiry · ${pos.qtyOpen} contract${pos.qtyOpen !== 1 ? 's' : ''} · ${fmt$(filledNet)}` : 'Enter the settlement value to record the expiry')
                 : filled.length ? `Record ${filled.reduce((a, r) => a + Number(r.qty), 0)} filled of ${pos.qtyOpen} · ${fmt$(filledNet)}` : 'Mark a tranche Filled to record it'}
             </button>
             <button onClick={() => { persistPlan(rows.filter(r => r.status !== 'Filled'), pos.qtyOpen); setMsg({ text: 'Plan saved — it reopens with this ticket.' }); }}
-              style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#c9d1d9', fontSize: 13, cursor: 'pointer' }}>Save plan</button>
+              style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-c9d1d9)', fontSize: 13, cursor: 'pointer' }}>Save plan</button>
           </>) : (
             <button onClick={recordRoll} disabled={busy || !rs || rq <= 0 || noEntry}
-              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: '#9e6a03', color: '#fff', opacity: busy || !rs || rq <= 0 || noEntry ? 0.45 : 1 }}>
+              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: 'var(--c-9e6a03)', color: '#fff', opacity: busy || !rs || rq <= 0 || noEntry ? 0.45 : 1 }}>
               {busy ? 'Rolling…' : rs ? `Roll ${rq} · bank ${fmt$(rs.realised - rollFees)} · new ticket ${Math.abs(rs.openFull).toFixed(2)} ${rs.openFull >= 0 ? 'cr' : 'db'}` : partial && !isFinite(carriedAbs) ? 'Enter the carried legs’ entry price' : 'Enter close and open prices'}
             </button>
           )}
-          <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid #30363d', background: 'transparent', color: '#a8b2be', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-a8b2be)', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -749,13 +750,13 @@ function RollAdvice({ check, oldStrikes, onUse }) {
   const rv = check && check.review;
   if (!rv || rv.action === 'unknown') {
     return (
-      <details style={{ fontSize: 12.5, color: '#a8b2be', marginBottom: 10 }}>
-        <summary style={{ cursor: 'pointer', color: '#58a6ff' }}>How a roll is recorded</summary>
+      <details style={{ fontSize: 12.5, color: 'var(--c-a8b2be)', marginBottom: 10 }}>
+        <summary style={{ cursor: 'pointer', color: 'var(--c-58a6ff)' }}>How a roll is recorded</summary>
         <div style={{ marginTop: 6, lineHeight: 1.5 }}>One combo in TWS, two records here: the old ticket banks its P&amp;L on the rolled contracts, and the new legs open as a new ticket linked back to it. Change only the strikes that move — untested legs carry across, and their entry price is asked for so each ticket keeps only its own P&amp;L.</div>
       </details>
     );
   }
-  const col = { green: '#3fb950', amber: '#e3b341', red: '#f85149' }[rv.tone] || '#a8b2be';
+  const col = { green: 'var(--c-3fb950)', amber: 'var(--c-e3b341)', red: 'var(--c-f85149)' }[rv.tone] || 'var(--c-a8b2be)';
   const isRoll = /^roll/.test(rv.action);
   const r = check.roll;
   const sh = (rv.metrics && rv.metrics.shorts) || [];
@@ -764,15 +765,15 @@ function RollAdvice({ check, oldStrikes, onUse }) {
     .sort((a, b) => Math.abs(a.strike - oldShort.strike) - Math.abs(b.strike - oldShort.strike))[0] : null;
   const canUse = r && oldShort && wing && oldStrikes.includes(Number(oldShort.strike)) && oldStrikes.includes(Number(wing.strike));
   return (
-    <div data-testid="roll-advice" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: col + '14', border: `1px solid ${col}66` }}>
+    <div data-testid="roll-advice" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: alpha(col, '14'), border: `1px solid ${alpha(col, '66')}` }}>
       <div style={{ fontSize: 13.5, fontWeight: 700, color: col }}>{isRoll ? '↻ ' : '⚠ '}Check-up: {rv.headline}</div>
-      {rv.steps && rv.steps[0] && <div style={{ fontSize: 12.5, color: '#c9d1d9', marginTop: 4 }}>→ {rv.steps[0]}</div>}
+      {rv.steps && rv.steps[0] && <div style={{ fontSize: 12.5, color: 'var(--c-c9d1d9)', marginTop: 4 }}>→ {rv.steps[0]}</div>}
       {r && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap', fontSize: 13 }}>
           <span>Suggested: {r.right === 'C' ? 'calls' : 'puts'} <b className="mono">{oldShort ? `${oldShort.strike}/${wing ? wing.strike : '?'} → ` : ''}{r.shortStrike}/{r.longStrike}</b>
-            {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? '#3fb950' : '#f85149' }}>{r.net >= 0 ? '+' : ''}{r.net.toFixed(2)}</b></>}</span>
+            {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{r.net >= 0 ? '+' : ''}{r.net.toFixed(2)}</b></>}</span>
           {canUse && <button data-testid="roll-use-suggested" onClick={() => onUse([Number(oldShort.strike), Number(wing.strike)], [r.shortStrike, r.longStrike])}
-            style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 6, border: '1px solid #9e6a03', color: '#d29922', background: 'transparent', cursor: 'pointer' }}>Use these strikes</button>}
+            style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)', background: 'transparent', cursor: 'pointer' }}>Use these strikes</button>}
         </div>
       )}
     </div>

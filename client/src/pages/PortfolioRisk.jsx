@@ -19,14 +19,14 @@ import {
 // the bridge is reachable, TWS positions and live leg quotes. Without the bridge it
 // still works, valued with a model at the entry price and IV — and says so.
 
-const C = { text: '#e6edf3', muted: '#8b949e', faint: '#6e7681', border: '#30363d', panel: '#0d1117',
-  green: '#3fb950', red: '#f85149', amber: '#d29922', blue: '#58a6ff', solid: '#2f81f7' };
+const C = { text: 'var(--c-e6edf3)', muted: 'var(--c-8b949e)', faint: 'var(--c-6e7681)', border: 'var(--c-30363d)', panel: 'var(--c-0d1117)',
+  green: 'var(--c-3fb950)', red: 'var(--c-f85149)', amber: 'var(--c-d29922)', blue: 'var(--c-58a6ff)', solid: 'var(--c-2f81f7)' };
 const TONE = {
-  red: { fg: '#f85149', bg: '#2d0f11', border: '#6e2427' },
-  amber: { fg: '#e3b341', bg: '#1f1a0d', border: '#9e6a03' },
-  green: { fg: '#3fb950', bg: '#0f2417', border: '#238636' },
-  blue: { fg: '#58a6ff', bg: '#0c1d36', border: '#1f6feb' },
-  grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
+  red: { fg: 'var(--c-f85149)', bg: 'var(--c-2d0f11)', border: 'var(--c-6e2427)' },
+  amber: { fg: 'var(--c-e3b341)', bg: 'var(--c-1f1a0d)', border: 'var(--c-9e6a03)' },
+  green: { fg: 'var(--c-3fb950)', bg: 'var(--c-0f2417)', border: 'var(--c-238636)' },
+  blue: { fg: 'var(--c-58a6ff)', bg: 'var(--c-0c1d36)', border: 'var(--c-1f6feb)' },
+  grey: { fg: 'var(--c-a8b2be)', bg: 'var(--c-161b22)', border: 'var(--c-30363d)' },
 };
 // Round the SIGNED value first, as every other screen does (−9.5 → −9, not −10), so
 // this page and the board never differ by a dollar.
@@ -193,7 +193,7 @@ export default function PortfolioRisk({ authenticated, account }) {
         {bridgeUrl && (
           <button onClick={refreshLive} disabled={live.busy} data-testid="risk-refresh"
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-50"
-            style={{ background: C.solid, color: '#0d1117' }}>
+            style={{ background: C.solid, color: 'var(--c-0d1117)' }}>
             <RefreshCw size={14} className={live.busy ? 'animate-spin' : ''} /> {live.busy ? 'Pulling from TWS…' : 'Refresh live'}
           </button>
         )}
@@ -278,7 +278,7 @@ function Toggle({ value, onChange, options }) {
     <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
       {options.map(([v, label]) => (
         <button key={v} onClick={() => onChange(v)} className="px-3 py-1 text-xs"
-          style={{ background: value === v ? '#1f6feb' : 'transparent', color: value === v ? '#fff' : C.muted }}>{label}</button>
+          style={{ background: value === v ? 'var(--c-1f6feb)' : 'transparent', color: value === v ? '#fff' : C.muted }}>{label}</button>
       ))}
     </div>
   );
@@ -337,7 +337,7 @@ function StressTable({ grid, sd, book }) {
   const max = Math.max(1, ...grid.cells.flat().map(c => Math.abs(c.pnl)));
   const bg = v => {
     const a = Math.min(1, Math.abs(v) / max) * 0.55 + 0.05;
-    return v >= 0 ? `rgba(63,185,80,${a})` : `rgba(248,81,73,${a})`;
+    return `color-mix(in srgb, var(--c-${v >= 0 ? '3fb950' : 'f85149'}) ${Math.round(a * 100)}%, transparent)`;
   };
   const w = grid.worst;
   const name = k => { const p = book.find(x => x.key === k); return p ? `${p.underlying} ${p.strategy}` : k; };
@@ -362,7 +362,7 @@ function StressTable({ grid, sd, book }) {
                   const isW = w && c === w;
                   return (
                     <td key={j} className="mono text-center py-1.5 rounded" data-worst={isW ? '1' : undefined}
-                      style={{ background: bg(c.pnl), color: '#fff', outline: isW ? '2px solid #fff' : 'none', fontWeight: isW ? 800 : 500 }}>
+                      style={{ background: bg(c.pnl), color: 'var(--c-ffffff)', outline: isW ? '2px solid var(--c-ffffff)' : 'none', fontWeight: isW ? 800 : 500 }}>
                       {money(c.pnl)}
                     </td>
                   );
@@ -407,7 +407,7 @@ function PositionsTable({ book, risks, onAct }) {
               <tr key={p.key} className="table-row cursor-pointer" data-testid="risk-row" onClick={() => onAct(p, p.working ? 'fills' : 'sell')}
                 style={{ borderTop: `1px solid ${C.border}` }}>
                 <td className="py-2 pr-3">
-                  <div className="mono" style={{ color: '#fff', fontWeight: 700 }}>{p.underlying} {strikes.length ? strikes.join('/') : (p.row.legs || '')} <span style={{ fontWeight: 400, color: C.text }}>{String(p.strategy || '').replace(/\s*-\s*Normal\b/i, '')} · {p.working ? `${p.resting} wkg` : `${p.live} ct`}</span></div>
+                  <div className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 700 }}>{p.underlying} {strikes.length ? strikes.join('/') : (p.row.legs || '')} <span style={{ fontWeight: 400, color: C.text }}>{String(p.strategy || '').replace(/\s*-\s*Normal\b/i, '')} · {p.working ? `${p.resting} wkg` : `${p.live} ct`}</span></div>
                   <div className="text-[11.5px]" style={{ color: C.faint }}>{p.engine} · β {betaOf(p.underlying)}</div>
                 </td>
                 <td className="py-2 pr-3 mono text-right" style={{ color: p.dte != null && p.dte < 0 ? C.red : C.text }}>{p.dte == null ? '—' : p.dte < 0 ? 'exp' : p.dte}</td>
@@ -431,7 +431,7 @@ function PositionsTable({ book, risks, onAct }) {
 
 function Bar({ parts, total }) {
   return (
-    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: '#21262d' }}>
+    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--c-21262d)' }}>
       {parts.map((x, i) => <div key={i} style={{ width: `${Math.min(100, (x.v / total) * 100)}%`, background: x.c }} />)}
     </div>
   );
@@ -446,7 +446,7 @@ function Budget({ budget }) {
         <span style={{ color: C.text }}>{plain$(e.live)} open <span style={{ color: C.blue }}>+ {plain$(e.working)} working</span></span>
         <span style={{ color: C.muted }}>{e.cap ? `cap ${plain$(e.cap)}` : 'no cap set (Settings)'}</span>
       </div>
-      <Bar total={scale} parts={[{ v: e.live, c: e.overNow ? C.red : C.solid }, { v: e.working, c: '#1f6feb66' }]} />
+      <Bar total={scale} parts={[{ v: e.live, c: e.overNow ? C.red : C.solid }, { v: e.working, c: 'color-mix(in srgb, var(--c-1f6feb) 40%, transparent)' }]} />
       {e.cap && <div className="text-[12.5px] mt-1" style={{ color: e.overNow ? C.red : e.overIfFilled ? C.amber : C.muted }}>
         {e.overNow ? 'Over the cap now.' : e.overIfFilled ? 'Over the cap if the working orders fill.' : `${plain$(e.headroom)} of room left.`}</div>}
 

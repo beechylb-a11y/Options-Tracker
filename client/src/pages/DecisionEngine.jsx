@@ -12,7 +12,7 @@ import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
-const TONE_HEX = { green: '#3fb950', amber: '#e3b341', red: '#f85149', blue: '#58a6ff', grey: '#8b949e' };
+const TONE_HEX = { green: 'var(--c-3fb950)', amber: 'var(--c-e3b341)', red: 'var(--c-f85149)', blue: 'var(--c-58a6ff)', grey: 'var(--c-8b949e)' };
 
 // ── Trade tabs (Aug 2026) ──
 // One mounted EnginePanel per tab, inactive ones hidden with display:none so
@@ -56,8 +56,8 @@ function tabLabel(mode, underlying, createdAt, dte) {
 // banner over the ticket. A 0DTE scan opened as a 45DTE ticket (the scan kept
 // its 0DTE results after the mode was switched) is the mistake this prevents.
 export const MODE_UI = {
-  '0dte': { short: '0DTE', long: '0DTE \u00b7 expires today', fg: '#e3b341', solid: '#d29922', bg: '#1f1a0d', border: '#9e6a03', Icon: Timer },
-  '45dte': { short: '45DTE', long: '45DTE \u00b7 about six weeks', fg: '#58a6ff', solid: '#2f81f7', bg: '#0c1d36', border: '#1f6feb', Icon: CalendarDays },
+  '0dte': { short: '0DTE', long: '0DTE \u00b7 expires today', fg: 'var(--c-e3b341)', solid: 'var(--c-d29922)', bg: 'var(--c-1f1a0d)', border: 'var(--c-9e6a03)', Icon: Timer },
+  '45dte': { short: '45DTE', long: '45DTE \u00b7 about six weeks', fg: 'var(--c-58a6ff)', solid: 'var(--c-2f81f7)', bg: 'var(--c-0c1d36)', border: 'var(--c-1f6feb)', Icon: CalendarDays },
 };
 const modeUi = m => MODE_UI[m === '0dte' ? '0dte' : '45dte'];
 function ModeBadge({ mode, size = 'sm', testid }) {
@@ -575,7 +575,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                 <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
                   title={on ? `Showing ${u.short} · ${CLASS_LABEL[groupClass]}` : `Show ${u.short} · ${CLASS_LABEL[groupClass]}`}
                   className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
-                  style={on ? { background: u.solid, color: '#0d1117', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
+                  style={on ? { background: u.solid, color: 'var(--c-0d1117)', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
                   <u.Icon size={14} /> {u.short}
                 </button>
               );
@@ -643,26 +643,26 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                   <Clock size={12} /> Open tickets ({openTickets.length})
                 </h3>
                 <button onClick={handleReconcile} disabled={reconciling}
-                  className="text-[12.5px] px-3 py-1 border border-[#2f81f7] rounded-lg text-[#58a6ff] hover:bg-[#0d1a2e] disabled:opacity-50">
+                  className="text-[12.5px] px-3 py-1 border border-[var(--c-2f81f7)] rounded-lg text-[var(--c-58a6ff)] hover:bg-[var(--c-0d1a2e)] disabled:opacity-50">
                   {reconciling ? 'Reconciling...' : '⚡ Reconcile with TWS'}
                 </button>
               </div>
 
               {/* Reconcile results */}
               {reconcileResults && (
-                <div className="mb-3 p-3 rounded-lg border border-[#30363d] bg-[#0d1117]">
-                  <div className="text-xs text-[#a8b2be] mb-2">
+                <div className="mb-3 p-3 rounded-lg border border-[var(--c-30363d)] bg-[var(--c-0d1117)]">
+                  <div className="text-xs text-[var(--c-a8b2be)] mb-2">
                     {reconcileResults.matches.length} matched, {reconcileResults.unmatchedCount} unmatched fills
                   </div>
                   {reconcileResults.matches.map((m, i) => (
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-[#21262d] last:border-0">
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-[var(--c-21262d)] last:border-0">
                       <div>
                         <span className="text-sm text-white font-medium">{m.ticket.underlying}</span>
-                        <span className="text-xs text-[#a8b2be] ml-2">{m.ticket.strategy}</span>
-                        <span className="text-xs text-[#8b949e] ml-2">{m.fillCount} fills</span>
+                        <span className="text-xs text-[var(--c-a8b2be)] ml-2">{m.ticket.strategy}</span>
+                        <span className="text-xs text-[var(--c-8b949e)] ml-2">{m.fillCount} fills</span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? '#3fb950' : '#f85149'}}
+                        <span className="mono text-sm font-bold" style={{color:m.totalPnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)'}}
                           title={m.grossPnl != null ? `${fmt$(m.grossPnl)} before commission · ${fmt$(m.totalComm)} commission` : ''}>{fmt$(m.totalPnl)}</span>
                         {m.totalComm > 0 && <span className="mono text-[11.5px] text-text-faint">after {fmt$(m.totalComm)} comm</span>}
                         <button onClick={async () => {
@@ -705,7 +705,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             }));
                           } catch (e) { alert('Error: ' + e.message); }
                         }}
-                          className="text-[12px] px-2 py-1 bg-[#238636] rounded text-white hover:bg-[#2ea043] font-semibold">
+                          className="text-[12px] px-2 py-1 bg-[var(--c-238636)] rounded text-white hover:bg-[var(--c-2ea043)] font-semibold">
                           Accept & close
                         </button>
                       </div>
@@ -775,14 +775,14 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                             <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'close'); }}
                               title="Sell ticket: close in tranches, with IBKR limit prices"
                               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
-                              style={{ background: '#da3633', color: '#fff' }}>
+                              style={{ background: 'var(--c-da3633)', color: '#fff' }}>
                               <DollarSign size={12} /> Sell / scale out
                             </button>
 {/45/.test(dec.Engine || '') && (
                                                         <button onClick={(e) => { e.stopPropagation(); openOrderTicket(dec, 'roll'); }}
                               title="Roll: close the old legs and open new ones as one combo"
                               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
-                              style={{ border: '1px solid #9e6a03', color: '#d29922' }}>
+                              style={{ border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)' }}>
                               Roll
                             </button>
                             )}
@@ -993,7 +993,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                           <span className="text-xs font-medium" style={{ color: TONE_HEX[b.tone] }} title={m.decision.direction || ''}>{b.icon}</span>); })()}
                       </td>
                       <td className="py-2 px-2 text-xs">{m.matchedTrade?.strategy || <span className="text-text-faint">--</span>}</td>
-                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : '#8b949e' }}>
+                      <td className="py-2 px-2 text-right mono font-medium" style={{ color: m.matchedTrade ? pnlColor(pnl) : 'var(--c-8b949e)' }}>
                         {m.matchedTrade ? fmt$(pnl) : '--'}
                       </td>
                       <td className="py-2 px-2 text-center">
@@ -1019,18 +1019,18 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           const g = groupKey(gm, gc), n = groupCount(g), on = g === activeGroup, u = modeUi(gm);
           const sc = scans[g];
           const age = sc && sc.scannedAt ? scanNow - new Date(sc.scannedAt).getTime() : null;
-          const dot = scanBusy[g] ? '#58a6ff' : age == null ? null : age < SCAN_FRESH_MS ? '#3fb950' : '#d29922';
+          const dot = scanBusy[g] ? 'var(--c-58a6ff)' : age == null ? null : age < SCAN_FRESH_MS ? 'var(--c-3fb950)' : 'var(--c-d29922)';
           const best = sc && sc.results && sc.results[0] && sc.results[0].result ? sc.results[0] : null;
           return (
             <button key={g} data-testid={'group-' + gm + '-' + gc} data-on={on ? '1' : '0'} onClick={() => openGroup(gm, gc)}
               title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets`
                 + (scanBusy[g] ? ' · scanning…' : age == null ? ' · not scanned yet' : ` · scanned ${clockOf(sc.scannedAt)} (${agoOf(sc.scannedAt, scanNow)})${age >= SCAN_FRESH_MS ? ' — rescan' : ''}${best ? ` · best ${best.underlying} ${best.result.setupScore}/100` : ''}`)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, fontSize: 12.5, fontWeight: on ? 700 : 500,
-                border: `1px solid ${on ? u.border : '#30363d'}`, background: on ? u.bg : 'transparent', color: on ? u.fg : '#a8b2be' }}>
+                border: `1px solid ${on ? u.border : 'var(--c-30363d)'}`, background: on ? u.bg : 'transparent', color: on ? u.fg : 'var(--c-a8b2be)' }}>
               <u.Icon size={12} /> {u.short} · {CLASS_LABEL[gc]}
               {dot && <span data-testid={'scan-dot-' + gm + '-' + gc} style={{ width: 7, height: 7, borderRadius: '50%', background: dot }} />}
-              <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: '#0d1117',
-                color: n > TAB_GROUP_MAX ? '#f85149' : n ? (on ? u.fg : '#c9d1d9') : '#6e7681' }}>{n}/{TAB_GROUP_MAX}</span>
+              <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: 'var(--c-0d1117)',
+                color: n > TAB_GROUP_MAX ? 'var(--c-f85149)' : n ? (on ? u.fg : 'var(--c-c9d1d9)') : 'var(--c-6e7681)' }}>{n}/{TAB_GROUP_MAX}</span>
             </button>
           );
         })}
@@ -1055,7 +1055,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                 + (rankable ? ` \u00b7 ranked #${i + 1}` : '')}
               data-mode={t.mode}
               style={{ ...(tint ? {
-                background: tint.bg, borderColor: tint.border, color: '#e6edf3',
+                background: tint.bg, borderColor: tint.border, color: 'var(--c-e6edf3)',
                 boxShadow: on ? `0 0 0 2px ${tint.color}` : 'none', opacity: on ? 1 : 0.85
               } : {}), borderLeft: `3px solid ${modeUi(t.mode).solid}` }}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${tint ? '' : (on ? 'border-accent bg-accent/10 text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover')}`}>
@@ -1113,11 +1113,11 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         <div key={t.id} style={{ display: t.id === (activeTab && activeTab.id) ? 'block' : 'none' }}>
           <div data-testid="ticket-mode-banner" data-mode={t.mode}
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', marginBottom: 10, borderRadius: 8,
-              background: modeUi(t.mode).bg, borderLeft: `4px solid ${modeUi(t.mode).solid}`, fontSize: 12.5, color: '#c9d1d9' }}>
+              background: modeUi(t.mode).bg, borderLeft: `4px solid ${modeUi(t.mode).solid}`, fontSize: 12.5, color: 'var(--c-c9d1d9)' }}>
             <ModeBadge mode={t.mode} size="lg" />
             <span style={{ color: modeUi(t.mode).fg, fontWeight: 600 }}>{modeUi(t.mode).long}</span>
             {t.seed && t.seed._scanMode && (
-              <span style={{ color: '#a8b2be' }}>
+              <span style={{ color: 'var(--c-a8b2be)' }}>
                 · from the {modeUi(t.seed._scanMode).short} multi-scan
                 {t.seed._meta && t.seed._meta.pulledAt ? ' ' + new Date(t.seed._meta.pulledAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}
               </span>
@@ -1148,86 +1148,86 @@ function Row({ label, value }) {
 
 // Blank trend cell: say why — an old bridge, or a bridge that returned no daily bars.
 const trendMissing = r => r.data?._oldBridge
-  ? <span style={{color:'#d29922'}} title="Your Bridge predates the 6 Oct update: it sends no daily bars or VIX3M. In the bridge folder: git pull, then restart the bridge.">update Bridge</span>
+  ? <span style={{color:'var(--c-d29922)'}} title="Your Bridge predates the 6 Oct update: it sends no daily bars or VIX3M. In the bridge folder: git pull, then restart the bridge.">update Bridge</span>
   : r.data?._noDaily
-    ? <span style={{color:'#d29922'}} title="The Bridge returned no daily bars for this ticker (TWS historical data request failed or timed out). Scan again.">no daily bars</span>
-    : <span style={{color:'#8b949e'}}>--</span>;
+    ? <span style={{color:'var(--c-d29922)'}} title="The Bridge returned no daily bars for this ticker (TWS historical data request failed or timed out). Scan again.">no daily bars</span>
+    : <span style={{color:'var(--c-8b949e)'}}>--</span>;
 
 // What each scan type shows per underlying. The 0DTE rows read today's session;
 // none of them means anything six weeks out, so 45DTE gets its own set.
 const SCAN_ROWS = {
   '0dte': [
-    { label: 'Direction', render: r => <span style={{color: r.result?.dirScore > 0 ? '#3fb950' : r.result?.dirScore < 0 ? '#f85149' : '#c9d1d9'}}>{r.result?.dirLabel || '--'}</span> },
+    { label: 'Direction', render: r => <span style={{color: r.result?.dirScore > 0 ? 'var(--c-3fb950)' : r.result?.dirScore < 0 ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{r.result?.dirLabel || '--'}</span> },
     { label: 'Move consumed', render: r => r.result?.moveConsumed !== undefined ? (r.result.moveConsumed * 100).toFixed(0) + '%' : '--' },
-    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
+    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'var(--c-c9d1d9)'}}>{r.result?.regime || '--'}</span> },
     { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
-    { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? '#3fb950' : r.result?.trendPattern === 'reversal' ? '#d29922' : '#c9d1d9'}}>{r.result?.trendPattern || '--'}</span> },
+    { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? 'var(--c-3fb950)' : r.result?.trendPattern === 'reversal' ? 'var(--c-d29922)' : 'var(--c-c9d1d9)'}}>{r.result?.trendPattern || '--'}</span> },
     { label: 'VWAP trend', render: r => {
       const s = r.result?.slope5;
       const a = r.result?.vwapAccept;
-      return <span style={{color: s?.direction === 'rising' ? '#3fb950' : s?.direction === 'falling' ? '#f85149' : '#c9d1d9'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
+      return <span style={{color: s?.direction === 'rising' ? 'var(--c-3fb950)' : s?.direction === 'falling' ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
     }},
   ],
   '45dte': [
     { label: 'IV rank', tip: 'Where today’s IV sits in its 52-week range. Above 30–40 favours selling premium; under 20 favours debit and calendar structures.',
       render: r => {
         const v = parseFloat(r.data?.ivr);
-        if (!(v > 0)) return <span style={{color:'#8b949e'}}>--</span>;
-        const col = v > 40 ? '#3fb950' : v > 20 ? '#c9d1d9' : '#d29922';
-        return <span style={{color:col}}>{v.toFixed(0)}% <span style={{fontSize:12,color:'#a8b2be'}}>{r.result?.ivrBand || ''}</span></span>;
+        if (!(v > 0)) return <span style={{color:'var(--c-8b949e)'}}>--</span>;
+        const col = v > 40 ? 'var(--c-3fb950)' : v > 20 ? 'var(--c-c9d1d9)' : 'var(--c-d29922)';
+        return <span style={{color:col}}>{v.toFixed(0)}% <span style={{fontSize:12,color:'var(--c-a8b2be)'}}>{r.result?.ivrBand || ''}</span></span>;
       }},
     { label: 'IV / HV', tip: 'Implied over 30-day realised. Above 1 the options are paying more than the index has been moving — the edge a premium seller is collecting.',
       render: r => {
         const x = r.result?.ivhvRatio;
-        if (!(x > 0)) return <span style={{color:'#8b949e'}}>--</span>;
-        return <span style={{color: x >= 1.1 ? '#3fb950' : x >= 1 ? '#c9d1d9' : '#f85149'}}>{x.toFixed(2)}× <span style={{fontSize:12,color:'#a8b2be'}}>{r.data?.iv}/{r.data?.hv}</span></span>;
+        if (!(x > 0)) return <span style={{color:'var(--c-8b949e)'}}>--</span>;
+        return <span style={{color: x >= 1.1 ? 'var(--c-3fb950)' : x >= 1 ? 'var(--c-c9d1d9)' : 'var(--c-f85149)'}}>{x.toFixed(2)}× <span style={{fontSize:12,color:'var(--c-a8b2be)'}}>{r.data?.iv}/{r.data?.hv}</span></span>;
       }},
     { label: 'Term', tip: 'Front-month IV against ~90-day IV. Contango (front cheaper) is normal and calm; backwardation means stress now and blocks naked short premium.',
       render: r => {
         const t = r.result?.termBias;
-        if (!t) return <span style={{color:'#8b949e'}}>--</span>;
-        return <span style={{color: t === 'contango' ? '#3fb950' : t === 'backwardation' ? '#f85149' : '#c9d1d9'}}>{t}{r.result?.termRatio ? ` ${(+r.result.termRatio).toFixed(2)}` : ''}</span>;
+        if (!t) return <span style={{color:'var(--c-8b949e)'}}>--</span>;
+        return <span style={{color: t === 'contango' ? 'var(--c-3fb950)' : t === 'backwardation' ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{t}{r.result?.termRatio ? ` ${(+r.result.termRatio).toFixed(2)}` : ''}</span>;
       }},
     { label: 'Skew 25Δ', tip: 'Put IV minus call IV at 25 delta, in vol points. A steep skew pays more for the put side.',
       render: r => {
         const k = parseFloat(r.data?.skew);
-        return isFinite(k) && r.data?.skew !== '' && r.data?.skew != null ? <span>{k > 0 ? '+' : ''}{k.toFixed(1)} pts</span> : <span style={{color:'#8b949e'}}>--</span>;
+        return isFinite(k) && r.data?.skew !== '' && r.data?.skew != null ? <span>{k > 0 ? '+' : ''}{k.toFixed(1)} pts</span> : <span style={{color:'var(--c-8b949e)'}}>--</span>;
       }},
     { label: 'Move to expiry', tip: 'One standard deviation to a 45-day expiry, from IV: price × IV × √(45/365).',
       render: r => {
         const e = r.result?.em45, p = parseFloat(r.data?.price);
-        return e > 0 ? <span>±{e.toFixed(e > 50 ? 0 : 1)} <span style={{fontSize:12,color:'#a8b2be'}}>{p > 0 ? (e / p * 100).toFixed(1) + '%' : ''}</span></span> : <span style={{color:'#8b949e'}}>--</span>;
+        return e > 0 ? <span>±{e.toFixed(e > 50 ? 0 : 1)} <span style={{fontSize:12,color:'var(--c-a8b2be)'}}>{p > 0 ? (e / p * 100).toFixed(1) + '%' : ''}</span></span> : <span style={{color:'var(--c-8b949e)'}}>--</span>;
       }},
     { label: 'Events', tip: 'Scheduled high-impact releases (FOMC, CPI, jobs) before the 45-day expiry.',
       render: r => {
         const n = r.result?.eventHighCount;
-        return n == null ? '--' : <span style={{color: n > 2 ? '#d29922' : '#c9d1d9'}}>{n} high-impact</span>;
+        return n == null ? '--' : <span style={{color: n > 2 ? 'var(--c-d29922)' : 'var(--c-c9d1d9)'}}>{n} high-impact</span>;
       }},
     { label: 'Trend', tip: 'Daily trend: close vs 20- and 50-day averages, the 20-day slope, and ADX(14). Sets the ticket\u2019s outlook. ADX under 20 is a range — neutral, whatever the averages say.',
       render: r => {
         const t = r.data?._trend;
         if (!t) return trendMissing(r);
-        const col = t.outlook === 'bullish' ? '#3fb950' : t.outlook === 'bearish' ? '#f85149' : '#c9d1d9';
+        const col = t.outlook === 'bullish' ? 'var(--c-3fb950)' : t.outlook === 'bearish' ? 'var(--c-f85149)' : 'var(--c-c9d1d9)';
         return <span style={{color:col}} title={t.why}>{trendLabel(t)}</span>;
       }},
     { label: 'Stretch', tip: 'Distance from the 20-day mean in standard deviations of the last 20 closes. Beyond ±2 a move back toward the mean is common.',
       render: r => {
         const t = r.data?._trend;
         if (!t || t.z20 == null) return trendMissing(r);
-        return <span style={{color: t.stretch !== 'normal' ? '#d29922' : '#c9d1d9'}}>{t.z20 > 0 ? '+' : ''}{t.z20.toFixed(1)}σ <span style={{fontSize:12,color:'#a8b2be'}}>{t.pctVs20 > 0 ? '+' : ''}{t.pctVs20.toFixed(1)}% vs 20d</span></span>;
+        return <span style={{color: t.stretch !== 'normal' ? 'var(--c-d29922)' : 'var(--c-c9d1d9)'}}>{t.z20 > 0 ? '+' : ''}{t.z20.toFixed(1)}σ <span style={{fontSize:12,color:'var(--c-a8b2be)'}}>{t.pctVs20 > 0 ? '+' : ''}{t.pctVs20.toFixed(1)}% vs 20d</span></span>;
       }},
     { label: 'Realised vol', tip: 'HV10 ÷ HV60. Below 0.7 coiled (quiet before a move), above 1.3 expanding (let it settle before selling premium).',
       render: r => {
         const t = r.data?._trend;
         if (!t || t.hvRatio == null) return trendMissing(r);
-        return <span style={{color: t.hvRegime !== 'steady' ? '#d29922' : '#c9d1d9'}}>{t.hvRatio.toFixed(2)} <span style={{fontSize:12,color:'#a8b2be'}}>{t.hvRegime}</span></span>;
+        return <span style={{color: t.hvRegime !== 'steady' ? 'var(--c-d29922)' : 'var(--c-c9d1d9)'}}>{t.hvRatio.toFixed(2)} <span style={{fontSize:12,color:'var(--c-a8b2be)'}}>{t.hvRegime}</span></span>;
       }},
     { label: 'VIX / VIX3M', tip: 'Above 1 is index backwardation: about the same direction odds, much wider swings. Size down rather than call a direction.',
       render: r => {
         const x = parseFloat(r.data?.vixTermRatio);
-        return x > 0 ? <span style={{color: x >= 1 ? '#f85149' : '#c9d1d9'}}>{x.toFixed(2)}</span> : r.data?._oldBridge ? trendMissing(r) : <span style={{color:'#8b949e'}}>--</span>;
+        return x > 0 ? <span style={{color: x >= 1 ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{x.toFixed(2)}</span> : r.data?._oldBridge ? trendMissing(r) : <span style={{color:'var(--c-8b949e)'}}>--</span>;
       }},
-    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'#c9d1d9'}}>{r.result?.regime || '--'}</span> },
+    { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'var(--c-c9d1d9)'}}>{r.result?.regime || '--'}</span> },
   ],
 };
 
@@ -1271,38 +1271,38 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
               : 'Volatility and trend: IV rank, IV vs realised, term, skew, daily trend — for a trade about six weeks out'}
           </p>
           {scannedAt && (
-            <p className="text-[12.5px] mono mt-1" style={{ color: stale ? '#d29922' : '#a8b2be' }} data-testid="scan-age">
+            <p className="text-[12.5px] mono mt-1" style={{ color: stale ? 'var(--c-d29922)' : 'var(--c-a8b2be)' }} data-testid="scan-age">
               {ui.short} · {classLabel} scan {clockOf(scannedAt)} · {agoOf(scannedAt, now)}{stale ? ' — rescan' : ''}
             </p>
           )}
-          {master && <p className="text-[12.5px] mt-1" style={{ color: '#58a6ff' }}>Scan everything: {master.label} ({master.i}/{master.n})…</p>}
+          {master && <p className="text-[12.5px] mt-1" style={{ color: 'var(--c-58a6ff)' }}>Scan everything: {master.label} ({master.i}/{master.n})…</p>}
         </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => setShowInputs(!showInputs)}
-            className={`px-3 py-2 text-xs border rounded-lg transition-colors ${showInputs ? 'border-accent bg-accent/10 text-accent' : 'border-[#30363d] text-[#a8b2be] hover:bg-[#161b22]'}`}>
+            className={`px-3 py-2 text-xs border rounded-lg transition-colors ${showInputs ? 'border-accent bg-accent/10 text-accent' : 'border-[var(--c-30363d)] text-[var(--c-a8b2be)] hover:bg-[var(--c-161b22)]'}`}>
             {showInputs ? 'Hide inputs' : 'Show inputs'}
           </button>
           <button onClick={() => onRecalc(withTyped())} disabled={!results}
-            className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#a8b2be] hover:bg-[#161b22] disabled:opacity-30">
+            className="px-3 py-2 text-xs border border-[var(--c-30363d)] rounded-lg text-[var(--c-a8b2be)] hover:bg-[var(--c-161b22)] disabled:opacity-30">
             Recalculate
           </button>
           <button onClick={() => onScan(typed)} disabled={busy || !!master} data-testid="scan-all"
             title={`Scan ${underlyings.join(', ')} for a ${ui.short} trade`}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
-            style={{ background: ui.solid, color: '#0d1117' }}>
+            style={{ background: ui.solid, color: 'var(--c-0d1117)' }}>
             <ui.Icon size={14} className={busy ? 'animate-spin' : ''} />
             {busy ? `Scanning ${classLabel}…` : `Scan ${classLabel} · ${ui.short}`}
           </button>
           <button onClick={onScanAll} disabled={!!master} data-testid="scan-everything-panel"
             title="All six groups: 0DTE and 45DTE × indices, ETFs, stocks"
-            className="px-3 py-2 text-xs border border-[#30363d] rounded-lg text-[#c9d1d9] hover:bg-[#161b22] disabled:opacity-50">
+            className="px-3 py-2 text-xs border border-[var(--c-30363d)] rounded-lg text-[var(--c-c9d1d9)] hover:bg-[var(--c-161b22)] disabled:opacity-50">
             Scan everything
           </button>
         </div>
       </div>
 
       {otherScans && otherScans.length > 0 && (
-        <div data-testid="multiscan-other" className="mb-3 text-[12.5px] flex items-center gap-2 flex-wrap" style={{ color: '#a8b2be' }}>
+        <div data-testid="multiscan-other" className="mb-3 text-[12.5px] flex items-center gap-2 flex-wrap" style={{ color: 'var(--c-a8b2be)' }}>
           Other groups:
           {otherScans.map(o => {
             const best = o.s.results && o.s.results[0] && o.s.results[0].result ? o.s.results[0] : null;
@@ -1322,40 +1322,40 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
         {underlyings.map((u, i) => (
           <div key={i} className="flex items-center gap-1">
             <select value={u} onChange={e => { const next = [...underlyings]; next[i] = e.target.value; onUnderlyings(next); }}
-              className="px-2 py-1.5 bg-[#0d1117] border border-[#30363d] rounded text-xs text-white outline-none">
+              className="px-2 py-1.5 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded text-xs text-white outline-none">
               {opts.map(x => <option key={x} value={x}>{x}</option>)}
             </select>
             {underlyings.length > 1 && (
               <button onClick={() => onUnderlyings(underlyings.filter((_, j) => j !== i))}
-                className="text-[#8b949e] hover:text-red text-xs">×</button>
+                className="text-[var(--c-8b949e)] hover:text-red text-xs">×</button>
             )}
           </div>
         ))}
         {underlyings.length < 6 && (
           <button onClick={() => onUnderlyings([...underlyings, (opts.find(x => !underlyings.includes(x)) || opts[0])])}
-            className="px-2 py-1.5 border border-dashed border-[#30363d] rounded text-xs text-[#8b949e] hover:text-white">+</button>
+            className="px-2 py-1.5 border border-dashed border-[var(--c-30363d)] rounded text-xs text-[var(--c-8b949e)] hover:text-white">+</button>
         )}
         <button onClick={() => onUnderlyings(SCAN_DEFAULTS[cls])} title={`Back to ${SCAN_DEFAULTS[cls].join(', ')}`}
-          className="px-2 py-1.5 text-xs text-[#8b949e] hover:text-white underline">defaults</button>
+          className="px-2 py-1.5 text-xs text-[var(--c-8b949e)] hover:text-white underline">defaults</button>
       </div>
 
       {showInputs && (
         <div className="mb-4 overflow-x-auto fade-in">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-[11px] text-[#a8b2be] uppercase tracking-wider">
+              <tr className="text-[11px] text-[var(--c-a8b2be)] uppercase tracking-wider">
                 <th className="text-left py-1 px-1 w-28">{ui.short} input</th>
                 {underlyings.map((u, i) => <th key={i} className="text-center py-1 px-1 text-white text-sm font-bold">{u}</th>)}
               </tr>
             </thead>
             <tbody>
               {inputFields.map(f => (
-                <tr key={f.key} className="border-t border-[#21262d]">
-                  <td className="py-1 px-1 text-[#a8b2be] text-[12px]">{f.label}</td>
+                <tr key={f.key} className="border-t border-[var(--c-21262d)]">
+                  <td className="py-1 px-1 text-[var(--c-a8b2be)] text-[12px]">{f.label}</td>
                   {underlyings.map((u, i) => (
                     <td key={i} className="py-1 px-1">
                       <input type="number" step="any" value={getVal(u, f.key)} onChange={e => setVal(u, f.key, e.target.value)} placeholder="—"
-                        className="w-full px-2 py-1 bg-[#0d1117] border border-[#21262d] rounded text-[12.5px] text-white mono outline-none focus:border-[#2f81f7] text-center" />
+                        className="w-full px-2 py-1 bg-[var(--c-0d1117)] border border-[var(--c-21262d)] rounded text-[12.5px] text-white mono outline-none focus:border-[var(--c-2f81f7)] text-center" />
                     </td>
                   ))}
                 </tr>
@@ -1369,7 +1369,7 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="scan-results" data-mode={scanMode} data-cls={cls}>
             <thead>
-              <tr className="text-[12px] text-[#a8b2be] uppercase tracking-wider">
+              <tr className="text-[12px] text-[var(--c-a8b2be)] uppercase tracking-wider">
                 <th className="text-left py-2 px-2"><ModeBadge mode={scanMode} /></th>
                 {results.map((r, i) => (
                   <th key={i} className="text-center py-2 px-3" style={{minWidth:140}}>
@@ -1377,7 +1377,7 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
                     {i === 0 && r.result && r.result.setupScore > 0 && <span className="ml-1.5 text-[11px] px-1.5 py-0.5 rounded bg-green/10 text-green font-semibold">BEST</span>}
                     {scanMeta[r.underlying] && (
                       <div className="text-[11px] mono font-normal mt-0.5 normal-case tracking-normal"
-                        style={{ color: scanMeta[r.underlying].isLive ? '#3fb950' : '#a8b2be' }}
+                        style={{ color: scanMeta[r.underlying].isLive ? 'var(--c-3fb950)' : 'var(--c-a8b2be)' }}
                         title={scanMeta[r.underlying].label + (scanMeta[r.underlying].asOf ? ' · quote ' + clockOf(scanMeta[r.underlying].asOf) : '')}>
                         {scanMeta[r.underlying].isLive ? '● live' : '○ close'} {clockOf(scanMeta[r.underlying].pulledAt)}
                       </div>
@@ -1389,12 +1389,12 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
             <tbody>
               {[
                 { label: 'Strategy', render: r => r.error
-                    ? <span data-testid="scan-error" style={{ color: '#f85149', fontSize: 12.5 }}>{r.error}</span>
+                    ? <span data-testid="scan-error" style={{ color: 'var(--c-f85149)', fontSize: 12.5 }}>{r.error}</span>
                     : <>{r.result?.legStrat || r.result?.bestStrat || '--'}
-                        {r.data?._volError && <div data-testid="scan-vol-error" style={{ color: '#d29922', fontSize: 11.5, fontWeight: 400 }}>vol surface: {r.data._volError}</div>}</> },
+                        {r.data?._volError && <div data-testid="scan-vol-error" style={{ color: 'var(--c-d29922)', fontSize: 11.5, fontWeight: 400 }}>vol surface: {r.data._volError}</div>}</> },
                 { label: 'Setup score', render: r => {
                   const sc = r.result?.setupScore || 0;
-                  const col = sc >= 85 ? '#3fb950' : sc >= 70 ? '#2f81f7' : sc >= 50 ? '#d29922' : '#f85149';
+                  const col = sc >= 85 ? 'var(--c-3fb950)' : sc >= 70 ? 'var(--c-2f81f7)' : sc >= 50 ? 'var(--c-d29922)' : 'var(--c-f85149)';
                   return <span style={{color:col}}>{sc}/100 <span style={{fontSize:12,fontWeight:400}}>{r.result?.setup||''}</span></span>;
                 }},
                 ...SCAN_ROWS[scanMode],
@@ -1402,7 +1402,7 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
                 { label: 'VIX', render: r => r.data?.vix || '--' },
                 { label: 'Decision', render: r => {
                   const d = r.result?.decision || '--';
-                  const col = d === 'Trade' ? '#3fb950' : d === 'Trade with caution' ? '#d29922' : '#f85149';
+                  const col = d === 'Trade' ? 'var(--c-3fb950)' : d === 'Trade with caution' ? 'var(--c-d29922)' : 'var(--c-f85149)';
                   return <span style={{color:col,fontWeight:700}}>{d}</span>;
                 }},
                 { label: '', render: r => {
@@ -1416,9 +1416,9 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
                   </button>;
                 }},
               ].map((row, ri) => (
-                <tr key={ri} className="border-t border-[#21262d]">
-                  <td className="py-2 px-2 text-[#a8b2be]" title={row.tip || undefined}
-                    style={row.tip ? { textDecoration: 'underline dotted #484f58', textUnderlineOffset: 3, cursor: 'help' } : undefined}>{row.label}</td>
+                <tr key={ri} className="border-t border-[var(--c-21262d)]">
+                  <td className="py-2 px-2 text-[var(--c-a8b2be)]" title={row.tip || undefined}
+                    style={row.tip ? { textDecoration: 'underline dotted var(--c-484f58)', textUnderlineOffset: 3, cursor: 'help' } : undefined}>{row.label}</td>
                   {results.map((r, i) => <td key={i} className="py-2 px-3 text-center mono text-xs">{row.render(r)}</td>)}
                 </tr>
               ))}
@@ -1428,7 +1428,7 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
       )}
 
       {!results && !busy && (
-        <div className="py-8 text-center text-[#8b949e] text-sm">
+        <div className="py-8 text-center text-[var(--c-8b949e)] text-sm">
           “Scan {classLabel} · {ui.short}” scans {underlyings.join(', ')} — or “Scan everything” for all six groups. “Show inputs” to enter values by hand.
         </div>
       )}

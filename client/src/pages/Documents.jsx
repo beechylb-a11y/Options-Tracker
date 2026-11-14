@@ -95,26 +95,26 @@ export default function Documents({ authenticated }) {
               <h3 className="text-sm font-medium text-white mb-3">Upload a document</h3>
               <div className="grid grid-cols-4 gap-3 mb-3">
                 <div>
-                  <label className="text-[12.5px] text-[#c9d1d9] block mb-1">Document type</label>
+                  <label className="text-[12.5px] text-[var(--c-c9d1d9)] block mb-1">Document type</label>
                   <select value={uploadForm.type} onChange={e => setUploadForm(f => ({ ...f, type: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]">
+                    className="w-full px-3 py-2 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded-lg text-sm text-white outline-none focus:border-[var(--c-2f81f7)]">
                     {DOC_TYPES.filter(t => t !== 'All').map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[12.5px] text-[#c9d1d9] block mb-1">Trade date</label>
+                  <label className="text-[12.5px] text-[var(--c-c9d1d9)] block mb-1">Trade date</label>
                   <input type="date" value={uploadForm.tradeDate} onChange={e => setUploadForm(f => ({ ...f, tradeDate: e.target.value }))}
-                    className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white outline-none focus:border-[#2f81f7]" />
+                    className="w-full px-3 py-2 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded-lg text-sm text-white outline-none focus:border-[var(--c-2f81f7)]" />
                 </div>
                 <div>
-                  <label className="text-[12.5px] text-[#c9d1d9] block mb-1">Underlying</label>
+                  <label className="text-[12.5px] text-[var(--c-c9d1d9)] block mb-1">Underlying</label>
                   <input type="text" value={uploadForm.underlying} onChange={e => setUploadForm(f => ({ ...f, underlying: e.target.value }))} placeholder="SPX, SPY..."
-                    className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white placeholder-[#8b949e] outline-none focus:border-[#2f81f7]" />
+                    className="w-full px-3 py-2 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded-lg text-sm text-white placeholder-[var(--c-8b949e)] outline-none focus:border-[var(--c-2f81f7)]" />
                 </div>
                 <div>
-                  <label className="text-[12.5px] text-[#c9d1d9] block mb-1">Notes</label>
+                  <label className="text-[12.5px] text-[var(--c-c9d1d9)] block mb-1">Notes</label>
                   <input type="text" value={uploadForm.notes} onChange={e => setUploadForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional"
-                    className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-sm text-white placeholder-[#8b949e] outline-none focus:border-[#2f81f7]" />
+                    className="w-full px-3 py-2 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded-lg text-sm text-white placeholder-[var(--c-8b949e)] outline-none focus:border-[var(--c-2f81f7)]" />
                 </div>
               </div>
               <label className="inline-flex items-center gap-2 px-4 py-2 bg-green-dim hover:bg-green text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">
@@ -127,21 +127,21 @@ export default function Documents({ authenticated }) {
           <div className="flex gap-1.5 mb-4">
             {DOC_TYPES.map(t => (
               <button key={t} onClick={() => setFilter(t)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${filter === t ? 'border-accent bg-accent/10 text-accent' : 'border-[#30363d] text-[#a8b2be] hover:bg-[#161b22]'}`}>
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${filter === t ? 'border-accent bg-accent/10 text-accent' : 'border-[var(--c-30363d)] text-[var(--c-a8b2be)] hover:bg-[var(--c-161b22)]'}`}>
                 {t}
               </button>
             ))}
           </div>
 
-          {loading ? <div className="text-[#a8b2be] text-sm">Loading...</div> : filtered.length === 0 ? (
-            <div className="card py-12 text-center text-[#8b949e]">
+          {loading ? <div className="text-[var(--c-a8b2be)] text-sm">Loading...</div> : filtered.length === 0 ? (
+            <div className="card py-12 text-center text-[var(--c-8b949e)]">
               {docs.length === 0 ? 'No documents uploaded yet.' : `No ${filter.toLowerCase()} documents found.`}
             </div>
           ) : (
             <div className="space-y-4">
               {months.map(month => (
                 <div key={month}>
-                  <h3 className="text-xs font-semibold text-[#c9d1d9] uppercase tracking-wider mb-2">
+                  <h3 className="text-xs font-semibold text-[var(--c-c9d1d9)] uppercase tracking-wider mb-2">
                     {month === 'Unknown' ? 'Undated' : new Date(month + '-01').toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })}
                   </h3>
                   <div className="space-y-1">
@@ -150,28 +150,28 @@ export default function Documents({ authenticated }) {
                       const typeBadge = doc.meta?.type || 'Other';
                       const badgeCls = typeBadge === 'Confirmation' ? 'badge-green' : typeBadge === 'Statement' ? 'badge-blue' : typeBadge === 'Screenshot' ? 'badge-amber' : 'badge-red';
                       return (
-                        <div key={doc.id} className="flex items-center gap-3 py-2.5 px-4 rounded-lg border border-[#30363d] hover:border-[#8b949e] transition-colors">
-                          <Icon size={18} className="text-[#a8b2be] flex-shrink-0" />
+                        <div key={doc.id} className="flex items-center gap-3 py-2.5 px-4 rounded-lg border border-[var(--c-30363d)] hover:border-[var(--c-8b949e)] transition-colors">
+                          <Icon size={18} className="text-[var(--c-a8b2be)] flex-shrink-0" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium text-white truncate">{doc.name}</span>
                               <span className={`badge text-[11px] ${badgeCls}`}>{typeBadge}</span>
-                              {doc.meta?.underlying && <span className="text-[12px] text-[#a8b2be]">{doc.meta.underlying}</span>}
+                              {doc.meta?.underlying && <span className="text-[12px] text-[var(--c-a8b2be)]">{doc.meta.underlying}</span>}
                             </div>
-                            <div className="flex items-center gap-3 text-[12px] text-[#8b949e] mt-0.5">
+                            <div className="flex items-center gap-3 text-[12px] text-[var(--c-8b949e)] mt-0.5">
                               {doc.meta?.tradeDate && <span>{fmtDate(doc.meta.tradeDate)}</span>}
                               <span>{formatSize(doc.size)}</span>
-                              {doc.meta?.notes && <span className="text-[#a8b2be]">{doc.meta.notes}</span>}
+                              {doc.meta?.notes && <span className="text-[var(--c-a8b2be)]">{doc.meta.notes}</span>}
                             </div>
                           </div>
-                          <button onClick={() => handleOpen(doc.id)} className="text-[#a8b2be] hover:text-accent transition-colors p-1"><ExternalLink size={14} /></button>
+                          <button onClick={() => handleOpen(doc.id)} className="text-[var(--c-a8b2be)] hover:text-accent transition-colors p-1"><ExternalLink size={14} /></button>
                           {deleting === doc.id ? (
                             <div className="flex items-center gap-1">
                               <button onClick={() => handleDelete(doc.id)} className="text-[12px] px-2 py-1 bg-red-dim text-white rounded">Delete</button>
-                              <button onClick={() => setDeleting(null)} className="text-[12px] px-2 py-1 border border-[#30363d] text-[#a8b2be] rounded">Cancel</button>
+                              <button onClick={() => setDeleting(null)} className="text-[12px] px-2 py-1 border border-[var(--c-30363d)] text-[var(--c-a8b2be)] rounded">Cancel</button>
                             </div>
                           ) : (
-                            <button onClick={() => setDeleting(doc.id)} className="text-[#8b949e] hover:text-red transition-colors p-1"><Trash2 size={14} /></button>
+                            <button onClick={() => setDeleting(doc.id)} className="text-[var(--c-8b949e)] hover:text-red transition-colors p-1"><Trash2 size={14} /></button>
                           )}
                         </div>
                       );

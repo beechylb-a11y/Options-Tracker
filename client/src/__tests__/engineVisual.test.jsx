@@ -9,7 +9,7 @@ afterEach(cleanup);
 
 describe('engine verdict and order card', () => {
   it('title line: verdict badge, then the trade on one line', () => {
-    render(<VerdictTitle word="Take the trade" tone="#3fb950" underlying="SPX" strikes={[7350, 7370]} strategy="Bull put spread" qty={2} expiry="20261027" />);
+    render(<VerdictTitle word="Take the trade" tone="var(--c-3fb950)" underlying="SPX" strikes={[7350, 7370]} strategy="Bull put spread" qty={2} expiry="20261027" />);
     expect(screen.getByTestId('verdict').textContent).toBe('Take the trade');
     expect(screen.getByTestId('verdict-title').textContent).toBe('SPX 7350/7370Bull put spread2 ct27 Oct');
   });

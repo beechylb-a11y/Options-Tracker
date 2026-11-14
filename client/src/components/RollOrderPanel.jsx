@@ -10,8 +10,8 @@ import { buildRollOrder, priceRollOrder, rollOrderText, fmtExp } from '../engine
 // whole roll at mid and at natural, a limit to send, and the order written out for
 // TWS. "Use these prices" fills the two record fields below from the same quotes.
 
-const C = { text: '#e6edf3', muted: '#8b949e', faint: '#6e7681', border: '#30363d', panel: '#0d1117',
-  buy: '#3fb950', sell: '#f85149', amber: '#d29922', blue: '#58a6ff' };
+const C = { text: 'var(--c-e6edf3)', muted: 'var(--c-8b949e)', faint: 'var(--c-6e7681)', border: 'var(--c-30363d)', panel: 'var(--c-0d1117)',
+  buy: 'var(--c-3fb950)', sell: 'var(--c-f85149)', amber: 'var(--c-d29922)', blue: 'var(--c-58a6ff)' };
 const snapTo = (x, t) => Math.round(x / t) * t;
 
 async function getJson(url, ms = 30000) {
@@ -98,7 +98,7 @@ export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.0
   const net = Number.isFinite(lim) ? lim : price && price.complete ? price.mid : null;
   return (
     <div data-testid="roll-order" style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#161b22', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--c-161b22)', borderBottom: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
         <b style={{ color: C.text, fontSize: 13.5 }}>Roll order</b>
         <span style={{ fontSize: 12, color: C.muted }}>{order.legs.length / 2} leg{order.legs.length / 2 === 1 ? '' : 's'} move{order.carried.length ? ` · ${order.carried.length} carr${order.carried.length === 1 ? 'ies' : 'y'} across` : ''} · legs from {legSrc}</span>
         <button onClick={pull} disabled={!bridgeUrl || !order.legs.length} className="flex items-center gap-1" data-testid="roll-quotes"
@@ -119,11 +119,11 @@ export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.0
               const col = l.action === 'BUY' ? C.buy : C.sell;
               const open = l.role === 'open';
               return (
-                <tr key={i} data-testid="roll-leg" style={{ borderTop: `1px solid #21262d`, background: open ? 'rgba(88,166,255,0.06)' : 'transparent' }}>
+                <tr key={i} data-testid="roll-leg" style={{ borderTop: `1px solid var(--c-21262d)`, background: open ? 'color-mix(in srgb, var(--c-58a6ff) 6%, transparent)' : 'transparent' }}>
                   <td style={{ padding: '6px 12px' }}>
                     <span className="mono" style={{ fontWeight: 800, color: col, display: 'inline-block', width: 40 }}>{l.action}</span>
                     <span className="mono" style={{ color: C.text }}>{l.qty} × {pos.underlying} {fmtExp(l.expiry)} <b>{l.strike}{l.right}</b></span>
-                    <span style={{ marginLeft: 8, fontSize: 11, padding: '1px 6px', borderRadius: 4, color: open ? C.blue : C.muted, border: `1px solid ${open ? '#1f6feb' : C.border}` }}>
+                    <span style={{ marginLeft: 8, fontSize: 11, padding: '1px 6px', borderRadius: 4, color: open ? C.blue : C.muted, border: `1px solid ${open ? 'var(--c-1f6feb)' : C.border}` }}>
                       {open ? `open · was ${l.from}` : 'close'}</span>
                   </td>
                   <td className="mono" style={{ textAlign: 'right', color: l.action === 'SELL' ? C.text : C.faint }}>{q && q.bid > 0 ? q.bid.toFixed(2) : '—'}</td>
@@ -149,7 +149,7 @@ export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.0
                 <div style={{ fontSize: 11.5, color: C.muted }}>Limit to send (+ credit / − debit)</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input type="number" step={tick} value={limit} onChange={e => setLimit(e.target.value)} data-testid="roll-limit"
-                    style={{ width: 90, padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, background: '#161b22', color: C.text }} className="mono" />
+                    style={{ width: 90, padding: '5px 8px', borderRadius: 6, border: `1px solid ${C.border}`, background: 'var(--c-161b22)', color: C.text }} className="mono" />
                   <button onClick={() => setLimit(snapTo(price.mid, tick).toFixed(2))} style={{ fontSize: 12, color: C.blue }}>mid</button>
                   <button onClick={() => setLimit(snapTo((price.mid + price.natural) / 2, tick).toFixed(2))} style={{ fontSize: 12, color: C.blue }}>halfway</button>
                   <button onClick={() => setLimit(snapTo(price.natural, tick).toFixed(2))} style={{ fontSize: 12, color: C.blue }}>natural</button>
@@ -159,20 +159,20 @@ export default function RollOrderPanel({ pos, roll, oldStrikes, lots, tick = 0.0
                   {price.mid < 0 && pos.isCredit ? ' · a roll for a debit is a new bet — close instead?' : ''}
                 </div>
               </div>
-              <button onClick={use} data-testid="roll-use" style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 8, border: '1px solid #9e6a03', color: '#e3b341', fontSize: 12.5 }}>
+              <button onClick={use} data-testid="roll-use" style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 8, border: '1px solid var(--c-9e6a03)', color: 'var(--c-e3b341)', fontSize: 12.5 }}>
                 Use these prices below</button>
             </div>
           ) : <div style={{ fontSize: 12.5, color: C.muted }}>{status || (bridgeUrl ? 'Waiting for quotes…' : 'Set the bridge URL in Settings for live quotes.')}</div>}
           {price && price.complete && status && <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>{status}</div>}
         </div>
-        <div style={{ borderTop: `1px solid ${C.border}`, padding: '8px 12px', background: '#010409' }}>
+        <div style={{ borderTop: `1px solid ${C.border}`, padding: '8px 12px', background: 'var(--c-010409)' }}>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
             <span style={{ fontSize: 11.5, color: C.muted }}>To place in TWS</span>
             <button onClick={async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) { /* no clipboard */ } }}
               className="flex items-center gap-1" style={{ marginLeft: 'auto', fontSize: 12, color: C.blue }} data-testid="roll-copy">
               {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}</button>
           </div>
-          <pre data-testid="roll-text" className="mono" style={{ margin: 0, fontSize: 12, color: '#c9d1d9', whiteSpace: 'pre-wrap' }}>{text}</pre>
+          <pre data-testid="roll-text" className="mono" style={{ margin: 0, fontSize: 12, color: 'var(--c-c9d1d9)', whiteSpace: 'pre-wrap' }}>{text}</pre>
         </div>
       </>)}
     </div>

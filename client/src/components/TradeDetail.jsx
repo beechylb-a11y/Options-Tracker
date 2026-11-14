@@ -14,8 +14,8 @@ import { loadPlan } from '../utils/ticketMath';
 // Click the diagram to pin a price and read what the trade would be worth there.
 // A 0DTE refreshes itself every 30 s while the market is open and the bridge answers.
 
-const C = { text: '#e6edf3', muted: '#8b949e', faint: '#6e7681', border: '#30363d', green: '#3fb950', red: '#f85149',
-  amber: '#e3b341', blue: '#58a6ff', orange: '#f0883e', bg: '#0d1117', card: '#161b22' };
+const C = { text: 'var(--c-e6edf3)', muted: 'var(--c-8b949e)', faint: 'var(--c-6e7681)', border: 'var(--c-30363d)', green: 'var(--c-3fb950)', red: 'var(--c-f85149)',
+  amber: 'var(--c-e3b341)', blue: 'var(--c-58a6ff)', orange: 'var(--c-f0883e)', bg: 'var(--c-0d1117)', card: 'var(--c-161b22)' };
 const money = v => v == null || !Number.isFinite(v) ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString();
 const px = v => v == null || !Number.isFinite(v) ? '—' : (Math.abs(v) >= 1000 ? v.toFixed(0) : v.toFixed(2));
 const pc = v => (v == null ? C.muted : v >= 0 ? C.green : C.red);
@@ -132,15 +132,15 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>
-              <span style={{ color: '#79c0ff' }}>{row.underlying}</span> {p ? p.strategy : row.strategy}
-              <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 8, padding: '2px 7px', borderRadius: 4, background: '#0c1d36', color: C.blue }}>{row.engine}</span>
+              <span style={{ color: 'var(--c-79c0ff)' }}>{row.underlying}</span> {p ? p.strategy : row.strategy}
+              <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 8, padding: '2px 7px', borderRadius: 4, background: 'var(--c-0c1d36)', color: C.blue }}>{row.engine}</span>
             </div>
             <div className="mono" style={{ fontSize: 12.5, color: C.muted, marginTop: 3 }}>
               {p && p.legs ? p.legs.map(l => `${l.qty > 0 ? '+' : '−'}${Math.abs(l.qty)} ${l.strike}${l.right}`).join(' / ') : row.legs}
               {p && p.expiry ? ` · exp ${isoOfYmd(p.expiry)}` : ''} · {p ? (p.live > 0 ? `${p.live} open` : `${p.resting} working (shown as if filled)`) : ''}
               {p && p.pos && p.pos.ncd ? ` · entry ${Math.abs(p.pos.ncd).toFixed(2)} ${p.pos.isCredit ? 'cr' : 'db'}` : ''}
             </div>
-            {p && p.chain && <div className="mono" style={{ fontSize: 12, color: '#a8b2be', marginTop: 2 }}>
+            {p && p.chain && <div className="mono" style={{ fontSize: 12, color: 'var(--c-a8b2be)', marginTop: 2 }}>
               rolled from {p.chain.links.map(l => `${l.strikes} (${money(l.realised)})`).join(' · ')}</div>}
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
@@ -164,8 +164,8 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
               title="Re-pull quotes every 30 s while the market is open">
               <Radio size={12} /> {auto ? 'Live · 30 s' : live ? 'Live (market closed)' : 'Live off'}</button>
           )}
-          {note && <span style={{ color: '#d29922' }}>{note}</span>}
-          {r && r.spotSource === 'entry' && <span style={{ color: '#d29922' }}>No live price — drawn at the entry price {px(r.spot)}.</span>}
+          {note && <span style={{ color: 'var(--c-d29922)' }}>{note}</span>}
+          {r && r.spotSource === 'entry' && <span style={{ color: 'var(--c-d29922)' }}>No live price — drawn at the entry price {px(r.spot)}.</span>}
         </div>
 
         {status === 'nolegs' || (p && !p.legs) ? (
@@ -190,7 +190,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
                 </div>
               )}
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11.5, color: C.muted, marginTop: 6 }}>
-                <span><span style={{ color: '#c9d1d9' }}>━</span> at expiry (green profit, red loss)</span>
+                <span><span style={{ color: 'var(--c-c9d1d9)' }}>━</span> at expiry (green profit, red loss)</span>
                 <span><span style={{ color: C.blue }}>╍</span> now</span>
                 {series.exitAt && <span><span style={{ color: C.amber }}>╍</span> {series.exitLabel.toLowerCase()}</span>}
                 <span><span style={{ color: C.blue, opacity: 0.6 }}>▮</span> ±1σ move left ({px(series.sd)} pts)</span>
@@ -208,7 +208,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
 
 function Stat({ k, v, color, sub, testid }) {
   return (
-    <div data-testid={testid} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderBottom: `1px solid #21262d` }}>
+    <div data-testid={testid} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderBottom: `1px solid var(--c-21262d)` }}>
       <span style={{ color: C.muted, fontSize: 12.5 }}>{k}</span>
       <span style={{ textAlign: 'right' }}>
         <span className="mono" style={{ color: color || C.text, fontSize: 13 }}>{v}</span>
@@ -246,9 +246,9 @@ function Side({ p, r, pnl, series, where, stop, tgt, clock, closeYmd, todayYmd, 
         sub={`vega ${money(g.vega)} per vol pt · ${r.greeksSource === 'quotes' ? 'live' : 'model'}`} />
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         {onSell && <button onClick={onSell} data-testid="detail-sell" className="px-3 py-1.5 text-sm font-semibold rounded-lg"
-          style={{ border: '1px solid #da3633', color: C.red }}>Sell ticket</button>}
+          style={{ border: '1px solid var(--c-da3633)', color: C.red }}>Sell ticket</button>}
         {onRoll && <button onClick={onRoll} className="px-3 py-1.5 text-sm font-semibold rounded-lg"
-          style={{ border: '1px solid #9e6a03', color: '#d29922' }}>Roll</button>}
+          style={{ border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)' }}>Roll</button>}
       </div>
     </div>
   );
@@ -296,7 +296,7 @@ function PayoffDiagram({ series, spot, pnlNow, target, stop, pick, onPick, under
       {/* grid */}
       {yTicks.map(v => (
         <g key={'y' + v}>
-          <line x1={L} x2={W - R} y1={Y(v)} y2={Y(v)} stroke="#21262d" />
+          <line x1={L} x2={W - R} y1={Y(v)} y2={Y(v)} stroke="var(--c-21262d)" />
           <text x={L - 6} y={Y(v) + 4} fontSize="11" fill={C.muted} textAnchor="end">{money(v)}</text>
         </g>
       ))}
@@ -304,8 +304,8 @@ function PayoffDiagram({ series, spot, pnlNow, target, stop, pick, onPick, under
       {/* expiry: filled by sign */}
       <path d={area} fill={C.green} opacity="0.22" clipPath="url(#td-up)" />
       <path d={area} fill={C.red} opacity="0.22" clipPath="url(#td-dn)" />
-      <line x1={L} x2={W - R} y1={y0} y2={y0} stroke="#6e7681" strokeWidth="1" />
-      <path d={line(series.expiry)} fill="none" stroke="#c9d1d9" strokeWidth="2" />
+      <line x1={L} x2={W - R} y1={y0} y2={y0} stroke="var(--c-6e7681)" strokeWidth="1" />
+      <path d={line(series.expiry)} fill="none" stroke="var(--c-c9d1d9)" strokeWidth="2" />
       {series.exit && <path d={line(series.exit)} fill="none" stroke={C.amber} strokeWidth="1.8" strokeDasharray="6 4" />}
       <path d={line(series.now)} fill="none" stroke={C.blue} strokeWidth="2" strokeDasharray="5 3" />
       {/* target and stop */}
@@ -333,12 +333,12 @@ function PayoffDiagram({ series, spot, pnlNow, target, stop, pick, onPick, under
       {pick != null && <line x1={X(pick)} x2={X(pick)} y1={T} y2={H - B} stroke={C.amber} strokeWidth="1.5" />}
       {hp != null && (
         <g pointerEvents="none">
-          <line x1={X(hp)} x2={X(hp)} y1={T} y2={H - B} stroke="#8b949e" strokeDasharray="2 3" />
-          <rect x={Math.min(X(hp) + 8, W - R - 170)} y={T + 18} width="162" height={series.exit ? 62 : 46} rx="5" fill="#0d1117" stroke={C.border} />
+          <line x1={X(hp)} x2={X(hp)} y1={T} y2={H - B} stroke="var(--c-8b949e)" strokeDasharray="2 3" />
+          <rect x={Math.min(X(hp) + 8, W - R - 170)} y={T + 18} width="162" height={series.exit ? 62 : 46} rx="5" fill="var(--c-0d1117)" stroke={C.border} />
           <text x={Math.min(X(hp) + 16, W - R - 162)} y={T + 34} fontSize="11.5" fill={C.text}>{underlying} {px(hp)}</text>
           <text x={Math.min(X(hp) + 16, W - R - 162)} y={T + 50} fontSize="11.5" fill={C.blue}>now {money(series.nowAt(hp))}</text>
           {series.exit && <text x={Math.min(X(hp) + 16, W - R - 162)} y={T + 66} fontSize="11.5" fill={C.amber}>{series.exitLabel.toLowerCase().replace('at the planned close', 'at close')} {money(series.exitAt(hp))}</text>}
-          <text x={Math.min(X(hp) + 96, W - R - 82)} y={T + 50} fontSize="11.5" fill="#c9d1d9">exp {money(series.expiryAt(hp))}</text>
+          <text x={Math.min(X(hp) + 96, W - R - 82)} y={T + 50} fontSize="11.5" fill="var(--c-c9d1d9)">exp {money(series.expiryAt(hp))}</text>
         </g>
       )}
     </svg>

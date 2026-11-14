@@ -27,7 +27,7 @@ function loadFilters() {
 }
 
 // --- Account dot colors (stable hash of id across a theme-ish palette) ---
-const ACCT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#bc8cff', '#39c5cf', '#ff7b72', '#7ee787', '#f778ba'];
+const ACCT_COLORS = ['var(--c-58a6ff)', 'var(--c-3fb950)', 'var(--c-d29922)', 'var(--c-bc8cff)', 'var(--c-39c5cf)', 'var(--c-ff7b72)', 'var(--c-7ee787)', 'var(--c-f778ba)'];
 function acctColor(id) {
   const s = String(id || '');
   let h = 0;
@@ -271,7 +271,7 @@ export default function Trades({ authenticated, account, accounts }) {
           </button>
           {accounts && accounts.length > 0 && (
             <select value={uploadAccount} onChange={e => setUploadAccount(e.target.value)}
-              className="px-2 py-2 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white outline-none"
+              className="px-2 py-2 bg-[var(--c-0d1117)] border border-[var(--c-30363d)] rounded-lg text-xs text-white outline-none"
               title="Account for uploaded trades">
               {(accounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
@@ -387,9 +387,9 @@ export default function Trades({ authenticated, account, accounts }) {
                         <td className="py-1.5 pr-2 mono text-text-muted">{csv?.entryDate || (ex?.['Entry Date'] || '').split('T')[0]}</td>
                         <td className="py-1.5 pr-2 font-medium">{csv?.underlying || ex?.Underlying}</td>
                         <td className="py-1.5 pr-2 text-text-muted">{r.diffs?.strategy ? <><span className="text-amber">{r.diffs.strategy.csv}</span> / <span className="text-text-faint">{r.diffs.strategy.existing}</span></> : (csv?.strategy || ex?.['Strategy (OIC)'])}</td>
-                        <td className="py-1.5 pr-2 text-right mono" style={{ color: csv ? pnlColor(csv.totalPnl) : '#8b949e' }}>{csv ? fmt$(csv.totalPnl) : '--'}</td>
-                        <td className="py-1.5 pr-2 text-right mono" style={{ color: ex ? pnlColor(parseFloat(ex['Total P&L ($)']) || 0) : '#8b949e' }}>{ex ? fmt$(parseFloat(ex['Total P&L ($)']) || 0) : '--'}</td>
-                        <td className="py-1.5 text-right mono font-medium" style={{ color: Math.abs(r.pnlDiff) >= 1 ? pnlColor(r.pnlDiff) : '#8b949e' }}>{Math.abs(r.pnlDiff) >= 1 ? fmt$(r.pnlDiff) : '—'}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: csv ? pnlColor(csv.totalPnl) : 'var(--c-8b949e)' }}>{csv ? fmt$(csv.totalPnl) : '--'}</td>
+                        <td className="py-1.5 pr-2 text-right mono" style={{ color: ex ? pnlColor(parseFloat(ex['Total P&L ($)']) || 0) : 'var(--c-8b949e)' }}>{ex ? fmt$(parseFloat(ex['Total P&L ($)']) || 0) : '--'}</td>
+                        <td className="py-1.5 text-right mono font-medium" style={{ color: Math.abs(r.pnlDiff) >= 1 ? pnlColor(r.pnlDiff) : 'var(--c-8b949e)' }}>{Math.abs(r.pnlDiff) >= 1 ? fmt$(r.pnlDiff) : '—'}</td>
                       </tr>
                     );
                   })}
@@ -608,12 +608,12 @@ export default function Trades({ authenticated, account, accounts }) {
                         <div className="flex items-center gap-2">
                           {/* Status is state, not result: green/red belong to the W/L column. A closed
                               loser showed a green "Closed". (Oct 2026.) */}
-                          <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : ''}`} style={!isOpen && t.Status !== 'Assigned' ? { color: '#8b949e', border: '1px solid #30363d' } : undefined}>
+                          <span className={`badge ${isOpen ? 'badge-blue' : t.Status === 'Assigned' ? 'badge-amber' : ''}`} style={!isOpen && t.Status !== 'Assigned' ? { color: 'var(--c-8b949e)', border: '1px solid var(--c-30363d)' } : undefined}>
                             {t.Status}
                           </span>
                           {isOpen && (
                             <button onClick={(e) => { e.stopPropagation(); setClosingTrade(t); }}
-                              className="text-[12px] px-2 py-0.5 border border-[#238636] rounded text-[#3fb950] hover:bg-[#0d2818]">
+                              className="text-[12px] px-2 py-0.5 border border-[var(--c-238636)] rounded text-[var(--c-3fb950)] hover:bg-[var(--c-0d2818)]">
                               Close
                             </button>
                           )}

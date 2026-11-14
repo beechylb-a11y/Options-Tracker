@@ -18,12 +18,12 @@ import { ActionBadge, PnlMeter, fmtYmd as fmtYmdV, CushionGauge, ClockGauge, Pri
 // split into what time, price and volatility did. Data: TWS positions and leg
 // quotes, the vol surface (ATM IV + daily trend), and the logged ticket.
 
-const BLUE = { fg: '#58a6ff', solid: '#2f81f7', bg: '#0c1d36', border: '#1f6feb' };
+const BLUE = { fg: 'var(--c-58a6ff)', solid: 'var(--c-2f81f7)', bg: 'var(--c-0c1d36)', border: 'var(--c-1f6feb)' };
 const TONE = {
-  green: { fg: '#3fb950', bg: '#0f2417', border: '#238636' },
-  amber: { fg: '#e3b341', bg: '#1f1a0d', border: '#9e6a03' },
-  red: { fg: '#f85149', bg: '#2d0f11', border: '#6e2427' },
-  grey: { fg: '#a8b2be', bg: '#161b22', border: '#30363d' },
+  green: { fg: 'var(--c-3fb950)', bg: 'var(--c-0f2417)', border: 'var(--c-238636)' },
+  amber: { fg: 'var(--c-e3b341)', bg: 'var(--c-1f1a0d)', border: 'var(--c-9e6a03)' },
+  red: { fg: 'var(--c-f85149)', bg: 'var(--c-2d0f11)', border: 'var(--c-6e2427)' },
+  grey: { fg: 'var(--c-a8b2be)', bg: 'var(--c-161b22)', border: 'var(--c-30363d)' },
 };
 export const ACTION_LABEL = {
   'take-profit': 'Take profit', hold: 'Hold', watch: 'Watch', 'roll-untested': 'Roll untested side',
@@ -280,20 +280,20 @@ export default function Checkup45({ tickets, openPositions }) {
           <p className="text-xs text-text-muted mt-1">
             Is each trade going to plan, and what does the playbook say now — hold, take profit, roll or close.
           </p>
-          {ranAt && <p className="text-[12.5px] mono mt-1" style={{ color: '#a8b2be' }}>Checked {ranAt.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>}
+          {ranAt && <p className="text-[12.5px] mono mt-1" style={{ color: 'var(--c-a8b2be)' }}>Checked {ranAt.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false })}</p>}
         </div>
         <button onClick={run} disabled={busy || !list.length} data-testid="checkup-run"
           className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-50"
-          style={{ background: BLUE.solid, color: '#0d1117' }}>
+          style={{ background: BLUE.solid, color: 'var(--c-0d1117)' }}>
           <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />
           {busy ? 'Checking…' : `Check ${list.length} open trade${list.length === 1 ? '' : 's'}`}
         </button>
       </div>
-      {err && <div className="text-sm mb-3" style={{ color: '#f85149' }}>{err}</div>}
-      {rows && rows.posErr && <div className="text-[12.5px] mb-3" style={{ color: '#d29922' }}>TWS positions: {rows.posErr} — using the legs logged with each ticket where there are any.</div>}
-      {!list.length && <div className="py-6 text-center text-sm" style={{ color: '#8b949e' }}>No open 45DTE tickets.</div>}
+      {err && <div className="text-sm mb-3" style={{ color: 'var(--c-f85149)' }}>{err}</div>}
+      {rows && rows.posErr && <div className="text-[12.5px] mb-3" style={{ color: 'var(--c-d29922)' }}>TWS positions: {rows.posErr} — using the legs logged with each ticket where there are any.</div>}
+      {!list.length && <div className="py-6 text-center text-sm" style={{ color: 'var(--c-8b949e)' }}>No open 45DTE tickets.</div>}
       {list.length > 0 && !rows && !busy && (
-        <div className="py-6 text-center text-sm" style={{ color: '#8b949e' }}>
+        <div className="py-6 text-center text-sm" style={{ color: 'var(--c-8b949e)' }}>
           {list.map(d => d.Underlying + ' ' + strategyName(d.Strategy)).join(' · ')}
         </div>
       )}
@@ -311,7 +311,7 @@ function ymdAdd(y, n) {
   const d = new Date(Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, +y.slice(6, 8)) + n * 86400000);
   return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
 }
-const PACE_COL = { target: '#3fb950', ahead: '#3fb950', 'on plan': '#3fb950', behind: '#d29922', 'off plan': '#f85149', unknown: '#8b949e' };
+const PACE_COL = { target: 'var(--c-3fb950)', ahead: 'var(--c-3fb950)', 'on plan': 'var(--c-3fb950)', behind: 'var(--c-d29922)', 'off plan': 'var(--c-f85149)', unknown: 'var(--c-8b949e)' };
 
 // The P&L of the open lots split into time / price / IV / not explained, in $ for
 // every open contract (the panel used to show these per lot beside a total).
@@ -393,24 +393,24 @@ export function CheckupCard({ row }) {
     plan={m.plan$ != null ? banked + m.plan$ : null} steps={steps} />;
   return (
     <div data-testid="checkup-card" data-action={rv.action}
-      style={{ border: `1px solid #30363d`, borderLeft: `5px solid ${tone.fg}`, borderRadius: 12, padding: 16, background: '#0d1117' }}>
+      style={{ border: `1px solid var(--c-30363d)`, borderLeft: `5px solid ${tone.fg}`, borderRadius: 12, padding: 16, background: 'var(--c-0d1117)' }}>
       {/* verdict · position · P&L */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <ActionBadge action={rv.action} tone={rv.tone} label={label} />
         <div style={{ minWidth: 0 }}>
-          <div data-testid="checkup-title" className="mono" style={{ color: '#ffffff', fontWeight: 800, fontSize: 20, lineHeight: 1.25, letterSpacing: '.01em',
+          <div data-testid="checkup-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: 20, lineHeight: 1.25, letterSpacing: '.01em',
             display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2 }}>
             <span style={{ whiteSpace: 'nowrap' }}>{t.underlying} {parseStrikes(t.strikes).join('/')}</span>
             <span style={{ whiteSpace: 'nowrap' }}>{String(t.strategy || '').replace(/\s*-\s*Normal\b/i, '')}</span>
             <span style={{ whiteSpace: 'nowrap' }}>{q} ct</span>
             {m.nearExp ? <span style={{ whiteSpace: 'nowrap' }}>exp {fmtYmd(m.nearExp)}</span> : null}
           </div>
-          {chain ? <div style={{ color: '#a8b2be', fontSize: 12, marginTop: 3 }}>{chain.rolls} roll{chain.rolls > 1 ? 's' : ''} since {fmtYmd(chain.startYmd)}</div> : null}
+          {chain ? <div style={{ color: 'var(--c-a8b2be)', fontSize: 12, marginTop: 3 }}>{chain.rolls} roll{chain.rolls > 1 ? 's' : ''} since {fmtYmd(chain.startYmd)}</div> : null}
         </div>
         {posPnl != null && (
           <div style={{ marginLeft: 'auto', textAlign: 'right' }} data-testid="position-pnl">
-            <div className="mono" style={{ fontWeight: 800, fontSize: 28, lineHeight: 1, color: posPnl >= 0 ? '#3fb950' : '#f85149' }}>{money(posPnl)}</div>
-            <div style={{ fontSize: 11, color: '#8b949e', marginTop: 3 }}>
+            <div className="mono" style={{ fontWeight: 800, fontSize: 28, lineHeight: 1, color: posPnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{money(posPnl)}</div>
+            <div style={{ fontSize: 11, color: 'var(--c-8b949e)', marginTop: 3 }}>
               {chain ? <>position · this ticket <span className="mono">{money(m.pnl$)}</span> + banked <span className="mono">{money(banked)}</span></> : 'open P&L'}
             </div>
           </div>
@@ -433,28 +433,28 @@ export function CheckupCard({ row }) {
       )}
       {live && legs && spot > 0 && ncdPos != null && <Triggers legs={legs} ncdPos={ncdPos} spot={spot} closeYmd={closeYmd} />}
       <Reasons chips={chips} />
-      {spotStale && <div data-testid="stale-spot" style={{ marginTop: 8, fontSize: 12, color: '#d29922', display: 'flex', alignItems: 'center', gap: 5 }}>
+      {spotStale && <div data-testid="stale-spot" style={{ marginTop: 8, fontSize: 12, color: 'var(--c-d29922)', display: 'flex', alignItems: 'center', gap: 5 }}>
         <Clock size={12} /> price is the {spotAsOf ? `${spotAsOf.slice(4, 6)}/${spotAsOf.slice(6, 8)} ` : ''}close, not live</div>}
-      {!(spot > 0) && priceNote && <div data-testid="no-spot-why" style={{ marginTop: 8, fontSize: 12.5, color: '#f85149' }}>{priceNote}</div>}
-      {(note || quoteErr) && <div style={{ marginTop: 6, fontSize: 12, color: '#d29922' }}>{[note, quoteErr].filter(Boolean).join(' · ')}</div>}
+      {!(spot > 0) && priceNote && <div data-testid="no-spot-why" style={{ marginTop: 8, fontSize: 12.5, color: 'var(--c-f85149)' }}>{priceNote}</div>}
+      {(note || quoteErr) && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--c-d29922)' }}>{[note, quoteErr].filter(Boolean).join(' · ')}</div>}
       <NextStep text={nextStep} />
       {roll && <RollPlan roll={roll} />}
 
       <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 10 }}>
         <button onClick={() => setOpen(!open)} data-testid="checkup-more"
-          style={{ fontSize: 12.5, color: '#58a6ff', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          style={{ fontSize: 12.5, color: 'var(--c-58a6ff)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {open ? 'Hide details' : 'Details'}
         </button>
         {row.openRow && (
-          <button onClick={() => setDetail(true)} data-testid="checkup-details" style={{ fontSize: 12.5, color: '#58a6ff' }}>
+          <button onClick={() => setDetail(true)} data-testid="checkup-details" style={{ fontSize: 12.5, color: 'var(--c-58a6ff)' }}>
             Payoff diagram and live P&L →</button>
         )}
       </div>
       {detail && row.openRow && <TradeDetail row={row.openRow} onClose={() => setDetail(false)} />}
 
       {/* Everything that used to be the card, one click away. Kept in the DOM. */}
-      <div data-testid="checkup-detail-body" style={{ display: open ? 'block' : 'none', marginTop: 10, paddingTop: 10, borderTop: '1px solid #21262d' }}>
-        {live && <div data-testid="checkup-summary" style={{ color: '#c9d1d9', fontSize: 13 }}>{summaryLine(m, chain, q)}</div>}
+      <div data-testid="checkup-detail-body" style={{ display: open ? 'block' : 'none', marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--c-21262d)' }}>
+        {live && <div data-testid="checkup-summary" style={{ color: 'var(--c-c9d1d9)', fontSize: 13 }}>{summaryLine(m, chain, q)}</div>}
         {live && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, marginTop: 12 }}>
             <PnLChart m={m} chain={chain} />
@@ -476,15 +476,15 @@ export function CheckupCard({ row }) {
           {source && <Chip label="legs" val={source} tone={source === 'TWS' ? null : 'amber'} />}
         </div>
         {rv.warnings.length > 0 && (
-          <ul style={{ marginTop: 8, fontSize: 12.5, color: '#e3b341', paddingLeft: 16, listStyle: 'disc' }}>
+          <ul style={{ marginTop: 8, fontSize: 12.5, color: 'var(--c-e3b341)', paddingLeft: 16, listStyle: 'disc' }}>
             {rv.warnings.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
         )}
         {(rv.steps.length > 1 || rv.reasons.length > 0) && (
-          <div style={{ marginTop: 8, fontSize: 13, color: '#c9d1d9' }}>
+          <div style={{ marginTop: 8, fontSize: 13, color: 'var(--c-c9d1d9)' }}>
             {rv.steps.slice(1).map((s2, i) => <div key={'s' + i} style={{ marginBottom: 4 }}>→ {s2}</div>)}
-            {rv.reasons.map((s2, i) => <div key={'r' + i} style={{ marginBottom: 4, color: '#a8b2be' }}>{s2}</div>)}
-            <div style={{ marginTop: 4, color: '#8b949e', fontSize: 12 }}>Rule: {rv.rule.why || `${rv.rule.target}% target`} · close by {m.closeDte} DTE</div>
+            {rv.reasons.map((s2, i) => <div key={'r' + i} style={{ marginBottom: 4, color: 'var(--c-a8b2be)' }}>{s2}</div>)}
+            <div style={{ marginTop: 4, color: 'var(--c-8b949e)', fontSize: 12 }}>Rule: {rv.rule.why || `${rv.rule.target}% target`} · close by {m.closeDte} DTE</div>
           </div>
         )}
         {more && null}
@@ -497,8 +497,8 @@ function Chip({ label, val, tone, tip }) {
   const c = tone ? TONE[tone] : TONE.grey;
   return (
     <span title={tip} style={{ display: 'inline-flex', gap: 5, padding: '3px 8px', borderRadius: 6, fontSize: 12.5,
-      background: c.bg, border: `1px solid ${c.border}`, color: tone ? c.fg : '#c9d1d9' }}>
-      <span style={{ color: '#8b949e' }}>{label}</span><span className="mono">{val}</span>
+      background: c.bg, border: `1px solid ${c.border}`, color: tone ? c.fg : 'var(--c-c9d1d9)' }}>
+      <span style={{ color: 'var(--c-8b949e)' }}>{label}</span><span className="mono">{val}</span>
     </span>
   );
 }
@@ -539,14 +539,14 @@ function PnLChart({ m, chain }) {
   const W = 640, H = 230, L = 54, R = 104, T = 12, B = 40;
   const X = d => L + (d / span) * (W - L - R);
   const Y = v => T + ((hi - v) / (hi - lo)) * (H - T - B);
-  const col = PACE_COL[m.pace] || '#8b949e';
+  const col = PACE_COL[m.pace] || 'var(--c-8b949e)';
   const path = curve.map((c, i) => `${i ? 'L' : 'M'}${X(c.d).toFixed(1)},${Y(c.v).toFixed(1)}`).join(' ');
   // Keep the right-hand labels from sitting on top of each other.
   const labels = [
-    target != null && { v: target, text: `target ${money(target)}`, c: '#3fb950' },
-    planNow != null && curve.length > 1 && { v: curve[curve.length - 1].v, text: `plan ${money(curve[curve.length - 1].v)}`, c: '#58a6ff' },
-    chain && { v: banked, text: `banked ${money(banked)}`, c: '#a8b2be' },
-    stop != null && { v: stop, text: `stop ${money(stop)}`, c: '#f85149' },
+    target != null && { v: target, text: `target ${money(target)}`, c: 'var(--c-3fb950)' },
+    planNow != null && curve.length > 1 && { v: curve[curve.length - 1].v, text: `plan ${money(curve[curve.length - 1].v)}`, c: 'var(--c-58a6ff)' },
+    chain && { v: banked, text: `banked ${money(banked)}`, c: 'var(--c-a8b2be)' },
+    stop != null && { v: stop, text: `stop ${money(stop)}`, c: 'var(--c-f85149)' },
   ].filter(Boolean).sort((a, b) => Y(a.v) - Y(b.v));
   let lastY = -99;
   labels.forEach(l => { l.y = Math.max(Y(l.v) + 4, lastY + 13); lastY = l.y; });
@@ -556,53 +556,53 @@ function PnLChart({ m, chain }) {
   xTicks.push({ d: span, t: `${fmtYmd(m.nearExp && m.closeDte != null ? ymdAdd(m.nearExp, -m.closeDte) : null)} close` });
   return (
     <div data-testid="plan-track">
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 2 }}>
+      <div style={{ fontSize: 12, color: 'var(--c-8b949e)', marginBottom: 2 }}>
         {chain ? 'Position P&L since you opened' : 'P&L since entry'} — going to plan? <b style={{ color: col, textTransform: 'capitalize' }}>{m.pace === 'target' ? 'target reached' : m.pace}</b>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" style={{ display: 'block' }}
         aria-label={`P&L ${now != null ? money(now) : 'unknown'} against a plan of ${planNow != null ? money(planNow) : 'unknown'} by today`}>
         {/* zero */}
-        <line x1={L} x2={W - R} y1={Y(0)} y2={Y(0)} stroke="#484f58" strokeWidth="1" />
-        <text x={L - 6} y={Y(0) + 4} fontSize="11" fill="#8b949e" textAnchor="end">$0</text>
+        <line x1={L} x2={W - R} y1={Y(0)} y2={Y(0)} stroke="var(--c-484f58)" strokeWidth="1" />
+        <text x={L - 6} y={Y(0) + 4} fontSize="11" fill="var(--c-8b949e)" textAnchor="end">$0</text>
         {/* target and stop */}
-        {target != null && <line x1={X(off)} x2={W - R} y1={Y(target)} y2={Y(target)} stroke="#3fb950" strokeWidth="1.2" strokeDasharray="5 4" />}
-        {stop != null && <line x1={X(off)} x2={W - R} y1={Y(stop)} y2={Y(stop)} stroke="#f85149" strokeWidth="1.2" strokeDasharray="5 4" />}
+        {target != null && <line x1={X(off)} x2={W - R} y1={Y(target)} y2={Y(target)} stroke="var(--c-3fb950)" strokeWidth="1.2" strokeDasharray="5 4" />}
+        {stop != null && <line x1={X(off)} x2={W - R} y1={Y(stop)} y2={Y(stop)} stroke="var(--c-f85149)" strokeWidth="1.2" strokeDasharray="5 4" />}
         {/* earlier tickets and the roll */}
         {segs.map((s, i) => (
           <g key={i}>
-            <line x1={X(s.d0)} x2={X(s.d1)} y1={Y(s.v0)} y2={Y(s.v1)} stroke="#a8b2be" strokeWidth="1.5" strokeDasharray="2 3" />
-            <circle cx={X(s.d1)} cy={Y(s.v1)} r="3" fill="#a8b2be" />
+            <line x1={X(s.d0)} x2={X(s.d1)} y1={Y(s.v0)} y2={Y(s.v1)} stroke="var(--c-a8b2be)" strokeWidth="1.5" strokeDasharray="2 3" />
+            <circle cx={X(s.d1)} cy={Y(s.v1)} r="3" fill="var(--c-a8b2be)" />
           </g>
         ))}
-        {chain && <line x1={X(off)} x2={W - R} y1={Y(banked)} y2={Y(banked)} stroke="#a8b2be" strokeWidth="0.8" opacity="0.5" />}
-        {chain && <line x1={X(off)} x2={X(off)} y1={T} y2={H - B} stroke="#d29922" strokeWidth="1" strokeDasharray="3 3" />}
+        {chain && <line x1={X(off)} x2={W - R} y1={Y(banked)} y2={Y(banked)} stroke="var(--c-a8b2be)" strokeWidth="0.8" opacity="0.5" />}
+        {chain && <line x1={X(off)} x2={X(off)} y1={T} y2={H - B} stroke="var(--c-d29922)" strokeWidth="1" strokeDasharray="3 3" />}
         {/* plan: time decay only */}
-        <path d={path} fill="none" stroke="#58a6ff" strokeWidth="1.8" strokeDasharray="6 4" />
+        <path d={path} fill="none" stroke="var(--c-58a6ff)" strokeWidth="1.8" strokeDasharray="6 4" />
         {/* today */}
-        {today <= span && <line x1={X(today)} x2={X(today)} y1={T} y2={H - B} stroke="#30363d" strokeWidth="1" />}
+        {today <= span && <line x1={X(today)} x2={X(today)} y1={T} y2={H - B} stroke="var(--c-30363d)" strokeWidth="1" />}
         {now != null && planNow != null && <line x1={X(today)} x2={X(today)} y1={Y(planNow)} y2={Y(now)} stroke={col} strokeWidth="2.5" opacity="0.55" />}
-        {planNow != null && <circle cx={X(today)} cy={Y(planNow)} r="3.5" fill="#0d1117" stroke="#58a6ff" strokeWidth="1.5" />}
-        {now != null && <circle cx={X(today)} cy={Y(now)} r="6" fill={col} stroke="#0d1117" strokeWidth="2" />}
+        {planNow != null && <circle cx={X(today)} cy={Y(planNow)} r="3.5" fill="var(--c-0d1117)" stroke="var(--c-58a6ff)" strokeWidth="1.5" />}
+        {now != null && <circle cx={X(today)} cy={Y(now)} r="6" fill={col} stroke="var(--c-0d1117)" strokeWidth="2" />}
         {now != null && <text x={X(today) + (X(today) > W - R - 120 ? -10 : 10)} y={Y(now) + 4} fontSize="12.5" fontWeight="700" fill={col}
           textAnchor={X(today) > W - R - 120 ? 'end' : 'start'}>now {money(now)}</text>}
         {now != null && planNow != null && Math.abs(now - planNow) > 20 && (
-          <text x={X(today) + (X(today) > W - R - 120 ? -10 : 10)} y={(Y(now) + Y(planNow)) / 2 + 4} fontSize="11" fill="#8b949e"
+          <text x={X(today) + (X(today) > W - R - 120 ? -10 : 10)} y={(Y(now) + Y(planNow)) / 2 + 4} fontSize="11" fill="var(--c-8b949e)"
             textAnchor={X(today) > W - R - 120 ? 'end' : 'start'}>{money(now - planNow)} vs plan</text>
         )}
         {labels.map((l, i) => <text key={i} x={W - R + 6} y={l.y} fontSize="11" fill={l.c}>{l.text}</text>)}
         {/* x axis */}
         {xTicks.map((k, i) => (
           <g key={i}>
-            <line x1={X(k.d)} x2={X(k.d)} y1={H - B} y2={H - B + 4} stroke="#484f58" />
-            <text x={X(k.d)} y={H - B + 16} fontSize="11" fill={k.t === 'today' ? '#e6edf3' : '#8b949e'}
+            <line x1={X(k.d)} x2={X(k.d)} y1={H - B} y2={H - B + 4} stroke="var(--c-484f58)" />
+            <text x={X(k.d)} y={H - B + 16} fontSize="11" fill={k.t === 'today' ? 'var(--c-e6edf3)' : 'var(--c-8b949e)'}
               textAnchor={i === 0 ? 'start' : i === xTicks.length - 1 ? 'end' : 'middle'}>{k.t}</text>
           </g>
         ))}
       </svg>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: '#8b949e', marginTop: 2 }}>
-        <span><span style={{ color: '#58a6ff' }}>- - -</span> plan: time decay only, price and IV unchanged</span>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: 'var(--c-8b949e)', marginTop: 2 }}>
+        <span><span style={{ color: 'var(--c-58a6ff)' }}>- - -</span> plan: time decay only, price and IV unchanged</span>
         <span><span style={{ color: col }}>●</span> now</span>
-        {chain && <span><span style={{ color: '#a8b2be' }}>···</span> earlier ticket{chain.rolls > 1 ? 's' : ''} (realised; daily path not recorded)</span>}
+        {chain && <span><span style={{ color: 'var(--c-a8b2be)' }}>···</span> earlier ticket{chain.rolls > 1 ? 's' : ''} (realised; daily path not recorded)</span>}
         <span>{held} of {planDays} days held</span>
       </div>
     </div>
@@ -621,7 +621,7 @@ function Waterfall({ m, chain, qty }) {
     rows.push({ k: b.skewIncluded ? 'IV change (each leg)' : 'IV change (ATM)', v: b.vol });
     if (b.other != null) rows.push({ k: 'Not explained by price or IV', v: b.other, other: true });
   } else if (m.pnl$ != null) rows.push({ k: chain ? 'This ticket' : 'Open P&L', v: m.pnl$ });
-  if (!rows.length) return <div style={{ fontSize: 12.5, color: '#8b949e' }}>No live mark — nothing to break down.</div>;
+  if (!rows.length) return <div style={{ fontSize: 12.5, color: 'var(--c-8b949e)' }}>No live mark — nothing to break down.</div>;
   let acc = 0;
   const steps = rows.map(r => { const s = { ...r, from: acc, to: acc + r.v }; acc += r.v; return s; });
   const total = acc;
@@ -631,30 +631,30 @@ function Waterfall({ m, chain, qty }) {
   const other = steps.find(s => s.other);
   return (
     <div data-testid="attribution">
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 6 }}>
+      <div style={{ fontSize: 12, color: 'var(--c-8b949e)', marginBottom: 6 }}>
         What made the P&L — all {qty} contract{qty === 1 ? '' : 's'}{chain ? ', whole position' : ''}
       </div>
       {steps.map((s, i) => (
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '172px 1fr 64px', alignItems: 'center', gap: 8, fontSize: 12.5, marginBottom: 4 }}>
-          <span style={{ color: s.other ? '#e3b341' : '#c9d1d9' }}>{s.k}</span>
-          <div style={{ position: 'relative', height: 12, background: '#161b22', borderRadius: 3 }}>
-            <div style={{ position: 'absolute', left: `${P(0)}%`, top: -2, bottom: -2, width: 1, background: '#484f58' }} />
+          <span style={{ color: s.other ? 'var(--c-e3b341)' : 'var(--c-c9d1d9)' }}>{s.k}</span>
+          <div style={{ position: 'relative', height: 12, background: 'var(--c-161b22)', borderRadius: 3 }}>
+            <div style={{ position: 'absolute', left: `${P(0)}%`, top: -2, bottom: -2, width: 1, background: 'var(--c-484f58)' }} />
             <div style={{ position: 'absolute', top: 1, bottom: 1, borderRadius: 2,
               left: `${Math.min(P(s.from), P(s.to))}%`, width: `${Math.max(0.6, Math.abs(P(s.to) - P(s.from)))}%`,
-              background: s.v >= 0 ? '#3fb950' : '#f85149', opacity: s.other ? 0.6 : 0.9 }} />
+              background: s.v >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)', opacity: s.other ? 0.6 : 0.9 }} />
           </div>
-          <span className="mono" style={{ textAlign: 'right', color: s.v >= 0 ? '#3fb950' : '#f85149' }}>{money(s.v)}</span>
+          <span className="mono" style={{ textAlign: 'right', color: s.v >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{money(s.v)}</span>
         </div>
       ))}
-      <div style={{ display: 'grid', gridTemplateColumns: '172px 1fr 64px', alignItems: 'center', gap: 8, fontSize: 13, borderTop: '1px solid #30363d', paddingTop: 5, marginTop: 2 }}>
-        <span style={{ color: '#e6edf3', fontWeight: 700 }}>{chain ? 'Position now' : 'Now'}</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '172px 1fr 64px', alignItems: 'center', gap: 8, fontSize: 13, borderTop: '1px solid var(--c-30363d)', paddingTop: 5, marginTop: 2 }}>
+        <span style={{ color: 'var(--c-e6edf3)', fontWeight: 700 }}>{chain ? 'Position now' : 'Now'}</span>
         <div style={{ position: 'relative', height: 12 }}>
-          <div style={{ position: 'absolute', left: `${P(total)}%`, top: 0, bottom: 0, width: 3, marginLeft: -1, background: total >= 0 ? '#3fb950' : '#f85149' }} />
+          <div style={{ position: 'absolute', left: `${P(total)}%`, top: 0, bottom: 0, width: 3, marginLeft: -1, background: total >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }} />
         </div>
-        <span className="mono" style={{ textAlign: 'right', fontWeight: 700, color: total >= 0 ? '#3fb950' : '#f85149' }}>{money(total)}</span>
+        <span className="mono" style={{ textAlign: 'right', fontWeight: 700, color: total >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{money(total)}</span>
       </div>
       {other && Math.abs(other.v) >= 25 && (
-        <div data-testid="other-explained" style={{ fontSize: 12, color: '#a8b2be', marginTop: 8 }}>
+        <div data-testid="other-explained" style={{ fontSize: 12, color: 'var(--c-a8b2be)', marginTop: 8 }}>
           “Not explained” is the P&L the time, price and IV model can’t account for.{' '}
           {b && b.skewIncluded
             ? 'With each leg’s IV known, that is mostly the entry price against fair value, and wide quotes in today’s mark.'
@@ -676,25 +676,25 @@ function RollPlan({ roll }) {
   const good = r.worthIt === true;
   return (
     <div data-testid="roll-plan" style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8,
-      background: '#161b22', border: '1px solid #30363d' }}>
-      <div style={{ fontSize: 13, color: '#e6edf3' }}>
+      background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)' }}>
+      <div style={{ fontSize: 13, color: 'var(--c-e6edf3)' }}>
         Roll the {side} spread to{' '}
         <b className="mono">{r.shortStrike}/{r.longStrike}</b>{' '}
-        <span className="mono" style={{ color: '#8b949e' }}>({Math.round(r.delta * 100)}Δ)</span>
-        {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? '#3fb950' : '#f85149' }}>
+        <span className="mono" style={{ color: 'var(--c-8b949e)' }}>({Math.round(r.delta * 100)}Δ)</span>
+        {r.net != null && <> for about <b className="mono" style={{ color: r.net >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>
           {r.net >= 0 ? '+' : ''}{r.net.toFixed(2)}</b></>}
-        {r.closeCost != null && <span style={{ color: '#8b949e' }}> (net of {r.closeCost.toFixed(2)} to close the old pair)</span>}
+        {r.closeCost != null && <span style={{ color: 'var(--c-8b949e)' }}> (net of {r.closeCost.toFixed(2)} to close the old pair)</span>}
       </div>
       {r.cushionGained != null && r.roomGiven != null && (
-        <div style={{ marginTop: 6, fontSize: 12.5, color: good ? '#3fb950' : '#d29922' }}>
+        <div style={{ marginTop: 6, fontSize: 12.5, color: good ? 'var(--c-3fb950)' : 'var(--c-d29922)' }}>
           Buys <b className="mono">{r.cushionGained.toFixed(2)}</b> of cushion on the tested side;
           gives up <b className="mono">{r.roomGiven.toFixed(2)}</b> on this one
-          {r.breakevenBefore != null && <span style={{ color: '#8b949e' }} className="mono">
+          {r.breakevenBefore != null && <span style={{ color: 'var(--c-8b949e)' }} className="mono">
             {' '}(break-even {Math.round(r.breakevenBefore)} → {Math.round(r.breakevenAfter)})</span>}.
         </div>
       )}
       {r.distanceToNewShort != null && (
-        <div style={{ marginTop: 4, fontSize: 12, color: '#8b949e' }}>
+        <div style={{ marginTop: 4, fontSize: 12, color: 'var(--c-8b949e)' }}>
           The new short sits <span className="mono">{r.distanceToNewShort.toFixed(0)}</span> from price.
           {!good && ' Worth it only if you think the move continues — it is not free credit.'}
         </div>
@@ -713,7 +713,7 @@ function StrikeStrip({ legs, spot, shorts, ncd }) {
   const uniq = [];
   legs.forEach(l => { if (!uniq.some(u => u.strike === l.strike && u.right === l.right)) uniq.push(l); });
   if (!strip) {
-    return <div data-testid="strike-strip" style={{ fontSize: 12, color: '#8b949e', marginTop: 12 }}>
+    return <div data-testid="strike-strip" style={{ fontSize: 12, color: 'var(--c-8b949e)', marginTop: 12 }}>
       Entry price not logged — no break-even band.</div>;
   }
   const X = v => strip.at(v) * 100;
@@ -726,20 +726,20 @@ function StrikeStrip({ legs, spot, shorts, ncd }) {
       {strip.zone && (
         <div title={`Break-even ${strip.zone.from} to ${strip.zone.to} — profitable at expiry between them`}
           style={{ position: 'absolute', left: `${strip.zone.x0 * 100}%`, width: `${(strip.zone.x1 - strip.zone.x0) * 100}%`,
-            top: 15, height: 14, background: 'rgba(63,185,80,0.14)', border: '1px solid rgba(63,185,80,0.45)', borderRadius: 3 }} />
+            top: 15, height: 14, background: 'color-mix(in srgb, var(--c-3fb950) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--c-3fb950) 45%, transparent)', borderRadius: 3 }} />
       )}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 21, height: 2, background: '#30363d' }} />
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 21, height: 2, background: 'var(--c-30363d)' }} />
       {strip.breakevens.map((b, i) => (
         <div key={'be' + i} title={`Break-even ${b.value}`}
           style={{ position: 'absolute', left: `${b.x * 100}%`, top: 15, transform: 'translateX(-50%)' }}>
-          <div style={{ width: 1, height: 14, background: '#3fb950', opacity: 0.85 }} />
-          <div className="mono" style={{ fontSize: 10, color: '#3fb950', position: 'absolute', top: 15,
+          <div style={{ width: 1, height: 14, background: 'var(--c-3fb950)', opacity: 0.85 }} />
+          <div className="mono" style={{ fontSize: 10, color: 'var(--c-3fb950)', position: 'absolute', top: 15,
             left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{Math.round(b.value)}</div>
         </div>
       ))}
       {uniq.map((l, i) => {
         const s2 = sh(l);
-        const c = l.qty < 0 ? (s2 && s2.tested ? '#f85149' : s2 && s2.pressured ? '#d29922' : '#f0883e') : '#58a6ff';
+        const c = l.qty < 0 ? (s2 && s2.tested ? 'var(--c-f85149)' : s2 && s2.pressured ? 'var(--c-d29922)' : 'var(--c-f0883e)') : 'var(--c-58a6ff)';
         return (
           <div key={i} style={{ position: 'absolute', left: `${X(l.strike)}%`, top: 9, transform: 'translateX(-50%)', textAlign: 'center' }}
             title={`${l.qty > 0 ? '+' : ''}${l.qty} ${l.strike}${l.right} ${l.expiry}${s2 && s2.absDelta != null ? ` · ${Math.round(s2.absDelta * 100)}\u0394` : ''}${s2 && s2.tested ? ' · tested' : ''}`}>
@@ -751,13 +751,13 @@ function StrikeStrip({ legs, spot, shorts, ncd }) {
       <div style={{ position: 'absolute', left: `${strip.spot.x * 100}%`, top: 15, transform: 'translateX(-50%)' }}
         title={`Spot ${spot} — ${strip.spot.inProfit ? 'inside' : 'outside'} the break-evens`}>
         <div style={{ width: 12, height: 12, borderRadius: '50%',
-          background: strip.spot.inProfit ? '#e6edf3' : '#f85149', border: '2px solid #0d1117' }} />
-        <div className="mono" style={{ fontSize: 10.5, color: '#e6edf3', position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{spot}</div>
+          background: strip.spot.inProfit ? 'var(--c-e6edf3)' : 'var(--c-f85149)', border: '2px solid var(--c-0d1117)' }} />
+        <div className="mono" style={{ fontSize: 10.5, color: 'var(--c-e6edf3)', position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{spot}</div>
       </div>
     </div>
-    <div data-testid="strip-legend" style={{ fontSize: 12, color: '#a8b2be', marginTop: 2 }}>
-      {strip.zone && <><span style={{ color: '#3fb950' }}>Green band</span>: in profit at expiry between <span className="mono">{Math.round(strip.zone.from)}</span> and <span className="mono">{Math.round(strip.zone.to)}</span>. </>}
-      <span style={{ color: '#f0883e' }}>Shorts</span> (red when tested), <span style={{ color: '#58a6ff' }}>longs</span>.
+    <div data-testid="strip-legend" style={{ fontSize: 12, color: 'var(--c-a8b2be)', marginTop: 2 }}>
+      {strip.zone && <><span style={{ color: 'var(--c-3fb950)' }}>Green band</span>: in profit at expiry between <span className="mono">{Math.round(strip.zone.from)}</span> and <span className="mono">{Math.round(strip.zone.to)}</span>. </>}
+      <span style={{ color: 'var(--c-f0883e)' }}>Shorts</span> (red when tested), <span style={{ color: 'var(--c-58a6ff)' }}>longs</span>.
       {near && <> Price <span className="mono">{spot}</span> is {near.cushion >= 0
         ? <><span className="mono">{near.cushion.toFixed(1)}</span> {near.right === 'P' ? 'above' : 'below'} the {near.strike}{near.right} short</>
         : <><span className="mono">{Math.abs(near.cushion).toFixed(1)}</span> through the {near.strike}{near.right} short</>}

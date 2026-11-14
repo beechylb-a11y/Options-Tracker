@@ -5,8 +5,8 @@ import { api } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
 import { benchmarkOf, pieSlices, DEFAULT_TARGET_PCT } from '../utils/benchmark';
 
-const SLICE = { invested: '#2f81f7', returned: '#3fb950', remaining: '#30363d', lost: '#f85149' };
-const ttStyle = { background: '#161b22', border: '1px solid #30363d', borderRadius: 8, fontSize: 12 };
+const SLICE = { invested: 'var(--c-2f81f7)', returned: 'var(--c-3fb950)', remaining: 'var(--c-30363d)', lost: 'var(--c-f85149)' };
+const ttStyle = { background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 8, fontSize: 12 };
 const pct = v => (v == null || !isFinite(v) ? '--' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
 
 // Journal returns card. `s` comes from journalSummary() for the month on screen:
@@ -109,7 +109,7 @@ export default function JournalBenchmark({ s, accounts, onAccountsChange, monthL
                 <PieChart>
                   <Pie data={slices.map(x => x.key === 'invested' ? { ...x, name: 'Bank at month start' } : x)}
                     dataKey="value" nameKey="name" cx="50%" cy="50%" startAngle={90} endAngle={-270}
-                    outerRadius={50} innerRadius={31} strokeWidth={1} stroke="#161b22" isAnimationActive={false}>
+                    outerRadius={50} innerRadius={31} strokeWidth={1} stroke="var(--c-161b22)" isAnimationActive={false}>
                     {slices.map(x => <Cell key={x.key} fill={SLICE[x.key]} />)}
                   </Pie>
                   <Tooltip contentStyle={ttStyle} formatter={(v, n) => [fmt$(v), n]} />
@@ -129,8 +129,8 @@ export default function JournalBenchmark({ s, accounts, onAccountsChange, monthL
             <div className="space-y-1 text-xs">
               <Row color={SLICE.invested} label="Bank at start" value={fmt$(m.start)} />
               {monthUp
-                ? <Row color={SLICE.returned} label="Returned" value={fmt$(m.pnl)} valueColor="#3fb950" />
-                : <Row color={SLICE.lost} label="Lost" value={fmt$(-m.pnl)} valueColor="#f85149" />}
+                ? <Row color={SLICE.returned} label="Returned" value={fmt$(m.pnl)} valueColor="var(--c-3fb950)" />
+                : <Row color={SLICE.lost} label="Lost" value={fmt$(-m.pnl)} valueColor="var(--c-f85149)" />}
             </div>
           </div>
         </div>
@@ -146,7 +146,7 @@ export default function JournalBenchmark({ s, accounts, onAccountsChange, monthL
             </span>
           </div>
           <div className="h-2 rounded-full bg-bg-border overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: `${progress * 100}%`, background: m.vsTarget >= 0 ? '#3fb950' : (m.pnl > 0 ? '#d29922' : '#f85149') }} />
+            <div className="h-full rounded-full" style={{ width: `${progress * 100}%`, background: m.vsTarget >= 0 ? 'var(--c-3fb950)' : (m.pnl > 0 ? 'var(--c-d29922)' : 'var(--c-f85149)') }} />
           </div>
         </div>
 
@@ -165,9 +165,9 @@ export default function JournalBenchmark({ s, accounts, onAccountsChange, monthL
           <div className="h-[110px] -mx-1 mt-1">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={fy.rows} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
-                <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
+                <XAxis dataKey="label" tick={{ fill: 'var(--c-8b949e)', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
                 <YAxis hide domain={[d => Math.min(0, d), d => Math.max(0, d)]} />
-                <ReferenceLine y={0} stroke="#30363d" />
+                <ReferenceLine y={0} stroke="var(--c-30363d)" />
                 <Tooltip contentStyle={ttStyle} labelFormatter={(l, p) => p?.[0] ? `${l} ${p[0].payload.year}` : l}
                   formatter={(v, n, p) => {
                     if (n === 'pnl') return [`${fmt$(v)} (${pct(p.payload.returnPct)})`, 'Month'];
@@ -175,10 +175,10 @@ export default function JournalBenchmark({ s, accounts, onAccountsChange, monthL
                     return [fmt$(v), 'Benchmark to date'];
                   }} />
                 <Bar dataKey="pnl" maxBarSize={18} isAnimationActive={false}>
-                  {fy.rows.map((r, i) => <Cell key={i} fill={r.pnl >= 0 ? '#3fb950' : '#f85149'} fillOpacity={0.55} />)}
+                  {fy.rows.map((r, i) => <Cell key={i} fill={r.pnl >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)'} fillOpacity={0.55} />)}
                 </Bar>
-                <Line dataKey="cumTarget" stroke="#2f81f7" strokeDasharray="4 3" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                <Line dataKey="cumPnl" stroke="#e6edf3" strokeWidth={1.75} dot={{ r: 2 }} isAnimationActive={false} />
+                <Line dataKey="cumTarget" stroke="var(--c-2f81f7)" strokeDasharray="4 3" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                <Line dataKey="cumPnl" stroke="var(--c-e6edf3)" strokeWidth={1.75} dot={{ r: 2 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
