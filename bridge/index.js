@@ -3,7 +3,9 @@
 //  Connects to TWS or IB Gateway on localhost (auto-detect), serves REST API on :3333
 //  Expose via ngrok for Railway app to call
 // ================================================================
+import './env.js';
 import express from 'express';
+import { bridgeKeyGuard } from './auth.js';
 import cors from 'cors';
 import { IBApi, EventName, SecType, BarSizeSetting, WhatToShow } from '@stoqey/ib';
 import net from 'net';
@@ -19,7 +21,7 @@ const app = express();
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'ngrok-skip-browser-warning']
+  allowedHeaders: ['Content-Type', 'ngrok-skip-browser-warning', 'X-Bridge-Key']
 }));
 
 // Handle preflight explicitly
@@ -27,10 +29,13 @@ app.options('*', (req, res) => {
   res.set({
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, ngrok-skip-browser-warning'
+    'Access-Control-Allow-Headers': 'Content-Type, ngrok-skip-browser-warning, X-Bridge-Key'
   });
   res.sendStatus(204);
 });
+
+// Everything below needs the bridge key when it comes through ngrok (auth.js).
+app.use(bridgeKeyGuard());
 app.use(express.json());
 
 const PORT = process.env.BRIDGE_PORT || 3333;

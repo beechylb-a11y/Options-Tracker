@@ -40,6 +40,20 @@ Ngrok will show a URL like `https://abc123.ngrok-free.app`. Copy this URL.
 
 Now the "Auto-fill" button in the Decision Engine will fetch all market data in one click.
 
+## Bridge key and TWS capture (Nov 2026)
+The bridge is reachable by anyone who knows the ngrok URL, so calls through ngrok now
+need a key. Run once on the Mac:
+```bash
+cd bridge && bash setup-key.sh
+```
+It writes `BRIDGE_KEY` (and copies `DATABASE_URL` from server/.env) into `bridge/.env`,
+restarts the bridge, installs the hourly TWS capture (`captureTws.js`, launchd job
+`com.options-tracker.tws-capture`, log `/tmp/tws-capture.log`) and prints the key.
+Paste the key into the app under Settings → IBKR Bridge → Bridge key.
+Calls made directly on the Mac (`curl localhost:3333/...`) don't need the key.
+The capture fills `options.tws_executions`, `options.tws_positions` and
+`options.tws_capture_runs`, which the Saturday review reconciles against.
+
 ## Test
 ```bash
 # Check bridge is running

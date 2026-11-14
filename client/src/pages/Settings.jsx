@@ -349,11 +349,22 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
               if (!url) return;
               try {
                 const r = await fetch(url + '/api/health', { headers: { 'ngrok-skip-browser-warning': '1' } });
+                if (r.status === 401) { alert('Bridge reached, but the key is missing or wrong — paste the Bridge key below.'); return; }
                 const d = await r.json();
-                alert(d.ok ? 'Bridge connected! TWS: ' + (d.connected ? 'connected' : 'disconnected') : 'Bridge error');
+                alert(d.ok ? 'Bridge connected! TWS: ' + (d.connected ? 'connected' : 'disconnected') + (d.mode ? ' (' + d.mode + ')' : '') : 'Bridge error');
               } catch (e) { alert('Cannot reach bridge: ' + e.message); }
             }} className="px-3 py-2 text-xs border border-bg-border rounded-lg text-text-muted hover:bg-bg-hover">Test</button>
           </div>
+          <label className="text-xs text-text-muted block mb-1 mt-3">Bridge key</label>
+          <input
+            type="password"
+            autoComplete="off"
+            defaultValue={typeof window !== 'undefined' ? localStorage.getItem('bridgeKey') || '' : ''}
+            placeholder="printed by bridge/setup-key.sh"
+            onChange={e => localStorage.setItem('bridgeKey', e.target.value.trim())}
+            className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text mono placeholder-text-faint outline-none focus:border-accent"
+          />
+          <p className="text-xs text-text-faint mt-1">Sent only to the Bridge URL above. Without it the bridge refuses calls that come through ngrok.</p>
         </div>
       </div>
 

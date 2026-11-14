@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- TWS capture: every hour, copy TWS executions and option positions into Supabase
+     (bridge/captureTws.js). Hourly rather than a fixed 16:15 ET because the Mac runs on
+     Melbourne time and DST moves the gap; upserts make repeats harmless.
+     Install:  cp com.options-tracker.tws-capture.plist ~/Library/LaunchAgents/
+               launchctl load ~/Library/LaunchAgents/com.options-tracker.tws-capture.plist
+     Run now:  launchctl start com.options-tracker.tws-capture
+     Log:      /tmp/tws-capture.log -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.options-tracker.tws-capture</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>captureTws.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/lewis/Options-Tracker/bridge</string>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/tws-capture.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/tws-capture.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>TWS_TZ</key>
+        <string>America/New_York</string>
+    </dict>
+</dict>
+</plist>
