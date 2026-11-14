@@ -99,7 +99,7 @@ function Tile({ label, icon: Icon, word, sub, tone, testid, title }) {
   );
 }
 
-export default function CreditSpreadPanel({ r, price, underlying, bridgeUrl, currentStrat, currentVariant, onBuild }) {
+export default function CreditSpreadPanel({ r, price, underlying, bridgeUrl, currentStrat, currentVariant, onBuild, previewLegs }) {
   const t = useTrendRead(underlying, bridgeUrl);
   const mins = nyMinutes();
   const win = entryWindow(mins);
@@ -148,7 +148,14 @@ export default function CreditSpreadPanel({ r, price, underlying, bridgeUrl, cur
     const blocked = !isPut && plan.blocked.call;
     const suggested = plan.side === side && !blocked;
     const onTicket = currentStrat === name && (currentVariant || 'engine') === plan.anchor;
-    const k = shortOf(side, plan.anchor);
+    // The engine's own strikes for this side and anchor when it can give them; the
+    // estimate below only when it can't (marked ~).
+    const eng = previewLegs ? previewLegs(side, plan.anchor) : null;
+    const engShort = eng && eng.find(l => /short/i.test(l.label || ''));
+    const engLong = eng && eng.find(l => l !== engShort);
+    const k = engShort ? engShort.strike : shortOf(side, plan.anchor);
+    const kLong = engLong ? engLong.strike : (k != null && w ? +(isPut ? k - w : k + w).toFixed(1) : null);
+    const approx = !engShort && k != null;
     const col = blocked ? C.red : suggested ? C.green : C.blue;
     return (
       <button key={side} data-testid={`credit-${side}`} disabled={!onBuild}
@@ -164,7 +171,7 @@ export default function CreditSpreadPanel({ r, price, underlying, bridgeUrl, cur
             : suggested ? <span style={{ fontSize: 11.5, fontWeight: 800, color: C.green }}>SUGGESTED</span> : null}
         </div>
         <div className="mono" style={{ marginTop: 6, fontSize: 13, color: C.text }}>
-          {k != null ? <>short <b>{k}</b>{w ? ` · long ${+(isPut ? k - w : k + w).toFixed(1)}` : ''}</> : 'strikes on build'}
+          {k != null ? <>{approx ? '~' : ''}short <b>{k}</b>{kLong != null ? ` · long ${kLong}` : ''}</> : 'strikes on build'}
         </div>
         <div style={{ marginTop: 3, fontSize: 12, color: C.grey }}>{isPut ? 'profits above the short' : 'profits below the short'} · {plan.anchor === 'em1d' ? 'VIX1D EM' : 'IVX EM'}</div>
       </button>

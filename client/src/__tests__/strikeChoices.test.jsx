@@ -62,6 +62,16 @@ describe('vertical strike choices', () => {
     expect(screen.getByTestId('em-tasty').textContent).toMatch(/VIX ±61 · VIX1D ±50 · IVX ±36/);
   });
 
+  it('the Credit spread buttons show the engine\'s strikes, the same as the tiles (Nov 2026)', () => {
+    mount();
+    const tile = screen.getByTestId('strike-choice-engine').textContent.match(/(\d+) \/ (\d+)/).slice(1);
+    const put = screen.getByTestId('credit-put').textContent;
+    expect(put).toContain(`short ${tile[0]}`);
+    expect(put).toContain(`long ${tile[1]}`);
+    expect(put).not.toMatch(/~short/);
+    expect(screen.getByTestId('credit-call').textContent).toMatch(/short \d+ · long \d+/);
+  });
+
   it('says when hand edits mean no choice is on the ticket, and a pick replaces them', () => {
     mount({ overrideStrikes: { '0': { strat: 'Bull put spread', map: { 0: 7300 } } } });
     expect(screen.getByTestId('strike-choices').textContent).toMatch(/edited by hand/);

@@ -2122,6 +2122,26 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Credit spread on purpose (Nov 2026): the panel's side and anchor become the ticket —
   // a bull put or bear call at the chosen EM distance, EM-built (the study's anchors), so
   // the 20Δ delta default does not move it on the next greeks fetch.
+  // The panel's strike preview comes from the engine itself (Nov 2026): the same inputs
+  // run as a bull put / bear call at the panel's anchor, so the button shows exactly
+  // what a click puts on the ticket. Its own estimate used the wall clock for the time
+  // left; the engine uses the ticket's session hours — a strike apart over a weekend.
+  // Memoised per engine result; at most four extra runs (2 sides × 2 anchors).
+  const creditPreviewCache = useMemo(() => new Map(), [r]);
+  function creditPreview(side, anchor) {
+    const key = side + '|' + (anchor || 'engine');
+    if (!creditPreviewCache.has(key)) {
+      const name = side === 'put' ? 'Bull put spread' : 'Bear call spread';
+      let legs = null;
+      try {
+        const same = (r.legStrat || r.bestStrat) === name && (r.vertVariant || 'engine') === (anchor || 'engine') && !overrideStrikes[bag] && !deltaApplied;
+        const res = same ? r : calc0DTE(mk0({ overrideStrategy: name, vertVariant: anchor || 'engine', overrideStrikes: null, overrideStrikesStrat: null }));
+        legs = res && Array.isArray(res.legs) && res.legs.length === 2 ? res.legs : null;
+      } catch (e) { legs = null; }
+      creditPreviewCache.set(key, legs);
+    }
+    return creditPreviewCache.get(key);
+  }
   function buildCreditSpread(side, anchor) {
     const name = side === 'put' ? 'Bull put spread' : 'Bear call spread';
     if (overrideStrikes[bag]) resetStrikes();
@@ -3425,7 +3445,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       {is0 && r.decision !== 'Error' && (
         <CreditSpreadPanel r={r} price={fv(secBag, 'price')} underlying={secBag.underlying}
           bridgeUrl={(() => { try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; } })()}
-          currentStrat={r.legStrat || r.bestStrat} currentVariant={r.vertVariant} onBuild={buildCreditSpread} />
+          currentStrat={r.legStrat || r.bestStrat} currentVariant={r.vertVariant} onBuild={buildCreditSpread} previewLegs={creditPreview} />
       )}
 
       {/* ── 2b · YOUR CHOICES ── the engine pick and the next two structures, each a
