@@ -211,6 +211,19 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const overAllocated = allocated > pos.qtyOpen;
   const filled = rows.filter(r => r.status === 'Filled' && Number(r.qty) > 0);
   const rowFill = r => parseFloat(r.status === 'Filled' && r.fill !== '' ? r.fill : r.price);
+  // A tranche marked Filled keeps the plan's target as its fill until a real price is
+  // typed in, and nothing stopped that being recorded as the close. QQQ 62 (11 Nov)
+  // went into the log as 3 @ 2.00 and 2 @ 1.00, its 50% / 75% targets, while the
+  // condor was ~20 pt ITM: +$1,169 recorded, -$1,588 real. SPY 66 the same day was
+  // recorded at -0.55 against a real ~-1.58. A fill now needs evidence: TWS matched
+  // it, a price was typed that differs from the target, or it is confirmed by hand
+  // below. And a typed fill that disagrees with what TWS shows is flagged too.
+  // (Nov 2026.)
+  const atTarget = r => !expired && !r.tws && isFinite(rowFill(r)) && Math.abs(rowFill(r) - parseFloat(r.price)) <= 0.004;
+  const offTws = r => !expired && !r.tws && !!twsClose && isFinite(rowFill(r)) && Math.abs(rowFill(r) - twsClose.avgPrice) > 0.004;
+  const unverified = filled.filter(r => atTarget(r) || offTws(r));
+  const [confirmFills, setConfirmFills] = useState(false);
+  const needsConfirm = unverified.length > 0 && !confirmFills;
   const rowNet = r => { const q = Number(r.qty) || 0, p = rowFill(r); return isFinite(p) ? pnlAt(pos, p, q) - exitFees(q) : 0; };
   const planNet = rows.reduce((a, r) => a + rowNet(r), 0);
   const filledNet = filled.reduce((a, r) => a + rowNet(r), 0);
@@ -264,6 +277,10 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
   async function recordFills() {
     if (!filled.length || overAllocated) return;
+    if (needsConfirm) {
+      setMsg({ err: true, text: 'Type the price TWS actually filled at, or tick the box to confirm it — a plan target is not a fill.' });
+      return;
+    }
     setBusy(true); setMsg(null);
     const snapV = snapRef.current || {};
     try {
@@ -275,10 +292,20 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
         const n = rows.indexOf(r) + 1;
         // An expiry has no target and no limit price to name — it has a settlement
         // value. Say that, so the exit-reason review can tell the two apart.
+        // Say where the price came from and how it ended, not just which rung of the
+        // ladder it was — "T1 50% target" on the SPY 66 loss told the exit review a
+        // profit target had fired.
+        const pctTxt = isFinite(parseFloat(r.pct)) ? `${parseFloat(r.pct).toFixed(0)}% ` : '';
+        const limTxt = isFinite(parseFloat(r.price)) ? `${parseFloat(r.price).toFixed(2)} ${side}` : '—';
+        const outcome = (pnlAt(pos, p, q) - fees) >= 0 ? 'win' : 'loss';
         const label = expired
           ? `Expired — settlement value ${isFinite(p) ? p.toFixed(2) : '—'}`
-          : `T${n} ${parseFloat(r.pct).toFixed(0)}% target @ ${p.toFixed(2)} ${side}${Math.abs(p - parseFloat(r.price)) > 0.004 ? ` (limit ${parseFloat(r.price).toFixed(2)})` : ''}`
-            + (r.tws && twsClose ? ` — TWS ${twsClose.date} ${twsClose.time} ET, IBKR commission [${twsClose.keys.join(' ')}]` : '');
+          : r.tws && twsClose
+            ? `T${n} TWS fill @ ${p.toFixed(2)} ${side} (plan ${pctTxt}@ ${limTxt}) · ${outcome} — TWS ${twsClose.date} ${twsClose.time} ET, IBKR commission [${twsClose.keys.join(' ')}]`
+            : atTarget(r)
+              ? `T${n} ${pctTxt}target @ ${p.toFixed(2)} ${side} · ${outcome} — manual, confirmed at the target price; no TWS fill matched`
+              : `T${n} manual fill @ ${p.toFixed(2)} ${side} (plan ${pctTxt}@ ${limTxt}) · ${outcome}`
+                + (offTws(r) ? ` — differs from TWS ${twsClose.avgPrice.toFixed(2)}, confirmed` : '');
         await api.closeTicket(pos.ticketRef, {
           closeDate, closePrice: p, qtyClosed: q, fees,
           grossPnl: pnlAt(pos, p, q),
@@ -718,13 +745,31 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
         <TicketHelp kind="sell" />
 
+        {tab === 'close' && unverified.length > 0 && (
+          <div data-testid="confirm-fills" style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, fontSize: 12.5, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-e3b341)' }}>
+            {unverified.map(r => {
+              const n = rows.indexOf(r) + 1;
+              return <div key={n}>
+                {atTarget(r)
+                  ? <>T{n} is still at its plan target ({rowFill(r).toFixed(2)} {side}) — nothing from TWS confirms that fill. Type the price it actually filled at.</>
+                  : <>T{n} @ {rowFill(r).toFixed(2)} differs from what TWS shows ({twsClose.avgPrice.toFixed(2)}).</>}
+              </div>;
+            })}
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, cursor: 'pointer', color: 'var(--c-e6edf3)' }}>
+              <input type="checkbox" checked={confirmFills} onChange={e => setConfirmFills(e.target.checked)} />
+              I checked TWS — {unverified.length > 1 ? 'these prices are' : 'this price is'} what really filled
+            </label>
+          </div>
+        )}
+
         {msg && <div style={{ marginTop: 8, fontSize: 12.5, color: msg.err ? 'var(--c-f85149)' : 'var(--c-3fb950)' }}>{msg.text}</div>}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
           {tab === 'close' ? (<>
-            <button onClick={recordFills} disabled={busy || !filled.length || overAllocated || noEntry}
-              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: 'var(--c-da3633)', color: '#fff', opacity: busy || !filled.length || overAllocated || noEntry ? 0.45 : 1 }}>
+            <button onClick={recordFills} disabled={busy || !filled.length || overAllocated || noEntry || needsConfirm}
+              style={{ flex: 1, padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer', background: 'var(--c-da3633)', color: '#fff', opacity: busy || !filled.length || overAllocated || noEntry || needsConfirm ? 0.45 : 1 }}>
               {busy ? 'Recording…'
+                : needsConfirm ? 'Enter the real fill price (or confirm it) to record'
                 : expired ? (isFinite(rowFill(rows[0] || {})) ? `Record expiry · ${pos.qtyOpen} contract${pos.qtyOpen !== 1 ? 's' : ''} · ${fmt$(filledNet)}` : 'Enter the settlement value to record the expiry')
                 : filled.length ? `Record ${filled.reduce((a, r) => a + Number(r.qty), 0)} filled of ${pos.qtyOpen} · ${fmt$(filledNet)}` : 'Mark a tranche Filled to record it'}
             </button>

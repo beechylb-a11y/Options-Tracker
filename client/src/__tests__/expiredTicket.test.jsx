@@ -95,9 +95,12 @@ describe('recording an expiry', () => {
     await open();
     // Default ladder, first tranche marked Filled at its limit.
     fireEvent.click(screen.getAllByText('Working')[0]);
+    // A fill still sitting at its target needs confirming first (Nov 2026: QQQ 62).
+    fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByText(/Record 1 filled/));
     await waitFor(() => expect(closed.length).toBe(1));
     expect(closed[0].notes).toMatch(/target @/);
+    expect(closed[0].notes).toMatch(/manual, confirmed/);
     expect(closed[0].fees).toBeCloseTo(5.20, 2);    // round trip — this one traded out
   });
 });
