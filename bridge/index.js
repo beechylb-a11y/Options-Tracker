@@ -1824,7 +1824,8 @@ app.get('/api/vol-surface', async (req, res) => {
 });
 
 // ── Stage an order in TWS, untransmitted (Nov 2026) ────────────────────────
-// POST /api/stage-order  { underlying, legs, lots, side, entry, targets, tif, account, orderRef }
+// POST /api/stage-order  { underlying, legs, lots, side, entry, targets, tif, entryTif, account, orderRef }
+// entryTif: 'GTD' (0DTE — cancels at 12:30 ET if unfilled) | 'GTC' (45DTE) | 'DAY' (default).
 // The combo + its profit target(s) go to TWS with transmit = false: they appear in the
 // order window for the trader to check and Transmit there. No stop is ever sent.
 // Order ids: IB hands out the next valid id on request; the bridge keeps a counter above
@@ -1884,7 +1885,7 @@ app.post('/api/stage-order', async (req, res) => {
     ib.removeListener(EventName.error, onErr);
     console.log(`[BRIDGE] staged (not transmitted) ${plan.summary.join(' | ')} ids ${ids.join(',')}${errors.length ? ' errors ' + JSON.stringify(errors) : ''}`);
     if (errors.length) return res.status(400).json({ error: errors.map(e => `${e.code}: ${e.message}`).join('; '), ids, staged: false });
-    res.json({ ok: true, staged: true, transmitted: false, ids, parentId: ids[0], summary: plan.summary, account: p.account || null });
+    res.json({ ok: true, staged: true, transmitted: false, ids, parentId: ids[0], summary: plan.summary, entryTif: plan.entryTif, account: p.account || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -3642,7 +3642,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               drawer. */}
           <div style={{flexBasis:'100%',paddingBottom:14,borderBottom:'1px solid var(--c-21262d)'}}>
             <ExitPlanCard net={signedNet(ticketNet, cashType)} win={parseFloat(is0 ? i0.win : i45.win) || 0} qty={r.contracts} plan={exitPlan}
-              maxRisk={r.maxRisk} tif={is0 ? 'DAY' : 'GTC'}
+              maxRisk={r.maxRisk} tif={is0 ? 'DAY' : 'GTC'} entryTif={is0 ? 'GTD' : 'GTC'}
               head={{ underlying: secBag.underlying, strikes: [...new Set((r.legs || []).map(l => Number(l.strike)))].sort((x, y) => x - y),
                 strategy: String(effectiveStrat || '').replace(/\s*-\s*Normal\b/i, ''),
                 expiryLabel: fmtYmd(is0 ? todayYmd : ((r.legs || []).map(l => legExpiryOf(l)).filter(Boolean).sort()[0] || '')) }}

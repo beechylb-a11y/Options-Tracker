@@ -22,7 +22,7 @@ describe('buildStage', () => {
     // Selling a combo reverses each leg, so the combo is defined flipped: selling it
     // opens SHORT 674P / LONG 672P, the ticket.
     expect(p.comboLegs.map(l => [l.legKey, l.action, l.ratio])).toEqual([['20261116|674|P', 'BUY', 1], ['20261116|672|P', 'SELL', 1]]);
-    expect(p.summary[0]).toBe('SELL 4 QQQ 674/672 @ 0.66 cr');
+    expect(p.summary[0]).toBe('SELL 4 QQQ 674/672 @ 0.66 cr DAY');
   });
 
   it('a debit butterfly: BUY at the debit, SELL the targets, legs as on the ticket, GTC targets', () => {
@@ -104,6 +104,7 @@ describe('ExitPlanCard', () => {
     const call = global.fetch.mock.calls.find(c => String(c[0]).includes('/api/stage-order'));
     const body = JSON.parse(call[1].body);
     expect(body).toMatchObject({ underlying: 'QQQ', lots: 4, side: 'credit', entry: 0.66, targets: [{ qty: 4, price: 0.5 }], tif: 'DAY', account: 'DU222', orderRef: 'SB QQQ 672/674' });
+    expect(body.entryTif).toBe('DAY');
     expect(JSON.stringify(body)).not.toMatch(/stop/i);
     expect(onStaged).toHaveBeenCalled();
   });

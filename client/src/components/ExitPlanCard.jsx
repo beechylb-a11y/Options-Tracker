@@ -145,11 +145,12 @@ const note = { fontSize: 12.5, color: C.grey, lineHeight: 1.45, minWidth: 0 };
  * @param stageLegs   [{ strike, right, qty (signed per lot), expiry }]  — null: can't stage
  * @param stageWhyNot text shown instead of the button when staging is not possible
  * @param tif         'DAY' | 'GTC' for the profit target(s)
+ * @param entryTif    'GTD' | 'GTC' | 'DAY' for the entry — 0DTE GTD (cancels 12:30 ET unfilled), 45DTE GTC
  * @param orderRef    tag on the TWS orders
  * @param editor      the inline controls (ProfitTaker variant="card")
  * @param onStaged    called after TWS accepted the staged orders
  */
-export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, when, stageLegs, stageWhyNot, tif = 'DAY', orderRef, editor, onStaged }) {
+export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, when, stageLegs, stageWhyNot, tif = 'DAY', entryTif = 'DAY', orderRef, editor, onStaged }) {
   const N = exitNumbers({ net, win, qty, plan, maxRisk });
   const [health, setHealth] = useState(null);
   const [acct, setAcct] = useState(() => { try { return localStorage.getItem(ACCT_KEY) || ''; } catch { return ''; } });
@@ -178,13 +179,14 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
   const strikes = (head.strikes || []).join(' / ');
   const desc = [head.underlying, head.expiryLabel, strikes].filter(Boolean).join(' ');
   const paper = health && health.mode === 'paper';
+  const entryTifLabel = entryTif === 'GTD' ? 'GTD 12:30 ET' : entryTif;
 
   async function stage() {
     if (!bridgeUrl || !stageLegs) return;
     setSt({ s: 'busy' });
     try {
       const body = { underlying: head.underlying, legs: stageLegs, lots: N.q, side: cr ? 'credit' : 'debit', entry: N.entry,
-        targets: N.targets.map(t => ({ qty: t.qty, price: t.price })), tif, account: acct || undefined, orderRef };
+        targets: N.targets.map(t => ({ qty: t.qty, price: t.price })), tif, entryTif, account: acct || undefined, orderRef };
       const r = await fetch(`${bridgeUrl}/api/stage-order`, { method: 'POST', headers: { ...HDR, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       let j = null; try { j = await r.json(); } catch { j = null; }
       if (!r.ok || !j || !j.staged) throw new Error((j && j.error) || (r.status === 404 ? 'The bridge is on old code — git pull on the Mac and restart it' : `bridge said ${r.status}`));
@@ -246,7 +248,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
                 {desc} <span style={{ color: C.soft }}>{head.strategy || ''}</span></span>
               <span><span style={cap}>LMT</span> <span style={{ fontFamily: MONO, fontSize: 20, fontWeight: 800 }}>{N.entry.toFixed(2)}</span>{' '}
                 <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 6px', borderRadius: 5, color: cr ? C.green : C.soft, border: `1px solid ${cr ? C.green : C.line}` }}>{sideTag}</span></span>
-              <span style={note}>opening order · DAY</span>
+              <span data-testid="entry-tif" style={note}>opening order · {entryTifLabel}</span>
               <CopyBtn text={N.entry.toFixed(2)} testid="copy-entry" />
             </div>
             {N.targets.length ? N.targets.map((t, i) => (
@@ -300,7 +302,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
               ) : accounts.length === 1 ? <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.soft }}>{accounts[0]}</span> : null}
               <span style={note}>
                 {health && health.connected === false ? 'TWS is not connected to the bridge.'
-                  : <>Sends {openAct} {N.q} @ {N.entry.toFixed(2)} + {N.targets.length > 1 ? `${N.targets.length} profit targets` : `the profit target @ ${N.targets[0].price.toFixed(2)}`} with <b>transmit off</b>. Nothing trades until you click Transmit in TWS. No stop is sent.</>}
+                  : <>Sends {openAct} {N.q} @ {N.entry.toFixed(2)} + {N.targets.length > 1 ? `${N.targets.length} profit targets` : `the profit target @ ${N.targets[0].price.toFixed(2)}`} with <b>transmit off</b>. Entry is {entryTif === 'GTD' ? <b>GTD — cancels at 12:30 ET if unfilled</b> : entryTifLabel}. Nothing trades until you click Transmit in TWS. No stop is sent.</>}
               </span>
             </>
           ) : (

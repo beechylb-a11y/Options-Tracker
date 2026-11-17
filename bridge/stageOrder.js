@@ -17,8 +17,54 @@
 // the debit and SELLs at the target. IB reverses every leg when a combo is SOLD, so for a
 // credit trade the combo is defined with each leg's side flipped: selling it opens
 // exactly the ticket's legs.
+//
+// Entry time-in-force (17 Nov 2026): a 0DTE entry goes GTD — it cancels itself at
+// 12:30 New York time if it hasn't filled (no 0DTE opens after 12:00 ET, so a resting
+// entry never drifts into the afternoon). A 45DTE entry goes GTC. The profit target keeps
+// its own TIF (0DTE DAY, 45DTE GTC): if the entry fills, the target must NOT vanish at
+// 12:30 with the trade still on. If the entry cancels unfilled, TWS cancels its children.
 
 export const STAGE_MAX_LOTS = 50;
+export const GTD_CUTOFF_ET = '12:30';
+
+const NY = 'America/New_York';
+function nyParts(ms) {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: NY, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short' });
+  const o = {}; for (const x of f.formatToParts(new Date(ms))) o[x.type] = x.value;
+  return { ymd: `${o.year}${o.month}${o.day}`, h: Number(o.hour), m: Number(o.minute), wd: o.weekday };
+}
+// New York wall-clock (yyyymmdd, hh, mm) → UTC ms, DST-correct.
+export function nyToUtcMs(ymd, h, m) {
+  const y = +ymd.slice(0, 4), mo = +ymd.slice(4, 6) - 1, d = +ymd.slice(6, 8);
+  let t = Date.UTC(y, mo, d, h, m);
+  for (let i = 0; i < 2; i++) {
+    const q = nyParts(t);
+    const seen = Date.UTC(+q.ymd.slice(0, 4), +q.ymd.slice(4, 6) - 1, +q.ymd.slice(6, 8), q.h, q.m);
+    t += Date.UTC(y, mo, d, h, m) - seen;
+  }
+  return t;
+}
+const addDaysYmd = (ymd, n) => {
+  const t = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8) + n));
+  return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`;
+};
+const isWeekend = ymd => { const w = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8))).getUTCDay(); return w === 0 || w === 6; };
+
+/**
+ * The GTD for a 0DTE entry: the next New York session whose cut-off is still ahead —
+ * today's if it's before 12:30 ET, else the next weekday — capped at the legs' expiry.
+ * Staged from Melbourne the evening before, that's the coming session's 12:30.
+ * @returns { goodTillDate: 'yyyymmdd hh:mm:ss US/Eastern', ymd, label } | { error }
+ */
+export function gtdFor(expiry, now = Date.now(), cutoff = GTD_CUTOFF_ET) {
+  const [hh, mm] = String(cutoff).split(':').map(Number);
+  let day = nyParts(now).ymd;
+  while (isWeekend(day) || nyToUtcMs(day, hh, mm) <= now) day = addDaysYmd(day, 1);
+  if (expiry && day > expiry) return { error: `Past the ${cutoff} ET entry cut-off for this expiry — no 0DTE entry to stage` };
+  const pad = n => String(n).padStart(2, '0');
+  return { goodTillDate: `${day} ${pad(hh)}:${pad(mm)}:00 US/Eastern`, ymd: day, label: `GTD ${pad(hh)}:${pad(mm)} ET` };
+}
 
 const round2 = x => Math.round(x * 100) / 100;
 
@@ -30,6 +76,9 @@ const round2 = x => Math.round(x * 100) / 100;
  * @param p.entry       price per share, positive (0.66)
  * @param p.targets     [{ qty, price }] — price per share, positive (0.50 to buy back a credit)
  * @param p.tif         'DAY' | 'GTC' for the targets (0DTE → DAY)
+ * @param p.entryTif    'GTD' | 'GTC' | 'DAY' for the entry (0DTE → GTD at 12:30 ET, 45DTE → GTC).
+ *                      Left out: DAY, as before.
+ * @param p.now         ms, for tests (default Date.now())
  * @param p.account     IB account code (optional: TWS uses its default)
  * @param p.orderRef    tag carried on every order so the fills map back to the ticket
  * @returns { error } | { comboLegs, parent, children, summary }
@@ -69,7 +118,15 @@ export function buildStage(p) {
     ...(p.account ? { account: String(p.account) } : {}),
     ...(p.orderRef ? { orderRef: String(p.orderRef).slice(0, 40) } : {}),
   };
-  const parent = { ...common, action: credit ? 'SELL' : 'BUY', totalQuantity: lots, lmtPrice: round2(entry), tif: 'DAY' };
+  let entryTif = { tif: 'DAY' }, entryLabel = 'DAY';
+  if (p.entryTif === 'GTC') { entryTif = { tif: 'GTC' }; entryLabel = 'GTC'; }
+  else if (p.entryTif === 'GTD') {
+    const firstExp = legs.map(l => String(l.expiry)).sort()[0];
+    const g = gtdFor(firstExp, p.now != null ? Number(p.now) : Date.now());
+    if (g.error) return { error: g.error };
+    entryTif = { tif: 'GTD', goodTillDate: g.goodTillDate }; entryLabel = g.label;
+  }
+  const parent = { ...common, action: credit ? 'SELL' : 'BUY', totalQuantity: lots, lmtPrice: round2(entry), ...entryTif };
   const children = targets.map(t => ({ ...common, action: credit ? 'BUY' : 'SELL', totalQuantity: t.qty, lmtPrice: round2(t.price), tif: p.tif === 'GTC' ? 'GTC' : 'DAY' }));
   const comboLegs = legs.map(l => ({
     legKey: `${String(l.expiry)}|${Number(l.strike)}|${String(l.right).toUpperCase()[0]}`,
@@ -79,8 +136,8 @@ export function buildStage(p) {
   }));
   const ks = legs.map(l => Number(l.strike)).join('/');
   const summary = [
-    `${credit ? 'SELL' : 'BUY'} ${lots} ${String(p.underlying || '').toUpperCase()} ${ks} @ ${entry.toFixed(2)} ${side === 'credit' ? 'cr' : 'db'}`,
-    ...targets.map(t => `${credit ? 'BUY' : 'SELL'} ${t.qty} @ ${t.price.toFixed(2)} (profit target)`),
+    `${credit ? 'SELL' : 'BUY'} ${lots} ${String(p.underlying || '').toUpperCase()} ${ks} @ ${entry.toFixed(2)} ${side === 'credit' ? 'cr' : 'db'} ${entryLabel}`,
+    ...targets.map(t => `${credit ? 'BUY' : 'SELL'} ${t.qty} @ ${t.price.toFixed(2)} (profit target) ${p.tif === 'GTC' ? 'GTC' : 'DAY'}`),
   ];
-  return { comboLegs, parent, children, summary };
+  return { comboLegs, parent, children, summary, entryTif: entryLabel };
 }
