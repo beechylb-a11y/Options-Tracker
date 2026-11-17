@@ -76,6 +76,30 @@ export function fillQuality(fill) {
   };
 }
 
+// The fill against the market at the moment it printed (Nov 2026). The bridge quotes
+// every leg when TWS reports a fill of a staged order; mid and spread are per lot,
+// credit +, so "mid − fill" is slippage with worse positive. A real fill lands between
+// the natural price and the far side, i.e. within half a spread of the mid. Outside
+// that, something other than the market filled it: on paper, the simulator (SPX
+// 17 Nov filled a put spread far through the mid); live, a fast market or a bad print
+// — either way it is not a result to build on.
+// @param fill  signed fill price per lot (credit +)
+// @param q     { mid, spread } at fill (or at send, when that is all there is)
+// @returns null | { vsMid, inSpreads, suspect: 'better' | 'worse' | null, label }
+export function fillVsMarket(fill, q, tol = 0.02) {
+  const f = num(fill), mid = num(q && q.mid), sp = num(q && q.spread);
+  if (f == null || mid == null) return null;
+  const vsMid = +(mid - f).toFixed(4);
+  const half = sp != null && sp > 0 ? sp / 2 : null;
+  const inSpreads = half ? +(vsMid / sp).toFixed(2) : null;
+  let suspect = null;
+  if (half != null && Math.abs(vsMid) > half + tol) suspect = vsMid < 0 ? 'better' : 'worse';
+  const label = suspect === 'better' ? 'Filled better than the market — a paper-fill artifact, not an edge'
+    : suspect === 'worse' ? 'Filled worse than the natural price — check the fill'
+      : vsMid < -0.0001 ? 'Better than mid' : vsMid > 0.0001 ? 'Gave up some of the spread' : 'At mid';
+  return { vsMid, inSpreads, suspect, label };
+}
+
 // Roll a ticket's fills into one entry. Quantity-weighted, because two contracts at
 // 0.60 and three at 0.70 is 0.66, not 0.65 — the same mistake the exit blend was
 // written to avoid.
@@ -168,4 +192,38 @@ export function fillStats(tickets) {
     // entry habit, which is otherwise invisible because it never appears as a loss.
     totalSlippageDollars: +rows.reduce((a, t) => a + (num(t.slippageDollars) || 0), 0).toFixed(2),
   };
+}
+
+// Fill quality across recorded entry fills (Nov 2026) — the review's check that the
+// results are repeatable: how far fills land from the market, and which ones landed
+// outside it. Rows are /api/fills objects. The market is the bridge's quote at the
+// fill where there is one, else the quote when the order was sent.
+// @returns null | { fills, measured, atFill, avgVsMid, dollars, suspect: [...], byEngine: { [engine]: {...} } }
+export function fillQualitySummary(rows) {
+  const list = (rows || []).filter(r => r && num(r['Fill Price']) != null && (num(r['Qty Filled']) || 0) > 0);
+  if (!list.length) return null;
+  const acc = () => ({ fills: 0, measured: 0, sum: 0, dollars: 0, suspect: 0 });
+  const all = acc(), byEngine = {}, suspect = [];
+  let atFill = 0;
+  for (const r of list) {
+    const eng = r.Engine || '—';
+    const e = byEngine[eng] || (byEngine[eng] = acc());
+    all.fills++; e.fills++;
+    const hasFill = num(r['Mid At Fill']) != null;
+    const q = hasFill ? { mid: r['Mid At Fill'], spread: r['Spread At Fill'] } : { mid: r['Mid At Send'], spread: r['Spread At Send'] };
+    const v = fillVsMarket(r['Fill Price'], q);
+    const flagged = /PAPER-FILL SUSPECT/.test(r.Notes || '') || (v && v.suspect);
+    if (flagged) {
+      all.suspect++; e.suspect++;
+      suspect.push({ fillId: r['Fill ID'], ticketRef: r['Ticket Ref'], underlying: r.Underlying, date: r['Fill Date'], fill: num(r['Fill Price']), mid: v ? num(q.mid) : null, vsMid: v ? v.vsMid : null, why: v ? v.suspect : 'noted' });
+      continue;                                 // a fill outside the market says nothing about execution
+    }
+    if (!v) continue;
+    if (hasFill) atFill++;
+    const qty = num(r['Qty Filled']) || 1;
+    for (const x of [all, e]) { x.measured++; x.sum += v.vsMid; x.dollars += v.vsMid * 100 * qty; }
+  }
+  const fin = x => ({ fills: x.fills, measured: x.measured, suspect: x.suspect,
+    avgVsMid: x.measured ? +(x.sum / x.measured).toFixed(4) : null, dollars: +x.dollars.toFixed(2) });
+  return { ...fin(all), atFill, suspectFills: suspect, byEngine: Object.fromEntries(Object.entries(byEngine).map(([k, x]) => [k, fin(x)])) };
 }

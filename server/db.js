@@ -75,7 +75,8 @@ export const TABS = {
     ['vwap_roll30_prior', 'VWAP Roll30 Prior'], ['vwap_acceptance', 'VWAP Acceptance'],
     ['vwap_trend', 'VWAP Trend'], ['vwap_dist_em', 'VWAP Dist EM'],
     ['strike_method', 'Strike Method'], ['short_deltas', 'Short Deltas'], ['implied_pop', 'Implied POP'],
-    ['limit_price', 'Limit Price'], ['order_ref', 'Order Ref'], ['working_since', 'Working Since']]) },
+    ['limit_price', 'Limit Price'], ['order_ref', 'Order Ref'], ['working_since', 'Working Since'],
+    ['mid_at_send', 'Mid At Send'], ['spread_at_send', 'Spread At Send']]) },
   Journal: { table: 'journal', cols: C([
     ['date', 'Date'], ['day_pnl', 'Day P&L'], ['trades_count', 'Trades Count'], ['win_count', 'Win Count'],
     ['loss_count', 'Loss Count'], ['notes', 'Notes'], ['week_number', 'Week Number']]) },
@@ -91,7 +92,8 @@ export const TABS = {
     ['fill_date', 'Fill Date'], ['fill_time', 'Fill Time'], ['qty_filled', 'Qty Filled'],
     ['qty_remaining', 'Qty Remaining'], ['fill_price', 'Fill Price'], ['limit_price', 'Limit Price'],
     ['mid_at_send', 'Mid At Send'], ['fees_usd', 'Fees ($)'], ['order_ref', 'Order Ref'],
-    ['account', 'Account'], ['notes', 'Notes']]) },
+    ['account', 'Account'], ['notes', 'Notes'],
+    ['spread_at_send', 'Spread At Send'], ['mid_at_fill', 'Mid At Fill'], ['spread_at_fill', 'Spread At Fill']]) },
   TradeLog: { table: 'trade_log', cols: C([
     ['ticket_ref', 'Ticket Ref'], ['entry_date', 'Entry Date'], ['entry_time', 'Entry Time'],
     ['engine', 'Engine'], ['underlying', 'Underlying'], ['strategy', 'Strategy'], ['legs', 'Legs'],
@@ -740,7 +742,12 @@ export async function logDecision(decision) {
     // must be written when — and only when — the order was resting.
     decision.limitPrice ?? '',       // BE signed per contract, as asked
     decision.orderRef ?? '',         // BF TWS order ref, when there is one
-    decision.workingSince ?? ''      // BG ISO moment the order went in
+    decision.workingSince ?? '',     // BG ISO moment the order went in
+    // -- BH-BI: the market when the order went in (Nov 2026) --
+    // The combo mid and natural spread from the bridge's leg quotes at staging (or the
+    // live TWS price on the ticket), credit +. What the fill is judged against.
+    decision.midAtSend ?? '',        // BH
+    decision.spreadAtSend ?? ''      // BI
   ];
   await appendRows('Decisions', [row]);
   return row;
@@ -1017,6 +1024,10 @@ export async function getOpenPositions() {
       // Full ISO timestamp of the ticket — the key the engine's exit plan is saved
       // under at log time, so the sell ticket opens with the ladder set at entry.
       o.timestamp = (decRows[Number(r[0]) - 1] || [])[0] || '';
+      // The market when the order went in, for the reconcile screen's fill check.
+      { const hdr0 = decRows[0] || [], dr = decRows[Number(r[0]) - 1] || [];
+        const im = hdr0.indexOf('Mid At Send'), is = hdr0.indexOf('Spread At Send');
+        o.midAtSend = im >= 0 ? (dr[im] ?? '') : ''; o.spreadAtSend = is >= 0 ? (dr[is] ?? '') : ''; }
       // A rolled ticket is logged without Max Risk / Max Profit (the roll ticket does
       // not model leg types), so the dashboard read its live risk as $0 and the open-
       // risk gauge left a 5-lot condor out. Derive both from the logged legs and the
@@ -1079,7 +1090,10 @@ export async function appendFill(f) {
     f.ticketRef, f.ticketTimestamp || '', f.engine || '', f.underlying || '', f.strategy || '',
     f.fillDate || '', f.fillTime || '', f.qtyFilled, f.qtyRemaining,
     f.fillPrice, f.limitPrice ?? '', f.midAtSend ?? '', f.feesUsd ?? '',
-    f.orderRef || '', f.account || '', f.notes || ''
+    f.orderRef || '', f.account || '', f.notes || '',
+    // The market around the fill (Nov 2026): spread when sent, and the combo mid and
+    // spread the bridge read the moment TWS reported the fill.
+    f.spreadAtSend ?? '', f.midAtFill ?? '', f.spreadAtFill ?? ''
   ];
   await appendRows('Fills', [row]);
   return row;

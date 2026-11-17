@@ -98,7 +98,11 @@ describe('ExitPlanCard', () => {
     const onStaged = vi.fn();
     render(<ExitPlanCard {...props} onStaged={onStaged} />);
     await waitFor(() => expect(screen.getByTestId('stage-mode').textContent).toBe('PAPER'));
+    // Let the default account settle before choosing another — under a loaded test run
+    // the default could land after the change and overwrite it.
+    await waitFor(() => expect(screen.getByTestId('stage-account').value).toBe('DU111'));
     fireEvent.change(screen.getByTestId('stage-account'), { target: { value: 'DU222' } });
+    await waitFor(() => expect(screen.getByTestId('stage-account').value).toBe('DU222'));
     fireEvent.click(screen.getByTestId('stage-btn'));
     await waitFor(() => expect(screen.getByTestId('stage-ok').textContent).toMatch(/not transmitted/));
     const call = global.fetch.mock.calls.find(c => String(c[0]).includes('/api/stage-order'));

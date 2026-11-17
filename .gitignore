@@ -9,3 +9,7 @@ client/dist/
 _to_delete/
 patchwork/
 Claude outputs/
+
+# Bridge state (staged orders it watches, quotes at fill)
+bridge/.staged-orders.json
+bridge/.fill-quotes.json

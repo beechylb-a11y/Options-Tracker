@@ -14,7 +14,7 @@ vi.mock('../components/EnginePanel', () => ({
 }));
 vi.mock('../utils/api', () => ({
   api: { getStrategyHistory: () => Promise.resolve([]), getDecisions: () => Promise.resolve([]),
-         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}) },
+         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}), updateConfig: () => Promise.resolve({}) },
   clearApiCache: () => {},
 }));
 vi.mock('../utils/volSnapshot', () => ({ startCloseVolSnapshot: () => {} }));
@@ -91,6 +91,7 @@ describe('multi-scan mode', () => {
     expect(screen.queryAllByTestId('tab')).toHaveLength(0);    // nothing made for you
     const scanPanel = screen.getAllByTestId('panel').find(p => p.dataset.scan === '45dte');
     expect(scanPanel.dataset.mode).toBe('45dte');
+    fireEvent.click(screen.getByTestId('mode-45dte'));
     expect(screen.getByTestId('group-45dte-index').textContent).toMatch(/1\/5/);
   });
 });

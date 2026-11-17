@@ -23,7 +23,7 @@ vi.mock('../components/EnginePanel', () => ({
 }));
 vi.mock('../utils/api', () => ({
   api: { getStrategyHistory: () => Promise.resolve([]), getDecisions: () => Promise.resolve([]),
-         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}) },
+         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}), updateConfig: () => Promise.resolve({}) },
   clearApiCache: () => {},
 }));
 vi.mock('../utils/volSnapshot', () => ({ startCloseVolSnapshot: () => {} }));

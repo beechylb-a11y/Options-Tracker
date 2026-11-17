@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { directionBadge } from '../utils/stats';
 import { settleShadows } from '../utils/shadowSettle';
-import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ListChecks, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save } from 'lucide-react';
+import { Zap, Timer, CalendarDays, Radar, Stethoscope, FileText, ListChecks, ChevronDown, ChevronUp, GitCompare, Check, X, DollarSign, Edit3, Clock, Save, MoreHorizontal } from 'lucide-react';
+import { bucketTickets, dayPnl } from '../utils/ticketBuckets';
 import { api } from '../utils/api';
 import { fmt$, fmtDate, pnlColor } from '../utils/format';
 import EnginePanel from '../components/EnginePanel';
@@ -419,7 +420,13 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Realised capture per engine × strategy (Oct 2026) — the engines blend their
   // assumed capture fractions toward it.
   const [captureStats, setCaptureStats] = useState(null);
-  const [panel, setPanel] = useState(null); // 'log' | 'compare' | null
+  const [panel, setPanel] = useState(null); // 'log' | 'compare' | 'checkup' | 'watchlist' | 'multiscan' | null
+  // What is actually on (Nov 2026): the trade log's open positions and working
+  // orders, and the closes, for the status strip and the ticket log's tabs.
+  const [positions, setPositions] = useState([]);
+  const [closesAll, setClosesAll] = useState([]);
+  const [logTab, setLogTab] = useState('open');
+  const [menu, setMenu] = useState(null);           // 'more' | 'scan' | null
   const [comparison, setComparison] = useState(null);
   const [compLoading, setCompLoading] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState(null);
@@ -510,6 +517,18 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   }
 
   useEffect(() => { loadDecisions(); }, [authenticated]);
+  function loadLive() {
+    if (!authenticated) return;
+    if (api.getOpenPositions) Promise.resolve().then(() => api.getOpenPositions(account)).then(r => setPositions(Array.isArray(r) ? r : [])).catch(() => setPositions([]));
+    if (api.getCloses) Promise.resolve().then(() => api.getCloses(account)).then(r => setClosesAll(Array.isArray(r) ? r : [])).catch(() => setClosesAll([]));
+  }
+  useEffect(() => { loadLive(); }, [authenticated, account, decisions.length]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const h = setTimeout(() => document.addEventListener('click', close), 0);
+    return () => { clearTimeout(h); document.removeEventListener('click', close); };
+  }, [menu]);
 
   // Per-strategy realized history powers measured-mode EV. Scoped to the
   // selected account; re-fetched when the account changes.
@@ -593,8 +612,24 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     const decAccount = d.Account || d._raw?.[26] || '';
     return decAccount === account || !decAccount;
   });
-  const openTickets = accountDecisions.filter(d => d.Status !== 'Closed' && d._raw?.[21] !== 'Closed');
-  const closedTickets = accountDecisions.filter(d => d.Status === 'Closed' || d._raw?.[21] === 'Closed');
+  // Open = a position on; Working = sent, nothing filled; Cancelled never counts as open.
+  const buckets = bucketTickets(accountDecisions, positions);
+  const openTickets = buckets.open;
+  const workingTickets = buckets.working;
+  const closedTickets = buckets.closed;
+  const cancelledTickets = buckets.cancelled;
+  const posByRef = new Map(positions.map(p => [String(p.ticketRef), p]));
+  const open45 = openTickets.filter(d => /45/.test(String(d.Engine || '')));
+  const sessionDay = lastSessionDate();
+  const today = dayPnl(closesAll, sessionDay, account);
+  const logList = { open: openTickets, working: workingTickets, closed: closedTickets, cancelled: cancelledTickets }[logTab] || openTickets;
+  const hasBridge = () => { try { return !!localStorage.getItem('bridgeUrl'); } catch (e) { return false; } };
+  function scanThisGroup() {
+    if (panel === 'multiscan' && !hasBridge()) { setPanel(null); return; }
+    setPanel('multiscan');
+    if (hasBridge() && !scanBusy[activeGroup] && !master) runGroupScan(activeGroup);
+  }
+  const stratOf = d => { const p = (d.Strategy || '').split(' - '); return p.length > 1 ? p.slice(1, -1).join(' - ') : (d.Strategy || ''); };
 
   // A scan pick opens its OWN tab and leaves the scan panel up, so you can take
   // one candidate, then another, without losing the first. It opens in the mode
@@ -612,61 +647,140 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
 
   return (
     <div className="fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div>
-          <h2 className="font-display text-2xl font-bold">Decision Engine</h2>
-          <p className="text-text-muted text-sm mt-0.5">Pre-trade analysis, trade tickets & performance tracking</p>
+      {/* Header (Nov 2026): row 1 — where am I (mode + class), what can I do (scan), tools;
+          row 2 — what is live (open positions, working orders, today's P&L). The ticket
+          log, the TWS reconcile and Engine vs actual live in the ⋯ menu. */}
+      <div className="mb-3">
+        <h2 className="font-display text-2xl font-bold">Decision Engine</h2>
+        <p className="text-text-muted text-sm mt-0.5">Pick a group, scan it, act on what needs you.</p>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap mb-3" data-testid="header-controls">
+        <div className="flex border border-bg-border rounded-lg overflow-hidden" data-testid="mode-switch">
+          {['0dte', '45dte'].map(m => {
+            const u = modeUi(m), on = mode === m;
+            return (
+              <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
+                title={on ? `Showing ${u.short} · ${CLASS_LABEL[groupClass]}` : `Show ${u.short} · ${CLASS_LABEL[groupClass]}`}
+                className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
+                style={on ? { background: u.solid, color: 'var(--c-0d1117)', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
+                <u.Icon size={14} /> {u.short}
+              </button>
+            );
+          })}
         </div>
-        {/* One line of controls (Oct 2026); manual tickets are + Trade in a group below. */}
-        <div className="flex items-center gap-2 flex-nowrap" data-testid="header-controls" style={{ whiteSpace: 'nowrap' }}>
-          <div className="flex border border-bg-border rounded-lg overflow-hidden" data-testid="mode-switch">
-            {['0dte', '45dte'].map(m => {
-              const u = modeUi(m), on = mode === m;
+        {/* The three groups of this mode. The count is the tickets open in that group. */}
+        <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)' }} data-testid="tab-groups">
+          {['index', 'etf', 'stock'].map(gc => {
+            const gm = mode, g = groupKey(gm, gc), n = groupCount(g), on = g === activeGroup, u = modeUi(gm);
+            const sc = scans[g];
+            const age = sc && sc.scannedAt ? scanNow - new Date(sc.scannedAt).getTime() : null;
+            const dot = scanBusy[g] ? 'var(--c-58a6ff)' : age == null ? null : age < SCAN_FRESH_MS ? 'var(--c-3fb950)' : 'var(--c-d29922)';
+            const best = sc && sc.results && sc.results[0] && sc.results[0].result ? sc.results[0] : null;
+            return (
+              <button key={g} data-testid={'group-' + gm + '-' + gc} data-on={on ? '1' : '0'} onClick={() => openGroup(gm, gc)}
+                title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets`
+                  + (scanBusy[g] ? ' · scanning…' : age == null ? ' · not scanned yet' : ` · scanned ${clockOf(sc.scannedAt)} (${agoOf(sc.scannedAt, scanNow)})${age >= SCAN_FRESH_MS ? ' — rescan' : ''}${best ? ` · best ${best.underlying} ${best.result.setupScore}/100` : ''}`)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '6px 12px', borderRadius: 7, fontSize: 13, fontWeight: on ? 700 : 500,
+                  background: on ? u.bg : 'transparent', color: on ? u.fg : 'var(--c-a8b2be)', boxShadow: on ? `inset 0 0 0 1px ${u.border}` : 'none' }}>
+                {CLASS_LABEL[gc]}
+                {dot && <span data-testid={'scan-dot-' + gm + '-' + gc} style={{ width: 7, height: 7, borderRadius: '50%', background: dot }} />}
+                <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: 'var(--c-0d1117)',
+                  color: n > TAB_GROUP_MAX ? 'var(--c-f85149)' : n ? (on ? u.fg : 'var(--c-c9d1d9)') : 'var(--c-6e7681)' }}>{n}/{TAB_GROUP_MAX}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex-1" />
+        {/* Scan: this group, or all six from the caret. */}
+        <div className="relative flex" data-testid="scan-split">
+          <button onClick={scanThisGroup} data-testid="multiscan-toggle" disabled={!!master}
+            title={`Scan ${modeUi(mode).short} · ${CLASS_LABEL[groupClass]} — ${(scanLists[activeGroup] || []).join(', ') || 'no names'}`}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-l-lg text-white disabled:opacity-60"
+            style={{ background: modeUi(mode).bg, border: `1px solid ${modeUi(mode).border}` }}>
+            <Radar size={14} className={master || scanBusy[activeGroup] ? 'animate-spin' : ''} />
+            {master ? `Scanning ${master.i}/${master.n}…` : `Scan ${modeUi(mode).short} · ${CLASS_LABEL[groupClass]}`}
+          </button>
+          <button onClick={e => { e.stopPropagation(); setMenu(menu === 'scan' ? null : 'scan'); }} data-testid="scan-menu" aria-label="More scan options"
+            className="px-2 py-2 text-sm rounded-r-lg text-white" style={{ background: modeUi(mode).bg, border: `1px solid ${modeUi(mode).border}`, borderLeft: 'none' }}>
+            <ChevronDown size={14} />
+          </button>
+          {menu === 'scan' && (
+            <div className="absolute right-0 top-full mt-1 z-30 rounded-lg p-1" style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', minWidth: 280, boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
+              <button onClick={() => { setMenu(null); setPanel('multiscan'); runAllScans(); }} disabled={!!master} data-testid="scan-everything"
+                className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-bg-hover flex justify-between gap-3">
+                Scan all six groups <span className="text-text-faint text-xs">0DTE + 45DTE</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <button onClick={() => setPanel(panel === 'watchlist' ? null : 'watchlist')} data-testid="watchlist-toggle"
+          title="The names both engines scan — up to 20, top 10 scanned"
+          className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'watchlist' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+          <ListChecks size={14} /> Watchlist <span className="mono" style={{ fontSize: 11.5 }}>{watch.items.length}</span>
+        </button>
+        <div className="relative">
+          <button onClick={e => { e.stopPropagation(); setMenu(menu === 'more' ? null : 'more'); }} data-testid="more-menu" aria-label="Ticket log, reconcile, engine vs actual"
+            className={`flex items-center px-3 py-2 text-sm border rounded-lg transition-colors ${['log', 'compare'].includes(panel) ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
+            <MoreHorizontal size={16} />
+          </button>
+          {menu === 'more' && (
+            <div className="absolute right-0 top-full mt-1 z-30 rounded-lg p-1" style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', minWidth: 320, boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
+              {[
+                ['log-open', <><FileText size={13} /> Ticket log</>, `${accountDecisions.length} · open / working / closed / cancelled`, () => { setPanel('log'); setLogTab('open'); }],
+                ['reconcile', <>⚡ Reconcile with TWS</>, 'match today’s fills to tickets', () => { setPanel('log'); setLogTab('open'); handleReconcile(); }],
+                ['compare', <><GitCompare size={13} /> Engine vs actual</>, 'moving to Analytics', () => { setPanel('compare'); if (!comparison) loadComparison(); }],
+              ].map(([k, label, sub, go]) => (
+                <button key={k} data-testid={'menu-' + k} onClick={() => { setMenu(null); go(); }}
+                  className="w-full text-left px-3 py-2 rounded-md text-sm hover:bg-bg-hover flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2">{label}</span><span className="text-text-faint text-xs">{sub}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Status strip — only what is live. */}
+      <div className="flex gap-2 mb-4 flex-wrap items-stretch" data-testid="status-strip">
+        <div className="card flex items-center gap-3 flex-wrap" style={{ flex: '1 1 420px', padding: '8px 12px' }}>
+          <span className="text-[11px] uppercase tracking-wider font-bold text-text-faint">Open</span>
+          {openTickets.length === 0 ? <span className="text-text-faint text-sm">no positions</span>
+            : openTickets.slice(0, 4).map(d => {
+              const p = posByRef.get(String(d._rowIndex));
+              const u = modeUi(/45/.test(String(d.Engine || '')) ? '45dte' : '0dte');
               return (
-                <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
-                  title={on ? `Showing ${u.short} · ${CLASS_LABEL[groupClass]}` : `Show ${u.short} · ${CLASS_LABEL[groupClass]}`}
-                  className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
-                  style={on ? { background: u.solid, color: 'var(--c-0d1117)', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
-                  <u.Icon size={14} /> {u.short}
+                <button key={d._rowIndex} data-testid="strip-open" onClick={() => { setPanel('log'); setLogTab('open'); setExpandedIdx(decisions.indexOf(d)); }}
+                  className="flex items-center gap-2 text-[13px] px-2 py-1 rounded-md hover:bg-bg-hover" style={{ border: '1px solid var(--c-30363d)' }}
+                  title={`Ticket #${d._rowIndex}${p ? ` · ${p.qtyOpen ?? p.qty} open` : ''}`}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: u.solid }} />
+                  <b>{d.Underlying}</b> <span className="text-text-muted">{stratOf(d)} {d['Wing Strikes'] || ''}</span>
+                  <span className="mono" style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 5px', borderRadius: 4, color: u.fg, background: u.bg }}>{u.short}</span>
+                  {p && <span className="mono text-text-faint" style={{ fontSize: 11.5 }}>×{p.qtyOpen ?? p.qty}</span>}
                 </button>
               );
             })}
-          </div>
-          <button onClick={() => { setPanel(panel === 'log' ? null : 'log'); }}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'log' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <FileText size={14} /> Tickets ({decisions.length})
-          </button>
-          <button onClick={() => { setPanel(panel === 'compare' ? null : 'compare'); if (!comparison) loadComparison(); }}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'compare' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <GitCompare size={14} /> Compare
-          </button>
-          <button onClick={() => setPanel(panel === 'watchlist' ? null : 'watchlist')} data-testid="watchlist-toggle"
-            title="The names both engines scan — up to 20, top 10 scanned"
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'watchlist' ? 'border-accent bg-accent/10 text-accent' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}>
-            <ListChecks size={14} /> Watchlist <span className="mono" style={{ fontSize: 11.5 }}>{watch.items.length}/{WATCH_MAX}</span>
-          </button>
-          <button onClick={() => setPanel(panel === 'multiscan' ? null : 'multiscan')} data-testid="multiscan-toggle"
-            title={`Scan several underlyings for a ${modeUi(mode).short} trade`}
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'multiscan' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
-            style={panel === 'multiscan' ? { borderColor: modeUi(mode).border, background: modeUi(mode).bg } : undefined}>
-            <Radar size={14} /> Multi-scan <ModeBadge mode={mode} /> <span style={{ fontSize: 11.5 }}>{CLASS_LABEL[groupClass]}</span>
-          </button>
-          <button onClick={() => { setPanel('multiscan'); runAllScans(); }} disabled={!!master} data-testid="scan-everything"
-            title="Run all six scans — 0DTE and 45DTE, indices, ETFs and stocks — and file each group's results with it"
-            className="flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors border-bg-border text-text-muted hover:bg-bg-hover disabled:opacity-60">
-            <Radar size={14} className={master ? 'animate-spin' : ''} /> {master ? `Scanning ${master.i}/${master.n}…` : 'Scan everything'}
-          </button>
+          {openTickets.length > 4 && <span className="text-text-faint text-xs">+{openTickets.length - 4} more</span>}
+          <div className="flex-1" />
           <button onClick={() => setPanel(panel === 'checkup' ? null : 'checkup')} data-testid="checkup-toggle"
-            title="Hold, take profit, roll or close — a check-up of every open 45DTE trade"
-            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${panel === 'checkup' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
+            title="Hold, take profit, roll or close — a check-up of every open 45DTE position"
+            className={`flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg transition-colors ${panel === 'checkup' ? 'text-white' : 'border-bg-border text-text-muted hover:bg-bg-hover'}`}
             style={panel === 'checkup' ? { borderColor: MODE_UI['45dte'].border, background: MODE_UI['45dte'].bg } : undefined}>
             <Stethoscope size={14} /> Check-up
-            <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 5, color: MODE_UI['45dte'].fg,
-              background: MODE_UI['45dte'].bg, border: `1px solid ${MODE_UI['45dte'].border}` }}>
-              {openTickets.filter(d => /45/.test(String(d.Engine || ''))).length} open
-            </span>
+            <span data-testid="checkup-count" style={{ fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 5, color: MODE_UI['45dte'].fg,
+              background: MODE_UI['45dte'].bg, border: `1px solid ${MODE_UI['45dte'].border}` }}>{open45.length}</span>
           </button>
+        </div>
+        <div className="card flex items-center gap-2" style={{ padding: '8px 12px' }} data-testid="strip-working">
+          <span className="text-[11px] uppercase tracking-wider font-bold text-text-faint">Working</span>
+          {workingTickets.length === 0 ? <span className="text-text-faint text-sm">none</span>
+            : <button onClick={() => { setPanel('log'); setLogTab('working'); }} className="text-[13px] hover:underline">
+                {workingTickets.slice(0, 2).map(d => `${d.Underlying} ${stratOf(d)}`).join(' · ')}{workingTickets.length > 2 ? ` +${workingTickets.length - 2}` : ''}
+              </button>}
+        </div>
+        <div className="card flex items-center gap-2" style={{ padding: '8px 12px' }} data-testid="strip-today"
+          title={`Realised P&L of ${today.count} close${today.count === 1 ? '' : 's'} dated ${sessionDay}, after commission`}>
+          <span className="text-[11px] uppercase tracking-wider font-bold text-text-faint">{sessionDay === tradingSession().dateISO ? 'Today' : 'Last session'}</span>
+          <b className="mono" style={{ fontSize: 16, color: today.count ? pnlColor(today.pnl) : 'var(--c-6e7681)' }}>{today.count ? fmt$(today.pnl) : '$0'}</b>
         </div>
       </div>
 
@@ -692,18 +806,26 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       {/* TRADE TICKETS PANEL */}
       {panel === 'log' && (
         <div className="card mb-4 fade-in" style={{ maxHeight: '500px', overflowY: 'auto' }}>
-          {/* Open tickets */}
-          {openTickets.length > 0 && (
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs text-text-faint uppercase tracking-wider flex items-center gap-2">
-                  <Clock size={12} /> Open tickets ({openTickets.length})
-                </h3>
-                <button onClick={handleReconcile} disabled={reconciling}
-                  className="text-[12.5px] px-3 py-1 border border-[var(--c-2f81f7)] rounded-lg text-[var(--c-58a6ff)] hover:bg-[var(--c-0d1a2e)] disabled:opacity-50">
-                  {reconciling ? 'Reconciling...' : '⚡ Reconcile with TWS'}
+          {/* Ticket log tabs (Nov 2026): sorted by what is true now. Cancelled orders
+              have their own tab and never count as open. */}
+          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+            <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--c-0d1117)', border: '1px solid var(--c-30363d)' }} data-testid="log-tabs">
+              {[['open', 'Open', openTickets.length], ['working', 'Working', workingTickets.length], ['closed', 'Closed', closedTickets.length], ['cancelled', 'Cancelled', cancelledTickets.length]].map(([k, label, n]) => (
+                <button key={k} data-testid={'log-tab-' + k} data-on={logTab === k ? '1' : '0'} onClick={() => setLogTab(k)}
+                  className="flex items-center gap-2 px-3 py-1 rounded-md text-[13px]"
+                  style={logTab === k ? { background: 'var(--c-21262d)', color: 'var(--c-e6edf3)', fontWeight: 700 } : { color: 'var(--c-8b949e)' }}>
+                  {label} <span className="mono" style={{ fontSize: 11 }}>{n}</span>
                 </button>
-              </div>
+              ))}
+            </div>
+            <button onClick={handleReconcile} disabled={reconciling}
+              className="text-[12.5px] px-3 py-1 border border-[var(--c-2f81f7)] rounded-lg text-[var(--c-58a6ff)] hover:bg-[var(--c-0d1a2e)] disabled:opacity-50">
+              {reconciling ? 'Reconciling...' : '⚡ Reconcile with TWS'}
+            </button>
+          </div>
+          {(logTab === 'open' || logTab === 'working') && (
+            <div className="mb-4">
+              {logList.length === 0 && <div className="py-4 text-center text-text-faint text-sm">{logTab === 'open' ? 'No open positions.' : 'No orders working.'}</div>}
 
               {/* Reconcile results */}
               {reconcileResults && (
@@ -770,7 +892,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
                   ))}
                 </div>
               )}
-              {openTickets.map((dec, i) => {
+              {logList.map((dec, i) => {
                 const globalIdx = decisions.indexOf(dec);
                 const expanded = expandedIdx === globalIdx;
                 const isClosing = closingIdx === globalIdx;
@@ -917,12 +1039,27 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
             </div>
           )}
 
-          {/* Closed tickets */}
-          {closedTickets.length > 0 && (
+          {/* Cancelled — orders that never filled */}
+          {logTab === 'cancelled' && (
             <div>
-              <h3 className="text-xs text-text-faint uppercase tracking-wider mb-2 flex items-center gap-2">
-                <Check size={12} /> Closed tickets ({closedTickets.length})
-              </h3>
+              {cancelledTickets.length === 0 && <div className="py-4 text-center text-text-faint text-sm">No cancelled orders.</div>}
+              {cancelledTickets.map(dec => (
+                <div key={dec._rowIndex} data-testid="log-cancelled" className="flex items-center gap-3 px-3 py-2 border border-bg-border rounded-lg mb-1 opacity-75">
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--c-6e7681)' }} />
+                  <span className="mono text-xs text-text-muted w-10">{dec.Engine}</span>
+                  <span className="text-xs text-text-muted mono w-16">{dec.Timestamp ? sessionLabelOf(dec.Timestamp) : ''}</span>
+                  <span className="text-sm font-medium">{dec.Underlying}</span>
+                  <span className="text-xs text-text-muted flex-1">{stratOf(dec)} {dec['Wing Strikes'] || ''}</span>
+                  <span className="text-xs text-text-faint">cancelled · never filled</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Closed tickets */}
+          {logTab === 'closed' && (
+            <div>
+              {closedTickets.length === 0 && <div className="py-4 text-center text-text-faint text-sm">No closed tickets.</div>}
               {closedTickets.map((dec, i) => {
                 const globalIdx = decisions.indexOf(dec);
                 const expanded = expandedIdx === globalIdx;
@@ -1075,29 +1212,6 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           )}
         </div>
       )}
-
-      {/* Tab groups: 0DTE / 45DTE × Indices / ETFs / Stocks */}
-      <div className="flex items-center gap-1.5 mb-2 flex-wrap" data-testid="tab-groups">
-        {GROUPS.map(([gm, gc]) => {
-          const g = groupKey(gm, gc), n = groupCount(g), on = g === activeGroup, u = modeUi(gm);
-          const sc = scans[g];
-          const age = sc && sc.scannedAt ? scanNow - new Date(sc.scannedAt).getTime() : null;
-          const dot = scanBusy[g] ? 'var(--c-58a6ff)' : age == null ? null : age < SCAN_FRESH_MS ? 'var(--c-3fb950)' : 'var(--c-d29922)';
-          const best = sc && sc.results && sc.results[0] && sc.results[0].result ? sc.results[0] : null;
-          return (
-            <button key={g} data-testid={'group-' + gm + '-' + gc} data-on={on ? '1' : '0'} onClick={() => openGroup(gm, gc)}
-              title={`${u.short} · ${CLASS_LABEL[gc]} — ${n} of ${TAB_GROUP_MAX} tickets`
-                + (scanBusy[g] ? ' · scanning…' : age == null ? ' · not scanned yet' : ` · scanned ${clockOf(sc.scannedAt)} (${agoOf(sc.scannedAt, scanNow)})${age >= SCAN_FRESH_MS ? ' — rescan' : ''}${best ? ` · best ${best.underlying} ${best.result.setupScore}/100` : ''}`)}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, fontSize: 12.5, fontWeight: on ? 700 : 500,
-                border: `1px solid ${on ? u.border : 'var(--c-30363d)'}`, background: on ? u.bg : 'transparent', color: on ? u.fg : 'var(--c-a8b2be)' }}>
-              <u.Icon size={12} /> {u.short} · {CLASS_LABEL[gc]}
-              {dot && <span data-testid={'scan-dot-' + gm + '-' + gc} style={{ width: 7, height: 7, borderRadius: '50%', background: dot }} />}
-              <span className="mono" style={{ fontSize: 11, padding: '0 5px', borderRadius: 4, background: 'var(--c-0d1117)',
-                color: n > TAB_GROUP_MAX ? 'var(--c-f85149)' : n ? (on ? u.fg : 'var(--c-c9d1d9)') : 'var(--c-6e7681)' }}>{n}/{TAB_GROUP_MAX}</span>
-            </button>
-          );
-        })}
-      </div>
 
       {/* Trade tabs — the active group only */}
       <div className="flex items-center gap-1.5 mb-3 flex-wrap" data-testid="tab-strip">

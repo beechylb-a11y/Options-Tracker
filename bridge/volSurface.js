@@ -36,6 +36,32 @@ export function nearestExpiry(expirations, target, today, minDte = 0) {
   return best;
 }
 
+// Standard monthly expiry (Nov 2026): the third Friday, day 15–21 — or the Thursday
+// before it when that Friday is a market holiday (day 14–20, Thursday). Monthlies list
+// the full strike grid and carry the liquidity; a weekly 45 days out (31 Dec 2026, a
+// Thursday) lists strikes $5 apart where the monthly lists $2.50, so an ATM strike read
+// off the all-expiry chain often does not exist there — the option request fails and the
+// scan shows IV blank.
+export function isMonthly(ymd) {
+  const d = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)));
+  const day = d.getUTCDate(), dow = d.getUTCDay();
+  return (dow === 5 && day >= 15 && day <= 21) || (dow === 4 && day >= 14 && day <= 20);
+}
+/** Nearest monthly to `target` (≥ minDte) when one sits within `window` days of it; else nearestExpiry. */
+export function nearestMonthly(expirations, target, today, minDte = 0, window = 15) {
+  const m = nearestExpiry((expirations || []).filter(isMonthly), target, today, minDte);
+  if (m && Math.abs(daysBetween(target, m)) <= window) return m;
+  return nearestExpiry(expirations, target, today, minDte);
+}
+/** Nearest strike that is LISTED (both a call and a put when `both`) — null when none known. */
+export function nearestListed(listed, x, both = true) {
+  if (!listed) return null;
+  const pool = both ? (listed.calls || []).filter(k => (listed.puts || []).includes(k)) : null;
+  const arr = pool && pool.length ? pool : null;
+  if (!arr) return null;
+  return arr.reduce((b, k) => (Math.abs(k - x) < Math.abs(b - x) ? k : b), arr[0]);
+}
+
 // Fallback when the chain lookup fails: the Friday nearest the target. Every
 // optionable underlying here lists Fridays (SPXW, SPY, QQQ, IWM, XSP, RUTW).
 export function fridayNear(target) {

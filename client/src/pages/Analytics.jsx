@@ -14,6 +14,7 @@ import { calibrate, headlines, DIMENSIONS, MIN_N, SOLID_N } from '../engine/cali
 import { suggestions as suggestFrom, SUGGEST_N } from '../engine/suggest';
 import { gridTable, exitTable, REGIMES, EXIT_LABEL, EXITS } from '../engine/learn';
 import { settleShadows } from '../utils/shadowSettle';
+import { fillQualitySummary } from '../engine/fills';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
@@ -94,6 +95,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
     { id: 'rolling', label: 'Rolling stats', icon: Activity },
     { id: 'capture', label: 'Capture', icon: Layers },
     { id: 'verdicts', label: 'Engine verdicts', icon: Activity },
+    { id: 'fills', label: 'Fills', icon: Activity },
   ];
 
   return (
@@ -121,6 +123,55 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
       {section === 'rolling' && <RollingStats closed={closed} />}
       {section === 'capture' && <CaptureTracker account={account} />}
       {section === 'verdicts' && <ShadowVerdicts account={account} />}
+      {section === 'fills' && <FillQuality account={account} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  FILL QUALITY (Nov 2026)
+//  Are the results repeatable? Every recorded entry fill against the market at the
+//  moment it printed (the bridge's quote) or, failing that, when it was sent. Fills
+//  outside the market — paper-simulator prints — are listed and left out of the
+//  average, so the review stops counting an artifact as edge.
+// ═══════════════════════════════════════════
+function FillQuality({ account }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { api.getFills(account || 'all').then(setRows).catch(e => setErr(e.message || 'could not load fills')); }, [account]);
+  if (err) return <ErrorBanner message={err} />;
+  if (!rows) return <div className="text-text-muted text-sm">Loading fills…</div>;
+  const s = fillQualitySummary(rows);
+  if (!s) return <div className="card text-text-muted text-sm">No recorded fills yet — reconcile with TWS from the Decision Engine.</div>;
+  const c = v => v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}`;
+  return (
+    <div className="card" data-testid="fill-quality">
+      <h3 className="text-sm font-semibold mb-1">Fill quality</h3>
+      <p className="text-text-muted text-xs mb-3" style={{ lineHeight: 1.5 }}>
+        Mid minus fill, per contract — positive is what the spread cost you. Measured against the combo mid the bridge read when TWS reported the fill, or the mid when the order was sent.
+        A fill more than half a spread from the mid is outside the market: on paper that is the simulator, not an edge, so it is listed below and kept out of the average.
+      </p>
+      <table className="w-full text-xs mono mb-3">
+        <thead><tr className="text-text-muted text-left"><th className="py-1 pr-3">Engine</th><th className="pr-3">Fills</th><th className="pr-3">Measured</th><th className="pr-3">Avg vs mid</th><th className="pr-3">$ given to the spread</th><th>Outside the market</th></tr></thead>
+        <tbody>
+          {[['All', s], ...Object.entries(s.byEngine)].map(([k, x]) => (
+            <tr key={k} className="border-t border-bg-border">
+              <td className="py-1 pr-3">{k}</td><td className="pr-3">{x.fills}</td><td className="pr-3">{x.measured}</td>
+              <td className="pr-3">{c(x.avgVsMid)}</td><td className="pr-3">{x.measured ? fmt$(x.dollars) : '—'}</td>
+              <td style={{ color: x.suspect ? 'var(--c-d29922)' : undefined }}>{x.suspect || 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-text-muted text-xs mb-2">{s.atFill} of {s.measured} measured against the quote at the fill; the rest against the quote at send. Fills with no market recorded are counted but not measured.</p>
+      {s.suspectFills.length ? (
+        <div>
+          <div className="text-xs font-semibold mb-1" style={{ color: 'var(--c-d29922)' }}>Outside the market — leave these out of any edge</div>
+          {s.suspectFills.map(f => (
+            <div key={f.fillId} className="text-xs mono text-text-muted">#{f.ticketRef} {f.underlying} {f.date} · filled {f.fill?.toFixed(2)}{f.mid != null ? ` vs mid ${f.mid.toFixed(2)} (${c(f.vsMid)})` : ''} · {f.why === 'better' ? 'better than the market' : f.why === 'worse' ? 'worse than the natural price' : 'flagged at reconcile'}</div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

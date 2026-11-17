@@ -675,6 +675,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // The TWS order ref of an entry staged from the exit-plan card (Nov 2026): logged with
   // the trade so its fills map back, and it pre-ticks "Order sent, not filled yet".
   const [stagedRef, setStagedRef] = useState('');
+  // The combo quote the bridge read when it staged the order (Nov 2026) — the market
+  // the fill is judged against. { mid, spread } ticket-signed, credit +.
+  const [stagedQuote, setStagedQuote] = useState(null);
   const [loadingTws, setLoadingTws] = useState(false);
   const [twsStructures, setTwsStructures] = useState(null); // picker list when >1
   const [twsLegs, setTwsLegs] = useState(null); // exact legs from a loaded TWS position
@@ -3291,7 +3294,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // and the net above stays what was ASKED until a fill replaces it.
       limitPrice: workingOrder ? (isFinite(ncdSigned) ? ncdSigned : ncdNow) : '',
       workingSince: workingOrder ? logTs : '',
-      orderRef: workingOrder ? stagedRef : ''
+      orderRef: workingOrder ? stagedRef : '',
+      // The market when the order went in: the bridge's quote at staging, else the live
+      // TWS price on the ticket. Blank when neither — never the model mid, which is
+      // exactly what a paper fill far from the market would hide behind.
+      ...(() => {
+        const lc = liveNow && liveNow.lp && liveNow.lp.combo;
+        if (stagedQuote && stagedQuote.mid != null) return { midAtSend: stagedQuote.mid, spreadAtSend: stagedQuote.spread ?? '' };
+        if (lc && isFinite(lc.mid)) return { midAtSend: +(-lc.mid).toFixed(4), spreadAtSend: isFinite(lc.spread) ? lc.spread : '' };
+        return { midAtSend: '', spreadAtSend: '' };
+      })()
     }))
       .then(ok => {
         // Strictly true. A rejection, an explicit false, or a host that returns nothing
@@ -3642,12 +3654,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               drawer. */}
           <div style={{flexBasis:'100%',paddingBottom:14,borderBottom:'1px solid var(--c-21262d)'}}>
             <ExitPlanCard net={signedNet(ticketNet, cashType)} win={parseFloat(is0 ? i0.win : i45.win) || 0} qty={r.contracts} plan={exitPlan}
-              maxRisk={r.maxRisk} tif={is0 ? 'DAY' : 'GTC'} entryTif={is0 ? 'GTD' : 'GTC'}
+              maxRisk={r.maxRisk} tif={is0 ? 'DAY' : 'GTC'} entryTif={is0 ? 'CUTOFF' : 'GTC'}
               head={{ underlying: secBag.underlying, strikes: [...new Set((r.legs || []).map(l => Number(l.strike)))].sort((x, y) => x - y),
                 strategy: String(effectiveStrat || '').replace(/\s*-\s*Normal\b/i, ''),
                 expiryLabel: fmtYmd(is0 ? todayYmd : ((r.legs || []).map(l => legExpiryOf(l)).filter(Boolean).sort()[0] || '')) }}
               stageLegs={stageInfo.legs || null} stageWhyNot={stageInfo.why} orderRef={stageInfo.ref}
-              onStaged={() => { setStagedRef(stageInfo.ref); setWorkingOrder(true); }}
+              onStaged={j => { setStagedRef(stageInfo.ref); setWorkingOrder(true); setStagedQuote(j && j.midAtSend != null ? { mid: j.midAtSend, spread: j.spreadAtSend } : null); }}
               editor={(parseFloat(is0?i0.netCreditDebit:i45.netCreditDebit) || 0) !== 0 ? (
                 <ProfitTaker variant="card" ncd={signedNet(ticketNet, cashType)} win={parseFloat(is0?i0.win:i45.win) || 0}
                   contracts={r.contracts} underlying={(is0?i0:i45).underlying} legs={r.legs} onPlan={setExitPlan}

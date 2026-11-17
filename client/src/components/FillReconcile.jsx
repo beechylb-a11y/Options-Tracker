@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../utils/api';
 import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide, positionForTicket } from '../utils/fillMatch';
-import { fillStats } from '../engine/fills';
+import { fillStats, fillVsMarket } from '../engine/fills';
 import { strategyWithCount } from './EditTicketModal';
 
 // Reconcile working orders against what TWS actually filled.
@@ -339,6 +339,19 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
                                 : c.match === 'partial' ? 'some strikes only'
                                 : ''}
                               {c.fees > 0 && <span className="mono"> · ${c.fees.toFixed(2)} fees</span>}
+                              {(() => {
+                                // The market at the fill (bridge quote), else at send (the ticket).
+                                const q = c.quoteAtFill || (ticket.midAtSend !== '' && ticket.midAtSend != null ? { mid: ticket.midAtSend, spread: ticket.spreadAtSend } : null);
+                                const v = fillVsMarket(c.netPrice, q);
+                                if (!v) return null;
+                                return (
+                                  <div data-testid={`fill-market-${c.key}`} className="mono" style={{ fontSize: 12, marginTop: 2, color: v.suspect === 'better' ? 'var(--c-d29922)' : v.suspect ? 'var(--c-f85149)' : 'var(--c-8b949e)' }}
+                                    title="Mid minus fill, per contract — worse is positive. A real fill lands within half a spread of the mid.">
+                                    mid {c.quoteAtFill ? 'at fill' : 'at send'} {Number(q.mid).toFixed(2)}{q.spread !== '' && q.spread != null ? ` ± ${(Number(q.spread) / 2).toFixed(2)}` : ''} · {v.vsMid > 0 ? '+' : ''}{v.vsMid.toFixed(2)}
+                                    {v.suspect ? <b> · {v.suspect === 'better' ? 'paper-fill suspect' : 'outside the market'}</b> : null}
+                                  </div>
+                                );
+                              })()}
                             </td>
                           </tr>
                         );

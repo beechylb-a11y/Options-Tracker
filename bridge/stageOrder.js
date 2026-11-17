@@ -18,11 +18,13 @@
 // credit trade the combo is defined with each leg's side flipped: selling it opens
 // exactly the ticket's legs.
 //
-// Entry time-in-force (17 Nov 2026): a 0DTE entry goes GTD — it cancels itself at
-// 12:30 New York time if it hasn't filled (no 0DTE opens after 12:00 ET, so a resting
-// entry never drifts into the afternoon). A 45DTE entry goes GTC. The profit target keeps
-// its own TIF (0DTE DAY, 45DTE GTC): if the entry fills, the target must NOT vanish at
-// 12:30 with the trade still on. If the entry cancels unfilled, TWS cancels its children.
+// Entry time-in-force (17 Nov 2026, reworked 18 Nov): a 0DTE entry must not rest into
+// the afternoon — no 0DTE opens after 12:00 ET. It was sent as GTD 12:30 ET, but TWS
+// rejects GTD on a combo it routes across exchanges ("Inter exchange combo order should
+// be DAY/GTC order" — every SPX spread). So the entry goes DAY and the BRIDGE cancels it
+// at 12:30 ET if it has not filled (index.js, cut-off watcher; survives a restart).
+// A 45DTE entry goes GTC. The profit target keeps its own TIF (0DTE DAY, 45DTE GTC): if
+// the entry fills, the target must not vanish with the trade still on.
 
 export const STAGE_MAX_LOTS = 50;
 export const GTD_CUTOFF_ET = '12:30';
@@ -76,12 +78,13 @@ const round2 = x => Math.round(x * 100) / 100;
  * @param p.entry       price per share, positive (0.66)
  * @param p.targets     [{ qty, price }] — price per share, positive (0.50 to buy back a credit)
  * @param p.tif         'DAY' | 'GTC' for the targets (0DTE → DAY)
- * @param p.entryTif    'GTD' | 'GTC' | 'DAY' for the entry (0DTE → GTD at 12:30 ET, 45DTE → GTC).
- *                      Left out: DAY, as before.
+ * @param p.entryTif    'CUTOFF' (or 'GTD') | 'GTC' | 'DAY' for the entry. CUTOFF stages a DAY order
+ *                      and returns cancelAt (12:30 ET) for the bridge to cancel it if unfilled —
+ *                      TWS rejects GTD on inter-exchange combos. 45DTE → GTC. Left out: DAY.
  * @param p.now         ms, for tests (default Date.now())
  * @param p.account     IB account code (optional: TWS uses its default)
  * @param p.orderRef    tag carried on every order so the fills map back to the ticket
- * @returns { error } | { comboLegs, parent, children, summary }
+ * @returns { error } | { comboLegs, parent, children, summary, entryTif (label), cancelAt (ms | null) }
  *          comboLegs carry `legKey` for index.js to swap in the conId.
  */
 export function buildStage(p) {
@@ -120,11 +123,14 @@ export function buildStage(p) {
   };
   let entryTif = { tif: 'DAY' }, entryLabel = 'DAY';
   if (p.entryTif === 'GTC') { entryTif = { tif: 'GTC' }; entryLabel = 'GTC'; }
-  else if (p.entryTif === 'GTD') {
+  let cancelAt = null;
+  if (p.entryTif === 'GTD' || p.entryTif === 'CUTOFF') {
     const firstExp = legs.map(l => String(l.expiry)).sort()[0];
     const g = gtdFor(firstExp, p.now != null ? Number(p.now) : Date.now());
     if (g.error) return { error: g.error };
-    entryTif = { tif: 'GTD', goodTillDate: g.goodTillDate }; entryLabel = g.label;
+    const [hh, mm] = GTD_CUTOFF_ET.split(':').map(Number);
+    cancelAt = nyToUtcMs(g.ymd, hh, mm);
+    entryTif = { tif: 'DAY' }; entryLabel = `DAY · cancels ${GTD_CUTOFF_ET} ET if unfilled`;
   }
   const parent = { ...common, action: credit ? 'SELL' : 'BUY', totalQuantity: lots, lmtPrice: round2(entry), ...entryTif };
   const children = targets.map(t => ({ ...common, action: credit ? 'BUY' : 'SELL', totalQuantity: t.qty, lmtPrice: round2(t.price), tif: p.tif === 'GTC' ? 'GTC' : 'DAY' }));
@@ -139,5 +145,5 @@ export function buildStage(p) {
     `${credit ? 'SELL' : 'BUY'} ${lots} ${String(p.underlying || '').toUpperCase()} ${ks} @ ${entry.toFixed(2)} ${side === 'credit' ? 'cr' : 'db'} ${entryLabel}`,
     ...targets.map(t => `${credit ? 'BUY' : 'SELL'} ${t.qty} @ ${t.price.toFixed(2)} (profit target) ${p.tif === 'GTC' ? 'GTC' : 'DAY'}`),
   ];
-  return { comboLegs, parent, children, summary, entryTif: entryLabel };
+  return { comboLegs, parent, children, summary, entryTif: entryLabel, cancelAt };
 }

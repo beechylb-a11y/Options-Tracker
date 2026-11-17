@@ -145,11 +145,14 @@ const note = { fontSize: 12.5, color: C.grey, lineHeight: 1.45, minWidth: 0 };
  * @param stageLegs   [{ strike, right, qty (signed per lot), expiry }]  — null: can't stage
  * @param stageWhyNot text shown instead of the button when staging is not possible
  * @param tif         'DAY' | 'GTC' for the profit target(s)
- * @param entryTif    'GTD' | 'GTC' | 'DAY' for the entry — 0DTE GTD (cancels 12:30 ET unfilled), 45DTE GTC
+ * @param entryTif    'CUTOFF' | 'GTC' | 'DAY' for the entry — 0DTE CUTOFF: a DAY order the bridge cancels at
+ *                    12:30 ET if unfilled (TWS rejects GTD on SPX-type combos); 45DTE GTC
  * @param orderRef    tag on the TWS orders
  * @param editor      the inline controls (ProfitTaker variant="card")
  * @param onStaged    called after TWS accepted the staged orders
  */
+const fmtSigned = v => { const n = Number(v); return !isFinite(n) ? '—' : `${Math.abs(n).toFixed(2)} ${n >= 0 ? 'cr' : 'db'}`; };
+
 export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, when, stageLegs, stageWhyNot, tif = 'DAY', entryTif = 'DAY', orderRef, editor, onStaged }) {
   const N = exitNumbers({ net, win, qty, plan, maxRisk });
   const [health, setHealth] = useState(null);
@@ -179,7 +182,8 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
   const strikes = (head.strikes || []).join(' / ');
   const desc = [head.underlying, head.expiryLabel, strikes].filter(Boolean).join(' ');
   const paper = health && health.mode === 'paper';
-  const entryTifLabel = entryTif === 'GTD' ? 'GTD 12:30 ET' : entryTif;
+  const cutoff = entryTif === 'CUTOFF' || entryTif === 'GTD';
+  const entryTifLabel = cutoff ? 'DAY · cancels 12:30 ET' : entryTif;
 
   async function stage() {
     if (!bridgeUrl || !stageLegs) return;
@@ -190,7 +194,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
       const r = await fetch(`${bridgeUrl}/api/stage-order`, { method: 'POST', headers: { ...HDR, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       let j = null; try { j = await r.json(); } catch { j = null; }
       if (!r.ok || !j || !j.staged) throw new Error((j && j.error) || (r.status === 404 ? 'The bridge is on old code — git pull on the Mac and restart it' : `bridge said ${r.status}`));
-      setSt({ s: 'ok', summary: j.summary || [], account: j.account });
+      setSt({ s: 'ok', summary: j.summary || [], account: j.account, midAtSend: j.midAtSend, spreadAtSend: j.spreadAtSend, entry: N.entry * (cr ? 1 : -1) });
       onStaged && onStaged(j);
     } catch (e) {
       setSt({ s: 'err', msg: e.message || String(e) });
@@ -302,7 +306,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
               ) : accounts.length === 1 ? <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.soft }}>{accounts[0]}</span> : null}
               <span style={note}>
                 {health && health.connected === false ? 'TWS is not connected to the bridge.'
-                  : <>Sends {openAct} {N.q} @ {N.entry.toFixed(2)} + {N.targets.length > 1 ? `${N.targets.length} profit targets` : `the profit target @ ${N.targets[0].price.toFixed(2)}`} with <b>transmit off</b>. Entry is {entryTif === 'GTD' ? <b>GTD — cancels at 12:30 ET if unfilled</b> : entryTifLabel}. Nothing trades until you click Transmit in TWS. No stop is sent.</>}
+                  : <>Sends {openAct} {N.q} @ {N.entry.toFixed(2)} + {N.targets.length > 1 ? `${N.targets.length} profit targets` : `the profit target @ ${N.targets[0].price.toFixed(2)}`} with <b>transmit off</b>. Entry is {cutoff ? <><b>DAY</b>, and the bridge <b>cancels it at 12:30 ET if nothing has filled</b> (TWS won’t take a timed order on this combo)</> : entryTifLabel}. Nothing trades until you click Transmit in TWS. No stop is sent.</>}
               </span>
             </>
           ) : (
@@ -317,6 +321,11 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
           <div data-testid="stage-ok" style={{ padding: '10px 14px', background: alpha(C.green, '18'), borderTop: `1px solid ${alpha(C.green, '66')}`, fontSize: 13, color: C.text, lineHeight: 1.5 }}>
             <b style={{ color: C.green }}>Staged in TWS — not transmitted.</b> Check it in TWS’s order window{st.account ? ` (${st.account})` : ''}, then click <b>Transmit</b> on the {openAct.toLowerCase()} order; the profit target goes with it.
             {st.summary && st.summary.length ? <div style={{ fontFamily: MONO, fontSize: 12, color: C.soft, marginTop: 4 }}>{st.summary.join('  ·  ')}</div> : null}
+            {st.midAtSend != null ? (
+              <div data-testid="stage-mid" style={{ fontFamily: MONO, fontSize: 12, color: C.soft, marginTop: 2 }}>
+                Market when staged: mid {fmtSigned(st.midAtSend)}{st.spreadAtSend != null ? ` · spread ${Number(st.spreadAtSend).toFixed(2)}` : ''} · your limit {fmtSigned(st.entry)} — recorded on the ticket so the fill can be checked against it.
+              </div>
+            ) : null}
           </div>
         )}
         {st.s === 'err' && (

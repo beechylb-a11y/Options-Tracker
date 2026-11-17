@@ -12,10 +12,14 @@ import net from 'net';
 import { computeOvernight } from './esOvernight.js';
 import { parseLegs, composeCombo, summarise, geometry, legKey, spreadProfile } from './replay.js';
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
-  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot } from './volSurface.js';
+  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot, nearestMonthly, nearestListed } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage } from './stageOrder.js';
+import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 const app = express();
 app.use(cors({
@@ -160,6 +164,10 @@ function connectTWS() {
         ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
         resolve();
       });
+
+      // Live fills of this client's orders (the staged ones) — quote the market the
+      // moment TWS reports them. reqId −1 marks an unsolicited report.
+      ib.on(EventName.execDetails, onLiveExec);
 
       ib.on(EventName.disconnected, () => {
         console.log('[BRIDGE] Disconnected from IBKR');
@@ -1725,14 +1733,37 @@ app.get('/api/vol-surface', async (req, res) => {
     // 2) Expiries off the real chain; Friday-nearest if the chain lookup fails.
     const chain = await getOptionChain(underlying).catch(() => null);
     if (!chain) notes.push('Option chain lookup failed — expiries snapped to the nearest Friday');
-    const pickExp = (target, minDte) => chain
-      ? nearestExpiry(chain.expirations, target, today, minDte)
+    // Monthlies first (Nov 2026): full strike grid and the liquidity. An explicit
+    // ?expiry= is honoured as asked.
+    const explicit = /^\d{8}$/.test(req.query.expiry || '');
+    const pickExp = (target, minDte, monthly = true) => chain
+      ? (monthly ? nearestMonthly(chain.expirations, target, today, minDte) : nearestExpiry(chain.expirations, target, today, minDte))
       : fridayNear(target);
-    const tradeExp = pickExp(reqExpiry, 1);
+    const tradeExp = pickExp(reqExpiry, 1, !explicit);
     const frontExp = pickExp(addDays(today, 30), 14);
     let backExp = pickExp(addDays(today, 90), 45);
     if (backExp && frontExp && backExp <= frontExp) backExp = null;
     const inc = ['SPX', 'NDX', 'RUT'].includes(underlying) ? 5 : 1;
+    // Strikes LISTED for each expiry (Nov 2026). The chain's strike list is the union over
+    // every expiry, so the nearest strike to spot from it often does not exist at the
+    // expiry asked — NVDA 154 at 31 Dec, 154 at 19 Feb — and the option request came
+    // back empty: the scan's blank IV, IV front/back and skew. One contract-details
+    // request per expiry, cached for the day.
+    const listedP = {};
+    const listedFor = exp => {
+      if (!exp) return Promise.resolve(null);
+      if (!listedP[exp]) listedP[exp] = getListedStrikes(underlying, exp).then(l => (l && l.calls.length && l.puts.length ? l : null)).catch(() => null);
+      return listedP[exp];
+    };
+    const strikeAt = async (exp, x, right) => {
+      const L = await listedFor(exp);
+      if (L) {
+        const arr = right === 'C' ? L.calls : right === 'P' ? L.puts : null;
+        const k = arr ? nearestStrike(arr, x) : nearestListed(L, x);
+        if (k != null) return k;
+      }
+      return nearestStrike(chain && chain.strikes, x, inc);
+    };
 
     const opt = (exp, strike, right) => {
       const c = buildOptionContract(underlying, exp, strike, right);
@@ -1741,7 +1772,7 @@ app.get('/api/vol-surface', async (req, res) => {
     };
     const atmIV = async (exp) => {
       if (!exp || !(spot > 0)) return null;
-      const k = nearestStrike(chain && chain.strikes, spot, inc);
+      const k = await strikeAt(exp, spot, null);
       const [c, p] = await Promise.all([getOptionGreeks(opt(exp, k, 'C')), getOptionGreeks(opt(exp, k, 'P'))]);
       const iv = avgIV(c && c.iv, p && p.iv);
       return { expiry: exp, dte: daysBetween(today, exp), strike: k, iv: iv != null ? +iv.toFixed(2) : null,
@@ -1762,8 +1793,8 @@ app.get('/api/vol-surface', async (req, res) => {
       const sig = tradeAtm.iv / 100, T = Math.max(tradeAtm.dte, 1) / 365, step = 0.25 * sig * Math.sqrt(T) * spot;
       const kP = strikeForDelta(spot, sig, T, 'P'), kC = strikeForDelta(spot, sig, T, 'C');
       const ks = {
-        P: [nearestStrike(chain && chain.strikes, kP, inc), nearestStrike(chain && chain.strikes, kP - step, inc)],
-        C: [nearestStrike(chain && chain.strikes, kC, inc), nearestStrike(chain && chain.strikes, kC - step, inc)],
+        P: [await strikeAt(tradeExp, kP, 'P'), await strikeAt(tradeExp, kP - step, 'P')],
+        C: [await strikeAt(tradeExp, kC, 'C'), await strikeAt(tradeExp, kC - step, 'C')],
       };
       const legs = [['P', ks.P[0]], ['P', ks.P[1]], ['C', ks.C[0]], ['C', ks.C[1]]];
       const got = await Promise.all(legs.map(([r, k]) => getOptionGreeks(opt(tradeExp, k, r))));
@@ -1825,7 +1856,8 @@ app.get('/api/vol-surface', async (req, res) => {
 
 // ── Stage an order in TWS, untransmitted (Nov 2026) ────────────────────────
 // POST /api/stage-order  { underlying, legs, lots, side, entry, targets, tif, entryTif, account, orderRef }
-// entryTif: 'GTD' (0DTE — cancels at 12:30 ET if unfilled) | 'GTC' (45DTE) | 'DAY' (default).
+// entryTif: 'CUTOFF' (0DTE — DAY, and the bridge cancels it at 12:30 ET if unfilled; 'GTD'
+// is read the same, since TWS rejects GTD on inter-exchange combos) | 'GTC' (45DTE) | 'DAY'.
 // The combo + its profit target(s) go to TWS with transmit = false: they appear in the
 // order window for the trader to check and Transmit there. No stop is ever sent.
 // Order ids: IB hands out the next valid id on request; the bridge keeps a counter above
@@ -1847,6 +1879,98 @@ function nextOrderIds(n) {
   });
 }
 
+// ── Staged-order watch: 12:30 ET cut-off + the market at send and at fill (Nov 2026) ──
+// See orderWatch.js. Both stores are small JSON files next to this script, so a
+// restart keeps them: .staged-orders.json (what was staged, and when to pull it) and
+// .fill-quotes.json (the combo quote when each fill was reported).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const STAGED_FILE = path.join(HERE, '.staged-orders.json');
+const QUOTES_FILE = path.join(HERE, '.fill-quotes.json');
+const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) || {}; } catch (e) { return {}; } };
+const writeJson = (f, o) => { try { fs.writeFileSync(f, JSON.stringify(o, null, 1)); } catch (e) { console.log('[BRIDGE] could not write', f, e.message); } };
+let stagedReg = prune(readJson(STAGED_FILE), Date.now(), 10, 'stagedAt');
+let fillQuotes = prune(readJson(QUOTES_FILE), Date.now(), 30, 'at');
+
+// Leg quotes by conId → comboMidOf. bid 0 is a real quote on a far wing (getSnapshot
+// drops zero ticks), so a leg with an ask and no bid reads bid 0.
+async function quoteLegs(legs, lots) {
+  try { ib.reqMarketDataType(2); } catch (e) {}
+  const snaps = await Promise.all(legs.map(l => getSnapshot({ conId: l.conId, exchange: 'SMART', currency: 'USD', secType: SecType.OPT, symbol: l.symbol })
+    .catch(() => ({}))));
+  const q = legs.map((l, i) => ({ sign: l.sign, qty: l.qty, bid: snaps[i].bid || (snaps[i].ask ? 0 : undefined), ask: snaps[i].ask, delayed: !!snaps[i].delayed }));
+  const c = comboMidOf(q, lots);
+  return c ? { ...c, delayed: q.some(x => x.delayed), legs: q.map(x => ({ bid: x.bid ?? null, ask: x.ask ?? null })) } : null;
+}
+
+// Fills arrive one leg at a time; the legs of one fill share an execId stem. Gather
+// for a moment, then quote every leg once.
+const pendingFills = {};
+function onLiveExec(reqId, contract, execution) {
+  try {
+    if (reqId !== -1 || !contract || contract.secType !== 'OPT' || !execution) return;
+    const stem = execStem(execution.execId);
+    if (fillQuotes[stem]) return;
+    const p = pendingFills[stem] || (pendingFills[stem] = { legs: [], orderId: execution.orderId, orderRef: execution.orderRef || '' });
+    if (p.legs.some(l => l.execId === execution.execId)) return;
+    p.legs.push({ execId: execution.execId, conId: contract.conId, symbol: contract.symbol, sign: execSign(execution.side), qty: Number(execution.shares) || 0, price: Number(execution.price) });
+    clearTimeout(p.timer);
+    p.timer = setTimeout(async () => {
+      delete pendingFills[stem];
+      const at = new Date().toISOString();
+      const q = await quoteLegs(p.legs).catch(() => null);
+      const fill = comboMidOf(p.legs.map(l => ({ sign: l.sign, qty: l.qty, bid: l.price, ask: l.price })));
+      fillQuotes[stem] = { at, orderId: p.orderId, orderRef: p.orderRef, fill: fill ? fill.mid : null, ...(q || { mid: null }) };
+      writeJson(QUOTES_FILE, fillQuotes);
+      console.log(`[BRIDGE] fill ${stem} ${p.orderRef || p.orderId}: got ${fill && fill.mid} vs mid ${q && q.mid} (spread ${q && q.spread})`);
+    }, 1200);
+  } catch (e) { console.log('[BRIDGE] live exec error:', e.message); }
+}
+
+// This client's open orders → { orderId: { status, filled } }.
+function openOrderStatus() {
+  return new Promise(resolve => {
+    const out = {};
+    const onOpen = (orderId, contract, order, state) => { out[orderId] = { ...(out[orderId] || {}), status: (state && state.status) || (out[orderId] || {}).status || '', found: true }; };
+    const onStatus = (orderId, status, filled) => { out[orderId] = { ...(out[orderId] || {}), status, filled: Number(filled) || 0, found: true }; };
+    let done = false;
+    const finish = () => { if (done) return; done = true; ib.removeListener(EventName.openOrder, onOpen); ib.removeListener(EventName.orderStatus, onStatus); ib.removeListener(EventName.openOrderEnd, onEnd); resolve(out); };
+    const t = setTimeout(finish, 6000);
+    const onEnd = () => { clearTimeout(t); setTimeout(finish, 600); };
+    ib.on(EventName.openOrder, onOpen); ib.on(EventName.orderStatus, onStatus);
+    ib.on(EventName.openOrderEnd, onEnd);
+    ib.reqOpenOrders();
+  });
+}
+
+let cutoffBusy = false;
+async function checkCutoffs() {
+  const due = dueCutoffs(stagedReg, Date.now());
+  if (!due.length || cutoffBusy || !connected || !ib) return;
+  cutoffBusy = true;
+  try {
+    const st = await openOrderStatus();
+    for (const e of due) {
+      const act = cutoffAction(st[e.parentId]);
+      if (act === 'cancel') {
+        try { ib.cancelOrder(e.parentId); } catch (err) { console.log('[BRIDGE] cancel failed', e.parentId, err.message); continue; }
+        // TWS cancels attached targets with their parent; pull any left anyway.
+        for (const c of e.childIds || []) { const cs = st[c]; if (cs && cs.found && !(cs.filled > 0)) { try { ib.cancelOrder(c); } catch (err) {} } }
+      }
+      stagedReg[e.parentId] = { ...e, done: act, doneAt: new Date().toISOString() };
+      console.log(`[BRIDGE] cut-off ${e.orderRef || e.parentId}: ${act === 'cancel' ? 'unfilled at ' + e.cutoffLabel + ' — cancelled' : act}`);
+    }
+    writeJson(STAGED_FILE, stagedReg);
+  } catch (err) {
+    console.log('[BRIDGE] cut-off check error:', err.message);
+  } finally { cutoffBusy = false; }
+}
+setInterval(() => { checkCutoffs(); }, 20000);
+
+// GET /api/staged  → what the bridge is watching (for the app and for a check by hand).
+app.get('/api/staged', (req, res) => {
+  res.json({ staged: Object.values(stagedReg).sort((a, b) => String(b.stagedAt).localeCompare(String(a.stagedAt))), fillQuotes });
+});
+
 app.post('/api/stage-order', async (req, res) => {
   try {
     await connectTWS();
@@ -1861,6 +1985,7 @@ app.post('/api/stage-order', async (req, res) => {
     // Resolve each leg to its conId (trading class from the chain: SPXW, RUTW, XSP…).
     const chain = await getOptionChain(u).catch(() => null);
     const comboLegs = [];
+    const conByKey = {};
     for (const l of plan.comboLegs) {
       const [expiry, strike, right] = l.legKey.split('|');
       const c = buildOptionContract(u, expiry, Number(strike), right);
@@ -1868,7 +1993,9 @@ app.post('/api/stage-order', async (req, res) => {
       const conId = await getConId(c);
       if (!conId) return res.status(400).json({ error: `TWS could not find ${u} ${expiry} ${strike}${right}` });
       comboLegs.push({ conId, ratio: l.ratio, action: l.action, exchange: l.exchange });
+      conByKey[l.legKey] = conId;
     }
+    const legConIds = (p.legs || []).map(l => conByKey[`${String(l.expiry)}|${Number(l.strike)}|${String(l.right).toUpperCase()[0]}`] || null);
     const bag = { symbol: u, secType: SecType.BAG, currency: 'USD', exchange: 'SMART', comboLegs };
     const ids = await nextOrderIds(1 + plan.children.length);
     const errors = [];
@@ -1885,7 +2012,20 @@ app.post('/api/stage-order', async (req, res) => {
     ib.removeListener(EventName.error, onErr);
     console.log(`[BRIDGE] staged (not transmitted) ${plan.summary.join(' | ')} ids ${ids.join(',')}${errors.length ? ' errors ' + JSON.stringify(errors) : ''}`);
     if (errors.length) return res.status(400).json({ error: errors.map(e => `${e.code}: ${e.message}`).join('; '), ids, staged: false });
-    res.json({ ok: true, staged: true, transmitted: false, ids, parentId: ids[0], summary: plan.summary, entryTif: plan.entryTif, account: p.account || null });
+    // The market as it was sent: the combo mid from the legs' own quotes, ticket-signed
+    // (credit +). Best effort — a missing quote leaves it blank, never blocks the stage.
+    const qLegs = (p.legs || []).map((l, i) => ({ conId: legConIds[i], symbol: u, sign: ticketSign(l.qty), qty: Math.abs(Number(l.qty) || 0) }));
+    const atSend = qLegs.every(l => l.conId) ? await quoteLegs(qLegs, 1).catch(() => null) : null;
+    stagedReg[ids[0]] = {
+      parentId: ids[0], childIds: ids.slice(1), orderRef: p.orderRef || '', account: p.account || '',
+      underlying: u, summary: plan.summary, stagedAt: new Date().toISOString(),
+      cancelAt: plan.cancelAt || null, cutoffLabel: plan.cancelAt ? new Date(plan.cancelAt).toISOString() : '',
+      midAtSend: atSend ? atSend.mid : null, spreadAtSend: atSend ? atSend.spread : null, limit: plan.parent.lmtPrice,
+    };
+    writeJson(STAGED_FILE, stagedReg);
+    res.json({ ok: true, staged: true, transmitted: false, ids, parentId: ids[0], summary: plan.summary, entryTif: plan.entryTif,
+      cancelAt: plan.cancelAt || null, account: p.account || null,
+      midAtSend: atSend ? atSend.mid : null, spreadAtSend: atSend ? atSend.spread : null, quoteDelayed: atSend ? atSend.delayed : null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2033,6 +2173,8 @@ app.get('/api/executions', async (req, res) => {
     // Merge commissions with executions
     const merged = executions.map(e => ({
       ...e,
+      // The combo quote when the bridge saw this fill live (staged orders only).
+      quoteAtFill: (() => { const q = fillQuotes[execStem(e.execId)]; return q && q.mid != null ? { mid: q.mid, spread: q.spread, natural: q.natural, at: q.at, delayed: !!q.delayed } : null; })(),
       commission: commissions[e.execId]?.commission || 0,
       realizedPnl: commissions[e.execId]?.realizedPnl || e.realizedPnl || 0
     }));

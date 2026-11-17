@@ -9,7 +9,7 @@ vi.mock('../components/EnginePanel', () => ({
 }));
 vi.mock('../utils/api', () => ({
   api: { getStrategyHistory: () => Promise.resolve([]), getDecisions: () => Promise.resolve([]),
-         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}) },
+         getTradeTracker: () => Promise.resolve([]), getConfig: () => Promise.resolve({}), updateConfig: () => Promise.resolve({}) },
   clearApiCache: () => {},
 }));
 vi.mock('../utils/volSnapshot', () => ({ startCloseVolSnapshot: () => {} }));
@@ -40,19 +40,22 @@ describe('tab groups', () => {
     expect(isBlankTab({ id: 'x', seed: null, state: { i0: { netCreditDebit: '1.2' } } })).toBe(false);
   });
 
-  it('shows only the active group, with counts on all six', () => {
+  it('shows only the active group, with counts on the three groups of the mode', () => {
     seed([{ id: 'a', mode: '0dte', u: 'SPX' }, { id: 'b', mode: '0dte', u: 'QQQ' }, { id: 'c', mode: '45dte', u: 'NVDA' }, { id: 'd', mode: '0dte', u: 'XSP' }]);
     mount();
     expect(screen.getAllByTestId('tab').map(t => t.dataset.tabId)).toEqual(['a', 'd']);
     expect(screen.getByTestId('group-0dte-index').textContent).toMatch(/2\/5/);
     expect(screen.getByTestId('group-0dte-etf').textContent).toMatch(/1\/5/);
-    expect(screen.getByTestId('group-45dte-stock').textContent).toMatch(/1\/5/);
+    expect(screen.queryByTestId('group-45dte-stock')).toBeNull();          // the other mode's groups sit behind the switch
     fireEvent.click(screen.getByTestId('group-0dte-etf'));
     expect(screen.getAllByTestId('tab').map(t => t.dataset.tabId)).toEqual(['b']);
+    fireEvent.click(screen.getByTestId('mode-45dte'));
+    expect(screen.getByTestId('group-45dte-stock').textContent).toMatch(/1\/5/);
   });
 
   it('an empty group stays empty until + Trade, and caps at five', () => {
     mount();
+    fireEvent.click(screen.getByTestId('mode-45dte'));
     fireEvent.click(screen.getByTestId('group-45dte-stock'));
     expect(screen.getByTestId('group-empty')).toBeTruthy();
     expect(screen.queryAllByTestId('panel')).toHaveLength(0);
@@ -92,10 +95,12 @@ describe('tab groups', () => {
       return { json: async () => body };
     });
     mount();
+    fireEvent.click(screen.getByTestId('scan-menu'));
     fireEvent.click(screen.getByTestId('scan-everything'));
-    await waitFor(() => expect(screen.getByTestId('scan-dot-45dte-stock')).toBeTruthy(), { timeout: 4000 });
-    ['0dte-index', '0dte-etf', '0dte-stock', '45dte-index', '45dte-etf', '45dte-stock'].forEach(g =>
-      expect(screen.getByTestId('scan-dot-' + g)).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('multiscan-toggle').disabled).toBe(false), { timeout: 4000 });
+    ['0dte-index', '0dte-etf', '0dte-stock'].forEach(g => expect(screen.getByTestId('scan-dot-' + g)).toBeTruthy());
+    fireEvent.click(screen.getByTestId('mode-45dte'));
+    ['45dte-index', '45dte-etf', '45dte-stock'].forEach(g => expect(screen.getByTestId('scan-dot-' + g)).toBeTruthy());
     // market data fetched once per ticker across both modes
     expect(seen.filter(x => x === 'market-data:SPY')).toHaveLength(1);
     expect(seen.some(x => x === 'market-data:NVDA')).toBe(true);

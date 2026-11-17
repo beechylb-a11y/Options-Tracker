@@ -11,6 +11,7 @@
 // (Oct 2026.)
 
 import { parseStrikes } from './positionMatch';
+import { fillVsMarket } from '../engine/fills';
 
 const num = v => { const n = parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
 
@@ -144,6 +145,9 @@ export function comboTranches(executions) {
         side: String(l.side || '').toUpperCase(), qty: Math.round(l.qty), price: l.price,
       })).sort((a, b) => a.strike - b.strike),
       execIds: legs.map(l => l.execId).filter(Boolean),
+      // The combo quote the bridge read when TWS reported this fill (staged orders
+      // only; null for anything else). Same signing as netPrice.
+      quoteAtFill: (legs.find(l => l.quoteAtFill && l.quoteAtFill.mid != null) || {}).quoteAtFill || null,
     });
   }
   return out.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
@@ -208,6 +212,13 @@ export function matchTranches(tickets, tranches, seen = []) {
   return { rows, unmatched };
 }
 
+// A fill outside the market at the moment it printed is written into the fill's notes,
+// so the review can leave it out without anyone remembering to.
+function marketNote(price, q) {
+  const v = fillVsMarket(price, q);
+  return v && v.suspect ? `PAPER-FILL SUSPECT: ${v.suspect} than the market (mid ${num(q.mid).toFixed(2)}, spread ${num(q.spread).toFixed(2)})` : '';
+}
+
 /** The Fills row a confirmed tranche becomes. */
 export function fillPayload(ticket, tr, { qty, price, notes } = {}) {
   const q = num(qty) != null ? num(qty) : tr.lots;
@@ -226,10 +237,13 @@ export function fillPayload(ticket, tr, { qty, price, notes } = {}) {
     fillPrice: p,
     limitPrice: ticket.limitPrice ?? '',
     midAtSend: ticket.midAtSend ?? '',
+    spreadAtSend: ticket.spreadAtSend ?? '',
+    midAtFill: tr.quoteAtFill && tr.quoteAtFill.mid != null ? tr.quoteAtFill.mid : '',
+    spreadAtFill: tr.quoteAtFill && tr.quoteAtFill.spread != null ? tr.quoteAtFill.spread : '',
     feesUsd: tr.fees || '',
     orderRef: tr.orderRef || (tr.orderId != null ? String(tr.orderId) : ''),
     account: ticket.account || tr.account || '',
-    notes: notes || (tr.match === 'partial' ? 'Partial strike match — confirmed by hand' : ''),
+    notes: [notes || (tr.match === 'partial' ? 'Partial strike match — confirmed by hand' : ''), marketNote(p, tr.quoteAtFill)].filter(Boolean).join(' · '),
   };
 }
 
@@ -262,6 +276,7 @@ export function manualFillPayload(ticket, { qty, price, side, date, time, notes 
     fillPrice: +(sd === 'db' ? -Math.abs(p) : Math.abs(p)).toFixed(4),
     limitPrice: ticket.limitPrice ?? '',
     midAtSend: ticket.midAtSend ?? '',
+    spreadAtSend: ticket.spreadAtSend ?? '',
     feesUsd: '',
     orderRef: '',
     account: ticket.account || '',
