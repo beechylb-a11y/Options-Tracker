@@ -1225,10 +1225,12 @@ const SCAN_ROWS = {
     { label: 'Regime', render: r => <span style={{fontSize:12.5,color:'var(--c-c9d1d9)'}}>{r.result?.regime || '--'}</span> },
     { label: 'Compression', render: r => r.result?.comp != null ? r.result.comp.toFixed(2) : '--' },
     { label: 'Trend', render: r => <span style={{color: r.result?.trendPattern === 'continuation' ? 'var(--c-3fb950)' : r.result?.trendPattern === 'reversal' ? 'var(--c-d29922)' : 'var(--c-c9d1d9)'}}>{r.result?.trendPattern || '--'}</span> },
-    { label: 'VWAP trend', render: r => {
+    { label: 'Short-term trend', render: r => {
       const s = r.result?.slope5;
       const a = r.result?.vwapAccept;
-      return <span style={{color: s?.direction === 'rising' ? 'var(--c-3fb950)' : s?.direction === 'falling' ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{s?.strength || '--'} {s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}{a == null ? '' : ` ${(a*100).toFixed(0)}%`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
+      const e = r.result?.emaTrend;
+      const lead = e ? `EMA ${e}` : `${s?.strength || '--'} ${s?.direction && s.direction !== 'unknown' ? '(' + s.direction + ')' : ''}`;
+      return <span style={{color: s?.direction === 'rising' ? 'var(--c-3fb950)' : s?.direction === 'falling' ? 'var(--c-f85149)' : 'var(--c-c9d1d9)'}}>{lead}{a == null ? '' : ` · ${(a*100).toFixed(0)}% accept`}{r.result?.confirmed ? ' ✓' : r.result?.diverges ? ' ✗' : ''}</span>;
     }},
   ],
   '45dte': [

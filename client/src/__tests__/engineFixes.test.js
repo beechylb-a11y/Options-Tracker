@@ -18,6 +18,9 @@ const bull = {
   atr: 60, em: 45, atr5: 4, atr2h: 4.2, gamStrike: 6700,
   vix: 15, vix1d: 17, bankroll: 3000, startBR: 3000,
   maxLoss: 300, maxOpen: 450, pop: 75, hours: 4, win: 120, risk: 380,
+  // A strong read now needs the overnight move to agree (Nov 2026: intraday trend alone
+  // is capped at a lean) — ES closed above the prior day here.
+  esClose: 6700, priorDayClose: 6680, esOvernightHigh: 6702, esOvernightLow: 6684, esEM: 45,
 };
 const run = (overrideStrategy) => calc0DTE({ ...bull, overrideStrategy });
 

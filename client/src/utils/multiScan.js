@@ -211,6 +211,7 @@ export function computeScan(mode, underlyings, data) {
       vwap5: scaleV(f('vwap5')), vwap5_30: scaleV(f('vwap5_30')), vwapRoll30: scaleV(f('vwapRoll30')),
       vwapRoll30Prior: scaleV(f('vwapRoll30Prior')),
       vwapAccept: (m0.vwapAccept == null || m0.vwapAccept === '' || parseFloat(m0.vwapAccept) < 0) ? null : parseFloat(m0.vwapAccept),
+      emaTrend: /^(up|down|mixed)$/.test(String(m0.emaTrend || '')) ? m0.emaTrend : '',
       esClose: f('esClose'), priorDayClose: f('priorDayClose'), esOvernightHigh: f('esOvernightHigh'),
       esOvernightLow: f('esOvernightLow'), esEM: f('esEM'),
     };

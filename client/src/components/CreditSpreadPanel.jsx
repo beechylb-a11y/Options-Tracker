@@ -139,7 +139,7 @@ export default function CreditSpreadPanel({ r, price, underlying, bridgeUrl, cur
   const vw = r && r.aboveVWAP != null && r.vwapDiff !== 0
     ? { word: r.aboveVWAP ? 'ABOVE' : 'BELOW', tone: r.slopeDirection === 'rising' ? 'green' : r.slopeDirection === 'falling' ? 'red' : 'amber',
         icon: r.slopeDirection === 'rising' ? TrendingUp : r.slopeDirection === 'falling' ? TrendingDown : Minus,
-        sub: `VWAP ${r.slope || 'flat'}${/^(SPX|XSP)$/.test(underlying) ? ' · SPY' : ''}` }
+        sub: `${r.emaTrend ? `5-min EMA ${r.emaTrend}` : `VWAP ${r.slope || 'flat'}`}${/^(SPX|XSP)$/.test(underlying) ? ' · SPY' : ''}` }
     : { word: '—', tone: 'grey', sub: 'VWAP' };
 
   const btn = side => {

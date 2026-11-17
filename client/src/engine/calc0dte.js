@@ -281,7 +281,7 @@ export function gammaFixFor({ cost, sd, atr, blocked, underlying, legStrat }) {
 }
 
 export function calc0DTE(inputs) {
-  const { price, high, low, vwap5, vwap5_30, vwapRoll30, vwapRoll30Prior, vwapAccept,
+  const { price, high, low, vwap5, vwap5_30, vwapRoll30, vwapRoll30Prior, vwapAccept, emaTrend,
     atr, em, atr5, atr2h, gamStrike,
     vix, vix1d, bankroll, startBR, risk, maxLoss, win, maxOpen, pop, netCreditDebit,
     emSource, straddleCall, straddlePut, straddleHaircut,
@@ -541,7 +541,18 @@ export function calc0DTE(inputs) {
     const direction = a < 0.40 ? 'flat' : (shift > 0 ? 'rising' : 'falling');
     return { strength, direction, shift, shiftEM };
   }
-  const slope5 = calcSlope(vwapRoll30, vwapRoll30Prior);
+  // ── Short-term trend input (Nov 2026): the 5-minute EMA 8/21 when the bridge sends it ──
+  // Tested on SPY 5-minute bars, 877 sessions (Apr 2023 – Nov 2026): the EMA at 10:00 called
+  // the direction to 15:00 51.1% of the time; the 30-min VWAP windows did no better over the
+  // last year. Neither knows where SPY closes, so the EMA is used for what it does have —
+  // it reads from the open and never comes back empty — and the score it feeds is capped
+  // at a tilt below. An EMA stack counts as a MILD slope (never strong); mixed = flat. The
+  // VWAP windows remain the fallback for an old bridge or a hand-typed ticket.
+  const emaOn = emaTrend === 'up' || emaTrend === 'down' || emaTrend === 'mixed';
+  const slope5 = emaOn
+    ? { strength: emaTrend === 'mixed' ? 'flat' : 'mild', direction: emaTrend === 'up' ? 'rising' : emaTrend === 'down' ? 'falling' : 'flat',
+        shift: 0, shiftEM: null, source: 'ema' }
+    : { ...calcSlope(vwapRoll30, vwapRoll30Prior), source: 'vwap' };
   const slope = slope5.strength;
   const slopeDirection = slope5.direction;
 
@@ -602,6 +613,17 @@ export function calc0DTE(inputs) {
     if (overnightDir === 'bullish' && dirScore <= -1) dirScore = Math.max(-1, dirScore + 1);
     if (overnightDir === 'bearish' && dirScore >= 1) dirScore = Math.min(1, dirScore - 1);
   }
+
+  // ── Tilt, not a switch (Nov 2026) ──
+  // No intraday trend read tested predicts the move to 15:00 (VWAP slope, acceptance,
+  // first hour, 5-min EMA: 46–52% over the samples), so on its own intraday evidence the
+  // direction score stops at ±1 — a lean. ±2 (strong, trend-day structures) needs the
+  // overnight move to agree as well as the short-term trend.
+  const dSign = Math.sign(dirScore);
+  const trendAgrees = dSign > 0 ? slopeDirection === 'rising' : dSign < 0 ? slopeDirection === 'falling' : false;
+  const overnightAgrees = (overnightDir === 'bullish' && dSign > 0) || (overnightDir === 'bearish' && dSign < 0);
+  const dirCapped = Math.abs(dirScore) >= 2 && !(trendAgrees && overnightAgrees);
+  if (dirCapped) dirScore = dSign;
 
   const overextendedWarning = vwapOverextended && Math.abs(dirScore) >= 2;
   const dirLabel = dirScore>=2?'Strong bullish':dirScore===1?'Mild bullish':dirScore===0?'Neutral':dirScore===-1?'Mild bearish':'Strong bearish';
@@ -1533,7 +1555,7 @@ export function calc0DTE(inputs) {
   if (diverges && isCentred) slopePts = Math.min(15, slopePts + 1);
   if (vwapOverextended && isSkewed) slopePts = Math.max(0, slopePts - 2);
   setupScore += slopePts;
-  const slopeLabel = `VWAP ${slope}${slopeDirectional?` (${slopeDirection})`:''}`
+  const slopeLabel = (slope5.source === 'ema' ? `EMA ${emaTrend} · VWAP` : `VWAP ${slope}${slopeDirectional?` (${slopeDirection})`:''}`)
     + `${vwap>0&&emSession>0?` · ${(vwapDistPctEM*100).toFixed(0)}% EM out`:''}`
     + `${confirmed?' ✓accept':diverges?' ✗accept':''}`;
   criteria.push({ label: slopeLabel, pts: slopePts, max: 15 });
@@ -2579,7 +2601,7 @@ export function calc0DTE(inputs) {
   if (moveConsumed > 0.90 && isSkewed && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
   if (vwapOverextended) warnings.push(`Price ${(vwapDistPctEM*100).toFixed(0)}% EM from VWAP — pullback risk`);
-  if (diverges) warnings.push(`VWAP trend ${slopeDirection} but only ${(vwapAccept*100).toFixed(0)}% of the last hour closed above VWAP — trend not being held`);
+  if (diverges) warnings.push(`${slope5.source === 'ema' ? '5-min EMA' : 'VWAP trend'} ${slopeDirection} but only ${(vwapAccept*100).toFixed(0)}% of the last hour closed above VWAP — trend not being held`);
   if (emDisagree && emVolGap != null) warnings.push(`EM sources disagree on a like-for-like basis: straddle implies ${emStraddleSessionVol.toFixed(1)}% session vol vs VIX1D ${vix1d}% (${emVolGap>0?'+':''}${(emVolGap*100).toFixed(0)}%) — check the feed or an event`);
   else if (emDisagree && emManualGap != null) warnings.push(`Manual EM ${em.toFixed(1)} is ${emManualGap>0?'+':''}${(emManualGap*100).toFixed(0)}% vs the VIX1D session EM ${emSessionModel.toFixed(1)} — move-consumed and every "% EM" score run off the manual number, but P(max loss) — and therefore EV and Trade Confidence — runs off the VIX1D ruler`);
   // An ITM-shifted debit vertical buys P(profit) with intrinsic value. Past a point
@@ -2838,7 +2860,7 @@ export function calc0DTE(inputs) {
     // Signals
     vixGap, vixGrade, vixImplic, emVIX, emV1D, gapBandIdx,
     dirScore, dirLabel, aboveVWAP, vwapDiff,
-    slope, slopeDirection, slope5, vwapDistPctEM, vwapOverextended, confirmed, diverges,
+    slope, slopeDirection, slope5, emaTrend: emaOn ? emaTrend : null, dirCapped, vwapDistPctEM, vwapOverextended, confirmed, diverges,
     vwapAccept: hasAccept ? vwapAccept : null, acceptLabel, em30,
     rm, rmRatio, comp, isCompressing,
     gamDist, regime, regimeConds, regimeCommentary,

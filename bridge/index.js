@@ -792,6 +792,31 @@ app.get('/api/market-data', async (req, res) => {
       console.error('[BRIDGE] VWAP calc error:', e.message);
     }
 
+    // ── 5-minute EMA 8/21 trend (Nov 2026) ──
+    // Replaces the 30-minute VWAP windows as the engine's short-term trend input. Over
+    // 877 sessions (Apr 2023 – Nov 2026) neither predicts SPY's direction to 15:00 (EMA
+    // 51%), so the engine only TILTS on it; but the EMA, seeded from the prior session,
+    // reads from 09:35 and never comes back empty, where the VWAP windows need 12 bars
+    // (10:30). Same proxy as VWAP (SPY for SPX/XSP, IWM for RUT). Units don't matter:
+    // only the order of price, EMA 8 and EMA 21 is sent, plus the 21's 30-min slope in bps.
+    let emaTrend = '', ema21SlopeBps = null;
+    try {
+      const vc = usesSPYVwap ? contracts.SPY : usesIWMVwap ? contracts.IWM : mainContract;
+      const vw = (vc.secType === SecType.IND) ? WhatToShow.BID_ASK : WhatToShow.TRADES;
+      const eb = await getHistoricalBars(vc, '2 D', BarSizeSetting.MINUTES_FIVE, vw);
+      const closes = eb.map(barClose).filter(c => c > 0);
+      if (closes.length >= 30) {
+        const k8 = 2 / 9, k21 = 2 / 22;
+        let e8 = null, e21 = null; const e21s = [];
+        for (const c of closes) { e8 = e8 == null ? c : c * k8 + e8 * (1 - k8); e21 = e21 == null ? c : c * k21 + e21 * (1 - k21); e21s.push(e21); }
+        const c = closes[closes.length - 1];
+        emaTrend = c > e8 && e8 > e21 ? 'up' : c < e8 && e8 < e21 ? 'down' : 'mixed';
+        if (e21s.length > 6) ema21SlopeBps = Math.round((e21 - e21s[e21s.length - 7]) / c * 1e5) / 10;
+      }
+    } catch (e) {
+      console.error('[BRIDGE] EMA trend error:', e.message);
+    }
+
     // XSP: SPX sends RAW SPY VWAPs and the client rescales ×10 client-side; the
     // client does NOT rescale XSP, so scale to index points here bridge-side.
     // vwapAccept is a 0..1 ratio, never a price — it is deliberately not scaled.
@@ -849,6 +874,7 @@ app.get('/api/market-data', async (req, res) => {
       vwapRoll30Prior: Math.round(vwapRoll30Prior * 100) / 100,
       // Ratio 0..1, or -1 when unavailable. NOT price-scaled.
       vwapAccept: vwapAccept < 0 ? -1 : Math.round(vwapAccept * 1000) / 1000,
+      emaTrend, ema21SlopeBps,
       // ES overnight
       esClose: Math.round(esClose * 100) / 100,
       priorDayClose: Math.round(esPrevClose * 100) / 100,

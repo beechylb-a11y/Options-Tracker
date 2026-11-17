@@ -39,7 +39,7 @@ const TERM_BIASES = [{ value: '', label: '— unknown' }, 'contango', 'flat', 'b
 // override by hand and expect the override to SURVIVE the next pull. Sizing
 // fields (bankroll, max loss, win/risk, net credit) are never fed and so are
 // deliberately absent: typing one of those is not an override of anything.
-const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwapRoll30','vwapRoll30Prior','vwapAccept','em',
+const MKT_0 = ['price','high','low','vwap5','vwap5_30','vwapRoll30','vwapRoll30Prior','vwapAccept','emaTrend','em',
   'atr','atr5','atr2h','vix','vix1d','esOvernightHigh','esOvernightLow','esClose',
   'priorDayClose','cashOpen','esEM'];
 const MKT_45 = ['price','vix'];
@@ -682,7 +682,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const [i0, setI0] = useState(() => {
     const base = {
     underlying:'SPX', price:'', high:'', low:'', vwap5:'', vwap5_30:'',
-    vwapRoll30:'', vwapRoll30Prior:'', vwapAccept:'',
+    vwapRoll30:'', vwapRoll30Prior:'', vwapAccept:'', emaTrend:'',
     em:'', atr5:'', atr2h:'', atr:'',
     vix:'', vix1d:'', ivx:'',
     esOvernightHigh:'', esOvernightLow:'', esClose:'', priorDayClose:'', cashOpen:'', esEM:'',
@@ -888,6 +888,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           // 0..1 ratio — it must NEVER go through scaleVWAP. Blank = unavailable,
           // which the engine reads as "no acceptance data" rather than "0%".
           vwapRoll30:scaleVWAP(i0.vwapRoll30), vwapRoll30Prior:scaleVWAP(i0.vwapRoll30Prior),
+          emaTrend: /^(up|down|mixed)$/.test(String(i0.emaTrend || '')) ? i0.emaTrend : '',
           vwapAccept: i0.vwapAccept === '' || i0.vwapAccept == null ? null : (parseFloat(i0.vwapAccept) || 0),
           atr:fv(i0,'atr'), em:fv(i0,'em'), atr5:fv(i0,'atr5'), atr2h:fv(i0,'atr2h'),
           gamStrike:fv(i0,'gamStrike'), vix:fv(i0,'vix'), vix1d:fv(i0,'vix1d'),
@@ -2754,7 +2755,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const absent = k === 'vwapAccept'
           ? (v == null || v === '' || v < 0)
           : (v == null || v === '' || v === 0);
-        if (absent && vwapNotYet && (k === 'vwapRoll30' || k === 'vwapRoll30Prior')) { pending.push(k); vals[k] = ''; }
+        // With the EMA trend in (Nov 2026) the VWAP windows are only a fallback, so their
+        // absence is not worth a warning either.
+        const emaIn = /^(up|down|mixed)$/.test(String(d.emaTrend || ''));
+        if (absent && (vwapNotYet || emaIn) && (k === 'vwapRoll30' || k === 'vwapRoll30Prior')) { pending.push(k); vals[k] = ''; }
         else if (absent) missing.push(k); else vals[k] = String(v);
       });
       setFeed({ at: pulledAt, values: vals, missing, pending });
@@ -3270,7 +3274,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       vwapRoll30: is0 ? fv(inp, 'vwapRoll30') : '',
       vwapRoll30Prior: is0 ? fv(inp, 'vwapRoll30Prior') : '',
       vwapAccept: is0 && inp.vwapAccept !== '' && inp.vwapAccept != null ? inp.vwapAccept : '',
-      vwapTrend: is0 ? `${r.slope}${r.slopeDirection && r.slopeDirection !== 'flat' ? ` ${r.slopeDirection}` : ''}`
+      vwapTrend: is0 ? (r.emaTrend ? `EMA ${r.emaTrend} · ` : '') + `${r.slope}${r.slopeDirection && r.slopeDirection !== 'flat' ? ` ${r.slopeDirection}` : ''}`
         + `${r.slope5?.shiftEM != null ? ` ${r.slope5.shiftEM >= 0 ? '+' : ''}${r.slope5.shiftEM.toFixed(2)}EM30` : ''}`
         + `${r.confirmed ? ' confirmed' : r.diverges ? ' diverges' : ''}` : '',
       vwapDistEM: is0 && r.vwapDistPctEM ? `${(r.vwapDistPctEM * 100).toFixed(0)}%` : '',
@@ -3898,9 +3902,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <Inp label="Day low" {...mk('low')} value={i0.low} onChange={v=>set0('low',v)}/>
               <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} {...mk('vwap5')} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
               <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap5_30')} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
-              <Inp label={`VWAP last 30m${vwapScaled ? ' (x10)' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30')} value={i0.vwapRoll30} onChange={v=>set0('vwapRoll30',v)}/>
-              <Inp label={`VWAP prior 30m${vwapScaled ? ' (x10)' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30Prior') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30Prior')} value={i0.vwapRoll30Prior} onChange={v=>set0('vwapRoll30Prior',v)}/>
+              <Inp label={`VWAP last 30m${vwapScaled ? ' (x10)' : ''}${i0.emaTrend ? ' · fallback' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30')} value={i0.vwapRoll30} onChange={v=>set0('vwapRoll30',v)}/>
+              <Inp label={`VWAP prior 30m${vwapScaled ? ' (x10)' : ''}${i0.emaTrend ? ' · fallback' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30Prior') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30Prior')} value={i0.vwapRoll30Prior} onChange={v=>set0('vwapRoll30Prior',v)}/>
               <Inp label="VWAP acceptance (0-1)" {...mk('vwapAccept')} value={i0.vwapAccept} onChange={v=>set0('vwapAccept',v)}/>
+              <Sel label={`Short-term trend · 5-min EMA 8/21${/^(SPX|XSP)$/.test(i0.underlying) ? ' (SPY)' : ''}${notFed('emaTrend') ? ' — no feed' : ''}`} value={i0.emaTrend || ''}
+                onChange={v=>set0('emaTrend',v)}
+                options={[{ value: '', label: '— (use VWAP 30m)' }, { value: 'up', label: 'Up — price > EMA 8 > EMA 21' }, { value: 'down', label: 'Down — price < EMA 8 < EMA 21' }, { value: 'mixed', label: 'Mixed' }]} />
               <Inp label="EM" {...mk('em')} value={i0.em} onChange={v=>{setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''})); markHeld('0','em');}}/>
               <Inp label="ATR 1 Day" {...mk('atr')} value={i0.atr} onChange={v=>set0('atr',v)}/>
               <Inp label="ATR 5m" {...mk('atr5')} value={i0.atr5} onChange={v=>set0('atr5',v)}/>
@@ -5148,7 +5155,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <KV label="ES overnight" value={r.overnightDir!=='unknown'?`${r.overnightDir} (${r.overnightDirMove>0?'+':''}${r.overnightDirMove?.toFixed(1)||0} pts)`:'--'} cls={r.overnightDir==='bullish'?'text-green':r.overnightDir==='bearish'?'text-red':''}/>
                 <KV label="Cash move" value={r.cashDirMove!==undefined?`${r.cashDirMove>0?'+':''}${r.cashDirMove?.toFixed(1)||0} pts (${r.cashDir})`:'--'} cls={r.cashDir==='bullish'?'text-green':r.cashDir==='bearish'?'text-red':''}/>
                 <KV label="Overnight range" value={r.overnightRangePct>0?`${(r.overnightRangePct*100).toFixed(0)}% EM`:'--'}/>
-                <KV label="VWAP trend (30m windows)" value={`${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})${r.slope5?.shiftEM?` · ${r.slope5.shiftEM>0?'+':''}${r.slope5.shiftEM.toFixed(2)} EM30`:''}`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
+                <KV label={r.emaTrend ? 'Short-term trend (5-min EMA 8/21)' : 'VWAP trend (30m windows)'} value={r.emaTrend ? `${r.emaTrend}${r.dirCapped ? ' · capped at a lean (overnight doesn’t confirm)' : ''}` : `${r.slope5?.strength||'--'} (${r.slope5?.direction||'--'})${r.slope5?.shiftEM?` · ${r.slope5.shiftEM>0?'+':''}${r.slope5.shiftEM.toFixed(2)} EM30`:''}`} cls={r.slope5?.direction==='rising'?'text-green':r.slope5?.direction==='falling'?'text-red':''}/>
                 <KV label="VWAP acceptance" value={r.vwapAccept==null?'--':`${(r.vwapAccept*100).toFixed(0)}% above · ${r.acceptLabel}`} cls={r.vwapAccept==null?'':r.vwapAccept>=0.65?'text-green':r.vwapAccept<=0.35?'text-red':''}/>
                 <KV label="Trend confirmed" value={r.confirmed?'Yes ✓':r.diverges?'Diverges ✗':'—'} cls={r.confirmed?'text-green':r.diverges?'text-amber':''}/>
                 <KV label="VIX1D/VIX gap" value={`${(r.vixGap*100).toFixed(1)}%`}/>
