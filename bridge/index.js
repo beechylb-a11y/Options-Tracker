@@ -799,6 +799,21 @@ app.get('/api/market-data', async (req, res) => {
       vwap5 *= atrScale; vwap5_30 *= atrScale;
       vwapRoll30 *= atrScale; vwapRoll30Prior *= atrScale;
     }
+    // SPX (Nov 2026): the same dividend drift. SPX is not SPY × 10 but ~SPY × 10.02–10.05,
+    // so the client's flat ×10 put SPX's VWAP 20–35 points below where it really sits —
+    // enough to read "above VWAP" on a day SPY was below it. Scale by the live ratio here
+    // and send index points; the client's ×10 only fires on SPY-sized numbers, so it
+    // stands down. No live ratio (no SPX print or no SPY bar) → raw SPY values as before.
+    if (underlying === 'SPX' && vwap5 > 0) {
+      const spyNow = bars5m.length > 0 ? (bars5m[bars5m.length - 1].close || 0) : 0;
+      const ratio = finalPrice > 0 && spyNow > 0 ? finalPrice / spyNow : 0;
+      if (ratio > 9.5 && ratio < 10.5) {
+        vwap5 *= ratio; vwap5_30 *= ratio;
+        if (vwapRoll30 > 0) vwapRoll30 *= ratio;
+        if (vwapRoll30Prior > 0) vwapRoll30Prior *= ratio;
+        console.log('[BRIDGE] SPX VWAP scaled by live SPX/SPY ' + ratio.toFixed(4));
+      }
+    }
 
     // Data freshness, derived from the main price snapshot's IBKR market-data type
     // (1=real-time, 2=frozen, 3/4=delayed). Lets a caller tell at a glance whether

@@ -2518,6 +2518,12 @@ export function calc0DTE(inputs) {
     // (Nov 2026: every credit spread built from the panel opened Blocked on its target.)
     warnings.push(`Net ${Math.abs(netCreditDebit).toFixed(2)} is the engine's target, not a fill — about `
       + `${Math.abs(priceCheck.fair).toFixed(2)} ${priceCheck.fair < 0 ? 'credit' : 'debit'} is fair for these strikes at spot. Enter your broker's price.`);
+  } else if (priceCheck?.mismatch && inputs.netIsLive) {
+    // The Net box holds TWS's live mid for exactly these strikes — the market, not a stale
+    // typed price. If it disagrees with the model's fair, the model is the suspect.
+    warnings.push(`Net ${Math.abs(netCreditDebit).toFixed(2)} is TWS's live mid for these strikes; the model makes them about `
+      + `${Math.abs(priceCheck.fair).toFixed(2)} ${priceCheck.fair < 0 ? 'credit' : 'debit'} at spot. The market price is what you trade — `
+      + `a big gap usually means the model's vol or EM inputs are off.`);
   } else if (priceCheck?.mismatch) {
     blockers.push(`Net ${netCreditDebit < 0 ? 'debit' : 'credit'} ${Math.abs(netCreditDebit).toFixed(2)} vs `
       + `${priceCheck.fair.toFixed(2)} fair for these strikes at spot (${priceCheck.gap > 0 ? '+' : ''}${priceCheck.gap.toFixed(2)}) — `

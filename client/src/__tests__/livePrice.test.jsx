@@ -104,8 +104,11 @@ describe('Fetch from TWS fills the Sizing fields', () => {
 
   it('fills Net (mid), Win, Risk and POP; your own net re-prices them; a typed POP is kept', async () => {
     mount();
-    fireEvent.click(screen.getByTestId('live-fetch'));
+    // Unpriced: the Price button sits in the Needs-you sizing row, no need to open Inputs.
+    fireEvent.click(screen.getByTestId('need-price'));
     await waitFor(() => expect(screen.getByTestId('live-strip')).toBeTruthy());
+    // Priced: the live strip now heads Needs you.
+    expect(screen.getByTestId('needs-you').contains(screen.getByTestId('live-strip'))).toBe(true);
     const net = parseFloat(field('netCreditDebit').value);
     expect(net).toBeGreaterThan(0);                       // a credit
     const win = parseFloat(field('win').value), risk = parseFloat(field('risk').value);

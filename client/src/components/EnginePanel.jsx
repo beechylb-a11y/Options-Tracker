@@ -878,6 +878,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const netAutoRef = useRef({ key: null, value: '' });
   const mk0 = (over) => ({
           netIsTarget: i0.netCreditDebit !== '' && i0.netCreditDebit != null && netAutoRef.current.value === String(i0.netCreditDebit),
+          // TWS's own mid for these strikes (Nov 2026): a market quote can't "describe a
+          // different trade", so a gap to the model's fair is a warning, not a block.
+          netIsLive: i0.netCreditDebit !== '' && i0.netCreditDebit != null
+            && !!(liveRef.current['0'] && liveRef.current['0'].written && String(liveRef.current['0'].written.netCreditDebit) === String(i0.netCreditDebit)),
           price:fv(i0,'price'), high:fv(i0,'high'), low:fv(i0,'low'),
           vwap5:scaleVWAP(i0.vwap5), vwap5_30:scaleVWAP(i0.vwap5_30),
           // Rolling windows are prices and scale like the rest. Acceptance is a
@@ -1743,6 +1747,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   };
   const autoFillAct = { label: 'Pull from TWS', onClick: handleAutoFill, busy: autoFilling, busyLabel: 'Pulling…', primary: true };
   const openInputsAct = { label: 'Open inputs', onClick: () => setDrawerTab('inputs') };
+  // Live price from the Needs-you queue (Nov 2026): the one button that fills Net, Win,
+  // Risk and POP (and fetches the greeks with them), so a ticket is priced without
+  // opening Inputs.
+  const priceAct = { label: '⚡ Price from TWS', onClick: () => handleFetchGreeks(), busy: fetchingGreeks, busyLabel: 'Pricing…', primary: true, testid: 'need-price' };
+  const canPrice = !!(r && r.legs && r.legs.length);
   const needs = [];
   if (hasBlocker) needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker, actions: [autoFillAct, openInputsAct] });
   // Short gamma costing more than the decay pays (Oct 2026): say what it means, what
@@ -1763,13 +1772,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       return;
     }
     const [title, detail] = splitMsg(b);
+    const isNet = /net (credit|debit)/i.test(b);
     needs.push({ key: 'blk' + i, tone: 'bad', title, detail,
-      net: /net (credit|debit)/i.test(b), actions: [openInputsAct] });
+      net: isNet, actions: isNet && canPrice ? [priceAct, openInputsAct] : [openInputsAct] });
   });
   if (gf && !gf.blocked) needs.push({ key: 'gamma', tone: 'warn', title: gf.headline, detail: gf.why, fix: gf, actions: gammaActs() });
   if (missingInputs && !hasBlocker) needs.push({ key: 'size', tone: 'warn', sizing: true,
-    title: 'Enter sizing from your broker preview',
-    detail: 'Edge score, EV and Kelly size wait on win, risk and POP.' });
+    title: canPrice ? 'Price it from TWS — or enter sizing from your broker preview' : 'Enter sizing from your broker preview',
+    detail: canPrice ? 'One press fills Net (the mid), Win, Risk and POP, and fetches the greeks. Edge score, EV and Kelly size wait on them.'
+      : 'Edge score, EV and Kelly size wait on win, risk and POP.',
+    actions: canPrice ? [priceAct] : [] });
   if (dataFresh && !dataFresh.isLive && sessionOpen) needs.push({ key: 'close', tone: 'warn',
     title: 'Market data is from the last close',
     detail: 'The session is open — pull live prices before deciding.', actions: [autoFillAct] });
@@ -1780,7 +1792,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     title: `You typed ${heldConflicts.length === 1 ? 'a value' : heldConflicts.length + ' values'} the feed disagrees with`,
     detail: heldConflicts.map(k => `${k} ${secBag[k]} (feed ${feedValOf(k)})`).join(' · '),
     actions: [{ label: 'Use feed values', onClick: releaseHolds }, openInputsAct] });
-  if (!hasBlocker && r.legs.length > 0 && r.pMaxLoss == null) needs.push({ key: 'greeks', tone: 'warn',
+  const sizeRow = needs.some(n => n.key === 'size');   // its Price button fetches the greeks too
+  if (!hasBlocker && !sizeRow && r.legs.length > 0 && r.pMaxLoss == null) needs.push({ key: 'greeks', tone: 'warn',
     title: 'No greeks for these strikes yet',
     detail: 'Max-loss chance and the greeks gauges need them.',
     actions: [{ label: 'Fetch greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
@@ -1788,6 +1801,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     title: `Greeks are ${greeksAgeMin} minutes old`,
     detail: 'Max-loss chance is still using the earlier wing deltas.',
     actions: [{ label: 'Refresh greeks', onClick: handleFetchGreeks, busy: fetchingGreeks, busyLabel: 'Fetching…', primary: true }] });
+
+  // The live strip sits at the top of Needs you once a price is in (or the strikes moved
+  // since); before that, the Sizing / net rows carry the Price button. With sizing typed
+  // by hand and no blocker, a compact strip still offers the button.
+  const liveStale = !!(livePx && livePx.bag === bag && !liveOn);
+  const priceRow = needs.some(n => n.key === 'size' || (n.net && n.actions && n.actions.includes(priceAct)));
+  const showLiveTop = r.decision !== 'Error' && canPrice && !hasBlocker && (liveOn || liveStale || !priceRow);
 
   // Keep the row you are typing in until you leave it, shown as done.
   needs.forEach(n => { lastNeedsRef.current[n.key] = n; });
@@ -2716,7 +2736,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       // stale number under a fresh LIVE badge and looked identical to a successful
       // pull. Now the failures are recorded and shown on the field itself.
       const fields = is0 ? MKT_0 : MKT_45;
-      const vals = {}, missing = [];
+      const vals = {}, missing = [], pending = [];
+      // The two 30-minute VWAP windows need 12 five-minute bars, so they read 0 from
+      // the open until 10:30 ET. That is "not yet", not a failed feed: clear them (an
+      // old number would be yesterday's) and don't raise the missing-values warning.
+      const sesNow = tradingSession();
+      const etMinNow = (() => { const [h, m] = String(sesNow.etTime || '0:0').split(':').map(Number); return h * 60 + m; })();
+      const vwapNotYet = is0 && !sesNow.isNextSession && etMinNow >= 570 && etMinNow < 632;
       fields.forEach(k => {
         let v = d[k];
         if (is0 && k === 'em' && straddle) v = straddle.expectedMove; // straddle beats the VIX model
@@ -2728,9 +2754,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         const absent = k === 'vwapAccept'
           ? (v == null || v === '' || v < 0)
           : (v == null || v === '' || v === 0);
-        if (absent) missing.push(k); else vals[k] = String(v);
+        if (absent && vwapNotYet && (k === 'vwapRoll30' || k === 'vwapRoll30Prior')) { pending.push(k); vals[k] = ''; }
+        else if (absent) missing.push(k); else vals[k] = String(v);
       });
-      setFeed({ at: pulledAt, values: vals, missing });
+      setFeed({ at: pulledAt, values: vals, missing, pending });
       setJustRefreshed(true);
       setTimeout(() => setJustRefreshed(false), 6000);
 
@@ -3504,11 +3531,18 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
       {/* ── 2 · NEEDS YOU ── only what a person has to do, each with its own control.
           Nothing renders here when the Bridge has everything covered. */}
-      {needs.length > 0 && (
+      {(needs.length > 0 || showLiveTop) && (
         <section data-testid="needs-you" style={{display:'flex',flexDirection:'column',gap:8}}>
-          <div style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:'var(--c-d29922)'}}>
-            Needs you · {needs.length}
+          <div style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:needs.length ? 'var(--c-d29922)' : 'var(--c-58a6ff)'}}>
+            {needs.length ? `Needs you · ${needs.length}` : 'Live price'}
           </div>
+          {/* Live price (Nov 2026): the numbers and the button up here, not in Inputs. */}
+          {showLiveTop && (
+            <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={liveStale}
+              vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
+              fetching={fetchingGreeks} canFetch={canPrice} onFetch={() => handleFetchGreeks()}
+              onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
+          )}
           {needs.map((n, idx) => (
             <div key={n.key} data-testid={'need-' + n.key} data-resolved={n.resolved ? '1' : '0'}
               onFocus={() => setNeedsFocus(n.key)}
@@ -3535,6 +3569,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <NeedNum label={cashType==='debit' ? 'Net debit' : 'Net credit'} value={ticketNet}
                   onChange={v=>is0?set0('netCreditDebit',v):set45('netCreditDebit',v)} />
               )}
+              {n.sizing && (n.actions || []).map(a => (
+                <button key={a.label} data-testid={a.testid} onClick={a.onClick} disabled={a.busy}
+                  style={{padding:'8px 12px',borderRadius:8,fontSize:13,fontWeight:600,cursor:a.busy?'default':'pointer',minHeight:36,
+                    border:`1px solid ${a.primary?'var(--c-2f81f7)':'var(--c-30363d)'}`,background:a.primary?'var(--c-0d1a2b)':'transparent',
+                    color:a.primary?'var(--c-58a6ff)':'var(--c-e6edf3)',opacity:a.busy?0.6:1}}>{a.busy ? (a.busyLabel || 'Working…') : a.label}</button>
+              ))}
+              {n.sizing && (n.actions || []).length > 0 && <span style={{fontSize:12.5,color:'var(--c-8b949e)'}}>or type</span>}
               {n.sizing && (
                 <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-start'}}>
                   <NeedNum label="Win $" value={secBag.win} onChange={v=>is0?set0('win',v):set45('win',v)}
@@ -3545,8 +3586,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     suggest={!is0 && exitSim ? Math.round(exitSim.pop * 100) : null} />
                 </div>
               )}
-              {(n.actions || []).map(a => (
-                <button key={a.label} onClick={a.onClick} disabled={a.busy}
+              {!n.sizing && (n.actions || []).map(a => (
+                <button key={a.label} data-testid={a.testid} onClick={a.onClick} disabled={a.busy}
                   style={{padding:'8px 12px',borderRadius:8,fontSize:13,fontWeight:600,cursor:a.busy?'default':'pointer',minHeight:36,
                     border:`1px solid ${a.primary?'var(--c-2f81f7)':'var(--c-30363d)'}`,background:a.primary?'var(--c-0d1a2b)':'transparent',
                     color:a.primary?'var(--c-58a6ff)':'var(--c-e6edf3)',opacity:a.busy?0.6:1}}>{a.busy ? (a.busyLabel || 'Working…') : a.label}</button>
@@ -3857,8 +3898,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               <Inp label="Day low" {...mk('low')} value={i0.low} onChange={v=>set0('low',v)}/>
               <Inp label={`VWAP 5${vwapScaled ? ' (SPY→x10)' : ''}`} {...mk('vwap5')} value={i0.vwap5} onChange={v=>set0('vwap5',v)}/>
               <Inp label={`VWAP 5 -30min${vwapScaled ? ' (x10)' : ''}`} {...mk('vwap5_30')} value={i0.vwap5_30} onChange={v=>set0('vwap5_30',v)}/>
-              <Inp label={`VWAP last 30m${vwapScaled ? ' (x10)' : ''}`} {...mk('vwapRoll30')} value={i0.vwapRoll30} onChange={v=>set0('vwapRoll30',v)}/>
-              <Inp label={`VWAP prior 30m${vwapScaled ? ' (x10)' : ''}`} {...mk('vwapRoll30Prior')} value={i0.vwapRoll30Prior} onChange={v=>set0('vwapRoll30Prior',v)}/>
+              <Inp label={`VWAP last 30m${vwapScaled ? ' (x10)' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30')} value={i0.vwapRoll30} onChange={v=>set0('vwapRoll30',v)}/>
+              <Inp label={`VWAP prior 30m${vwapScaled ? ' (x10)' : ''}${feed && feed.pending && feed.pending.includes('vwapRoll30Prior') ? ' — from 10:30 ET' : ''}`} {...mk('vwapRoll30Prior')} value={i0.vwapRoll30Prior} onChange={v=>set0('vwapRoll30Prior',v)}/>
               <Inp label="VWAP acceptance (0-1)" {...mk('vwapAccept')} value={i0.vwapAccept} onChange={v=>set0('vwapAccept',v)}/>
               <Inp label="EM" {...mk('em')} value={i0.em} onChange={v=>{setI0(prev=>({...prev, em:v, emSource:'manual', straddleCall:'', straddlePut:''})); markHeld('0','em');}}/>
               <Inp label="ATR 1 Day" {...mk('atr')} value={i0.atr} onChange={v=>set0('atr',v)}/>
@@ -4084,10 +4125,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             collapsed={isCollapsed('sizing')}
             onToggle={() => toggleSection('sizing')}
             onExpand={() => expandSection('sizing')}>
-          <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={!!(livePx && livePx.bag === bag && !liveOn)}
-            vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
-            fetching={fetchingGreeks} canFetch={!!(r && r.legs && r.legs.length)} onFetch={() => handleFetchGreeks()}
-            onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
+          <div data-testid="live-pointer" style={{fontSize:12,color:'var(--c-8b949e)',margin:'0 0 8px'}}>
+            ⚡ Live price — mid, win, risk, POP and the Price from TWS button — is at the top, under Needs you.
+          </div>
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className="text-xs block mb-1" style={{ fontWeight: 600, color: (() => {
@@ -6231,7 +6271,7 @@ function LivePriceStrip({ on, px, now, stale, vals, fetching, canFetch, onFetch,
   const go = <button data-testid="live-fetch" style={btn} disabled={!canFetch || fetching} onClick={onFetch}>{fetching ? 'Pricing…' : on ? '⚡ Refresh' : '⚡ Price from TWS'}</button>;
   if (!on || !now || !now.lp) {
     return (
-      <div data-testid="live-strip-off" style={{ ...box, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderStyle: 'dashed' }}>
+      <div data-testid="live-strip-off" style={{ ...box, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', border: '1px dashed var(--c-1f3a5f)' }}>
         {go}
         <span style={{ color: 'var(--c-a8b2be)' }}>{stale ? 'Strikes changed since the last price — refresh to price these ones.'
           : 'Fills Net (the combo mid), Win, Risk and POP from live TWS quotes — no Strategy Builder needed.'}</span>

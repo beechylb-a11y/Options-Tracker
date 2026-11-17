@@ -39,7 +39,7 @@ describe('verdict band', () => {
     mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '', risk: '', pop: '' });
     expect(screen.getByTestId('verdict').textContent).toBe('Waiting on sizing');
     expect(screen.getByTestId('log-trade').disabled).toBe(true);
-    expect(screen.getByTestId('needs-you').textContent).toMatch(/Enter sizing/);
+    expect(screen.getByTestId('needs-you').textContent).toMatch(/enter sizing/i);
   });
 
   it('offers a live Log trade when nothing blocks the ticket', () => {
@@ -68,7 +68,7 @@ describe('verdict band', () => {
     expect(cards[0].dataset.current).toBe('1');
     fireEvent.click(screen.getAllByTestId('choice-switch')[0]);
     expect(screen.getByTestId('verdict').textContent).not.toBe('Take it smaller, or pass');
-    expect(screen.getByTestId('needs-you').textContent).toMatch(/Enter sizing/);
+    expect(screen.getByTestId('needs-you').textContent).toMatch(/enter sizing/i);
   });
 
   it('says pass when EV after commission is negative, and Kelly is shown as no edge', () => {
