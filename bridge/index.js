@@ -958,7 +958,12 @@ app.get('/api/history', async (req, res) => {
     const pull = async (whatToShow) => {
       const seen = new Set();
       const all = [];
-      let end = new Date();
+      // ?end=yyyymmdd (Nov 2026): step further back than 12 months, one year per call,
+      // for longer intraday backtests. Default: now.
+      const endQ = String(req.query.end || '');
+      let end = /^\d{8}$/.test(endQ)
+        ? new Date(+endQ.slice(0, 4), +endQ.slice(4, 6) - 1, +endQ.slice(6, 8), 23, 59, 0)
+        : new Date();
       for (let i = 0; i < months; i++) {
         try {
           const chunk = await getHistoricalBars(contract, '1 M', barSize, whatToShow, stamp(end));
