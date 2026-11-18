@@ -210,6 +210,7 @@
 /* Icon rail */
 :root[data-vision="on"]:not(#_) .vis-rail {
   position: sticky;
+  z-index: 30;          /* hover labels float over the page */
   top: 18px;
   align-self: flex-start;
   width: 76px;
@@ -225,12 +226,12 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 :root[data-vision="on"]:not(#_) .vis-rail-brand {
+  position: relative;
   width: 52px; height: 52px; border-radius: 50%;
-  display: grid; place-items: center;
-  font-weight: 700; font-size: 18px; color: #fff;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0.10));
   margin-bottom: 6px;
+  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
+:root[data-vision="on"]:not(#_) .vis-rail-brand img { display: block; width: 52px; height: 52px; border-radius: 50%; user-select: none; }
 :root[data-vision="on"]:not(#_) .vis-rail-btn {
   position: relative;
   width: 52px; height: 52px; border-radius: 50%;
@@ -245,6 +246,41 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 16px -6px rgba(0, 0, 0, 0.4);
 }
 :root[data-vision="on"]:not(#_) .vis-rail-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* Hover labels: the page name in a glass pill beside the icon, shown at once on
+   hover or keyboard focus (the native title tooltip took ~1 s). Opaque enough to
+   read over any card. */
+:root[data-vision="on"]:not(#_) .vis-rail-label {
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  transform: translate(-6px, -50%);
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-size: 13px; font-weight: 600; letter-spacing: 0; color: #fff;
+  background: rgba(58, 55, 52, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 40;
+}
+:root[data-vision="on"]:not(#_) .vis-rail-label kbd {
+  font: inherit; font-size: 11px; font-weight: 600; color: #e4e2de;
+  min-width: 18px; padding: 1px 6px; border-radius: 6px; text-align: center;
+  background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.14);
+}
+:root[data-vision="on"]:not(#_) :is(.vis-rail-btn, .vis-rail-brand):is(:hover, :focus-visible) > .vis-rail-label {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-vision="on"]:not(#_) .vis-rail-label { transition: none; }
+}
 :root[data-vision="on"]:not(#_) .vis-rail-gap { height: 6px; width: 28px; border-top: 1px solid rgba(255, 255, 255, 0.12); margin-top: 6px; }
 :root[data-vision="on"]:not(#_) .vis-main { flex: 1; min-width: 0; }
 

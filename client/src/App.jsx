@@ -5,6 +5,7 @@ import { getSupabase } from './utils/supabase';
 import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import GlassSurface from './components/GlassSurface';
+import VisionRail from './components/VisionRail';
 import { useGlassOn, useVisionOn } from './components/ThemeToggle';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
@@ -190,42 +191,18 @@ export default function App() {
   // Vision (Nov 2026): the room, one glass shell, an icon rail inside it, and the
   // page title as a large text tab on the top row. Same pages, same header data.
   if (visionOn) {
-    const railBtn = t => {
-      const Icon = t.icon;
-      const active = tab === t.id;
-      return (
-        <button key={t.id} onClick={() => setTab(t.id)} className="vis-rail-btn" data-testid={`rail-${t.id}`}
-          aria-current={active ? 'page' : undefined} aria-label={t.label} title={`${t.label}${t.key ? ' (' + t.key + ')' : ''}`}>
-          <Icon size={20} strokeWidth={1.8} />
-        </button>
-      );
-    };
-    const settingsTab = ALL_TABS.find(t => t.id === 'settings');
     return (
       <div className="liquid-glass-backdrop vis-room">
         <div className="vis-shell" data-testid="vision-shell">
-          <nav className="vis-rail" aria-label="Pages" data-testid="sidebar">
-            <div className="vis-rail-brand" title="Shadowbook" aria-hidden="true">S</div>
-            {NAV_GROUPS.map((g, gi) => (
-              <React.Fragment key={g.label}>
-                {gi > 0 && <div className="vis-rail-gap" aria-hidden="true" />}
-                {g.tabs.filter(t => t.id !== 'settings').map(railBtn)}
-              </React.Fragment>
-            ))}
-            <div className="flex-1" />
-            {railBtn(settingsTab)}
-            <button onClick={handleLogout} className="vis-rail-btn" aria-label="Sign out" title={`Sign out${userEmail ? ' · ' + userEmail : ''}`}>
-              <LogOut size={18} strokeWidth={1.8} />
-            </button>
-          </nav>
+          <VisionRail groups={NAV_GROUPS} tab={tab} onTab={setTab} onSignOut={handleLogout} userEmail={userEmail} />
           <main className="vis-main">
             <HeaderStrip
-          authenticated={authenticated}
-          account={selectedAccount}
-          accounts={accounts}
-          onAccountChange={setSelectedAccount}
-          onGlobalRefresh={() => setRefreshTick(t => t + 1)}
-          onLogin={handleLogout}
+              authenticated={authenticated}
+              account={selectedAccount}
+              accounts={accounts}
+              onAccountChange={setSelectedAccount}
+              onGlobalRefresh={() => setRefreshTick(t => t + 1)}
+              onLogin={handleLogout}
               title={PAGE_NAMES[tab]}
             />
             {pages}
