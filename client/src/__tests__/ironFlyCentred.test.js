@@ -68,3 +68,18 @@ describe('iron fly time exit', () => {
     expect(r.action).not.toBe('close');
   });
 });
+
+import { exitNumbers } from '../components/ExitPlanCard';
+describe('a stop past the max loss', () => {
+  it('is capped at the max loss and flagged', () => {
+    const N = exitNumbers({ net: 22.5, win: 2250, qty: 1, maxRisk: 750, plan: { priced: [{ qty: 1, pct: 25, price: 16.88 }], stopPrice: 45, basis: 'entry' } });
+    expect(N.stopBeyondMax).toBe(true);
+    expect(N.stop).toBe(-750);
+    expect(N.stopPrice).toBeCloseTo(30, 6);
+  });
+  it('a stop inside the max loss is left alone', () => {
+    const N = exitNumbers({ net: 0.66, win: 66, qty: 4, maxRisk: 536, plan: { priced: [{ qty: 4, pct: 25, price: 0.5 }], stopPrice: 1.32, basis: 'entry' } });
+    expect(N.stopBeyondMax).toBe(false);
+    expect(N.stop).toBe(-264);
+  });
+});

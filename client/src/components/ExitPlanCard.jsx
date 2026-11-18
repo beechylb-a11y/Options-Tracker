@@ -65,17 +65,27 @@ export function exitNumbers({ net, win, qty, plan, maxRisk }) {
     .map((t, i, a) => ({ label: a.length > 1 ? `T${i + 1}` : 'Target', pct: Number(t.pct) || 0, qty: Number(t.qty), price: Number(t.price),
       gain: pnlAt(pos, Number(t.price), Number(t.qty)) }));
   const targetAll = targets.reduce((a, t) => a + t.gain, 0);
-  const stopPrice = plan && plan.stopPrice != null && isFinite(Number(plan.stopPrice)) ? Number(plan.stopPrice) : null;
-  const stop = stopPrice != null ? pnlAt(pos, stopPrice, q) : null;
+  let stopPrice = plan && plan.stopPrice != null && isFinite(Number(plan.stopPrice)) ? Number(plan.stopPrice) : null;
+  let stop = stopPrice != null ? pnlAt(pos, stopPrice, q) : null;
   const max = pos.isCredit ? entry * 100 * q : win > 0 ? win * q : null;
   const maxPrice = pos.isCredit ? 0 : win > 0 ? entry + win / 100 : null;
   const worst = maxRisk > 0 ? -Math.abs(maxRisk) : pos.isCredit ? null : -entry * 100 * q;
+  // A stop past the most the trade can lose can never trigger (Nov 2026): on a 0DTE iron
+  // fly the 100%-of-credit guide sits beyond the wings, and the card priced a −$2,250
+  // stop on a trade that cannot lose more than $750. The wings are the stop: cap it at
+  // the max loss and say so.
+  let stopBeyondMax = false;
+  if (stop != null && worst != null && stop < worst) {
+    stopBeyondMax = true;
+    stop = worst;
+    stopPrice = pos.isCredit ? entry + Math.abs(worst) / (100 * q) : Math.max(0, entry - Math.abs(worst) / (100 * q));
+  }
   const comm = plan && Number(plan.commRoundTrip) > 0 ? Number(plan.commRoundTrip) : 0;
   const risk = stop != null ? Math.abs(stop) + comm : worst != null ? Math.abs(worst) + comm : null;
   const reward = targets.length ? targetAll - comm : null;
   const rr = risk > 0 && reward != null ? reward / risk : null;
   const breakEvenWin = risk > 0 && reward > 0 ? risk / (risk + reward) : null;
-  return { pos, q, entry, isCredit: pos.isCredit, targets, targetAll, stopPrice, stop, max, maxPrice, worst, comm, reward, risk, rr, breakEvenWin };
+  return { pos, q, entry, isCredit: pos.isCredit, targets, targetAll, stopPrice, stop, stopBeyondMax, max, maxPrice, worst, comm, reward, risk, rr, breakEvenWin };
 }
 
 function CopyBtn({ text, label = 'Copy', testid }) {
@@ -271,7 +281,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
             <div data-testid="tws-row-stop" style={{ ...ROW, opacity: 0.85, background: alpha(C.red, '0a'), borderBottomStyle: 'dashed' }}>
               <span style={{ width: 24, height: 24, borderRadius: '50%', border: `1.5px dashed ${C.red}` }} />
               <span style={{ fontWeight: 800, fontSize: 12, letterSpacing: '.04em', color: C.red }}>YOURS</span>
-              <span style={{ fontSize: 13.5, color: C.soft }}>Stop {N.stopPrice != null ? <>at <b style={{ fontFamily: MONO, color: C.red }}>{N.stopPrice.toFixed(2)}</b> {money(N.stop)}</> : '— none set'}</span>
+              <span style={{ fontSize: 13.5, color: C.soft }}>{N.stopBeyondMax ? <>Stop is past the max loss — the wings cap it at <b style={{ fontFamily: MONO, color: C.red }}>{money(N.stop)}</b></> : <>Stop {N.stopPrice != null ? <>at <b style={{ fontFamily: MONO, color: C.red }}>{N.stopPrice.toFixed(2)}</b> {money(N.stop)}</> : '— none set'}</>}</span>
               <span style={{ ...cap, color: C.red, fontWeight: 800 }}>not sent</span>
               <span style={{ ...note, gridColumn: 'span 2' }}>you manage the loss; the check-up flags this level</span>
             </div>
@@ -340,7 +350,7 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
         {tile(N.targets.length > 1 ? `If all ${N.targets.length} targets fill` : 'If the target fills', N.reward != null ? money(N.reward) : '—',
           N.reward != null ? `${money(N.targetAll)} less $${N.comm.toFixed(2)} commission` : 'no target set', C.green, 'target')}
         {tile('If you take your stop', N.stop != null ? money(N.stop - N.comm) : '—',
-          N.stop != null ? `${money(N.stop)} less $${N.comm.toFixed(2)} · not in TWS` : 'no stop set', C.red, 'stop')}
+          N.stop != null ? (N.stopBeyondMax ? `capped at the max loss — the wings are the stop` : `${money(N.stop)} less $${N.comm.toFixed(2)} · not in TWS`) : 'no stop set', C.red, 'stop')}
         {tile('Worst case at expiry', N.worst != null ? money(N.worst) : '—', N.worst != null ? 'if nothing is closed' : 'needs max risk', C.red, 'worst')}
         {tile(N.stop != null ? 'Reward : risk to your stop' : 'Reward : risk to worst case', N.rr != null ? `${N.rr.toFixed(2)} : 1` : '—',
           N.breakEvenWin != null ? `needs ~${Math.round(N.breakEvenWin * 100)}% wins to break even` : '', null, 'rr')}
