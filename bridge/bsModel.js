@@ -62,7 +62,9 @@ export function yearsToClose(expiry, now = new Date()) {
  */
 export function greeksFromQuote({ bid, ask, last, und, strike, right, expiry, now = new Date(), r = 0.04, q = 0 }) {
   const S = Number(und), K = Number(strike), R = String(right || '').toUpperCase().startsWith('P') ? 'P' : 'C';
-  const mid = bid != null && ask != null && ask >= bid && ask > 0 ? (Number(bid) + Number(ask)) / 2 : Number(last) > 0 ? Number(last) : null;
+  // No bid on a far wing (ask 0.01–0.05, nobody bidding) is a bid of zero.
+  const b = bid == null && Number(ask) > 0 && Number(ask) <= 0.1 ? 0 : bid;
+  const mid = b != null && ask != null && Number(ask) >= Number(b) && Number(ask) > 0 ? (Number(b) + Number(ask)) / 2 : Number(last) > 0 ? Number(last) : null;
   const T = yearsToClose(expiry, now);
   if (!(S > 0) || !(K > 0) || !(mid > 0) || !(T > 0)) return null;
   const sigma = impliedVol(mid, S, K, T, R, r, q);

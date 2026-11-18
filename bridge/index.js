@@ -1450,7 +1450,9 @@ app.get('/api/option-greeks', async (req, res) => {
     // not an approximate one. (Sep 2026.)
     let comboBid = 0, comboAsk = 0, comboOk = results.length > 0;
     for (const r of results) {
-      const b = r.greeks && r.greeks.bid, a = r.greeks && r.greeks.ask, q = r.qty || 1;
+      const a = r.greeks && r.greeks.ask, q = r.qty || 1;
+      // A far wing with an ask and no bid (nobody bidding 0.01) has a bid of zero.
+      const b = r.greeks && (r.greeks.bid != null ? r.greeks.bid : (a != null && a <= 0.1 ? 0 : null));
       if (b == null || a == null || !isFinite(b) || !isFinite(a)) { comboOk = false; break; }
       comboAsk += q > 0 ? q * a : q * b;
       comboBid += q > 0 ? q * b : q * a;

@@ -31,6 +31,8 @@ describe('bridge Black–Scholes', () => {
     expect(greeksFromQuote({ bid: 7.6, ask: 7.7, und: 732.3, strike: 740, right: 'P', expiry: '20261118', now: NOW }))
       .toMatchObject({ iv: null, delta: -1 });
     expect(Math.abs(greeksFromQuote({ bid: 0, ask: 0.01, und: 732.3, strike: 719, right: 'P', expiry: '20261118', now: NOW }).delta)).toBeLessThan(0.01);
+    const wing = greeksFromQuote({ bid: null, ask: 0.01, und: 731.8, strike: 719, right: 'P', expiry: '20261118', now: NOW });
+    expect(wing.optPrice).toBe(0.01); expect(Math.abs(wing.delta)).toBeLessThan(0.01);   // no bid on the wing = bid 0
     expect(greeksFromQuote({ bid: 1, ask: 1.1, und: 0, strike: 719, right: 'P', expiry: '20261118', now: NOW })).toBeNull();
   });
   it('put–call parity gives the spot the options are pricing', () => {
