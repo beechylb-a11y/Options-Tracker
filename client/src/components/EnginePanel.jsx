@@ -20,7 +20,7 @@ import { commissionRate, unitsFromLegs, roundTripCommission } from '../utils/com
 import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices, farChoices, dteBetween, fmtExpiry, legRole, isoFromYmd } from '../utils/expiries';
 import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE, positionValue } from '../engine/payoffCurve';
 import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
-import PayoffTimeChart from './PayoffTimeChart';
+import PayoffChart, { INTRADAY_DAYS_PER_HOUR } from './PayoffChart';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
 import { livePrice, yearsToExpiry } from '../engine/livePrice.js';
@@ -1991,6 +1991,32 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, closeDte), closeDte,
       closeOptions: rule.closeOptions || null, closeLeg: rule.closeLeg || '',
       sigmaNear, divYield, target, atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
+  })();
+  // ── The same chart for 0DTE (Nov 2026) ──
+  // Every leg valued at the time left to the 16:00 bell, at VIX1D (VIX if VIX1D is not
+  // in), so the chart shows P&L at the 0DTE time exit as well as at expiry — on the
+  // day a 0DTE trade is closed before the bell, so expiry is not what it realises.
+  const payCurve0 = (() => {
+    if (!is0 || !r.payoff || !Array.isArray(r.payoff.legs) || !r.payoff.legs.length) return null;
+    const spot = fv(i0, 'price'), ivPct = fv(i0, 'vix1d') || fv(i0, 'vix');
+    if (!(spot > 0) || !(ivPct > 0)) return null;
+    const ses = tradingSession();
+    const bellH = Math.max(0.05, ses.hoursToBell || 6.5);
+    const T = bellH * INTRADAY_DAYS_PER_HOUR;   // trading time, in the chart's day units
+    const divYield = divYieldOf(i0.underlying);
+    const cl = r.payoff.legs.filter(l => isFinite(l.strike)).map(l => ({
+      strike: +l.strike, right: l.type === 'put' ? 'P' : 'C', sign: l.side === 'sell' ? -1 : 1,
+      qty: l.qty || 1, dte: T, iv: ivPct / 100, r: RATE, q: divYield, label: '' }));
+    if (!cl.length) return null;
+    const { net, source } = entryNet(cl, spot, ticketNet, cashType);
+    if (net == null) return null;
+    const ex = exitWhen0();
+    const exitH = ex && ex.hours != null && !ses.isNextSession ? ex.hours : Math.max(0, bellH - 1);
+    const closeEt = (ex && ex.label ? ex.label.replace(/^exit by /, '').replace(/ ET$/, '') : '15:00');
+    const lo = isFinite(r.payoff.plotMin) ? r.payoff.plotMin : spot * 0.98;
+    const hi = isFinite(r.payoff.plotMax) ? r.payoff.plotMax : spot * 1.02;
+    return { cl, net, netSource: source, spot, lo, hi, nearDte: T, closeDay: Math.min(T, exitH * INTRADAY_DAYS_PER_HOUR), closeEt,
+      sigmaNear: ivPct / 100, divYield };
   })();
   // Sizing suggestions for 45DTE come from the expiry curve (near expiry for a time
   // spread) — the engine's capture fractions already model the 21-DTE exit, so
@@ -4828,7 +4854,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           {!is0 && payCurve && (
             <div className="card">
               <SectionLabel white info="Position P&L on any date up to expiry, TWS performance-graph style. Opens on the 21-DTE hard close: that is the curve a 45DTE trade realises, since it never reaches expiry. Solid = chosen date, with a band for IV moving ±N vol points. Dotted = today. Dashed = expiry (near expiry for a calendar or diagonal). Each leg is priced with Black-Scholes at its own expiry and IV — Fetch Greeks first for the exact leg IVs. Drag the slider or hover the chart for P&L at a price.">Payoff over time</SectionLabel>
-              <PayoffTimeChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
+              <PayoffChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
                 lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
                 closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
                 underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
@@ -4841,7 +4867,31 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
           {/* Payoff diagram — full width */}
-          {r.payoff && r.payoff.points.length > 0 && (
+          {is0 && payCurve0 && (
+            <div className="card">
+              <SectionLabel white info="P&L now, at your time exit and at expiry. Bold blue = P&L at the time exit (the curve a 0DTE trade realises); thin = expiry; dotted = now. Green / red fill = profit / loss at the exit. Blue bands = ±1σ / ±2σ expected move to the moment shown, with the probability under the price axis. Red / green blocks = short / long strikes; amber diamonds = break-evens; dashed lines = targets. Each leg is priced with Black-Scholes at the time left to the 16:00 bell at VIX1D, in trading time. Drag the slider or hover for P&L at a price.">Payoff</SectionLabel>
+              {flyTastyOk && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 6px' }}>
+                  <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)}
+                    title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                    style={{ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                      border: '1px solid ' + (tastyFly ? 'var(--c-2f81f7)' : 'var(--c-30363d)'), background: tastyFly ? 'var(--c-0d1a2b)' : 'transparent', color: tastyFly ? 'var(--c-58a6ff)' : 'var(--c-c9d1d9)' }}>
+                    {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
+                  </button>
+                </div>
+              )}
+              <PayoffChart intraday cl={payCurve0.cl} net={payCurve0.net} netSource={payCurve0.netSource} spot={payCurve0.spot}
+                lo={payCurve0.lo} hi={payCurve0.hi} sigmaNear={payCurve0.sigmaNear} nearDte={payCurve0.nearDte}
+                closeDay={payCurve0.closeDay} closeEt={payCurve0.closeEt} todayYmd={todayYmd} underlying={i0.underlying}
+                divYield={payCurve0.divYield} targets={flyTargets} />
+              <div className="grid grid-cols-2 gap-1.5 mt-3">
+                <KV label="Max profit at expiry" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
+                <KV label="Max loss at expiry" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
+                <KV label="Profit band at expiry" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
+              </div>
+            </div>
+          )}
+          {r.payoff && r.payoff.points.length > 0 && !(is0 && payCurve0) && !(!is0 && payCurve) && (
             <div className="card">
               <SectionLabel white info="P&L diagram at expiration across price range. Green zone = profit, red zone = loss. White line = payoff curve. Blue dashed = current price. Yellow dots = breakeven prices. Calculated from leg structure and net credit/debit entered.">Payoff at expiry</SectionLabel>
               {flyTastyOk && (
