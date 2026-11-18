@@ -123,3 +123,29 @@ describe('vision.css step 2: controls', () => {
   });
 });
 
+describe('vision.css step 3: no solid insides', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../styles/vision.css'), 'utf8');
+  const rules = []; postcss.parse(css).walkRules(r => rules.push(r));
+  const decl = (r, prop) => (r.nodes.find(d => d.prop === prop) || {}).value;
+  const top = rules.find(r => r.selector === ':root[data-vision="on"]:not(#_)');
+  it('the page and well colours are see-through washes', () => {
+    expect(decl(top, '--c-0d1117')).toMatch(/^rgba\(0, 0, 0, 0\.1\d\)/);
+    expect(decl(top, '--c-010409')).toMatch(/^rgba\(0, 0, 0,/);
+    const bg = rules.find(r => /\.bg-bg$/.test(r.selector) && !r.selector.includes(':is('));
+    expect(decl(bg, 'background-color')).toMatch(/^rgba\(0, 0, 0,/);
+  });
+  it('floating layers and charts re-declare the surfaces opaque', () => {
+    const scope = rules.find(r => r.nodes.some(d => d.prop === '--c-0d1117') && r !== top);
+    for (const s of ['.absolute', '.fixed', '[role="tooltip"]', '[role="menu"]', '[role="dialog"]', 'svg']) expect(scope.selector).toContain(s);
+    for (const v of ['--c-0d1117', '--c-161b22', '--c-1c2128', '--c-30363d']) expect(decl(scope, v), v).toMatch(/^#[0-9a-f]{6}$/);
+  });
+  it('bordered boxes in a card take 18px corners; glass surfaces and split halves keep theirs', () => {
+    const inline = rules.find(r => r.selector.startsWith(':root[data-vision="on"]:not(#_) div[style*="border"][style*="border-radius"]'));
+    const rad = inline.nodes.find(d => d.prop === 'border-radius');
+    expect(rad.value).toBe('18px');
+    expect(rad.important).toBe(true);
+    expect(inline.selector).toContain(':not([style*="px 0"])');
+    expect(inline.selector).toContain(':not(.liquid-glass)');
+  });
+});
+

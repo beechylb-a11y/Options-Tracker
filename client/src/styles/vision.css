@@ -20,13 +20,13 @@
   color-scheme: dark;
   --c-e6ffed: #e6ffed;
   --c-ffffff: #ffffff;
-  --c-010409: #33312e;
+  --c-010409: rgba(0, 0, 0, 0.22);
   --c-0b3d1a: rgba(85,230,129,0.24);
   --c-0c1d36: rgba(85,144,230,0.18);
   --c-0c2d6b: rgba(85,135,230,0.23);
   --c-0d1726: rgba(85,143,230,0.17);
   --c-1f3a5f: rgba(85,146,230,0.26);
-  --c-0d1117: #3b3936;
+  --c-0d1117: rgba(0, 0, 0, 0.16);   /* wells (step 3); floating layers re-declare it opaque */
   --c-0d1a0d: rgba(85,230,85,0.17);
   --c-0d1a2b: rgba(85,148,230,0.17);
   --c-0d1a2e: rgba(85,142,230,0.17);
@@ -410,6 +410,40 @@
 
 /* Keyboard focus on any control: a white ring that reads on the room */
 :root[data-vision="on"]:not(#_) :is(button, [role="button"], a):focus-visible { outline: 2px solid rgba(255, 255, 255, 0.85); outline-offset: 2px; }
+
+/* ══ Step 3: no solid insides ══════════════════════════════════════
+   The page and well colours (--c-0d1117, --c-010409, .bg-bg) are see-through dark
+   washes, so boxes inside a card read as wells cut into the glass, not slabs on it.
+   Floating layers can't be see-through (a tooltip over a chart must hide the chart),
+   so each one re-declares the surface colours opaque. Custom properties inherit, so
+   a popover, a menu, a modal and everything inside them pick this up with no
+   component edits. SVG charts do the same: their halos and tooltip boxes use the
+   page colour and need it solid. */
+:root[data-vision="on"]:not(#_) .bg-bg { background-color: rgba(0, 0, 0, 0.16); }
+:root[data-vision="on"]:not(#_) :is(.absolute, .fixed, [style*="position: absolute"], [style*="position: fixed"],
+        .liquid-glass-menu, [role="tooltip"], [role="menu"], [role="listbox"], [role="dialog"], svg) {
+  --c-0d1117: #3b3936;
+  --c-010409: #33312e;
+  --c-161b22: #4a4743;
+  --c-1c2128: #57534e;
+  --c-21262d: #55524d;
+  --c-30363d: #6a665f;
+}
+:root[data-vision="on"]:not(#_) :is(.absolute, .fixed, .liquid-glass-menu, [role="tooltip"], [role="menu"], [role="listbox"]):is(.bg-bg, .bg-bg-card, .bg-bg-card\/95),
+:root[data-vision="on"]:not(#_) :is(.absolute, .fixed, .liquid-glass-menu, [role="tooltip"], [role="menu"], [role="listbox"]) :is(.bg-bg, .bg-bg-card) { background-color: #4a4743; }
+:root[data-vision="on"]:not(#_) :is(.absolute, .fixed, .liquid-glass-menu, [role="tooltip"], [role="menu"], [role="listbox"]) .bg-bg-hover,
+:root[data-vision="on"]:not(#_) :is(.absolute, .fixed, .liquid-glass-menu, [role="tooltip"], [role="menu"], [role="listbox"]) .hover\:bg-bg-hover:hover { background-color: #57534e; }
+/* A well inside a well stays one step darker, not two: nested washes would stack
+   to near-black. */
+:root[data-vision="on"]:not(#_) :is(.bg-bg, [style*="var(--c-0d1117)"]) :is(.bg-bg, [style*="background: var(--c-0d1117)"], [style*="background-color: var(--c-0d1117)"]) { background-color: rgba(255, 255, 255, 0.04) !important; }
+
+/* Corners: a bordered box inside a card follows the card (28px) at 18px, so the
+   nesting reads as one family. Inline radii are overridden too; split halves
+   ("…px 0px…"), circles (50%) and glass surfaces keep theirs. Small bordered
+   badges drawn inline become pills. */
+:root[data-vision="on"]:not(#_) div:is(.border, [style*="border:"]):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl):not(.liquid-glass) { border-radius: 18px; }
+:root[data-vision="on"]:not(#_) div[style*="border"][style*="border-radius"]:not([style*="px 0"]):not([style*="50%"]):not(.liquid-glass):not([data-glass-surface]) { border-radius: 18px !important; }
+:root[data-vision="on"]:not(#_) span[style*="border"][style*="border-radius"]:not([style*="px 0"]):not([style*="50%"]) { border-radius: 999px !important; }
 
 /* ── Off switches ── */
 @media (prefers-reduced-transparency: reduce) {
