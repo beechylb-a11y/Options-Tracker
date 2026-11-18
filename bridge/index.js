@@ -1432,6 +1432,19 @@ app.get('/api/option-greeks', async (req, res) => {
         q: ['SPX', 'XSP', 'RUT', 'NDX'].includes(underlying) ? 0.013 : 0 }) : null;
       r.greeks = c ? { ...g0, ...c, bid: g0.bid, ask: g0.ask, mdType: g0.mdType, priceOnly: undefined } : g0;
     }
+    // One leg computed, another off TWS's model: a sum across two models is the
+    // "mixed" case the app warns about. Put every quoted leg on the computed model so
+    // the net greeks are one consistent sum. (Nov 2026: QQQ 650/660 came back 13 + bs.)
+    const tts = new Set(results.filter(r => r.greeks && Number.isFinite(r.greeks.delta)).map(r => r.greeks.tickType));
+    if (tts.has('bs') && tts.size > 1 && _und) {
+      for (const r of results) {
+        const g0 = r.greeks;
+        if (!g0 || g0.tickType === 'bs' || g0.bid == null && g0.ask == null) continue;
+        const c = greeksFromQuote({ bid: g0.bid, ask: g0.ask, und: _und, strike: r.strike, right: r.right, expiry: r.expiry,
+          q: ['SPX', 'XSP', 'RUT', 'NDX'].includes(underlying) ? 0.013 : 0 });
+        if (c) r.greeks = { ...g0, ...c, bid: g0.bid, ask: g0.ask, mdType: g0.mdType, modelDelta: g0.delta };
+      }
+    }
 
     // Net position greeks (sum of qty × per-contract greek). For a butterfly the
     // engine mainly wants |delta|, theta, gamma of the whole structure.
