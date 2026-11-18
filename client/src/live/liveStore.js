@@ -30,8 +30,9 @@ export const FRESHNESS = ['live', 'frozen', 'delayed', 'stale', 'off'];
 
 export function freshnessOf(q, { now = Date.now(), connection = 'open', bridgeConnected = true, farmOk = true, marketOpen = true } = {}) {
   if (connection !== 'open' || !bridgeConnected) return 'off';
+  // No tick at all is off — including a not-subscribed contract. A not-subscribed
+  // WARNING with ticks (IBKR sends 10090 for partial entitlements) is not.
   if (!q || !q.ts) return 'off';
-  if (q.notEntitled) return 'off';
   if (q.delayed || q.mdType === 3 || q.mdType === 4) return 'delayed';
   if (!marketOpen) return 'frozen';
   if (!farmOk || now - q.ts > STALE_MS) return 'stale';

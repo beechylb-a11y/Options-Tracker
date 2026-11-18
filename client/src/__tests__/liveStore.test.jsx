@@ -51,7 +51,9 @@ describe('freshnessOf', () => {
     expect(freshnessOf(q, { now: 1000, connection: 'down' })).toBe('off');
     expect(freshnessOf(q, { now: 1000, bridgeConnected: false })).toBe('off');
     expect(freshnessOf({}, { now: 1000 })).toBe('off');
-    expect(freshnessOf({ ts: 1, notEntitled: true }, { now: 1 })).toBe('off');
+    expect(freshnessOf({ notEntitled: true }, { now: 1 })).toBe('off');
+    // a not-subscribed warning that came with real ticks (META legs on paper, 18 Nov)
+    expect(freshnessOf({ ts: 1, notEntitled: true, mdType: 2 }, { now: 1 })).toBe('live');
   });
   it('delayed beats everything else that is up; closed market is frozen', () => {
     expect(freshnessOf({ ts: 1000, delayed: true }, { now: 1000 })).toBe('delayed');

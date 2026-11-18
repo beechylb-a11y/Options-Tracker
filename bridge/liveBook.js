@@ -166,10 +166,13 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
     e.seq = bump();
   }
 
-  function markNotEntitled(key) {
+  // IBKR's not-subscribed family. Some (10090, 10167) arrive alongside real or delayed
+  // ticks, so this is a note on the quote, not a verdict: the app goes by the ticks.
+  function markNotEntitled(key, code = null) {
     const e = entries.get(key);
     if (!e) return;
     e.quote.notEntitled = true;
+    if (code != null) e.quote.entCode = code;
     e.seq = bump();
   }
 

@@ -2355,7 +2355,19 @@ function liveSubscribe(key) {
   liveReq.set(reqId, key); liveReqOf.set(key, reqId); liveSubAt.set(key, Date.now());
   book.setSubscribed(key, true);
   const isOpt = c.secType === SecType.OPT || /\s[CP]$/.test(key);
-  try { ib.reqMktData(reqId, c, isOpt ? '106' : '', false, false); }
+  try {
+    if (isOpt) ib.reqMktData(reqId, c, '106', false, false);
+    else {
+      // Underlyings go out as DELAYED-FROZEN (4), as every cash snapshot here already
+      // does: an account without a real-time index / stock subscription (the paper
+      // login) gets nothing at all on frozen (2), while with a subscription IBKR sends
+      // real-time anyway. The ticks say which (delayed field ids, marketDataType), so
+      // the app shows delayed honestly. Options stay on frozen (2) — OPRA is real-time.
+      ib.reqMarketDataType(4);
+      ib.reqMktData(reqId, c, '', false, false);
+      ib.reqMarketDataType(2);
+    }
+  }
   catch (e) { console.log('[BRIDGE] live subscribe failed', key, e.message); liveReq.delete(reqId); liveReqOf.delete(key); }
 }
 
@@ -2380,7 +2392,9 @@ function liveSnapshotFor(contract) {
   const at = liveSubAt.get(key);
   if (!at || !book.has(key)) return null;
   const q = book.snapshot().quotes[key];
-  if (!q || !q.ts || q.ts < at || q.notEntitled) return null;
+  // A not-subscribed warning can come with real ticks (10090 "part of the data is not
+  // subscribed"); only the ticks decide.
+  if (!q || !q.ts || q.ts < at) return null;
   const hasPrice = (q.bid && q.ask) || q.last;
   if (!hasPrice || !q.close) return null;
   return { bid: q.bid, ask: q.ask, last: q.last, high: q.high, low: q.low, prevClose: q.close, open: q.open,
@@ -2413,7 +2427,7 @@ function liveOnConnect() {
   ib.on(EventName.marketDataType, (id, type) => { const k = liveReq.get(id); if (k) book.applyMdType(k, type); });
   ib.on(EventName.error, (err, code, id) => {
     const k = liveReq.get(id);
-    if (k && NOT_SUBSCRIBED.includes(code)) book.markNotEntitled(k);
+    if (k && NOT_SUBSCRIBED.includes(code)) book.markNotEntitled(k, code);
     if (code === 2103 || code === 2105 || code === 2157) book.setStatus({ farmOk: false });   // data farm lost
     if (code === 2104 || code === 2106 || code === 2158) book.setStatus({ farmOk: true });    // data farm back
   });
