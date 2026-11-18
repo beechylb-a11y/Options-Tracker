@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { streamQuotesFor, streamPrice, useLiveQuotesEvery } from '../live/streamQuotes';
 import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare } from 'lucide-react';
 import { api } from '../utils/api';
 import OrderTicket from '../components/OrderTicket';
@@ -73,6 +74,9 @@ export default function PortfolioRisk({ authenticated, account }) {
   let bridgeUrl = '';
   try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
   const todayYmd = tradingSession(now).yyyymmdd;
+  // Prices from the push stream, re-read at most every 2 s: the risk grid re-marks
+  // itself as the market moves instead of on the next manual refresh. (Nov 2026.)
+  const stream = useLiveQuotesEvery(2000);
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -99,21 +103,25 @@ export default function PortfolioRisk({ authenticated, account }) {
     if (!bridgeUrl || !base) return;
     setLive(l => ({ ...l, busy: true, note: '' }));
     const t0 = new Date();
+    // VIX from the push stream when it is there; the 30 s market-data call otherwise.
+    const vixNow = streamPrice('VIX');
     const [pos, md] = await Promise.all([
       getJson(bridgeUrl + '/api/positions', 15000),
-      getJson(bridgeUrl + '/api/market-data?underlying=SPX', 30000),
+      vixNow ? Promise.resolve({ vix: vixNow }) : getJson(bridgeUrl + '/api/market-data?underlying=SPX', 30000),
     ]);
     const raw = pos && Array.isArray(pos.raw) ? pos.raw : null;
     const book = buildBook({ open: base.open, decisions: base.decisions, closes: base.closes, raw, todayYmd: tradingSession(t0).yyyymmdd });
     const want = book.filter(p => p.legs && p.live > 0 && (!p.expiry || p.expiry >= tradingSession(t0).yyyymmdd));
     const quotes = {};
     await pool(want, 3, async p => {
+      // Legs the live book already prices are valued from the stream (below), live.
+      if (streamQuotesFor(p.underlying, p.legs)) { quotes[p.key] = null; return; }
       const nearExp = p.legs.map(l => String(l.expiry)).sort()[0];
       const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + encodeURIComponent(p.underlying) + '&expiry=' + nearExp
         + '&legs=' + encodeURIComponent(JSON.stringify(p.legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
       quotes[p.key] = g && !g.error ? g : null;
     });
-    const missed = want.filter(p => !quotes[p.key]).length;
+    const missed = want.filter(p => !quotes[p.key] && !streamQuotesFor(p.underlying, p.legs)).length;
     setNow(new Date());
     setLive({ raw, posErr: pos && pos.error ? pos.error : null, quotes, vix: md && md.vix > 0 ? md.vix : null,
       busy: false, ranAt: new Date(), note: missed ? `${missed} position${missed === 1 ? '' : 's'} got no quotes — valued with the model` : '' });
@@ -129,7 +137,7 @@ export default function PortfolioRisk({ authenticated, account }) {
     const risks = {}, reviews = {};
     for (const p of book) {
       if (p.expiry && p.expiry < todayYmd) continue;
-      const r = positionRisk(p, live.quotes[p.key] || null, { now });
+      const r = positionRisk(p, (p.legs && streamQuotesFor(p.underlying, p.legs, stream)) || live.quotes[p.key] || null, { now });
       if (!r) continue;
       risks[p.key] = r;
       if (p.engine === '45DTE' && r.markSource === 'quotes' && r.greeks) {
@@ -153,7 +161,7 @@ export default function PortfolioRisk({ authenticated, account }) {
       events: eventsAhead(book, todayYmd),
       items: attention(book, { risks, reviews, planOf: loadPlan, now, todayYmd }),
     };
-  }, [base, live, horizon, todayYmd, now]);
+  }, [base, live, horizon, todayYmd, now, stream]);
 
   function act(p, action) {
     if (action === 'fills') setFills(p.row);

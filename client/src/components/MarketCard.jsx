@@ -160,6 +160,11 @@ export function useWhatIf({ underlying, legs, lots, entry, isCredit, enabled = t
   return st;
 }
 
+// IB's price-cap boilerplate, in one line (the full text stays in the tooltip).
+export function warnText(t) {
+  return /not immediately executable/i.test(t || '') ? 'Price-cap notice: IB may reject a limit set far from its reference price.' : t;
+}
+
 export function WhatIfBlock({ st }) {
   if (!st || st.s === 'idle') return null;
   const row = (k, v, col = C.text) => (
@@ -174,10 +179,19 @@ export function WhatIfBlock({ st }) {
       <span style={{ ...CAPS, paddingBottom: 4 }}>TWS what-if {st.s === 'busy' ? '· asking…' : ''}</span>
       {st.s === 'err' ? <div style={{ fontSize: 12.5, color: C.amber }}>{st.msg}</div> : (
         <>
-          {row('Margin required', $(w.initMarginChange))}
-          {row('Commission and fees', comm == null ? '—' : $(comm) + (w.commission == null && comm != null ? ' (est.)' : ''))}
-          {st.excess != null && row('Excess liquidity after', $(st.excess), st.excess < 0 ? C.red : C.text)}
-          {w.warning ? <div style={{ fontSize: 12.5, color: C.amber, paddingTop: 4 }}>{w.warning}</div> : null}
+          {st.s === 'ok' && w.initMarginChange == null ? (
+            // TWS answered with no margin figures (seen out of hours on paper): its
+            // commission is then a placeholder 0, so show neither. (Nov 2026.)
+            <div data-testid="what-if-empty" style={{ fontSize: 12.5, color: C.grey, paddingTop: 2 }}>
+              TWS answered without margin figures — it often does outside market hours. Try again once the market is open.</div>
+          ) : (
+            <>
+              {row('Margin required', $(w.initMarginChange))}
+              {row('Commission and fees', comm == null ? '—' : $(comm) + (w.commission == null && comm != null ? ' (est.)' : ''))}
+              {st.excess != null && row('Excess liquidity after', $(st.excess), st.excess < 0 ? C.red : C.text)}
+            </>
+          )}
+          {w.warning ? <div title={w.warning} style={{ fontSize: 12, color: C.amber, paddingTop: 4 }}>{warnText(w.warning)}</div> : null}
         </>
       )}
     </div>

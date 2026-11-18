@@ -13,6 +13,7 @@ import { comboQuote, FRESH_LABEL, ageText } from '../live/liveStore';
 import PayoffChart from './PayoffChart';
 import { LiveLegs } from './MarketCard';
 import FreshDot from './FreshDot';
+import { streamQuotesFor } from '../live/streamQuotes';
 
 // ── Trade details (Oct 2026) ──
 // One open trade on demand: a colour payoff diagram — at expiry, now, and at the
@@ -94,6 +95,8 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
     setNow(new Date());
     if (!p.legs) { setStatus('nolegs'); return; }
     if (!bridgeUrl) { setStatus('ready'); setNote('No IBKR bridge set — valued with a model at the ticket’s entry price and IV.'); return; }
+    // Every leg already priced by the push stream: nothing to ask the bridge for.
+    if (streamQuotesFor(p.underlying, p.legs)) { setNote(''); setStatus('ready'); return; }
     const nearExp = p.legs.map(l => String(l.expiry)).sort()[0];
     const g = await getJson(`${bridgeUrl}/api/option-greeks?underlying=${encodeURIComponent(p.underlying)}&expiry=${nearExp}&legs=`
       + encodeURIComponent(JSON.stringify(p.legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);

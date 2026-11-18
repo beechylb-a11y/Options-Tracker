@@ -98,6 +98,11 @@ describe('createLiveBook', () => {
     b.setOrder(7, { status: 'Submitted', lmtPrice: 1.85 });
     b.setOrder(7, { status: undefined, filled: 2 });     // an undefined field must not wipe the status
     expect(b.snapshot().orders[0]).toMatchObject({ orderId: 7, status: 'Submitted', filled: 2, lmtPrice: 1.85 });
+    // a what-if preview's status is dropped, and the stream says so
+    const s2 = b.seq;
+    b.dropOrder(7);
+    expect(b.snapshot().orders).toEqual([]);
+    expect(b.changesSince(s2).orders).toEqual([]);
   });
 });
 

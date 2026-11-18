@@ -16,6 +16,7 @@ import PositionBoard, { boardRow } from './PositionBoard';
 import { runCheckup, bridgeUrlOf, clearCheckupCache } from './Checkup45';
 import { payoffShape } from '../engine/positionPlan';
 import { nyMinutes } from '../engine/review0';
+import { streamQuotesFor, markFromStream, useLiveQuotesEvery } from '../live/streamQuotes';
 
 // The trading session the trade belongs to, and the moment it was logged on YOUR clock.
 // The server files a trade by its New York session (an after-close log rolls to the
@@ -40,6 +41,8 @@ function openedOf(r) {
 export default function OpenPositions({ authenticated, account, compact = false, maxOpenRisk = null }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState({});
+  // The board's P&L ticks with the push stream between check-ups (re-read each second).
+  const stream = useLiveQuotesEvery(1000);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [ticket, setTicket] = useState(null);   // { row, tab } — the SELL ticket in play
@@ -257,7 +260,12 @@ export default function OpenPositions({ authenticated, account, compact = false,
       else if (k === 'reconcile') setReconciling(r);
       else if (k === 'fix-strikes') fixStrikes(r, extra);
     };
-    const board = rows.map(r => boardRow(r, { chain: chains[r.ticketRef] || null, expiry: expiries[r.ticketRef] || null, check: check.byTs[Number(r.ticketRef)] || check.byTs[r.timestamp] || null }));
+    const board = rows.map(r => {
+      const ck = check.byTs[Number(r.ticketRef)] || check.byTs[r.timestamp] || null;
+      const und = ck && ck.t ? ck.t.underlying : r.underlying;
+      const liveMark = ck && Array.isArray(ck.legs) && ck.legs.length ? markFromStream(ck.legs, streamQuotesFor(und, ck.legs, stream)) : null;
+      return boardRow(r, { chain: chains[r.ticketRef] || null, expiry: expiries[r.ticketRef] || null, check: ck, liveMark });
+    });
     return (
       <>
         <PositionBoard rows={board} on={on} cap={exp.cap || null} checkedAt={check.at} checking={check.busy}

@@ -37,7 +37,9 @@ const URGENCY = { close: 0, 'close-or-roll': 0, 'roll-short': 1, 'roll-out': 1, 
 export const needsAction = a => URGENCY[a] != null && URGENCY[a] <= 1;
 
 /** Everything one row shows, from the open-position row, its roll chain, expiry and check-up. */
-export function boardRow(r, { chain = null, expiry = null, check = null } = {}) {
+// liveMark: the legs' value now from the push stream (Σ qty × mid per share); when
+// given, the P&L is re-marked with it between check-ups. (Nov 2026.)
+export function boardRow(r, { chain = null, expiry = null, check = null, liveMark = null } = {}) {
   const pos = normalisePosition(r);
   // Only a ticket with NOTHING filled is "working". A part-filled one is a live
   // position for the contracts that filled, plus an order still resting for the rest —
@@ -51,7 +53,9 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
   const tone = working ? 'purple' : rv ? rv.tone : 'grey';
   const label = working ? 'Working' : action === 'open' ? 'Open' : ACTION_LABEL[action] || action;
   const banked = (chain ? chain.banked : 0) + n(r.realisedPnl);
-  const ticketPnl = m.pnl$ != null ? m.pnl$ : null;
+  const qOpen = n(r.qtyOpen) || n(r.qty);
+  const live$ = liveMark != null && m.ncd != null && qOpen > 0 && !working ? Math.round((liveMark + m.ncd) * 100 * qOpen) : null;
+  const ticketPnl = live$ != null ? live$ : m.pnl$ != null ? m.pnl$ : null;
   const st = stopOf(r), tg = targetOf(r);
   const today = tradingSession().yyyymmdd;
   const exp = (m.nearExp) || (expiry && expiry.expiry) || null;
@@ -67,7 +71,7 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
     engine: pos.engine, is45: /45/.test(pos.engine || ''), is0: /0DTE/i.test(pos.engine || ''), resting,
     minutesToExit: m.minutesToExit, exitEt: m.exitEt, minutesToBell: m.minutesToBell, minutesToLastCall: m.minutesToLastCall, settle: m.settle, phase: m.phase,
     expiry: exp, dte, closeYmd, daysToClose, daysHeld: m.daysHeld, planDays: m.planDays, events: m.events || [],
-    banked, chain, ticketPnl, posPnl: ticketPnl != null ? ticketPnl + banked : null,
+    banked, chain, ticketPnl, posPnl: ticketPnl != null ? ticketPnl + banked : null, pnlSource: live$ != null ? 'stream' : m.pnl$ != null ? 'check-up' : null,
     // The check-up's own numbers when it ran (so this row and the card under it are
     // the same figures); the shared exit lines otherwise. Both read the same entry
     // and the same saved plan.
@@ -314,7 +318,8 @@ function BoardRow({ row, on, narrow }) {
   );
   const pnl = (
     <div data-testid="board-pnl" style={{ textAlign: narrow ? 'left' : 'right' }}>
-      <div className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: pnlCol }}>{row.posPnl != null ? money(row.posPnl) : '—'}</div>
+      <div className="mono" data-testid="board-pnl-value" data-source={row.pnlSource || ''} title={row.pnlSource === 'stream' ? 'Marked live from the TWS stream' : row.pnlSource === 'check-up' ? 'From the last check-up' : ''}
+        style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: pnlCol }}>{row.posPnl != null ? money(row.posPnl) : '—'}</div>
       <div className="mono" style={{ fontSize: 11, color: C.grey, marginTop: 3, whiteSpace: 'nowrap' }}>
         {row.chain ? <>banked <span style={{ color: row.banked >= 0 ? C.green : C.red }}>{money(row.banked)}</span></> : `risk $${Math.round(row.risk).toLocaleString()}`}
       </div>

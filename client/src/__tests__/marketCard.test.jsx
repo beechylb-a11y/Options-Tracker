@@ -3,7 +3,7 @@
 import React from 'react';
 import { render, screen, cleanup, within, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import MarketCard, { limitVsMid } from '../components/MarketCard';
+import MarketCard, { limitVsMid, WhatIfBlock, warnText } from '../components/MarketCard';
 import EnginePanel from '../components/EnginePanel';
 import { liveStore } from '../live/liveStore';
 
@@ -56,6 +56,19 @@ describe('MarketCard', () => {
     global.fetch = vi.fn(async (url) => (/what-if/.test(url) ? { ok: false, status: 404, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({}) }));
     rerender(<MarketCard underlying="SPX" legs={legs} lots={2} entry={1.85} isCredit />);
     await waitFor(() => expect(screen.getByTestId('what-if').textContent).toContain('bridge is on old code'), { timeout: 3000 });
+  });
+});
+
+describe('what-if without margin figures', () => {
+  afterEach(() => cleanup());
+  it('says so instead of showing a placeholder $0 commission, and shortens the price-cap notice', () => {
+    const warning = 'If your order is not immediately executable, our systems may, depending on market conditions, reject your order…';
+    render(<WhatIfBlock st={{ s: 'ok', w: { initMarginChange: null, commission: 0, warning }, excess: null }} />);
+    const t = screen.getByTestId('what-if').textContent;
+    expect(screen.getByTestId('what-if-empty')).toBeTruthy();
+    expect(t).not.toContain('$0');
+    expect(t).toContain('Price-cap notice');
+    expect(warnText('Order size too big')).toBe('Order size too big');
   });
 });
 

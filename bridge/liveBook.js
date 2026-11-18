@@ -191,6 +191,10 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
     ordSeq = bump();
   }
 
+  function dropOrder(orderId) {
+    if (orders.delete(orderId)) ordSeq = bump();
+  }
+
   function pruneOrders(maxAgeMs = 30 * 60000) {
     const t = now();
     for (const [id, o] of orders) {
@@ -234,7 +238,7 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
 
   return {
     want, release, expire, applyTick, applyGreeks, applyMdType, markNotEntitled,
-    setPosition, setOrder, pruneOrders, setStatus, snapshot, changesSince,
+    setPosition, setOrder, dropOrder, pruneOrders, setStatus, snapshot, changesSince,
     keys: () => [...entries.keys()],
     has: k => entries.has(k),
     isSubscribed: k => !!entries.get(k)?.subscribed,

@@ -1999,6 +1999,9 @@ async function resolveCombo(u, plan, legs) {
 // POST /api/what-if — same body as /api/stage-order (targets ignored). Asks TWS what
 // the ENTRY would do to margin and what it would cost, without placing anything:
 // order.whatIf = true is a preview TWS answers and never routes. (Nov 2026.)
+// Order ids used for what-if previews: their status events stay out of the live book.
+const whatIfIds = new Set();
+
 app.post('/api/what-if', async (req, res) => {
   try {
     await connectTWS();
@@ -2017,20 +2020,37 @@ app.post('/api/what-if', async (req, res) => {
     // never let a caller's fields override it.
     const order = { ...plan.parent, orderId: id, whatIf: true, transmit: true, parentId: 0 };
     if (order.whatIf !== true) return res.status(500).json({ error: 'what-if flag missing — refused' });
+    whatIfIds.add(id);
+    // TWS can answer a what-if more than once: first a warning-only state (the
+    // price-cap notice, no margin yet), then the margin figures. Keep the fullest
+    // state and stop once margin is in, or 3 s after the first answer. (Nov 2026.)
     const out = await new Promise(resolve => {
-      let done = false;
-      const finish = v => { if (done) return; done = true; clearTimeout(t); ib.removeListener(EventName.openOrder, onOpen); ib.removeListener(EventName.error, onErr); resolve(v); };
-      const onOpen = (orderId, contract, ord, state) => { if (orderId === id && state) finish({ state }); };
+      let done = false, best = null, bestScore = -1, grace = null, answers = 0;
+      const score = st => Object.values(whatIfSummary(st)).filter(v => typeof v === 'number').length;
+      const finish = v => {
+        if (done) return; done = true; clearTimeout(t); clearTimeout(grace);
+        ib.removeListener(EventName.openOrder, onOpen); ib.removeListener(EventName.error, onErr); resolve(v);
+      };
+      const onOpen = (orderId, contract, ord, state) => {
+        if (orderId !== id || !state) return;
+        answers++;
+        const sc = score(state);
+        if (sc > bestScore) { best = state; bestScore = sc; }
+        if (whatIfSummary(state).initMarginChange != null) return finish({ state, answers });
+        if (!grace) grace = setTimeout(() => finish({ state: best, answers }), 3000);
+      };
       const onErr = (err, code, reqId) => { if (reqId === id && !(code >= 2100 && code < 2200)) finish({ error: `${code}: ${(err && err.message) || err}` }); };
-      const t = setTimeout(() => finish({ error: 'TWS did not answer the what-if within 8 s' }), 8000);
+      const t = setTimeout(() => finish(best ? { state: best, answers } : { error: 'TWS did not answer the what-if within 8 s' }), 8000);
       ib.on(EventName.openOrder, onOpen);
       ib.on(EventName.error, onErr);
       ib.placeOrder(id, resolved.bag, order);
     });
+    setTimeout(() => { whatIfIds.delete(id); book.dropOrder(id); }, 60000);
     if (out.error) return res.status(400).json({ error: out.error });
     const w = whatIfSummary(out.state);
     console.log(`[BRIDGE] what-if ${plan.summary[0]}: init margin ${w.initMarginChange} commission ${w.commission}`);
-    res.json({ ok: true, whatIf: w, excessAfter: excessAfter(w), summary: plan.summary[0], account: p.account || null });
+    res.json({ ok: true, whatIf: w, excessAfter: excessAfter(w), summary: plan.summary[0], account: p.account || null, answers: out.answers || 1,
+      ...(w.initMarginChange == null ? { note: 'TWS gave no margin figures for this preview' } : {}) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2494,6 +2514,7 @@ function liveOnConnect() {
       parentId: (order && order.parentId) || 0, status: state && state.status ? state.status : undefined });
   });
   ib.on(EventName.orderStatus, (orderId, status, filled, remaining, avgFillPrice) => {
+    if (whatIfIds.has(orderId)) return;   // a preview, never a working order
     book.setOrder(orderId, { status, filled: Number(filled) || 0, remaining: Number(remaining) || 0, avgFillPrice: Number(avgFillPrice) || 0 });
   });
   book.setStatus({ connected: true, farmOk: true, positionsReady: false, app: session.app, mode: session.mode, accounts: session.accounts });

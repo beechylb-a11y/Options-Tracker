@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { streamQuotesFor, streamPrice } from '../live/streamQuotes';
 import { Stethoscope, RefreshCw, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 import { reviewOpen45, ymdOfIso, daysBetweenYmd } from '../engine/review45';
@@ -166,10 +167,17 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
     // rather than handing back a bare number or a zero; a check-up run off a stale
     // close is still worth reading, but only if the reader knows that is what it is.
     const priceNote = (vs.notes || []).find(n => /no live price|entitlement|no ticks|sent no ticks|no price for/i.test(n)) || null;
-    let spotFromGreeks = false;
+    let spotFromGreeks = false, quoteSource = null;
+    // The stream's price for the underlying beats the vol surface's when it has one.
+    const sp = streamPrice(t.underlying);
+    if (sp) now = { ...now, spot: sp };
     if (legs) {
       const nearExp = legs.map(l => l.expiry).sort()[0];
-      const g = await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
+      // The push stream first (open legs are held in the bridge's live book); the
+      // bridge's one-off quote, which takes up to 40 s, only when a leg has no price there.
+      const sq = streamQuotesFor(t.underlying, legs);
+      quoteSource = sq ? 'stream' : 'bridge';
+      const g = sq || await getJson(bridgeUrl + '/api/option-greeks?underlying=' + t.underlying + '&expiry=' + nearExp
         + '&legs=' + encodeURIComponent(JSON.stringify(legs.map(l => ({ strike: l.strike, right: l.right, qty: l.qty, expiry: l.expiry })))), 40000);
       if (g && !g.error && Array.isArray(g.legs)) {
         let mark = 0, ok = true;
@@ -242,10 +250,10 @@ async function runCheckupNow({ tickets, openPositions, bridgeUrl }) {
     out.push({ t, openRow: openByTs[t.key] || null,
       legs, source, note: m.legs ? m.note : (legs ? '' : m.note), quoteErr, review, trend: vs.trend,
       mismatch: m.legs && m.mismatch ? { ...m.mismatch, legs: m.legs } : null,
-      spot: now.spot, roll,
+      spot: now.spot, roll, quoteSource,
       // The greeks' undPrice overrides the surface spot where it exists, so a stale
       // surface price only stands if the greeks had none either.
-      spotStale: !!vs.spotStale && !spotFromGreeks, spotAsOf: vs.spotAsOf || null, priceNote });
+      spotStale: !!vs.spotStale && !spotFromGreeks && !sp, spotAsOf: vs.spotAsOf || null, priceNote });
   }
 return { list: out, posErr, at: new Date() };
 }
