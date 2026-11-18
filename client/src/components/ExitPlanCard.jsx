@@ -21,9 +21,6 @@ import { Clock, Copy, Check, Send } from 'lucide-react';
 import { normalisePosition, pnlAt } from '../utils/ticketMath';
 import { alpha } from '../utils/theme';
 import { TimeRing } from './EngineVisual';
-import FreshDot from './FreshDot';
-import { useLiveWatch, useLegKeys, useLiveQuotes, useFreshness, useLiveConnection } from '../live/useLive';
-import { comboQuote } from '../live/liveStore';
 
 const C = { green: 'var(--c-3fb950)', green2: 'var(--c-2ea043)', red: 'var(--c-f85149)', amber: 'var(--c-d29922)', blue: 'var(--c-58a6ff)',
   grey: 'var(--c-8b949e)', soft: 'var(--c-a8b2be)', text: 'var(--c-e6edf3)', white: 'var(--c-ffffff)', line: 'var(--c-30363d)', line2: 'var(--c-21262d)',
@@ -164,44 +161,6 @@ const note = { fontSize: 12.5, color: C.grey, lineHeight: 1.45, minWidth: 0 };
  * @param editor      the inline controls (ProfitTaker variant="card")
  * @param onStaged    called after TWS accepted the staged orders
  */
-// The combo's market right now, streamed from TWS (Nov 2026): mid, crossing the
-// spread and the far side, against the limit you are about to stage.
-export function LiveCombo({ underlying, legs, entry, isCredit }) {
-  const watch = (legs || []).map(l => ({ underlying, expiry: l.expiry, strike: l.strike, right: l.right, qty: Number(l.qty) || 0 }));
-  useLiveWatch(watch);
-  const keys = useLegKeys(watch);
-  const quotes = useLiveQuotes();
-  const { connection } = useLiveConnection();
-  const legQ = keys.map(k => quotes[k]);
-  const c = comboQuote(keys.map((k, i) => ({ key: k, qty: watch[i].qty })), quotes);
-  const oldest = legQ.every(q => q && q.ts) ? Math.min(...legQ.map(q => q.ts)) : 0;
-  const fresh = useFreshness(oldest ? { ts: oldest, delayed: legQ.some(q => q.delayed), notEntitled: legQ.some(q => q.notEntitled) } : null);
-  if (!watch.length || connection === 'off') return null;
-  const box = { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '9px 14px', borderTop: `1px solid ${C.line2}`, fontSize: 13 };
-  if (!c.complete) {
-    return <div data-testid="live-combo" style={{ ...box, color: C.grey }}><FreshDot state={connection === 'open' ? 'stale' : 'off'} />
-      {connection === 'open' ? 'Waiting for TWS quotes on every leg…' : 'Live stream not connected — market prices will appear when it is.'}</div>;
-  }
-  // Show the market the way the ticket reads it: a credit trade as credits.
-  const s = isCredit ? 1 : -1;
-  const sideTxt = v => `${Math.abs(v).toFixed(2)} ${v * s >= 0 ? (isCredit ? 'cr' : 'db') : (isCredit ? 'db' : 'cr')}`;
-  const edge = Number.isFinite(entry) ? Math.round((entry - c.mid * s) * 100) / 100 : null;
-  return (
-    <div data-testid="live-combo" style={box}>
-      <FreshDot state={fresh} ts={oldest} />
-      <span style={{ color: C.grey, fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>Market now</span>
-      <span style={{ fontFamily: MONO }}>mid <b style={{ color: C.text }}>{sideTxt(c.mid)}</b></span>
-      <span style={{ fontFamily: MONO, color: C.soft }}>crossing {sideTxt(c.natural)}</span>
-      <span style={{ fontFamily: MONO, color: C.soft }}>far side {sideTxt(c.far)}</span>
-      {edge != null && (
-        <span data-testid="live-combo-edge" style={{ fontSize: 12.5, color: C.soft }}>
-          your limit {entry.toFixed(2)} is {edge === 0 ? 'at the mid' : `${Math.abs(edge).toFixed(2)} ${(isCredit ? edge > 0 : edge < 0) ? 'past the mid — may not fill' : 'inside the mid'}`}
-        </span>
-      )}
-    </div>
-  );
-}
-
 const fmtSigned = v => { const n = Number(v); return !isFinite(n) ? '—' : `${Math.abs(n).toFixed(2)} ${n >= 0 ? 'cr' : 'db'}`; };
 
 export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, when, stageLegs, stageWhyNot, tif = 'DAY', entryTif = 'DAY', orderRef, editor, onStaged }) {
@@ -336,7 +295,6 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
             )}
           </div>
         </div>
-        {stageLegs && bridgeUrl ? <LiveCombo underlying={head.underlying} legs={stageLegs} entry={N.entry} isCredit={cr} /> : null}
         {/* Stage */}
         <div data-testid="stage-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '12px 14px', background: C.bg, borderTop: `1px solid ${C.line2}` }}>
           {stageLegs && bridgeUrl && N.targets.length > 0 ? (

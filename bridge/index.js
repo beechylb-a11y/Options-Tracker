@@ -15,7 +15,7 @@ import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike
   interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot, nearestMonthly, nearestListed } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
-import { buildStage } from './stageOrder.js';
+import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
 import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
 import fs from 'fs';
@@ -1977,6 +1977,65 @@ app.get('/api/staged', (req, res) => {
   res.json({ staged: Object.values(stagedReg).sort((a, b) => String(b.stagedAt).localeCompare(String(a.stagedAt))), fillQuotes });
 });
 
+// Resolve each leg of a planned combo to its conId (trading class from the chain:
+// SPXW, RUTW, XSP…) and build the BAG contract. Shared by staging and what-if.
+async function resolveCombo(u, plan, legs) {
+  const chain = await getOptionChain(u).catch(() => null);
+  const comboLegs = [];
+  const conByKey = {};
+  for (const l of plan.comboLegs) {
+    const [expiry, strike, right] = l.legKey.split('|');
+    const c = buildOptionContract(u, expiry, Number(strike), right);
+    if (chain && chain.tradingClass) c.tradingClass = chain.tradingClass;
+    const conId = await getConId(c);
+    if (!conId) return { error: `TWS could not find ${u} ${expiry} ${strike}${right}` };
+    comboLegs.push({ conId, ratio: l.ratio, action: l.action, exchange: l.exchange });
+    conByKey[l.legKey] = conId;
+  }
+  const legConIds = (legs || []).map(l => conByKey[`${String(l.expiry)}|${Number(l.strike)}|${String(l.right).toUpperCase()[0]}`] || null);
+  return { bag: { symbol: u, secType: SecType.BAG, currency: 'USD', exchange: 'SMART', comboLegs }, legConIds };
+}
+
+// POST /api/what-if — same body as /api/stage-order (targets ignored). Asks TWS what
+// the ENTRY would do to margin and what it would cost, without placing anything:
+// order.whatIf = true is a preview TWS answers and never routes. (Nov 2026.)
+app.post('/api/what-if', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const p = req.body || {};
+    const u = String(p.underlying || '').toUpperCase();
+    const plan = buildStage({ ...p, underlying: u, targets: [] });
+    if (plan.error) return res.status(400).json({ error: plan.error });
+    if (p.account && session.accounts.length && !session.accounts.includes(String(p.account))) {
+      return res.status(400).json({ error: `Account ${p.account} is not in this TWS login (${session.accounts.join(', ')})` });
+    }
+    const resolved = await resolveCombo(u, plan, p.legs);
+    if (resolved.error) return res.status(400).json({ error: resolved.error });
+    const [id] = await nextOrderIds(1);
+    // whatIf must be true or this would be a live order: build it here, check it, and
+    // never let a caller's fields override it.
+    const order = { ...plan.parent, orderId: id, whatIf: true, transmit: true, parentId: 0 };
+    if (order.whatIf !== true) return res.status(500).json({ error: 'what-if flag missing — refused' });
+    const out = await new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (done) return; done = true; clearTimeout(t); ib.removeListener(EventName.openOrder, onOpen); ib.removeListener(EventName.error, onErr); resolve(v); };
+      const onOpen = (orderId, contract, ord, state) => { if (orderId === id && state) finish({ state }); };
+      const onErr = (err, code, reqId) => { if (reqId === id && !(code >= 2100 && code < 2200)) finish({ error: `${code}: ${(err && err.message) || err}` }); };
+      const t = setTimeout(() => finish({ error: 'TWS did not answer the what-if within 8 s' }), 8000);
+      ib.on(EventName.openOrder, onOpen);
+      ib.on(EventName.error, onErr);
+      ib.placeOrder(id, resolved.bag, order);
+    });
+    if (out.error) return res.status(400).json({ error: out.error });
+    const w = whatIfSummary(out.state);
+    console.log(`[BRIDGE] what-if ${plan.summary[0]}: init margin ${w.initMarginChange} commission ${w.commission}`);
+    res.json({ ok: true, whatIf: w, excessAfter: excessAfter(w), summary: plan.summary[0], account: p.account || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/stage-order', async (req, res) => {
   try {
     await connectTWS();
@@ -1988,21 +2047,9 @@ app.post('/api/stage-order', async (req, res) => {
     if (p.account && session.accounts.length && !session.accounts.includes(String(p.account))) {
       return res.status(400).json({ error: `Account ${p.account} is not in this TWS login (${session.accounts.join(', ')})` });
     }
-    // Resolve each leg to its conId (trading class from the chain: SPXW, RUTW, XSP…).
-    const chain = await getOptionChain(u).catch(() => null);
-    const comboLegs = [];
-    const conByKey = {};
-    for (const l of plan.comboLegs) {
-      const [expiry, strike, right] = l.legKey.split('|');
-      const c = buildOptionContract(u, expiry, Number(strike), right);
-      if (chain && chain.tradingClass) c.tradingClass = chain.tradingClass;
-      const conId = await getConId(c);
-      if (!conId) return res.status(400).json({ error: `TWS could not find ${u} ${expiry} ${strike}${right}` });
-      comboLegs.push({ conId, ratio: l.ratio, action: l.action, exchange: l.exchange });
-      conByKey[l.legKey] = conId;
-    }
-    const legConIds = (p.legs || []).map(l => conByKey[`${String(l.expiry)}|${Number(l.strike)}|${String(l.right).toUpperCase()[0]}`] || null);
-    const bag = { symbol: u, secType: SecType.BAG, currency: 'USD', exchange: 'SMART', comboLegs };
+    const resolved = await resolveCombo(u, plan, p.legs);
+    if (resolved.error) return res.status(400).json({ error: resolved.error });
+    const { bag, legConIds } = resolved;
     const ids = await nextOrderIds(1 + plan.children.length);
     const errors = [];
     const onErr = (err, code, reqId) => {
@@ -2440,6 +2487,7 @@ function liveOnConnect() {
   });
   ib.on(EventName.positionEnd, () => { livePositionsReady = true; book.setStatus({ positionsReady: true }); });
   ib.on(EventName.openOrder, (orderId, contract, order, state) => {
+    if (order && order.whatIf) return;   // a what-if preview is not an order
     book.setOrder(orderId, { symbol: contract && contract.symbol, secType: contract && contract.secType,
       action: order && order.action, totalQty: order && order.totalQuantity, lmtPrice: order && order.lmtPrice,
       orderType: order && order.orderType, tif: order && order.tif, ref: (order && order.orderRef) || '',

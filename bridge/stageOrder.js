@@ -147,3 +147,31 @@ export function buildStage(p) {
   ];
   return { comboLegs, parent, children, summary, entryTif: entryLabel, cancelAt };
 }
+
+// ── What-if (Nov 2026) ──
+// TWS answers a what-if order (order.whatIf = true) with the margin and commission
+// the trade would cost, and never routes it. Its numbers arrive as strings or numbers,
+// with IB's UNSET_DOUBLE (1.797…e308) for anything it did not compute.
+const UNSET = 1e300;
+const whatNum = v => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && Math.abs(n) < UNSET ? n : null;
+};
+export function whatIfSummary(state) {
+  const s = state || {};
+  return {
+    initMarginChange: whatNum(s.initMarginChange), maintMarginChange: whatNum(s.maintMarginChange),
+    equityWithLoanChange: whatNum(s.equityWithLoanChange),
+    initMarginAfter: whatNum(s.initMarginAfter), maintMarginAfter: whatNum(s.maintMarginAfter),
+    equityWithLoanAfter: whatNum(s.equityWithLoanAfter), equityWithLoanBefore: whatNum(s.equityWithLoanBefore),
+    commission: whatNum(s.commission), minCommission: whatNum(s.minCommission), maxCommission: whatNum(s.maxCommission),
+    currency: s.commissionCurrency || 'USD',
+    warning: s.warningText ? String(s.warningText) : '',
+  };
+}
+/** Excess liquidity left after the trade, when TWS said enough to work it out. */
+export function excessAfter(w) {
+  if (!w || w.equityWithLoanAfter == null || w.initMarginAfter == null) return null;
+  return Math.round((w.equityWithLoanAfter - w.initMarginAfter) * 100) / 100;
+}

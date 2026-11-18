@@ -6,6 +6,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 afterEach(cleanup);
 import { buildStage } from '../../../bridge/stageOrder.js';
 import ExitPlanCard, { exitNumbers, spreadLabels } from '../components/ExitPlanCard';
+import { whatIfSummary, excessAfter } from '../../../bridge/stageOrder.js';
 
 const PUT_SPREAD = [
   { strike: 674, right: 'P', qty: -1, expiry: '20261116' },
@@ -117,5 +118,17 @@ describe('ExitPlanCard', () => {
     render(<ExitPlanCard {...props} stageLegs={null} stageWhyNot="TWS combos here take up to 4 legs — key this one by hand." />);
     expect(screen.queryByTestId('stage-btn')).toBeNull();
     expect(screen.getByTestId('stage-off').textContent).toMatch(/up to 4 legs/);
+  });
+});
+
+describe('what-if summary', () => {
+  it('reads TWS margin and commission and drops IB unset values', () => {
+    const w = whatIfSummary({ initMarginChange: '3630.0', maintMarginChange: '3630', equityWithLoanChange: '-5.4',
+      initMarginAfter: '8120', equityWithLoanAfter: '50000', commission: 5.4, minCommission: '1.7976931348623157E308',
+      maxCommission: 1.7976931348623157e308, commissionCurrency: 'USD', warningText: '' });
+    expect(w).toMatchObject({ initMarginChange: 3630, maintMarginChange: 3630, equityWithLoanChange: -5.4, commission: 5.4,
+      minCommission: null, maxCommission: null, currency: 'USD', warning: '' });
+    expect(excessAfter(w)).toBe(41880);
+    expect(excessAfter(whatIfSummary({}))).toBeNull();
   });
 });

@@ -87,7 +87,7 @@ describe('header live price', () => {
 
 describe('stage card live market', () => {
   it('prices the combo from streamed legs and compares it with the limit', async () => {
-    const { LiveCombo } = await import('../components/ExitPlanCard');
+    const { LiveCombo } = await import('../components/MarketCard');
     const calls = [];
     global.fetch = async (url, init) => { calls.push([String(url), init && init.body]); return { ok: true, json: async () => ({ held: [], refused: [] }) }; };
     localStorage.setItem('bridgeUrl', 'https://bridge.test');
@@ -99,9 +99,9 @@ describe('stage card live market', () => {
     const legs = [{ strike: 7580, right: 'P', qty: 1, expiry: '2026-11-18' }, { strike: 7600, right: 'P', qty: -1, expiry: '2026-11-18' }];
     render(<LiveCombo underlying="SPX" legs={legs} entry={1.85} isCredit />);
     const row = screen.getByTestId('live-combo').textContent;
-    expect(row).toContain('mid 1.85 cr');
-    expect(row).toContain('crossing 1.75 cr');
-    expect(row).toContain('far side 1.95 cr');
+    expect(row).toContain('Crossing1.75 cr');
+    expect(row).toContain('Mid1.85 cr');
+    expect(row).toContain('Far side1.95 cr');
     expect(screen.getByTestId('live-combo-edge').textContent).toBe('your limit 1.85 is at the mid');
     expect(calls[0][0]).toBe('https://bridge.test/api/live/watch');
     expect(JSON.parse(calls[0][1]).legs[0]).toMatchObject({ underlying: 'SPX', expiry: '2026-11-18', strike: 7580, right: 'P', qty: 1 });

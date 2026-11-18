@@ -21,6 +21,7 @@ import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices
 import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE, positionValue } from '../engine/payoffCurve';
 import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffChart, { INTRADAY_DAYS_PER_HOUR } from './PayoffChart';
+import MarketCard from './MarketCard';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
 import { livePrice, yearsToExpiry } from '../engine/livePrice.js';
@@ -3647,6 +3648,63 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         </section>
       )}
 
+      {/* ── 1b · PAYOFF + MARKET (Nov 2026 cockpit) ── the payoff and the trade's live
+          TWS market side by side, right under the verdict, so the decision, the picture
+          and the price are on one screen. Detail stays in the tabs below. */}
+      {!r.hardBlocker && Array.isArray(r.legs) && r.legs.length > 0 && (
+        <section data-testid="cockpit" style={{display:'flex',flexWrap:'wrap',gap:16,alignItems:'flex-start'}}>
+          <div style={{flex:'999 1 560px',minWidth:0}}>
+            {/* Payoff over time — 45DTE: today / 21-DTE close / expiry, calendars included */}
+            {!is0 && payCurve && (
+              <div className="card">
+                <SectionLabel white info="Position P&L on any date up to expiry, TWS performance-graph style. Opens on the 21-DTE hard close: that is the curve a 45DTE trade realises, since it never reaches expiry. Solid = chosen date, with a band for IV moving ±N vol points. Dotted = today. Dashed = expiry (near expiry for a calendar or diagonal). Each leg is priced with Black-Scholes at its own expiry and IV — Fetch Greeks first for the exact leg IVs. Drag the slider or hover the chart for P&L at a price.">Payoff over time</SectionLabel>
+                <PayoffChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
+                  lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
+                  closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
+                  underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
+                  closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim} />
+              </div>
+            )}
+            {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
+              <div className="card" style={{ fontSize: 13, color: 'var(--c-a8b2be)' }}>
+                Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.
+              </div>
+            )}
+            {/* Payoff diagram — full width */}
+            {is0 && payCurve0 && (
+              <div className="card">
+                <SectionLabel white info="P&L now, at your time exit and at expiry. Bold blue = P&L at the time exit (the curve a 0DTE trade realises); thin = expiry; dotted = now. Green / red fill = profit / loss at the exit. Blue bands = ±1σ / ±2σ expected move to the moment shown, with the probability under the price axis. Red / green blocks = short / long strikes; amber diamonds = break-evens; dashed lines = targets. Each leg is priced with Black-Scholes at the time left to the 16:00 bell at VIX1D, in trading time. Drag the slider or hover for P&L at a price.">Payoff</SectionLabel>
+                {flyTastyOk && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 6px' }}>
+                    <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)}
+                      title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                      style={{ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                        border: '1px solid ' + (tastyFly ? 'var(--c-2f81f7)' : 'var(--c-30363d)'), background: tastyFly ? 'var(--c-0d1a2b)' : 'transparent', color: tastyFly ? 'var(--c-58a6ff)' : 'var(--c-c9d1d9)' }}>
+                      {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
+                    </button>
+                  </div>
+                )}
+                <PayoffChart intraday cl={payCurve0.cl} net={payCurve0.net} netSource={payCurve0.netSource} spot={payCurve0.spot}
+                  lo={payCurve0.lo} hi={payCurve0.hi} sigmaNear={payCurve0.sigmaNear} nearDte={payCurve0.nearDte}
+                  closeDay={payCurve0.closeDay} closeEt={payCurve0.closeEt} todayYmd={todayYmd} underlying={i0.underlying}
+                  divYield={payCurve0.divYield} targets={flyTargets} />
+                <div className="grid grid-cols-2 gap-1.5 mt-3">
+                  <KV label="Max profit at expiry" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
+                  <KV label="Max loss at expiry" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
+                  <KV label="Profit band at expiry" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{flex:'1 1 340px',minWidth:0,alignSelf:'stretch',display:'flex'}}>
+            <MarketCard underlying={secBag.underlying} legs={stageInfo.legs || null} whyNot={stageInfo.why} lots={r.contracts}
+              entry={Math.abs(signedNet(ticketNet, cashType))}
+              isCredit={cashType === 'credit' || (cashType !== 'debit' && signedNet(ticketNet, cashType) > 0)}
+              onGoToOrder={() => { const el = document.querySelector('[data-testid="execution"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} />
+          </div>
+        </section>
+      )}
+
       {/* ── 2a · CREDIT SPREAD ── a 0DTE credit vertical on purpose, whatever the engine
           picked: side and strike distance from the replay's rules (creditSide.js). */}
       {is0 && r.decision !== 'Error' && (
@@ -4850,47 +4908,6 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
           </div>
           <div className="empty:hidden" style={tabShow('timing')}>
-          {/* Payoff over time — 45DTE: today / 21-DTE close / expiry, calendars included */}
-          {!is0 && payCurve && (
-            <div className="card">
-              <SectionLabel white info="Position P&L on any date up to expiry, TWS performance-graph style. Opens on the 21-DTE hard close: that is the curve a 45DTE trade realises, since it never reaches expiry. Solid = chosen date, with a band for IV moving ±N vol points. Dotted = today. Dashed = expiry (near expiry for a calendar or diagonal). Each leg is priced with Black-Scholes at its own expiry and IV — Fetch Greeks first for the exact leg IVs. Drag the slider or hover the chart for P&L at a price.">Payoff over time</SectionLabel>
-              <PayoffChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
-                lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
-                closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
-                underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
-                closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim} />
-            </div>
-          )}
-          {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
-            <div className="card" style={{ fontSize: 13, color: 'var(--c-a8b2be)' }}>
-              Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.
-            </div>
-          )}
-          {/* Payoff diagram — full width */}
-          {is0 && payCurve0 && (
-            <div className="card">
-              <SectionLabel white info="P&L now, at your time exit and at expiry. Bold blue = P&L at the time exit (the curve a 0DTE trade realises); thin = expiry; dotted = now. Green / red fill = profit / loss at the exit. Blue bands = ±1σ / ±2σ expected move to the moment shown, with the probability under the price axis. Red / green blocks = short / long strikes; amber diamonds = break-evens; dashed lines = targets. Each leg is priced with Black-Scholes at the time left to the 16:00 bell at VIX1D, in trading time. Drag the slider or hover for P&L at a price.">Payoff</SectionLabel>
-              {flyTastyOk && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 6px' }}>
-                  <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)}
-                    title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
-                    style={{ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
-                      border: '1px solid ' + (tastyFly ? 'var(--c-2f81f7)' : 'var(--c-30363d)'), background: tastyFly ? 'var(--c-0d1a2b)' : 'transparent', color: tastyFly ? 'var(--c-58a6ff)' : 'var(--c-c9d1d9)' }}>
-                    {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
-                  </button>
-                </div>
-              )}
-              <PayoffChart intraday cl={payCurve0.cl} net={payCurve0.net} netSource={payCurve0.netSource} spot={payCurve0.spot}
-                lo={payCurve0.lo} hi={payCurve0.hi} sigmaNear={payCurve0.sigmaNear} nearDte={payCurve0.nearDte}
-                closeDay={payCurve0.closeDay} closeEt={payCurve0.closeEt} todayYmd={todayYmd} underlying={i0.underlying}
-                divYield={payCurve0.divYield} targets={flyTargets} />
-              <div className="grid grid-cols-2 gap-1.5 mt-3">
-                <KV label="Max profit at expiry" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
-                <KV label="Max loss at expiry" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
-                <KV label="Profit band at expiry" value={r.payoff.profitBandWidth>0?(r.payoff.profitBandLow.toFixed(0)+'\u2013'+r.payoff.profitBandHigh.toFixed(0)+' ('+r.payoff.profitBandWidth.toFixed(0)+' pts)'):'--'}/>
-              </div>
-            </div>
-          )}
           {r.payoff && r.payoff.points.length > 0 && !(is0 && payCurve0) && !(!is0 && payCurve) && (
             <div className="card">
               <SectionLabel white info="P&L diagram at expiration across price range. Green zone = profit, red zone = loss. White line = payoff curve. Blue dashed = current price. Yellow dots = breakeven prices. Calculated from leg structure and net credit/debit entered.">Payoff at expiry</SectionLabel>
