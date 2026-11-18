@@ -322,6 +322,7 @@ function getOptionGreeks(contract) {
       if (graceTimer) clearTimeout(graceTimer);
       if (hardTimer) clearTimeout(hardTimer);
       if (quoteTimer) clearTimeout(quoteTimer);
+      if (modelTimer) clearTimeout(modelTimer);
       ib.removeListener(EventName.tickOptionComputation, onGreeks);
       ib.removeListener(EventName.tickPrice, onPrice);
       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
@@ -361,7 +362,14 @@ function getOptionGreeks(contract) {
         undPrice: undPrice != null && undPrice > 0 ? +Number(undPrice).toFixed(2) : null,
         tickType, mdType
       };
-      if (tickType === 13) { done(g); return; }
+      // The model tick can land before the bid/ask ticks; the combo quote and the
+      // put–call parity spot need both sides, so give them up to 0.8 s. (Nov 2026.)
+      if (tickType === 13) {
+        if (quote.bid != null && quote.ask != null) { done(g); return; }
+        modelGreeks = g;
+        if (!modelTimer) modelTimer = setTimeout(() => done(modelGreeks), 800);
+        return;
+      }
       if (!fallback || (TICK_RANK[tickType] || 0) > (TICK_RANK[fallback.tickType] || 0)) fallback = g;
       if (!graceTimer) graceTimer = setTimeout(() => done(fallback), 1500);
     };
@@ -372,14 +380,15 @@ function getOptionGreeks(contract) {
     const priceOnly = () => (quote.bid != null || quote.ask != null)
       ? { priceOnly: true, iv: null, delta: null, gamma: null, theta: null, vega: null, optPrice: null, undPrice: null, tickType: null, mdType }
       : null;
-    let quoteTimer = null;
+    let quoteTimer = null, modelGreeks = null, modelTimer = null;
     const onPrice = (id, field, value) => {
       if (id !== reqId || value == null || !(value >= 0)) return;
       if (field === 1 || field === 66) quote.bid = +Number(value).toFixed(2);
       else if (field === 2 || field === 67) quote.ask = +Number(value).toFixed(2);
+      if (modelGreeks && quote.bid != null && quote.ask != null) { done(modelGreeks); return; }
       if (quote.bid != null && quote.ask != null && !quoteTimer && !fallback) quoteTimer = setTimeout(() => done(fallback || priceOnly()), 2000);
     };
-    const onEnd = (id) => { if (id === reqId) done(fallback || priceOnly()); };
+    const onEnd = (id) => { if (id === reqId) done(modelGreeks || fallback || priceOnly()); };
     const onMdType = (id, type) => { if (id === reqId) mdType = type; };
     // Market-data-not-subscribed errors (scoped to THIS request).
     const onErr = (err, code, id) => {
@@ -394,7 +403,7 @@ function getOptionGreeks(contract) {
     // genericTickList '106' = implied vol / model greeks; snapshot=false because
     // greeks stream after a short delay, so we time out ourselves.
     ib.reqMktData(reqId, contract, '106', false, false);
-    hardTimer = setTimeout(() => done(fallback || priceOnly() || (notSubscribed ? { notSubscribed: true } : null)), 7000);
+    hardTimer = setTimeout(() => done(modelGreeks || fallback || priceOnly() || (notSubscribed ? { notSubscribed: true } : null)), 7000);
   });
 }
 

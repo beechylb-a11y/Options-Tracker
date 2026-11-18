@@ -1414,7 +1414,7 @@ const SCAN_ROWS = {
   ],
 };
 
-function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underlyings, onEditWatchlist, why,
+export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underlyings, onEditWatchlist, why,
   onScan, onScanAll, onRecalc, otherScans, onOpenGroup, onSelect }) {
   const scanMode = mode === '0dte' ? '0dte' : '45dte';
   const ui = modeUi(scanMode);
@@ -1501,11 +1501,22 @@ function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now, underl
 
       {/* This group's names — from the watchlist (Nov 2026): the mode's top N, this asset class */}
       <div className="flex gap-2 mb-4 flex-wrap items-center" data-testid="scan-names">
-        {underlyings.length ? underlyings.map(u => (
-          <span key={u} title={(why && why[u]) || ''} className="mono" style={{ padding: '3px 9px', borderRadius: 7, fontSize: 13, fontWeight: 700,
-            color: 'var(--c-ffffff)', border: `1px solid ${ui.border}`, background: ui.bg }}>{u}
-            {why && /^IVR/.test(why[u] || '') && <span style={{ fontSize: 11, fontWeight: 600, color: ui.fg }}> {why[u].replace(/^IVR /, '').replace(/ ·.*/, '')}</span>}</span>
-        )) : <span className="text-xs" style={{ color: 'var(--c-8b949e)' }}>No {classLabel.toLowerCase()} in the {ui.short} top list.</span>}
+        {underlyings.length ? underlyings.map(u => {
+          // The number on a name is its IV rank, said so (Nov 2026): it read as a setup
+          // score (QQQ "81" beside a 48/100 setup). The scan's own IV rank wins over the
+          // watchlist's cached one, so the chip and the table below agree.
+          const row = results && results.find(x => x.underlying === u);
+          const scanIvr = row ? parseFloat(row.data && row.data.ivr) : NaN;
+          const wlIvr = why && /^IVR/.test(why[u] || '') ? parseFloat(why[u].replace(/^IVR /, '')) : NaN;
+          const ivr = scanIvr > 0 ? scanIvr : wlIvr > 0 ? wlIvr : null;
+          const src = scanIvr > 0 ? 'from this scan' : 'from the watchlist ranking';
+          return (
+            <span key={u} data-testid={'scan-name-' + u} title={(ivr != null ? `IV rank ${Math.round(ivr)}%, ${src}` : '') + (why && why[u] ? ` · ${why[u]}` : '')}
+              className="mono" style={{ padding: '3px 9px', borderRadius: 7, fontSize: 13, fontWeight: 700,
+              color: 'var(--c-ffffff)', border: `1px solid ${ui.border}`, background: ui.bg }}>{u}
+              {ivr != null && <span style={{ fontSize: 11, fontWeight: 600, color: ui.fg }}> IVR {Math.round(ivr)}</span>}</span>
+          );
+        }) : <span className="text-xs" style={{ color: 'var(--c-8b949e)' }}>No {classLabel.toLowerCase()} in the {ui.short} top list.</span>}
         <button onClick={onEditWatchlist} data-testid="edit-watchlist" className="px-2 py-1 text-xs underline" style={{ color: 'var(--c-8b949e)' }}>edit watchlist</button>
       </div>
 
