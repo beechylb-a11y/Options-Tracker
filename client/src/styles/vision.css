@@ -321,6 +321,96 @@
 :root[data-vision="on"]:not(#_) .liquid-glass--modal { border-radius: var(--glass-radius-lg); }
 :root[data-vision="on"]:not(#_) .liquid-glass-scrim { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 
+/* ══ Step 2: controls ══════════════════════════════════════════════
+   Pills everywhere: secondary buttons, filled buttons, chips and segmented
+   tracks. Inputs are dark wells with a soft rim. Selectors go by shape, not by
+   component, so a new button picks the look up with no edits. */
+
+/* Secondary (bordered) buttons → pills. Only buttons whose content is a label:
+   a button holding blocks (a choice card, a spread card) keeps its card shape.
+   Neutral ones (border-bg-border) get the translucent fill and rim; coloured
+   outlines (amber Re-tag, red Sell, blue Details) keep their colour. */
+:root[data-vision="on"]:not(#_) :is(button, label.cursor-pointer):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl):is(.border, [style*="border"]):not(:has(div, p, table)) {
+  border-radius: 999px;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+:root[data-vision="on"]:not(#_) :is(button, label.cursor-pointer):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl):is(.border, [style*="border"]):not(:has(div, p, table)).border-bg-border {
+  border-color: rgba(255, 255, 255, 0.16);
+  background-color: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+:root[data-vision="on"]:not(#_) :is(button, label.cursor-pointer):is(.rounded, .rounded-md, .rounded-lg, .rounded-xl):is(.border, [style*="border"]):not(:has(div, p, table)).border-bg-border:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+/* Bordered buttons drawn with inline styles (engine tickets, board rows). A split
+   button's halves carry "…px 0px…" radii (or rounded-l- / rounded-r- classes,
+   which the rule above doesn't match) and keep them. */
+:root[data-vision="on"]:not(#_) button[style*="border-radius"]:not([style*="px 0"]):not([style*="50%"]):not(:has(div, p, table)) { border-radius: 999px !important; }
+
+/* Filled buttons → pill with a rim; the fill colours were set in step 1 */
+:root[data-vision="on"]:not(#_) button:is(.bg-accent, .bg-green-dim, .bg-red-dim, .bg-accent-dim, .bg-green, .bg-red):not([role="radio"]):not([role="tab"]) {
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px -8px rgba(0, 0, 0, 0.45);
+}
+
+/* Segmented tracks: a sunken pill; the chosen segment is a near-white pill with
+   dark text. Covers the Tailwind groups, role=radiogroup/tablist and the
+   p-1 tab rows. Inline-coloured segments (0DTE / 45DTE mode) keep their colour. */
+:root[data-vision="on"]:not(#_) :is(.flex, .inline-flex):is(.overflow-hidden.border.rounded-lg, .rounded-lg.p-1):has(> button),
+:root[data-vision="on"]:not(#_) :is([role="radiogroup"], [role="tablist"]):has(> button) {
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-color: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  overflow: visible;
+}
+:root[data-vision="on"]:not(#_) :is(.flex, .inline-flex):is(.overflow-hidden.border.rounded-lg, .rounded-lg.p-1) > button,
+:root[data-vision="on"]:not(#_) :is([role="radiogroup"], [role="tablist"]) > button {
+  border-radius: 999px;
+  border: none;
+  box-shadow: none;
+}
+:root[data-vision="on"]:not(#_) :is(.flex, .inline-flex):is(.overflow-hidden.border.rounded-lg, .rounded-lg.p-1) > button:hover:not(:disabled),
+:root[data-vision="on"]:not(#_) :is([role="radiogroup"], [role="tablist"]) > button:hover:not(:disabled) { background-color: rgba(255, 255, 255, 0.10); }
+:root[data-vision="on"]:not(#_) :is(.flex, .inline-flex):is(.overflow-hidden.border.rounded-lg, .rounded-lg.p-1) > button:is(.bg-accent, [aria-checked="true"], [aria-selected="true"], [aria-pressed="true"]),
+:root[data-vision="on"]:not(#_) :is([role="radiogroup"], [role="tablist"]) > button:is(.bg-accent, [aria-checked="true"], [aria-selected="true"], [aria-pressed="true"]) {
+  background-color: rgba(255, 255, 255, 0.88);
+  color: #1c1b19;
+  box-shadow: inset 0 1px 0 #fff, 0 2px 8px -2px rgba(0, 0, 0, 0.35);
+}
+
+/* Small bordered chips and badges (macro events, PAPER, counts) → pills */
+:root[data-vision="on"]:not(#_) span:is(.rounded, .rounded-md, .rounded-sm).border { border-radius: 999px; }
+
+/* Inputs: dark wells. !important because the pop-up forms set these inline. */
+:root[data-vision="on"]:not(#_) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"]), select, textarea):not(.hdr-select) {
+  background-color: rgba(0, 0, 0, 0.22) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 12px !important;
+  color: #f6f6f4;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+:root[data-vision="on"]:not(#_) textarea { border-radius: 16px !important; }
+:root[data-vision="on"]:not(#_) :is(input, select, textarea):not(.hdr-select)::placeholder { color: rgba(246, 246, 244, 0.55); }
+:root[data-vision="on"]:not(#_) :is(input, select, textarea):not(.hdr-select):focus,
+:root[data-vision="on"]:not(#_) :is(input, select, textarea):not(.hdr-select):focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 3px rgba(255, 255, 255, 0.14);
+}
+:root[data-vision="on"]:not(#_) select option { background: #3b3936; color: #f6f6f4; }
+:root[data-vision="on"]:not(#_) input[type="number"] { font-variant-numeric: tabular-nums; }
+
+/* Checkboxes, radios and sliders: white marks on the dark glass */
+:root[data-vision="on"]:not(#_) :is(input[type="checkbox"], input[type="radio"], input[type="range"]) { accent-color: #f6f6f4; }
+
+/* Keyboard focus on any control: a white ring that reads on the room */
+:root[data-vision="on"]:not(#_) :is(button, [role="button"], a):focus-visible { outline: 2px solid rgba(255, 255, 255, 0.85); outline-offset: 2px; }
+
 /* ── Off switches ── */
 @media (prefers-reduced-transparency: reduce) {
   :root[data-vision="on"]:not(#_) :is(.vis-shell, .vis-rail, .card, .kpi, .hdr-well) {

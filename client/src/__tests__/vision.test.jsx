@@ -4,6 +4,7 @@
 import React from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
+import postcss from 'postcss';
 import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
@@ -89,3 +90,36 @@ describe('vision.css contrast', () => {
     }
   });
 });
+
+describe('vision.css step 2: controls', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../styles/vision.css'), 'utf8');
+  const root = postcss.parse(css);   // throws on an unclosed comment or string
+  const rules = [];
+  root.walkRules(r => rules.push(r));
+  const find = re => rules.filter(r => re.test(r.selector));
+  it('parses, and every rule is gated on Vision', () => {
+    expect(rules.length).toBeGreaterThan(40);
+    for (const r of rules) {
+      if (r.parent && r.parent.type === 'atrule' && /keyframes/.test(r.parent.name)) continue;
+      expect(r.selector, r.selector).toMatch(/:root\[data-vision="on"\]:not\(#_\)/);
+    }
+  });
+  it('bordered label buttons become pills; buttons holding blocks keep their card shape', () => {
+    const pill = find(/:is\(button, label\.cursor-pointer\)/).find(r => r.nodes.some(d => d.prop === 'border-radius' && d.value === '999px'));
+    expect(pill).toBeTruthy();
+    expect(pill.selector).toContain(':not(:has(div, p, table))');
+    const neutral = find(/\.border-bg-border$/).find(r => r.selector.includes('label.cursor-pointer'));
+    expect(neutral.nodes.find(d => d.prop === 'background-color').value).toMatch(/rgba\(255, 255, 255/);
+  });
+  it('segmented tracks: the chosen segment is a near-white pill with dark text', () => {
+    const on = find(/\[aria-checked="true"\]/)[0];
+    expect(on.selector).toContain('[role="radiogroup"]');
+    expect(on.nodes.find(d => d.prop === 'color').value).toBe('#1c1b19');
+  });
+  it('inputs are wells, except the header account picker', () => {
+    const well = find(/select, textarea\):not\(\.hdr-select\)$/)[0];
+    expect(well).toBeTruthy();
+    expect(well.nodes.find(d => d.prop === 'border-radius').value).toMatch(/12px/);
+  });
+});
+
