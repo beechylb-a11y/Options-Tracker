@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Modal from './Modal';
 import { api } from '../utils/api';
 
 // Correct a logged ticket (Oct 2026). A typo in the contracts, a strike, or the entry
@@ -118,9 +119,8 @@ export default function EditTicketModal({ position: p, onClose, onDone }) {
   const L = (txt, k, el) => <label style={{ display: 'block' }}><span style={label}>{txt}</span>{el || <input style={field} value={f[k]} onChange={e => set(k, e.target.value)} aria-label={txt} />}</label>;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={() => (changedFills && onDone ? onDone() : onClose())}>
-      <div data-testid="edit-ticket" style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }}
-        onClick={e => e.stopPropagation()}>
+    <Modal onClose={() => (changedFills && onDone ? onDone() : onClose())} width={560} testid="edit-ticket">
+      <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--c-e6edf3)' }}>Edit logged trade</div>
@@ -199,6 +199,6 @@ export default function EditTicketModal({ position: p, onClose, onDone }) {
           <button onClick={() => (changedFills && onDone ? onDone() : onClose())} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-a8b2be)', fontSize: 13, cursor: 'pointer' }}>{changedFills ? 'Done' : 'Cancel'}</button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

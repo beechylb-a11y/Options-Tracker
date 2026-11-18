@@ -4,7 +4,7 @@ import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
 import { rateFromFills, DEFAULT_COMMISSION } from '../utils/commission';
 import { invalidateCommissionRates } from '../utils/useCommissionRate';
-import { ThemeChoice } from '../components/ThemeToggle';
+import { ThemeChoice, GlassChoice } from '../components/ThemeToggle';
 
 export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
   const [config, setConfig] = useState({});
@@ -141,9 +141,12 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6 flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h3 className="font-display font-semibold">Appearance</h3>
-          <p className="text-xs text-text-muted mt-1">Day for daylight, Night for the evening session, Auto follows your computer.</p>
+          <p className="text-xs text-text-muted mt-1">Day for daylight, Night for the evening session, Auto follows your computer. Glass gives the sidebar, header, verdict and pop-ups a frosted surface (refraction in Chrome and the Claude app; frosted elsewhere).</p>
         </div>
-        <ThemeChoice />
+        <div className="flex flex-col items-end gap-2">
+          <ThemeChoice />
+          <GlassChoice />
+        </div>
       </div>
 
       {/* Auth */}

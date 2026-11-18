@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import GlassSurface from './GlassSurface';
+import { useGlassOn } from './ThemeToggle';
 import { RefreshCw } from 'lucide-react';
 import { api, clearApiCache } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
@@ -126,6 +128,7 @@ function StatusDot({ state, label, title }) {
 }
 
 export default function HeaderStrip({ authenticated, account, accounts, onAccountChange, onGlobalRefresh, onLogin }) {
+  const glassOn = useGlassOn();
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [config, setConfig] = useState(null);
@@ -252,7 +255,8 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const gaugeColor = lossUsedPct >= 80 ? 'bg-red' : lossUsedPct >= 50 ? 'bg-amber' : 'bg-green';
 
   return (
-    <div className="sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border">
+    <GlassSurface data-testid="header-strip" className={glassOn ? 'top-0 z-20' : 'sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border'}
+      glassStyle={{ position: 'sticky', borderRadius: 16, margin: '12px 12px 0 0' }}>
       <div className="max-w-[1400px] mx-auto px-6 h-12 flex items-center gap-5">
         {authenticated && accounts.length > 0 ? (
           <select
@@ -319,6 +323,6 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
           liveLine={liveSummary(live)} />
         <ThemeToggle />
       </div>
-    </div>
+    </GlassSurface>
   );
 }

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Modal from './Modal';
+import GlassSurface from './GlassSurface';
 import { X, RefreshCw, Radio } from 'lucide-react';
 import { api } from '../utils/api';
 import { buildBook, positionRisk, stopFor, targetFor, plannedExit, isoOfYmd, etWall, daysBetween } from '../engine/portfolio';
@@ -174,10 +176,8 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   const doRoll = canRoll ? () => onRoll(row) : null;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
-      onClick={onClose}>
-      <div data-testid="trade-detail" onClick={e => e.stopPropagation()}
-        style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 18, width: 1040, maxWidth: '97vw', maxHeight: '94vh', overflow: 'auto' }}>
+    <Modal onClose={onClose} zIndex={9998} padding={18} width={1040} maxWidth="97vw" maxHeight="94vh" testid="trade-detail">
+      <div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>
@@ -260,7 +260,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -289,8 +289,10 @@ function DecisionStrip({ v, pnl, r, banked, chain, winChance, curve, clock, p, t
   );
   const rest = v.alerts.filter(a => a.text !== v.why);
   return (
-    <div data-testid="manage-strip" data-tone={v.tone} style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
-      borderLeft: `4px solid ${tone}`, background: `color-mix(in srgb, ${tone} 7%, var(--c-0d1117))` }}>
+    <GlassSurface data-testid="manage-strip" data-tone={v.tone} style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
+      borderLeft: `4px solid ${tone}`, background: `color-mix(in srgb, ${tone} 7%, var(--c-0d1117))` }}
+      glassStyle={{ borderRadius: 16, border: `1px solid color-mix(in srgb, ${tone} 45%, transparent)`, borderLeft: `4px solid ${tone}`,
+        background: `linear-gradient(180deg, color-mix(in srgb, ${tone} 14%, transparent), color-mix(in srgb, ${tone} 6%, transparent))` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 260px', minWidth: 0 }}>
           <div data-testid="manage-verdict" style={{ fontSize: 16, fontWeight: 800, color: tone }}>{v.title}</div>
@@ -315,7 +317,7 @@ function DecisionStrip({ v, pnl, r, banked, chain, winChance, curve, clock, p, t
           {rest.map((a, i) => <span key={i} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 999, border: `1px solid ${TONE[a.tone]}`, color: TONE[a.tone] }}>{a.text}</span>)}
         </div>
       )}
-    </div>
+    </GlassSurface>
   );
 }
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import Modal from './Modal';
 import { api } from '../utils/api';
 import { comboTranches, matchTranches, fillPayload, manualFillPayload, ticketSide, positionForTicket } from '../utils/fillMatch';
 import { fillStats, fillVsMarket } from '../engine/fills';
@@ -157,8 +158,8 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
   const edit = (key, patch) => setPick(p => (p[key] ? { ...p, [key]: { ...p[key], ...patch } } : p));
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, width: 860, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+    <Modal onClose={onClose} width={860}>
+      <div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <div>
@@ -406,6 +407,6 @@ export default function FillReconcile({ positions, account, onClose, onDone }) {
           </>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }

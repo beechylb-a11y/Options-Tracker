@@ -4,6 +4,8 @@ import { api, setAccessToken, setOnUnauthorized, clearApiCache } from './utils/a
 import { getSupabase } from './utils/supabase';
 import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
+import GlassSurface from './components/GlassSurface';
+import { useGlassOn } from './components/ThemeToggle';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
 import DecisionEngine from './pages/DecisionEngine';
@@ -67,6 +69,7 @@ export default function App() {
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccountState] = useState(savedAccount);
   const [refreshTick, setRefreshTick] = useState(0);
+  const glassOn = useGlassOn();
 
   const [userEmail, setUserEmail] = useState('');
   const [authNotice, setAuthNotice] = useState('');
@@ -160,9 +163,11 @@ export default function App() {
   if (!authenticated) return <Login notice={authNotice} />;
 
   return (
-    <div className="min-h-screen flex">
-      {/* Sidebar */}
-      <aside className="w-[220px] bg-bg-card border-r border-bg-border flex flex-col fixed h-full z-10">
+    <div className="min-h-screen flex liquid-glass-backdrop">
+      {/* Sidebar — with Settings › Glass on it floats, 12 px in, as a glass panel. */}
+      <GlassSurface as="aside" data-testid="sidebar"
+        className={glassOn ? 'w-[220px] flex flex-col z-10' : 'w-[220px] bg-bg-card border-r border-bg-border flex flex-col fixed h-full z-10'}
+        glassStyle={{ position: 'fixed', top: 12, left: 12, bottom: 12, borderRadius: 20, overflow: 'hidden' }}>
         <div className="p-5 border-b border-bg-border">
           <h1 className="font-display text-lg font-bold tracking-tight">Shadowbook</h1>
           <p className="text-[12.5px] text-text-faint mt-0.5">Portfolio & Decision Engine</p>
@@ -181,7 +186,7 @@ export default function App() {
                     onClick={() => setTab(t.id)}
                     className={`w-full flex items-center gap-3 px-5 py-2 text-sm transition-colors
                       ${active
-                        ? 'text-accent bg-accent/10 border-l-2 border-accent font-medium'
+                        ? `text-accent ${glassOn ? '' : 'bg-accent/10'} border-l-2 border-accent font-medium`
                         : 'text-text-muted hover:text-text hover:bg-bg-hover border-l-2 border-transparent'
                       }`}
                   >
@@ -204,10 +209,10 @@ export default function App() {
             </button>
           </div>
         </div>
-      </aside>
+      </GlassSurface>
 
       {/* Main content */}
-      <main className="flex-1 ml-[220px] min-h-screen">
+      <main className={`flex-1 min-h-screen ${glassOn ? 'ml-[244px]' : 'ml-[220px]'}`}>
         <HeaderStrip
           authenticated={authenticated}
           account={selectedAccount}

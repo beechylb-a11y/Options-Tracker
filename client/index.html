@@ -10,6 +10,7 @@
       // Day/night theme before first paint, so day mode doesn't flash black on load.
       try { var t = localStorage.getItem('theme');
         if (t === 'light' || (t === 'auto' && matchMedia('(prefers-color-scheme: light)').matches)) document.documentElement.setAttribute('data-theme', 'light');
+        if (localStorage.getItem('glass') === 'on') document.documentElement.setAttribute('data-glass', 'on');
       } catch (e) {}
     </script>
   </head>

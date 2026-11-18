@@ -71,6 +71,25 @@ describe('verdict band', () => {
     expect(screen.getByTestId('needs-you').textContent).toMatch(/enter sizing/i);
   });
 
+  it('Compare ghosts an alternative on the payoff chart; hovering does too; dragging a strike re-runs the engine', () => {
+    mount({ netCreditDebit: '6.36', gamma: '-0.2', win: '636', risk: '3364', pop: '92' });
+    const chart = () => screen.getByTestId('cockpit');
+    expect(chart().querySelector('[data-testid="ghost-curve"]')).toBeNull();
+    const alt = screen.getAllByTestId('choice-card').find(c => c.dataset.current === '0');
+    fireEvent.mouseEnter(alt);
+    expect(chart().querySelector('[data-testid="ghost-curve"]')).toBeTruthy();
+    fireEvent.mouseLeave(alt);
+    expect(chart().querySelector('[data-testid="ghost-curve"]')).toBeNull();
+    fireEvent.click(screen.getAllByTestId('choice-compare')[0]);
+    expect(chart().querySelector('[data-testid="ghost-legend"]').textContent).toMatch(/fair|·|\w/);
+    expect(screen.getAllByTestId('choice-compare')[0].getAttribute('aria-pressed')).toBe('true');
+    // arrow-key a strike block: the ticket's strikes change through the same path a typed strike uses
+    const before = screen.getByTestId('price-map').getAttribute('aria-label');
+    const block = chart().querySelector('[data-testid="strike-block"][role="slider"]');
+    fireEvent.keyDown(block, { key: 'ArrowRight' });
+    expect(screen.getByTestId('price-map').getAttribute('aria-label')).not.toBe(before);
+  });
+
   it('says pass when EV after commission is negative, and Kelly is shown as no edge', () => {
     // Losers priced at the stop (100% of the 6.36 credit = $636): EV turns negative
     // below a 2/3 win rate at a 50% average win — 60% is a pass.

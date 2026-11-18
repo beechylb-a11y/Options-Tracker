@@ -1,0 +1,261 @@
+/*!
+ * Shadowbook glass — the CSS half of Liquid Glass (stormaref/LiquidGlassSkill),
+ * re-keyed to Shadowbook's theme (Nov 2026).
+ *
+ * Differences from the stock liquid-glass.css, and why:
+ *   - NIGHT IS THE DEFAULT. Shadowbook's night mode has no data-theme attribute
+ *     (utils/theme.js removes it); day mode is data-theme="light". The stock file
+ *     keys dark off data-theme="dark", which this app never sets.
+ *   - The mesh is blue / indigo / teal. Never green, red or amber: those carry
+ *     P&L, stop and caution meaning, and a pink-red glow behind a loss figure
+ *     muddies the one colour that must read instantly.
+ *   - Rollout switch: html[data-glass="on"] turns every existing .card / .kpi into
+ *     the CSS glass tier in one go. Off = today's solid cards, unchanged.
+ *   - A data tier (.liquid-glass--data) for dense numeric tables.
+ *   - Reduced transparency, Glass-off and print all fall back to solid surfaces.
+ *
+ * Import AFTER index.css: the :root[data-glass="on"] selectors below must beat
+ * index.css's :root[data-theme="light"] .card shadow on source order.
+ */
+
+/* ── Tokens ─────────────────────────────────────────────── */
+:root {
+  --glass-radius: 12px;
+  --glass-radius-lg: 20px;
+  --glass-radius-full: 9999px;
+  --glass-duration: 180ms;
+  --glass-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* NIGHT (default) */
+  --glass-tint-top: rgba(255, 255, 255, 0.06);
+  --glass-tint-bottom: rgba(179, 179, 179, 0.06);
+  --glass-tint-top-hover: rgba(255, 255, 255, 0.11);
+  --glass-tint-bottom-hover: rgba(179, 179, 179, 0.11);
+  --glass-rim-top: rgba(255, 255, 255, 0.5);
+  --glass-rim-hairline: rgba(255, 255, 255, 0.1);
+  --glass-rim-bottom: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  --glass-divider: rgba(255, 255, 255, 0.07);   /* replaces nested borders inside glass */
+
+  --glass-menu-surface: #161b22;
+  --glass-menu-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --glass-modal-tint: rgba(13, 17, 23, 0.45);    /* heavier than stock 0.3: dense forms */
+  --glass-data-wash: 72%;                        /* % of card colour under tables */
+  --glass-scrim: rgba(1, 4, 9, 0.55);
+
+  --glass-page-bg: #0d1117;                      /* unchanged night page */
+  /* Measured, not picked: stock-strength glows (0.22) drop red loss text to
+     3.4:1 where the glows overlap. At these values every status colour on glass
+     stays >= 5.1:1 with the on-glass text tokens below. */
+  --glass-mesh-a: rgba(47, 129, 247, 0.14);      /* accent blue */
+  --glass-mesh-b: rgba(99, 102, 241, 0.07);      /* indigo */
+  --glass-mesh-c: rgba(57, 197, 207, 0.09);      /* teal */
+  --glass-mesh-corner-top: rgba(56, 139, 253, 0.08);
+  --glass-mesh-corner-bottom: rgba(79, 70, 229, 0.16);
+}
+
+:root[data-theme="light"] {
+  --glass-tint-top: rgba(255, 255, 255, 0.50);   /* stock 0.06 is far too thin over a light page */
+  --glass-tint-bottom: rgba(244, 246, 249, 0.40);
+  --glass-tint-top-hover: rgba(255, 255, 255, 0.60);
+  --glass-tint-bottom-hover: rgba(244, 246, 249, 0.50);
+  --glass-rim-top: rgba(255, 255, 255, 0.8);
+  --glass-rim-hairline: rgba(255, 255, 255, 0.35);
+  --glass-rim-bottom: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(31, 35, 40, 0.10);
+  --glass-shadow: 0 10px 30px rgba(31, 35, 40, 0.08);
+  --glass-divider: rgba(31, 35, 40, 0.08);
+
+  --glass-menu-surface: #ffffff;
+  --glass-menu-shadow: 0 12px 32px rgba(20, 22, 30, 0.14), 0 4px 10px rgba(20, 22, 30, 0.07);
+  --glass-modal-tint: rgba(255, 255, 255, 0.62);
+  --glass-data-wash: 80%;
+  --glass-scrim: rgba(31, 35, 40, 0.32);
+
+  --glass-page-bg: #eef1f5;
+  --glass-mesh-a: rgba(9, 105, 218, 0.08);
+  --glass-mesh-b: rgba(99, 102, 241, 0.04);
+  --glass-mesh-c: rgba(27, 124, 131, 0.06);
+  --glass-mesh-corner-top: rgba(9, 105, 218, 0.05);
+  --glass-mesh-corner-bottom: rgba(79, 70, 229, 0.07);
+}
+
+/* ── On-glass text tokens ──
+   Glass lets the glow through, so the darkest status shades lose contrast.
+   With glass on, the app's own colour variables shift to shades that hold
+   >= 5.1:1 over the busiest part of the mesh (measured). Every Tailwind class
+   and inline var(--c-…) picks this up with no component edits. */
+:root[data-glass="on"] {
+  --rgb-f85149: 255 123 114;  --c-f85149: #ff7b72;   /* loss / stop red  5.2 → was 3.9 */
+  --rgb-8b949e: 154 164 176;  --c-8b949e: #9aa4b0;   /* faint labels     5.2 → was 4.3 */
+}
+:root[data-theme="light"][data-glass="on"] {
+  --rgb-f85149: 164 14 38;    --c-f85149: #a40e26;   /* 6.6 */
+  --rgb-3fb950: 17 99 41;     --c-3fb950: #116329;   /* 6.2 */
+  --rgb-d29922: 125 78 0;     --c-d29922: #7d4e00;   /* 6.0 */
+  --rgb-8b949e: 87 96 106;    --c-8b949e: #57606a;   /* 5.4 */
+  --rgb-2f81f7: 5 80 174;     --c-2f81f7: #0550ae;   /* 6.4 */
+}
+
+/* ── Backdrop: required. Check it looks uneven with no glass on it. ── */
+.liquid-glass-backdrop {
+  position: relative;
+  isolation: isolate;
+}
+:root[data-glass="on"] .liquid-glass-backdrop { background: var(--glass-page-bg); }
+.liquid-glass-backdrop::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42rem 32rem at 30% 22%, var(--glass-mesh-a), transparent 60%),
+    radial-gradient(36rem 30rem at 72% 48%, var(--glass-mesh-b), transparent 62%),
+    radial-gradient(40rem 34rem at 44% 82%, var(--glass-mesh-c), transparent 62%),
+    radial-gradient(60rem 40rem at 8% -10%, var(--glass-mesh-corner-top), transparent 60%),
+    radial-gradient(50rem 36rem at 98% 110%, var(--glass-mesh-corner-bottom), transparent 60%);
+}
+
+/* ── Panel tier (+ useLiquidGlass for refraction) ── */
+.liquid-glass,
+:root[data-glass="on"] .card,
+:root[data-glass="on"] .kpi {
+  position: relative;
+  border: 1px solid var(--glass-border);
+  background: linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-rim-top),
+    inset 0 0 0 1px var(--glass-rim-hairline),
+    inset 0 -1px 0 var(--glass-rim-bottom);
+  backdrop-filter: blur(3px) saturate(125%);
+  -webkit-backdrop-filter: blur(3px) saturate(125%);
+}
+.liquid-glass { border-radius: var(--glass-radius); }
+
+/* Glass in glass inverts the effect (the raised thing looks sunken). A .card
+   nested in a glass surface goes transparent and keeps only spacing. */
+:root[data-glass="on"] :is(.liquid-glass, .card, .kpi) :is(.card, .kpi) {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.liquid-glass--hover { transition: transform var(--glass-duration) var(--glass-ease), background var(--glass-duration) var(--glass-ease); }
+.liquid-glass--hover:hover {
+  background: linear-gradient(180deg, var(--glass-tint-top-hover), var(--glass-tint-bottom-hover));
+  transform: translateY(-2px);
+}
+
+/* Data tier: tables, the Trades grid, Analytics matrices. Small mono numbers
+   over a scrolling, glowing backdrop are the legibility worst case, so the
+   card colour is washed back in under the glass. */
+.liquid-glass--data {
+  background:
+    linear-gradient(0deg, color-mix(in srgb, rgb(var(--rgb-161b22)) var(--glass-data-wash), transparent),
+                         color-mix(in srgb, rgb(var(--rgb-161b22)) var(--glass-data-wash), transparent)),
+    linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+}
+
+/* Coloured glass — the one primary action (Log trade, Close, Roll). Tint only;
+   the rim is restated because replacing box-shadow drops it. */
+.liquid-glass--primary {
+  background: linear-gradient(155deg, color-mix(in srgb, var(--c-2f81f7) 62%, transparent), color-mix(in srgb, var(--c-1f6feb) 48%, transparent));
+  border: 1px solid color-mix(in srgb, var(--c-2f81f7) 55%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--c-1f6feb) 35%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.liquid-glass--danger {
+  background: linear-gradient(155deg, color-mix(in srgb, var(--c-f85149) 60%, transparent), color-mix(in srgb, var(--c-da3633) 48%, transparent));
+  border: 1px solid color-mix(in srgb, var(--c-f85149) 55%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--c-da3633) 30%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* ── Chip tier: CSS only, never the hook. Neutral pills (account, PAPER, filters,
+   segmented controls). Status badges keep their colour fills. ── */
+.liquid-glass-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.22rem 0.6rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius-full);
+  background: linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+  box-shadow: inset 0 1px 0 var(--glass-rim-top);
+  backdrop-filter: blur(6px) saturate(125%);
+  -webkit-backdrop-filter: blur(6px) saturate(125%);
+}
+
+/* ── Menu tier: bridge menu, ⋯ menus, account picker, chart tooltips. ── */
+.liquid-glass-menu {
+  background: color-mix(in srgb, var(--glass-menu-surface) 55%, transparent);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-menu-shadow), inset 0 1px 0 var(--glass-rim-top);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+
+/* ── Modal tier: Close / Edit / Fill-reconcile / Order ticket / Trade detail. ── */
+.liquid-glass--modal {
+  border-radius: var(--glass-radius-lg);
+  background:
+    linear-gradient(180deg, var(--glass-modal-tint), var(--glass-modal-tint)),
+    linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+}
+.liquid-glass-scrim {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-scrim);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+/* Children of glass paint no surface: transparent, separated by a hairline. */
+.glass-divide > * + * { border-top: 1px solid var(--glass-divider); }
+.glass-divide-x > * + * { border-left: 1px solid var(--glass-divider); }
+
+/* ── Off switches ── */
+/* Settings › Glass off (or not yet on): everything reads as today's solid surfaces. */
+:root:not([data-glass="on"]) :is(.liquid-glass, .liquid-glass-chip, .liquid-glass-menu) {
+  background: rgb(var(--rgb-161b22));
+  border-color: rgb(var(--rgb-30363d));
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root:not([data-glass="on"]) .liquid-glass-backdrop::before { display: none; }
+
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass, .liquid-glass-chip, .liquid-glass-menu,
+  :root[data-glass="on"] .card, :root[data-glass="on"] .kpi {
+    background: rgb(var(--rgb-161b22)) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .liquid-glass-backdrop::before { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass--hover { transition-duration: 0.01ms; }
+  .liquid-glass--hover:hover { transform: none; }
+}
+@media print {
+  .liquid-glass-backdrop::before { display: none; }
+  .liquid-glass, .liquid-glass-chip, .liquid-glass-menu, .card, .kpi {
+    background: #fff !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid #d0d7de !important;
+  }
+}

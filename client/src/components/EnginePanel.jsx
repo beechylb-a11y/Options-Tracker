@@ -21,6 +21,7 @@ import { fridaysFrom, timeSpreadDefaults, nearestExpiry, addDaysYmd, nearChoices
 import { curveLegs, priceRange, entryNet, curveAt, probProfit, closeDay as closeDayOf, nearDte as nearDteOf, ivAtDte, divYieldOf, simulateExit, RATE, positionValue } from '../engine/payoffCurve';
 import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffChart, { INTRADAY_DAYS_PER_HOUR } from './PayoffChart';
+import GlassSurface from './GlassSurface';
 import MarketCard from './MarketCard';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
@@ -1308,6 +1309,10 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // click goes through commitStrike, so payoff / P(max loss) / EV recompute by
   // the same path a typed strike uses — no extra coupling.
   const [ladder, setLadder] = useState(null);
+  // Compare ghost (Nov 2026): an alternative structure's curve on the payoff chart,
+  // while its card is hovered or after "Compare" pins it.
+  const [ghostHover, setGhostHover] = useState(null);
+  const [ghostPin, setGhostPin] = useState(null);
   const ladderAbortRef = useRef(null);
   useEffect(() => () => { if (ladderAbortRef.current) ladderAbortRef.current.abort(); }, []);
   const closeLadder = () => {
@@ -1989,7 +1994,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const tgtBase = rule.basis === 'entry' ? Math.abs(net) * 100 : atExpiry.maxProfit;
     const target = tgtBase > 0 ? { dollars: tgtBase * rule.target / 100,
       label: `${rule.target}% of ${rule.basis === 'entry' ? 'the debit' : 'max profit'}` } : null;
-    return { cl, net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, closeDte), closeDte,
+    return { cl: withLegIdx(cl, r.legs), net, netSource: source, spot, lo, hi, nearDte: nd, closeDay: closeDayOf(cl, closeDte), closeDte,
       closeOptions: rule.closeOptions || null, closeLeg: rule.closeLeg || '',
       sigmaNear, divYield, target, atExpiry, popExpiry: probProfit(atExpiry, spot, sigmaNear, nd) };
   })();
@@ -2016,7 +2021,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const closeEt = (ex && ex.label ? ex.label.replace(/^exit by /, '').replace(/ ET$/, '') : '15:00');
     const lo = isFinite(r.payoff.plotMin) ? r.payoff.plotMin : spot * 0.98;
     const hi = isFinite(r.payoff.plotMax) ? r.payoff.plotMax : spot * 1.02;
-    return { cl, net, netSource: source, spot, lo, hi, nearDte: T, closeDay: Math.min(T, exitH * INTRADAY_DAYS_PER_HOUR), closeEt,
+    return { cl: withLegIdx(cl, r.legs), net, netSource: source, spot, lo, hi, nearDte: T, closeDay: Math.min(T, exitH * INTRADAY_DAYS_PER_HOUR), closeEt,
       sigmaNear: ivPct / 100, divYield };
   })();
   // Sizing suggestions for 45DTE come from the expiry curve (near expiry for a time
@@ -2231,8 +2236,32 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       rr, pay, priced, netShow,
       strikes: strikeMarks(res.legs),
       profitIf: profitIfText(pay, secBag.underlying) || res.behaviour || '',
+      legs: res.legs || null, payLegs: res.payoff && Array.isArray(res.payoff.legs) ? res.payoff.legs : null,
     };
   }) : [];
+  // The ghost: the hovered card, else the pinned one, on the same clock and IV as
+  // the ticket's chart, at the model's fair price for its own strikes.
+  const ghostName = ghostHover || ghostPin;
+  const ghostChoice = ghostName ? choiceList.find(c => !c.isCur && c.name === ghostName) : null;
+  const ghostCurve = (() => {
+    if (!ghostChoice) return null;
+    let cl = null;
+    if (is0 && payCurve0) {
+      const src = ghostChoice.payLegs || null;
+      cl = src ? src.filter(l => isFinite(l.strike)).map(l => ({ strike: +l.strike, right: l.type === 'put' ? 'P' : 'C', sign: l.side === 'sell' ? -1 : 1,
+        qty: l.qty || 1, dte: payCurve0.nearDte, iv: payCurve0.sigmaNear, r: RATE, q: payCurve0.divYield, label: '' })) : null;
+    } else if (!is0 && payCurve && Array.isArray(ghostChoice.legs)) {
+      const tradeDte = parseInt(i45.dte, 10) || 45;
+      cl = curveLegs(ghostChoice.legs, { dteOf: l => { const e = legExpiryOf(l); return e ? dteBetween(todayYmd, e) : tradeDte; },
+        baseIV: payCurve.sigmaNear * 100, divYield: payCurve.divYield });
+    }
+    if (!cl || !cl.length) return null;
+    const spot = (is0 ? payCurve0 : payCurve).spot;
+    const n = ghostChoice.netShow != null ? ghostChoice.netShow : entryNet(cl, spot, null, null).net;
+    if (n == null) return null;
+    return { cl, net: n, label: `${ghostChoice.name}${ghostChoice.netShow != null ? ` · fair ${Math.abs(ghostChoice.netShow).toFixed(2)} ${ghostChoice.netShow >= 0 ? 'cr' : 'db'}` : ''}` };
+  })();
+  const strikeSnap = { ...(listedNow || {}), step: strikeStep };
   const choiceRRMax = Math.max(0, ...choiceList.map(c => c.rr || 0));
   // Switching structure in place clears the four sizing fields: max profit, max
   // loss, POP and the fill all describe the legs being left behind. Net credit
@@ -3413,8 +3442,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           One verdict, one score, one sentence of why. Everything that used to sit
           here as tiles now lives on the trade-choice cards or in the evidence
           drawer below, so the band only ever answers "do I trade this?". */}
-      <div ref={decisionRef} data-testid="verdict-band"
-        style={{background:vTone.bg,border:`1px solid ${vTone.border}`,borderRadius:14,padding:'20px 24px'}}>
+      <GlassSurface ref={decisionRef} data-testid="verdict-band"
+        style={{background:vTone.bg,border:`1px solid ${vTone.border}`,borderRadius:14,padding:'20px 24px'}}
+        glassStyle={{background:`linear-gradient(180deg, color-mix(in srgb, ${vTone.bg} 55%, transparent), color-mix(in srgb, ${vTone.bg} 35%, transparent))`,borderRadius:22}}>
         <div style={{display:'flex',gap:24,alignItems:'flex-start',flexWrap:'wrap'}}>
           <div style={{flex:'1 1 420px',minWidth:0,display:'flex',flexDirection:'column',gap:12}}>
             <div style={{display:'flex',alignItems:'center',gap:18}}>
@@ -3578,7 +3608,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
           )}
         </div>
-      </div>
+      </GlassSurface>
 
       {/* ── 2 · NEEDS YOU ── only what a person has to do, each with its own control.
           Nothing renders here when the Bridge has everything covered. */}
@@ -3662,7 +3692,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                   lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
                   closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
                   underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
-                  closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim} />
+                  closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim}
+                  onStrikeChange={(i, k) => commitStrike(i, k)} strikeSnap={strikeSnap} ghost={ghostCurve} />
               </div>
             )}
             {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
@@ -3687,7 +3718,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 <PayoffChart intraday cl={payCurve0.cl} net={payCurve0.net} netSource={payCurve0.netSource} spot={payCurve0.spot}
                   lo={payCurve0.lo} hi={payCurve0.hi} sigmaNear={payCurve0.sigmaNear} nearDte={payCurve0.nearDte}
                   closeDay={payCurve0.closeDay} closeEt={payCurve0.closeEt} todayYmd={todayYmd} underlying={i0.underlying}
-                  divYield={payCurve0.divYield} targets={flyTargets} />
+                  divYield={payCurve0.divYield} targets={flyTargets}
+                  onStrikeChange={(i, k) => commitStrike(i, k)} strikeSnap={strikeSnap} ghost={ghostCurve} />
                 <div className="grid grid-cols-2 gap-1.5 mt-3">
                   <KV label="Max profit at expiry" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
                   <KV label="Max loss at expiry" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
@@ -3729,7 +3761,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:12}}>
             {choiceList.map(c => (
               <ChoiceCard key={c.name} c={c} price={fv(secBag, 'price')} underlying={secBag.underlying} rrMax={choiceRRMax}
-                onSwitch={() => switchStructure(c.name)}
+                onSwitch={() => { setGhostPin(null); setGhostHover(null); switchStructure(c.name); }}
+                onHover={setGhostHover} comparing={ghostPin === c.name}
+                onCompare={c.isCur ? null : () => setGhostPin(p => (p === c.name ? null : c.name))}
                 onNewTab={onOpenInTab ? () => openStructureInTab(c.name) : null} />
             ))}
           </div>
@@ -5698,7 +5732,20 @@ function CardBar({ label, value, pct, color, title }) {
   );
 }
 
-function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
+// Which r.legs entry each chart leg came from, so a dragged strike block edits the
+// right leg (matched on strike and side; a leg is used once). (Nov 2026.)
+export function withLegIdx(cl, legs) {
+  if (!Array.isArray(cl)) return cl;
+  const used = new Set();
+  const rightOf = l => (/put/i.test(String(l.label || '')) || l.type === 'put' || l.right === 'P' ? 'P' : 'C');
+  return cl.map(c => {
+    const j = (legs || []).findIndex((l, i) => !used.has(i) && Number(l.strike) === c.strike && rightOf(l) === c.right);
+    if (j >= 0) used.add(j);
+    return j >= 0 ? { ...c, legIdx: j } : c;
+  });
+}
+
+function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab, onHover, comparing, onCompare }) {
   const on = c.isCur;
   const accent = on ? (c.override ? 'var(--c-d29922)' : 'var(--c-3fb950)') : 'var(--c-8b949e)';
   const ratingClr = { EXCELLENT: 'var(--c-3fb950)', GOOD: 'var(--c-58a6ff)', MARGINAL: 'var(--c-d29922)', POOR: 'var(--c-f85149)' }[c.rating] || 'var(--c-8b949e)';
@@ -5709,6 +5756,7 @@ function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
   const netTxt = c.netShow == null ? null : `${c.netShow >= 0 ? 'cr' : 'dr'} ${Math.abs(c.netShow).toFixed(2)}`;
   return (
     <div data-testid="choice-card" data-current={on ? '1' : '0'}
+      onMouseEnter={onHover && !on ? () => onHover(c.name) : undefined} onMouseLeave={onHover && !on ? () => onHover(null) : undefined}
       style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, borderRadius: 12,
         background: on ? (c.override ? 'var(--c-1a160c)' : 'var(--c-101d14)') : 'var(--c-161b22)', border: `1px solid ${on ? accent : 'var(--c-21262d)'}` }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
@@ -5764,6 +5812,9 @@ function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab }) {
             border: `1px solid ${alpha(accent, '66')}`, background: 'color-mix(in srgb, var(--c-e6edf3) 3%, transparent)' }}>Selected</span>
         ) : (
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {onCompare && <button data-testid="choice-compare" aria-pressed={!!comparing} onClick={onCompare}
+              title="Draw this structure's curve on the payoff chart, dashed, beside the ticket's" style={{ ...EX_LINK, fontWeight: comparing ? 700 : undefined }}>
+              {comparing ? 'Comparing ✓' : 'Compare'}</button>}
             {onNewTab && <button onClick={onNewTab} title="Open in its own tab — keeps this ticket as it is" style={EX_LINK}>New tab</button>}
             <button data-testid="choice-switch" onClick={onSwitch}
               title="Make this the ticket. Win, risk, POP and the fill are cleared — they belonged to the old legs."

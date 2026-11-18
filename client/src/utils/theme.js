@@ -67,3 +67,21 @@ export function themeVarsCss() {
   const cs = getComputedStyle(document.documentElement);
   return ':root{' + [...new Set(out)].map(n => `${n}:${cs.getPropertyValue(n).trim()}`).join(';') + '}';
 }
+
+// ── Glass (Nov 2026) ──
+// Liquid glass on or off, per browser: data-glass="on" on <html> (absent = today's
+// solid surfaces). Off by default until the nested-surface pass is done.
+const GLASS_KEY = 'glass';
+export function glassPref() {
+  try { return localStorage.getItem(GLASS_KEY) === 'on' ? 'on' : 'off'; } catch { return 'off'; }
+}
+export function applyGlass(pref = glassPref()) {
+  if (typeof document === 'undefined') return;
+  if (pref === 'on') document.documentElement.setAttribute('data-glass', 'on');
+  else document.documentElement.removeAttribute('data-glass');
+}
+export function setGlassPref(pref) {
+  try { localStorage.setItem(GLASS_KEY, pref === 'on' ? 'on' : 'off'); } catch { /* private window */ }
+  applyGlass(pref);
+  try { window.dispatchEvent(new CustomEvent('glasschange', { detail: pref })); } catch { /* old browser */ }
+}

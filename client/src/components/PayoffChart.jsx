@@ -23,8 +23,8 @@
 //  on the evaluated date from this curve; the engine's own Max-loss chance stays
 //  where it is defined (one definition per number), so it is not redrawn here.
 // ================================================================
-import React, { useMemo, useState, useEffect } from 'react';
-import { curveAt, probProfit, pnlAt, HARD_CLOSE_DTE, RATE } from '../engine/payoffCurve';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { curveAt, probProfit, pnlAt, positionValue, HARD_CLOSE_DTE, RATE } from '../engine/payoffCurve';
 import { addDaysYmd, fmtExpiry } from '../utils/expiries';
 import { useLiveQuote, useFreshness } from '../live/useLive';
 import FreshDot from './FreshDot';
@@ -78,9 +78,44 @@ export function strikeBlocks(cl, x) {
   });
 }
 
-export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
+/** Nearest listed strike for this right (snap.P / snap.C), else the nearest grid step. */
+export function snapStrike(price, right, snap) {
+  const list = snap && Array.isArray(snap[right]) && snap[right].length ? snap[right] : null;
+  if (list) return list.reduce((b, k) => (Math.abs(k - price) < Math.abs(b - price) ? k : b), list[0]);
+  const step = snap && snap.step > 0 ? snap.step : 1;
+  return Math.round(price / step) * step;
+}
+/** The next listed strike (or grid step) above (dir +1) or below (dir −1). */
+export function stepStrike(strike, right, dir, snap) {
+  const list = snap && Array.isArray(snap[right]) && snap[right].length ? [...snap[right]].sort((a, b) => a - b) : null;
+  if (list) {
+    const next = dir > 0 ? list.find(k => k > strike + 1e-9) : [...list].reverse().find(k => k < strike - 1e-9);
+    return next != null ? next : strike;
+  }
+  const step = snap && snap.step > 0 ? snap.step : 1;
+  return +(strike + dir * step).toFixed(4);
+}
+/** The legs with one strike+right block moved, and the entry re-priced by the model
+ *  difference at today, so the edge over fair value carries over. */
+export function movedLegs(cl, net, from, right, to, spot) {
+  const moved = cl.map(l => (l.strike === from && l.right === right ? { ...l, strike: to } : l));
+  const dv = spot > 0 ? positionValue(moved, spot, 0) - positionValue(cl, spot, 0) : 0;
+  return { cl: moved, net: net - dv };
+}
+
+export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
   todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, targets, stop,
-  closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '', scopeNote = '' }) {
+  closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '', scopeNote = '',
+  onStrikeChange, strikeSnap, ghost }) {
+  // onStrikeChange(legIdx, strike): strike blocks drag (snapping to strikeSnap: { P, C, step })
+  //   and arrow keys step them; the curves preview while dragging, the engine re-runs on drop.
+  // ghost: { cl, net, label } — another structure drawn dashed for comparison.
+  const svgRef = useRef(null);
+  const [drag, setDrag] = useState(null);   // { strike, right, to, legIdx[] }
+  const moving = drag && drag.to !== drag.strike;
+  const view = useMemo(() => (moving ? movedLegs(clIn, netIn, drag.strike, drag.right, drag.to, spot) : { cl: clIn, net: netIn }),
+    [clIn, netIn, moving, drag, spot]);
+  const cl = view.cl, net = view.net;
   // scopeNote: replaces "Per contract." when the curves are a whole position (manage view).
   // target: { dollars, label } — the 45DTE rule's profit target per contract.
   // targets: [{ pnl, label, color }] — 0DTE target lines (the old diagram's list).
@@ -90,6 +125,12 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
   const [ivShift, setIvShift] = useState(0);
   const [hoverPx, setHoverPx] = useState(null);
   useEffect(() => { setDay(closeDay); }, [closeDay, nearDte]);
+  useEffect(() => {
+    if (!drag) return undefined;
+    const esc = e => { if (e.key === 'Escape') setDrag(null); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [drag]);
   const d = Math.min(Math.max(0, day), nearDte);
   const maxLegDte = Math.max(...cl.map(l => l.dte));
 
@@ -110,12 +151,16 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
     return { sel, now, exp, up, dn };
   }, [cl, net, lo, hi, d, nearDte, band, ivShift, maxLegDte]);
 
+  // The comparison: the structure before the drag, else the hovered/pinned alternative.
+  const ghostIn = moving ? { cl: clIn, net: netIn, label: `before (${drag.strike}${drag.right})` } : ghost && Array.isArray(ghost.cl) && ghost.cl.length ? ghost : null;
+  const ghostCurve = useMemo(() => (ghostIn ? curveAt(ghostIn.cl, { net: ghostIn.net, lo, hi, days: Math.min(d, Math.min(...ghostIn.cl.map(l => l.dte))), volShift: ivShift }) : null),
+    [ghostIn, lo, hi, d, ivShift]);   // eslint-disable-line react-hooks/exhaustive-deps
   const tgtLines = [
     ...(target && target.dollars > 0 ? [{ pnl: target.dollars, label: `target ${money(target.dollars)}`, color: C.green, long: target.label }] : []),
     ...((targets || []).filter(t => t && t.pnl > 0 && isFinite(t.pnl)).map(t => ({ pnl: t.pnl, label: t.label, color: t.color || C.green }))),
   ];
   const stopLine = stop && stop.dollars < 0 && isFinite(stop.dollars) ? stop.dollars : null;
-  const all = [curves.sel, curves.now, curves.exp, curves.up, curves.dn].filter(Boolean);
+  const all = [curves.sel, curves.now, curves.exp, curves.up, curves.dn, ghostCurve].filter(Boolean);
   const pnls = all.flatMap(c => c.points.map(p => p.pnl)).concat(tgtLines.map(t => t.pnl), stopLine != null ? [stopLine] : []);
   const minPnl = Math.min(0, ...pnls), maxPnl = Math.max(0, ...pnls);
   const range = (maxPnl - minPnl) || 1;
@@ -158,12 +203,46 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
     now: d === 0 ? null : pnlAt(cl, hoverPx, net, 0, ivShift),
   } : null;
 
-  const onMove = e => {
-    const svg = e.currentTarget; const rect = svg.getBoundingClientRect();
-    const sx = (e.clientX - rect.left) / rect.width * W;
-    if (sx < PAD.left || sx > W - PAD.right) { setHoverPx(null); return; }
-    setHoverPx(lo + (sx - PAD.left) / cW * (hi - lo));
+  const priceAt = clientX => {
+    const svg = svgRef.current; if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const sx = (clientX - rect.left) / rect.width * W;
+    return { sx, price: lo + (sx - PAD.left) / cW * (hi - lo) };
   };
+  const onMove = e => {
+    const p = priceAt(e.clientX); if (!p) return;
+    if (drag) {
+      const to = snapStrike(Math.min(hi, Math.max(lo, p.price)), drag.right, strikeSnap);
+      if (to > 0 && to !== drag.to) setDrag(g => ({ ...g, to }));
+      return;
+    }
+    if (p.sx < PAD.left || p.sx > W - PAD.right) { setHoverPx(null); return; }
+    setHoverPx(p.price);
+  };
+  const commit = (g, to) => { if (onStrikeChange && g && to !== g.strike) g.legIdx.forEach(i => onStrikeChange(i, to)); };
+  const onUp = () => { if (drag) { commit(drag, drag.to); setDrag(null); } };
+  const legIdxOf = b => [...new Set(clIn.map((l, i) => (l.strike === b.strike && l.right === b.right ? (l.legIdx ?? i) : null)).filter(i => i != null))];
+  const startDrag = (b, e) => {
+    if (!onStrikeChange) return;
+    e.preventDefault(); e.stopPropagation();
+    try { svgRef.current && svgRef.current.setPointerCapture && svgRef.current.setPointerCapture(e.pointerId); } catch (err) { /* jsdom */ }
+    setHoverPx(null);
+    setDrag({ strike: b.strike, right: b.right, to: b.strike, legIdx: legIdxOf(b) });
+  };
+  const onBlockKey = (b, e) => {
+    if (!onStrikeChange || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    const to = stepStrike(b.strike, b.right, e.key === 'ArrowRight' ? 1 : -1, strikeSnap);
+    commit({ strike: b.strike, legIdx: legIdxOf(b) }, to);
+  };
+  // What the drag changes, in the chart's own numbers.
+  const dragFacts = moving ? (() => {
+    const before = curveAt(clIn, { net: netIn, lo, hi, days: d, volShift: ivShift });
+    return {
+      popBefore: probProfit(before, px, sigmaNear, d), pnlBefore: pnlAt(clIn, px, netIn, d, ivShift),
+      netBefore: netIn, maxLossBefore: before.maxLoss,
+    };
+  })() : null;
 
   const btn = on => ({ padding: '3px 10px', borderRadius: 6, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
     border: '1px solid ' + (on ? 'var(--c-2f81f7)' : C.line), background: on ? 'var(--c-0d1a2b)' : 'transparent', color: on ? C.blue : 'var(--c-c9d1d9)' });
@@ -216,8 +295,20 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
         <span style={{ position: 'absolute', right: 0 }}>{intraday ? '16:00' : isTimeSpread ? 'near exp' : 'expiry'}</span>
       </div>
 
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', touchAction: 'none' }}
-        onMouseMove={onMove} onMouseLeave={() => setHoverPx(null)} role="img"
+      {moving && dragFacts && (
+        <div data-testid="drag-preview" style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', fontSize: 12.5, padding: '6px 10px', marginBottom: 6,
+          borderRadius: 8, border: `1px solid ${C.blue}`, background: 'color-mix(in srgb, var(--c-58a6ff) 10%, transparent)', color: C.text }}>
+          <b className="mono">{drag.strike}{drag.right} → {drag.to}{drag.right}</b>
+          <span>Win chance {dragFacts.popBefore == null ? '—' : Math.round(dragFacts.popBefore * 100) + '%'} → <b>{pop == null ? '—' : Math.round(pop * 100) + '%'}</b></span>
+          <span>P&L {label.toLowerCase()} {signed(dragFacts.pnlBefore)} → <b>{signed(atPx)}</b></span>
+          <span>Max loss {money(dragFacts.maxLossBefore)} → <b>{money(sel.maxLoss)}</b></span>
+          <span>Entry {Math.abs(dragFacts.netBefore).toFixed(2)} → <b>{Math.abs(net).toFixed(2)} {net >= 0 ? 'cr' : 'db'}</b> (model)</span>
+          <span style={{ color: C.grey }}>Release to re-run the engine · Esc cancels</span>
+        </div>
+      )}
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', touchAction: 'none', cursor: drag ? 'ew-resize' : undefined }}
+        onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => setDrag(null)}
+        onMouseLeave={() => { if (!drag) setHoverPx(null); }} role="img"
         aria-label={`P&L at ${label}: max ${money(sel.maxProfit)}, breakevens ${bes.join(', ') || 'none'}`}>
         <defs>
           <clipPath id="pc-above"><rect x={PAD.left} y={PAD.top} width={cW} height={Math.max(0, zeroY - PAD.top)} /></clipPath>
@@ -254,6 +345,7 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
         <g clipPath="url(#pc-plot)">
           {curves.exp && <path d={path(curves.exp)} fill="none" stroke={C.soft} strokeWidth="1.4" opacity="0.8" />}
           {curves.now && <path d={path(curves.now)} fill="none" stroke={C.purple} strokeWidth="1.6" strokeDasharray="1.5 4" strokeLinecap="round" />}
+          {ghostCurve && <path data-testid="ghost-curve" d={path(ghostCurve)} fill="none" stroke={C.text} strokeWidth="1.6" strokeDasharray="7 5" opacity="0.55" />}
           <path data-testid="close-curve" d={path(sel)} fill="none" stroke={C.blue} strokeWidth="2.6" strokeLinejoin="round" />
         </g>
         {bes.map((b, i) => {
@@ -316,8 +408,11 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
         })()}
         {/* strike blocks */}
         {blocks.map(b => (
-          <g key={`${b.strike}${b.right}`} data-testid="strike-block" data-side={b.net < 0 ? 'short' : 'long'}>
-            <rect x={b.x - 24} y={STRIKE_Y + b.row * 19} width="48" height="16" rx="5" fill={b.net < 0 ? C.red : C.green} opacity="0.9" />
+          <g key={`${b.strike}${b.right}`} data-testid="strike-block" data-side={b.net < 0 ? 'short' : 'long'}
+            {...(onStrikeChange ? { role: 'slider', tabIndex: 0, 'aria-label': `${b.net < 0 ? 'Short' : 'Long'} ${b.strike} ${b.right === 'P' ? 'put' : 'call'} — drag or use the arrow keys to move it`,
+              'aria-valuenow': b.strike, onPointerDown: e => startDrag(b, e), onKeyDown: e => onBlockKey(b, e), style: { cursor: 'ew-resize', outline: 'none' } } : {})}>
+            <rect x={b.x - 24} y={STRIKE_Y + b.row * 19} width="48" height="16" rx="5" fill={b.net < 0 ? C.red : C.green} opacity="0.9"
+              stroke={moving && b.strike === drag.to && b.right === drag.right ? C.text : 'none'} strokeWidth="1.5" />
             <text x={b.x} y={STRIKE_Y + b.row * 19 + 12} textAnchor="middle" fontSize="10" fontWeight="700" fill="#ffffff" fontFamily={MONO}>
               {b.net < 0 ? '−' : '+'}{Math.abs(b.net) > 1 ? Math.abs(b.net) + '×' : ''}{b.strike}{b.right}</text>
           </g>
@@ -338,6 +433,8 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
           {livePx ? `Live ${px2(livePx)}` : `Spot ${px2(spot)}`}
         </span>
         {ivShift !== 0 && <span style={{ color: C.amber }}>IV {ivShift > 0 ? '+' : '−'}{Math.abs(ivShift)} pts on every leg</span>}
+        {ghostCurve && <span data-testid="ghost-legend"><span style={{ color: C.text, opacity: 0.6 }}>╌</span> {ghostIn.label}</span>}
+        {onStrikeChange && !drag && <span style={{ color: C.dim }}>drag a strike to move it</span>}
       </div>
 
       <div data-testid="payoff-facts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', borderTop: `1px solid ${C.line2}`, borderBottom: `1px solid ${C.line2}`, marginBottom: 10 }}>

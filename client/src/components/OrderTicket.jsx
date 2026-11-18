@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import Modal from './Modal';
 import { api } from '../utils/api';
 import { unitsFromTicket, roundTripCommission, oneSideCommission } from '../utils/commission';
 import { useCommissionRate } from '../utils/useCommissionRate';
@@ -75,9 +76,7 @@ export default function OrderTicket(props) {
   }, [position]);
   if (!resolved) {
     return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={props.onClose}>
-        <div style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, color: 'var(--c-a8b2be)', fontSize: 13 }}>Loading the fills…</div>
-      </div>
+      <Modal onClose={props.onClose} panelStyle={{ color: 'var(--c-a8b2be)', fontSize: 13 }}>Loading the fills…</Modal>
     );
   }
   return <OrderTicketBody {...props} position={resolved} />;
@@ -473,8 +472,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const ncdPosAfter = ncdPosNow != null && rollPriced != null && changedLegs > 0 ? ncdPosNow + rollPriced : null;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ background: 'var(--c-161b22)', border: '1px solid var(--c-30363d)', borderRadius: 12, padding: 20, width: 720, maxWidth: '96vw', maxHeight: '92vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+    <Modal onClose={onClose} width={720}>
+      <div>
 
         {/* Header — the board row: verdict, what it is, whole-position P&L (Oct 2026). */}
         <TicketHeader check={check} fallback={check === null && /45/.test(pos.engine || '') ? 'Checking…' : pos.engine || 'Open'}
@@ -784,7 +783,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           <button onClick={onClose} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid var(--c-30363d)', background: 'transparent', color: 'var(--c-a8b2be)', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
