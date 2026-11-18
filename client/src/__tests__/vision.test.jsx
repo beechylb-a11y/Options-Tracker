@@ -149,3 +149,26 @@ describe('vision.css step 3: no solid insides', () => {
   });
 });
 
+describe('vision.css step 4: layouts', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../styles/vision.css'), 'utf8');
+  const rules = []; postcss.parse(css).walkRules(r => rules.push(r));
+  it("each page's own heading steps aside for the top-row title", () => {
+    const r = rules.find(x => x.selector.endsWith(' .page-title'));
+    expect(r.nodes.find(d => d.prop === 'display').value).toBe('none');
+  });
+  it('every page heading carries the page-title class', () => {
+    const dir = path.resolve(__dirname, '../pages');
+    for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.jsx'))) {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      const all = (src.match(/<h2 className="[^"]*font-display text-2xl[^"]*"/g) || []);
+      for (const h of all) expect(h, f).toContain('page-title');
+    }
+  });
+  it('the engine stats sit in a 2×2 grid at headline size', () => {
+    const grid = rules.find(x => x.selector.endsWith('[data-testid="edge-row"]'));
+    expect(grid.nodes.find(d => d.prop === 'grid-template-columns').value).toBe('repeat(2, minmax(0, 1fr))');
+    const num = rules.find(x => x.selector.endsWith('[data-testid="edge-row"] > div > div.mono'));
+    expect(num.nodes.find(d => d.prop === 'font-size').value).toBe('26px');
+  });
+});
+

@@ -8,6 +8,8 @@ import UpcomingExpiries from '../components/UpcomingExpiries';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, rowWl, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
+import VisionDashHero from '../components/VisionDashHero';
+import { useVisionOn } from '../components/ThemeToggle';
 import { eventOutlook, nowET } from '../engine/events';
 
 const RANGE_KEY = 'ot_dash_range';
@@ -18,6 +20,7 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 const shortDate = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : String(d || ''); };
 
 export default function Dashboard({ authenticated, account, accounts = [] }) {
+  const visionOn = useVisionOn();
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
   const [tracker, setTracker] = useState([]);
@@ -192,7 +195,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
   if (!authenticated) {
     return (
       <div className="fade-in">
-        <h2 className="font-display text-2xl font-bold mb-2">Dashboard</h2>
+        <h2 className="page-title font-display text-2xl font-bold mb-2">Dashboard</h2>
         <p className="text-text-muted mb-6">Connect your Google account in Settings to load trading data.</p>
         <div className="grid grid-cols-4 gap-4">
           {[1,2,3,4].map(i => (
@@ -236,7 +239,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       )}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h2 className="font-display text-2xl font-bold">Dashboard</h2>
+          <h2 className="page-title font-display text-2xl font-bold">Dashboard</h2>
           <p className="text-text-muted text-sm mt-0.5">
             {aggregated
               ? 'All accounts — aggregated (excl. PaperTrade)'
@@ -258,6 +261,9 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           </div>
         </div>
       </div>
+
+      {/* Vision: the three headline cards first (today, month vs target, watching). */}
+      {visionOn && <VisionDashHero closedTrades={closedTrades} tracker={tracker} decisions={decisions} account={account} accounts={accounts} />}
 
       <EventBanner />
 

@@ -251,7 +251,7 @@ export default function Trades({ authenticated, account, accounts }) {
   if (!authenticated) {
     return (
       <div className="fade-in">
-        <h2 className="font-display text-2xl font-bold mb-2">Trades</h2>
+        <h2 className="page-title font-display text-2xl font-bold mb-2">Trades</h2>
         <p className="text-text-muted">Connect Google to view and upload trades.</p>
       </div>
     );
@@ -261,7 +261,7 @@ export default function Trades({ authenticated, account, accounts }) {
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="font-display text-2xl font-bold">Trades</h2>
+          <h2 className="page-title font-display text-2xl font-bold">Trades</h2>
           <p className="text-text-muted text-sm mt-0.5">{filtered.length} positions tracked</p>
         </div>
         <div className="flex items-center gap-3">

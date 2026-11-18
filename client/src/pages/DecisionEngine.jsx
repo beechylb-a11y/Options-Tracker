@@ -655,7 +655,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
           row 2 — what is live (open positions, working orders, today's P&L). The ticket
           log, the TWS reconcile and Engine vs actual live in the ⋯ menu. */}
       <div className="mb-3">
-        <h2 className="font-display text-2xl font-bold">Decision Engine</h2>
+        <h2 className="page-title font-display text-2xl font-bold">Decision Engine</h2>
         <p className="text-text-muted text-sm mt-0.5">Pick a group, scan it, act on what needs you.</p>
       </div>
       <div className="flex items-center gap-2 flex-wrap mb-3" data-testid="header-controls">

@@ -481,6 +481,36 @@
 :root[data-vision="on"]:not(#_) div[style*="border"][style*="border-radius"]:not([style*="px 0"]):not([style*="50%"]):not(.liquid-glass):not([data-glass-surface]) { border-radius: 18px !important; }
 :root[data-vision="on"]:not(#_) span[style*="border"][style*="border-radius"]:not([style*="px 0"]):not([style*="50%"]) { border-radius: 999px !important; }
 
+/* ══ Step 4: Dashboard + Engine layouts ════════════════════════════
+   The top row already names the page, so each page's own heading steps aside
+   (its subtitle and controls stay). */
+:root[data-vision="on"]:not(#_) .page-title { display: none; }
+:root[data-vision="on"]:not(#_) .page-title + p { margin-top: 0; }
+
+/* Dashboard: three headline cards — today, month vs target, watching */
+:root[data-vision="on"]:not(#_) .vis-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 0.95fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+:root[data-vision="on"]:not(#_) .vis-hero > .card { display: flex; flex-direction: column; gap: 10px; padding: 22px 24px; min-height: 228px; }
+@media (max-width: 1180px) {
+  :root[data-vision="on"]:not(#_) .vis-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  :root[data-vision="on"]:not(#_) .vis-hero > .card:last-child { grid-column: 1 / -1; min-height: 0; }
+}
+
+/* Engine verdict: the edge ring and the four tiles at headline size */
+:root[data-vision="on"]:not(#_) [data-testid="edge-ring"] { width: 104px !important; height: 104px !important; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-ring"] svg { width: 104px; height: 104px; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-ring"] .mono { font-size: 30px !important; font-weight: 600 !important; }
+:root[data-vision="on"]:not(#_) [data-testid="verdict-title"] { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -0.01em; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-row"] { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px !important; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-row"] > div { padding: 14px 14px !important; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-row"] > div > div:first-child { text-transform: none !important; letter-spacing: 0 !important; font-size: 12.5px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-vision="on"]:not(#_) [data-testid="edge-row"] > div > div.mono { font-size: 26px !important; font-weight: 600 !important; line-height: 1.15 !important; margin-top: 2px; }
+:root[data-vision="on"]:not(#_) [data-testid="verdict-band"] { padding: 24px 28px !important; }
+
 /* ── Off switches ── */
 @media (prefers-reduced-transparency: reduce) {
   :root[data-vision="on"]:not(#_) :is(.vis-shell, .vis-rail, .card, .kpi, .hdr-well) {

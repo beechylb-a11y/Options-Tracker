@@ -50,7 +50,7 @@ export default function Documents({ authenticated }) {
 
 
   if (!authenticated) {
-    return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Documents</h2><p className="text-text-muted">Sign in to manage documents.</p></div>);
+    return (<div className="fade-in"><h2 className="page-title font-display text-2xl font-bold mb-2">Documents</h2><p className="text-text-muted">Sign in to manage documents.</p></div>);
   }
 
   const filtered = filter === 'All' ? docs : docs.filter(d => d.meta?.type === filter);
@@ -74,7 +74,7 @@ export default function Documents({ authenticated }) {
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="font-display text-2xl font-bold">Documents</h2>
+          <h2 className="page-title font-display text-2xl font-bold">Documents</h2>
           <p className="text-text-muted text-sm mt-0.5">{docs.length} document{docs.length !== 1 ? 's' : ''} stored</p>
         </div>
         <div className="flex gap-2">

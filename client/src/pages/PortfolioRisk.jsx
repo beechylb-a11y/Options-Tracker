@@ -172,7 +172,7 @@ export default function PortfolioRisk({ authenticated, account }) {
   if (!authenticated) {
     return (
       <div className="fade-in">
-        <h2 className="font-display text-2xl font-bold mb-2">Portfolio Risk</h2>
+        <h2 className="page-title font-display text-2xl font-bold mb-2">Portfolio Risk</h2>
         <p className="text-text-muted">Sign in to see your open risk.</p>
       </div>
     );
@@ -189,7 +189,7 @@ export default function PortfolioRisk({ authenticated, account }) {
     <div className="fade-in" data-testid="risk-now">
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h2 className="font-display text-2xl font-bold flex items-center gap-2"><Shield size={20} color={C.blue} /> Portfolio Risk</h2>
+          <h2 className="page-title font-display text-2xl font-bold flex items-center gap-2"><Shield size={20} color={C.blue} /> Portfolio Risk</h2>
           <p className="text-text-muted text-sm mt-0.5">
             {openN} open position{openN === 1 ? '' : 's'}{workN ? ` · ${workN} order${workN === 1 ? '' : 's'} working` : ''}
             {live.ranAt && ` · live ${live.ranAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`}

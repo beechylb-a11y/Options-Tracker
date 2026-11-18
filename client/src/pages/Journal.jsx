@@ -259,7 +259,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
     setSavingReview(false);
   }
 
-  if (!authenticated) return (<div className="fade-in"><h2 className="font-display text-2xl font-bold mb-2">Journal</h2><p className="text-text-muted">Connect Google to view journal.</p></div>);
+  if (!authenticated) return (<div className="fade-in"><h2 className="page-title font-display text-2xl font-bold mb-2">Journal</h2><p className="text-text-muted">Connect Google to view journal.</p></div>);
 
   const selData = selectedDay ? calendarData[selectedDay] || null : null;
   const selDayTrades = selectedDay ? getTradesForDate(selectedDay) : [];
@@ -276,7 +276,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
   return (<>
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="font-display text-2xl font-bold">Journal</h2>
+        <h2 className="page-title font-display text-2xl font-bold">Journal</h2>
         <button onClick={() => { setShowAdd(!showAdd); setNoteDate(localISODate(today)); }}
           className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors">
           <Plus size={14} /> Add note

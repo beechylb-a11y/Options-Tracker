@@ -262,7 +262,7 @@ export default function Knowledgebase() {
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="font-display text-2xl font-bold">Knowledgebase</h2>
+          <h2 className="page-title font-display text-2xl font-bold">Knowledgebase</h2>
           <p className="text-text-muted text-sm mt-0.5">Strategy reference, trading rules & checklists</p>
         </div>
         <div className="flex border border-bg-border rounded-lg overflow-hidden">

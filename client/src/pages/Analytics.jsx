@@ -80,7 +80,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
   if (!authenticated) {
     return (
       <div className="fade-in">
-        <h2 className="font-display text-2xl font-bold mb-2">Analytics</h2>
+        <h2 className="page-title font-display text-2xl font-bold mb-2">Analytics</h2>
         <p className="text-text-muted">Connect Google to view performance analytics.</p>
       </div>
     );
@@ -103,7 +103,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
       {error && <ErrorBanner message={error} onRetry={loadData} />}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="font-display text-2xl font-bold">Analytics</h2>
+          <h2 className="page-title font-display text-2xl font-bold">Analytics</h2>
           <p className="text-text-muted text-sm mt-0.5">{closed.length} closed trades analysed</p>
         </div>
         <div className="flex border border-bg-border rounded-lg overflow-hidden">

@@ -135,7 +135,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
 
   return (
     <div className="fade-in max-w-2xl">
-      <h2 className="font-display text-2xl font-bold mb-6">Settings</h2>
+      <h2 className="page-title font-display text-2xl font-bold mb-6">Settings</h2>
 
       {/* Theme */}
       <div className="card mb-6 flex items-center justify-between gap-4 flex-wrap">
