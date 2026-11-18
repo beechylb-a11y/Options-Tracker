@@ -61,6 +61,25 @@ function BridgeControl({ state, title, onAction, busy, note, mode, liveLine }) {
   );
 }
 
+// Header layout (Nov 2026): three recessed wells — Market, Today, System — each stat a
+// small caps label over its value, so the strip reads in columns instead of one run
+// of words. With Settings › Glass on the strip is a deep glass bar and the wells are
+// grooves cut into it (styles/glass.css: .hdr-well).
+export function HdrStat({ label, value, sub, color, testid, title, children }) {
+  return (
+    <div className="hdr-stat" data-testid={testid} title={title}>
+      <span className="hdr-label">{label}</span>
+      <span className="hdr-value">
+        {children || <span className="mono" style={color ? { color } : undefined}>{value}</span>}
+        {sub != null && sub !== '' && <span className="hdr-sub">{sub}</span>}
+      </span>
+    </div>
+  );
+}
+export function HdrWell({ testid, children, grow = false }) {
+  return <div className="hdr-well" data-testid={testid} style={grow ? { flex: '1 1 auto' } : undefined}>{children}</div>;
+}
+
 // New York date and time, and where the session stands (Oct 2026). Ticks every
 // 15 s; the tooltip gives your own clock alongside.
 const CLOCK_TONE = {
@@ -69,12 +88,19 @@ const CLOCK_TONE = {
   blue: { fg: 'var(--c-58a6ff)', bg: 'var(--c-0c1d36)', border: 'var(--c-1f6feb)' },
   grey: { fg: 'var(--c-a8b2be)', bg: 'var(--c-161b22)', border: 'var(--c-30363d)' },
 };
-export function NyClock() {
+export function NyClock({ stacked = false }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
   const c = marketClock(now);
   const t = CLOCK_TONE[c.tone] || CLOCK_TONE.grey;
   const local = now.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  if (stacked) {
+    return (
+      <HdrStat testid="ny-clock" title={`New York ${c.date} ${c.time} · your time ${local}${c.detail ? ' · ' + c.detail : ''}`}
+        label={<>New York <span data-testid="ny-status" className="hdr-pill" style={{ color: t.fg, background: t.bg, borderColor: t.border }}>{c.status}</span></>}
+        value={c.time} sub={<><span className="hdr-mid">{c.date}</span>{c.detail ? <span className="hdr-wide"> · {c.detail}</span> : null}</>} />
+    );
+  }
   return (
     <div className="flex items-center gap-2" data-testid="ny-clock" title={`New York ${c.date} ${c.time} · your time ${local}`}>
       <span className="text-[12px] text-text-faint uppercase tracking-wider">NY</span>
@@ -88,12 +114,19 @@ export function NyClock() {
 }
 
 // SPX from the live stream (Nov 2026): price, change on the day and how live it is.
-export function LivePrice({ symbol = 'SPX' }) {
+export function LivePrice({ symbol = 'SPX', stacked = false }) {
   const q = useLiveQuote(symbol);
   const fresh = useFreshness(q);
   const px = q && (q.mark ?? q.last);
   if (!(px > 0)) return null;
   const chg = q.close > 0 ? (px - q.close) / q.close * 100 : null;
+  if (stacked) {
+    return (
+      <HdrStat testid="live-price" label={<>{symbol} <FreshDot state={fresh} ts={q.ts} /></>}
+        value={px.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        sub={chg != null ? <span style={{ color: chg >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{chg >= 0 ? '+' : '−'}{Math.abs(chg).toFixed(2)}%</span> : null} />
+    );
+  }
   return (
     <div className="flex items-center gap-1.5" data-testid="live-price">
       <span className="text-[12px] text-text-faint uppercase tracking-wider">{symbol}</span>
@@ -255,73 +288,64 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const gaugeColor = lossUsedPct >= 80 ? 'bg-red' : lossUsedPct >= 50 ? 'bg-amber' : 'bg-green';
 
   return (
-    <GlassSurface data-testid="header-strip" className={glassOn ? 'top-0 z-20' : 'sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border'}
-      glassStyle={{ position: 'sticky', borderRadius: 16, margin: '12px 12px 0 0' }}>
-      <div className="max-w-[1400px] mx-auto px-6 h-12 flex items-center gap-5">
-        {authenticated && accounts.length > 0 ? (
-          <select
-            value={account}
-            onChange={e => onAccountChange(e.target.value)}
-            className="px-2 py-1 bg-bg border border-bg-border rounded-lg text-xs font-medium text-text outline-none focus:border-accent"
-          >
-            <option value="all">All accounts</option>
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        ) : !authenticated ? (
-          <button onClick={onLogin} className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg transition-colors">
-            Sign in
-          </button>
-        ) : null}
-
-        <NyClock />
-
-        <LivePrice symbol="SPX" />
+    <GlassSurface data-testid="header-strip" className={glassOn ? 'hdr-glass top-0 z-20' : 'sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border'}
+      glassStyle={{ position: 'sticky', borderRadius: 18, margin: '12px 12px 0 0' }}>
+      <div className="hdr-row" data-testid="header-row">
+        <HdrWell testid="hdr-market">
+          <NyClock stacked />
+          <LivePrice symbol="SPX" stacked />
+        </HdrWell>
 
         {authenticated && (
-          <>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-[12px] text-text-faint uppercase tracking-wider">Today</span>
-              <span className="mono text-sm font-bold" style={{ color: pnlColor(todayPnl) }}>{fmt$(todayPnl)}</span>
-            </div>
-
+          <HdrWell testid="hdr-today">
+            <HdrStat testid="hdr-pnl" label="Today" value={fmt$(todayPnl)} color={pnlColor(todayPnl)} />
             {maxDailyLoss > 0 && (
-              <div className="flex items-center gap-1.5" title={`Daily loss used: ${fmt$(todayPnl < 0 ? Math.abs(todayPnl) : 0)} of ${fmt$(maxDailyLoss)} cap`}>
-                <span className="text-[12px] text-text-faint uppercase tracking-wider">Loss cap</span>
-                <div className="w-16 h-1.5 bg-bg rounded-full overflow-hidden">
-                  <div className={`h-full ${gaugeColor}`} style={{ width: `${lossUsedPct}%` }} />
-                </div>
-                <span className="text-[12.5px] text-text-muted mono">{Math.round(lossUsedPct)}%</span>
-              </div>
+              <HdrStat testid="hdr-losscap" label="Loss cap" title={`Daily loss used: ${fmt$(todayPnl < 0 ? Math.abs(todayPnl) : 0)} of ${fmt$(maxDailyLoss)} cap`}>
+                <span className="hdr-meter"><span className={gaugeColor} style={{ width: `${Math.max(lossUsedPct, 2)}%` }} /></span>
+                <span className="mono hdr-sub" style={{ marginLeft: 0 }}>{Math.round(lossUsedPct)}%<span className="hdr-wide"> of {fmt$(maxDailyLoss)}</span></span>
+              </HdrStat>
             )}
-
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-[12px] text-text-faint uppercase tracking-wider">Open</span>
-              <span className="mono text-sm font-bold text-text">{openCount}</span>
-              {engineWorking > 0 && <span className="text-[12px]" style={{ color: 'var(--c-bc8cff)' }}>· {engineWorking} working</span>}
-            </div>
-          </>
+            <HdrStat testid="hdr-open" label="Open" value={openCount}
+              sub={engineWorking > 0 ? <span style={{ color: 'var(--c-bc8cff)' }}>{engineWorking} working</span> : null} />
+          </HdrWell>
         )}
 
         <div className="flex-1" />
 
-        <button
-          onClick={handleRefresh}
-          className="flex items-center gap-1.5 text-[12.5px] text-text-muted hover:text-text transition-colors"
-          title="Refresh all data"
-        >
-          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          {lastSynced ? `Synced ${clockFmt(lastSynced)}` : 'Not synced'}
-        </button>
-
-        <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
-        <BridgeControl
-          // The stream knows within a second when TWS drops; the 60 s heartbeat is the fallback.
-          state={live.connection === 'open' ? (live.status.connected ? 'ok' : 'warn') : bridgeState}
-          title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
-          onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
-          mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
-          liveLine={liveSummary(live)} />
-        <ThemeToggle />
+        <HdrWell testid="hdr-system">
+          {authenticated && accounts.length > 0 ? (
+            <HdrStat label="Account">
+              <select value={account} onChange={e => onAccountChange(e.target.value)} className="hdr-select" aria-label="Account">
+                <option value="all">All accounts</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </HdrStat>
+          ) : !authenticated ? (
+            <button onClick={onLogin} className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-lg transition-colors">
+              Sign in
+            </button>
+          ) : null}
+          <HdrStat label="Synced">
+            <button onClick={handleRefresh} className="flex items-center gap-1.5 hover:text-text transition-colors"
+              title={`Refresh all data${lastSynced ? ' · last synced ' + clockFmt(lastSynced) : ''}`}>
+              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+              <span className="mono hdr-mid">{lastSynced ? clockFmt(lastSynced) : '—'}</span>
+            </button>
+          </HdrStat>
+          <HdrStat label="Feeds">
+            <span className="flex items-center gap-3">
+              <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
+              <BridgeControl
+                // The stream knows within a second when TWS drops; the 60 s heartbeat is the fallback.
+                state={live.connection === 'open' ? (live.status.connected ? 'ok' : 'warn') : bridgeState}
+                title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
+                onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
+                mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
+                liveLine={liveSummary(live)} />
+            </span>
+          </HdrStat>
+          <ThemeToggle />
+        </HdrWell>
       </div>
     </GlassSurface>
   );

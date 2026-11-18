@@ -330,3 +330,29 @@ body {
 /* Animate in */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .fade-in { animation: fadeIn 0.3s ease-out; }
+
+/* ── Header strip (Nov 2026): wells of label-over-value stats ── */
+.hdr-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; padding: 8px 10px; container-type: inline-size; }
+/* The long extras (the clock's session note, the loss cap's dollar figure) only where
+   the strip is wide enough for them; the tooltip always has them. */
+.hdr-wide, .hdr-mid { display: none; }
+@container (min-width: 1100px) { .hdr-mid { display: inline; } .hdr-stat { padding: 2px 14px; } }
+@container (min-width: 1500px) { .hdr-wide { display: inline; } }
+.hdr-well {
+  display: flex; align-items: center; gap: 0; padding: 4px 1px; border-radius: 12px;
+  background: var(--c-0d1117); border: 1px solid var(--c-30363d);
+}
+.hdr-stat { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 2px 9px; min-width: 0; }
+.hdr-stat + .hdr-stat { border-left: 1px solid var(--c-30363d); }
+.hdr-label {
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 10.5px; line-height: 1; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-8b949e); font-weight: 600;
+}
+.hdr-value { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; font-size: 15px; line-height: 1.2; font-weight: 700; color: var(--c-e6edf3); }
+.hdr-sub { font-size: 12px; font-weight: 500; color: var(--c-a8b2be); }
+.hdr-pill { font-size: 10px; letter-spacing: 0.05em; padding: 1px 5px; border-radius: 4px; border: 1px solid; font-weight: 700; }
+.hdr-meter { display: inline-block; align-self: center; width: 64px; height: 6px; border-radius: 99px; overflow: hidden; background: var(--c-30363d); }
+.hdr-meter > span { display: block; height: 100%; border-radius: 99px; }
+.hdr-select { background: transparent; border: none; outline: none; padding: 0; font: inherit; font-size: 13.5px; color: inherit; cursor: pointer; }
+.hdr-select option { background: var(--c-161b22); color: var(--c-e6edf3); }
+.hdr-well .hdr-stat .hdr-value button { font-size: 13.5px; font-weight: 600; color: var(--c-a8b2be); }

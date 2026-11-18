@@ -259,3 +259,44 @@
     border: 1px solid #d0d7de !important;
   }
 }
+
+/* ── Header strip on glass (Nov 2026): a deep bar with grooves ──
+   The bar gets a thicker tint and a long soft drop shadow so it sits above the page;
+   each well is cut into it — darker inset fill, inner top shadow, a light lower rim —
+   so the three groups read as separate trays and the numbers sit on a calm ground. */
+:root[data-glass="on"] .hdr-glass {
+  --glass-tint-top: rgba(255, 255, 255, 0.09);
+  --glass-tint-bottom: rgba(255, 255, 255, 0.03);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 18px 40px -12px rgba(0, 0, 0, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+}
+:root[data-glass="on"] .hdr-well {
+  background: linear-gradient(180deg, rgba(1, 4, 9, 0.46), rgba(1, 4, 9, 0.30));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.45),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+}
+:root[data-glass="on"] .hdr-stat + .hdr-stat { border-left-color: rgba(255, 255, 255, 0.08); }
+:root[data-glass="on"] .hdr-meter { background: rgba(255, 255, 255, 0.10); }
+:root[data-glass="on"] .hdr-value { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35); }
+:root[data-glass="on"][data-theme="light"] .hdr-glass {
+  --glass-tint-top: rgba(255, 255, 255, 0.62);
+  --glass-tint-bottom: rgba(255, 255, 255, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(15, 30, 60, 0.08),
+    0 16px 36px -14px rgba(15, 30, 60, 0.28),
+    0 2px 6px rgba(15, 30, 60, 0.08);
+}
+:root[data-glass="on"][data-theme="light"] .hdr-well {
+  background: linear-gradient(180deg, rgba(15, 30, 60, 0.07), rgba(15, 30, 60, 0.035));
+  border-color: rgba(15, 30, 60, 0.08);
+  box-shadow: inset 0 2px 4px rgba(15, 30, 60, 0.12), inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+}
+:root[data-glass="on"][data-theme="light"] .hdr-stat + .hdr-stat { border-left-color: rgba(15, 30, 60, 0.10); }
+:root[data-glass="on"][data-theme="light"] .hdr-meter { background: rgba(15, 30, 60, 0.10); }
+:root[data-glass="on"][data-theme="light"] .hdr-value { text-shadow: none; }

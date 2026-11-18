@@ -12,6 +12,7 @@ import { INDEX_SYMBOLS, ETF_SYMBOLS, assetClassOf, loadWatchlist, saveWatchlist,
 import Checkup45 from '../components/Checkup45';
 import { trendLabel } from '../engine/trend';
 import { SCAN_FIELDS, VOL_SCAN_KEYS, fetchScanData, computeScan, newScanCache } from '../utils/multiScan';
+import { loadScans, saveScans } from '../utils/scanStore';
 import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
@@ -310,7 +311,10 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // ── Scans, per group (Oct 2026) ──
   // Lifted out of the panel so results survive closing it, every group keeps its own,
   // and "Scan everything" can fill all six. { [groupKey]: { results, meta, scannedAt, manualData } }
-  const [scans, setScans] = useState({});
+  // Kept in this browser too (utils/scanStore.js), so leaving the page or refreshing
+  // does not lose them; results are recomputed from the stored inputs. (Nov 2026.)
+  const [scans, setScans] = useState(() => loadScans());
+  useEffect(() => { saveScans(scans); }, [scans]);
   // ── Watchlist (Nov 2026) ──
   // One list in the database drives every scan group: each group scans the names of its
   // asset class that the mode's ranking puts in the top N (utils/watchlist.js). The
@@ -387,12 +391,12 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     try {
       const list = scanLists[g] || [];
       if (!list.length) {
-        setScans(prev => ({ ...prev, [g]: { results: [], meta: {}, scannedAt: new Date().toISOString(), manualData: {}, empty: true } }));
+        setScans(prev => ({ ...prev, [g]: { results: [], meta: {}, scannedAt: new Date().toISOString(), manualData: {}, empty: true, list: [] } }));
         return;
       }
       const { mergedData, meta, pulledAt } = await fetchScanData({ mode: m, underlyings: list, manualData: typed || {}, bridgeUrl, cache });
       const results = computeScan(m, list, mergedData);
-      setScans(prev => ({ ...prev, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData } }));
+      setScans(prev => ({ ...prev, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData, list } }));
     } catch (e) {
       showToast('Scan failed: ' + e.message, 'error');
     }
@@ -411,7 +415,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   function recalcGroup(g, manualData) {
     const [m] = g.split('|');
     const list = scanLists[g] || [];
-    setScans(prev => ({ ...prev, [g]: { ...(prev[g] || {}), manualData, results: computeScan(m, list, manualData),
+    setScans(prev => ({ ...prev, [g]: { ...(prev[g] || {}), manualData, list, results: computeScan(m, list, manualData),
       scannedAt: (prev[g] && prev[g].scannedAt) || new Date().toISOString(), meta: (prev[g] && prev[g].meta) || {} } }));
   }
 
