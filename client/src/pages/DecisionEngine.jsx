@@ -666,7 +666,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               <button key={m} onClick={() => switchMode(m)} data-testid={'mode-' + m} data-on={on ? '1' : '0'}
                 title={on ? `Showing ${u.short} · ${CLASS_LABEL[groupClass]}` : `Show ${u.short} · ${CLASS_LABEL[groupClass]}`}
                 className="px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5"
-                style={on ? { background: u.solid, color: 'var(--c-0d1117)', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
+                style={on ? { background: u.solid, color: 'var(--c-on-accent)', fontWeight: 700 } : { color: u.fg, background: 'transparent' }}>
                 <u.Icon size={14} /> {u.short}
               </button>
             );
@@ -1471,7 +1471,7 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
           <button onClick={() => onScan(typed)} disabled={busy || !!master} data-testid="scan-all"
             title={`Scan ${underlyings.join(', ')} for a ${ui.short} trade`}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
-            style={{ background: ui.solid, color: 'var(--c-0d1117)' }}>
+            style={{ background: ui.solid, color: 'var(--c-on-accent)' }}>
             <ui.Icon size={14} className={busy ? 'animate-spin' : ''} />
             {busy ? `Scanning ${classLabel}…` : `Scan ${classLabel} · ${ui.short}`}
           </button>

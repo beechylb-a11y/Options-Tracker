@@ -8,6 +8,7 @@
    (data-theme="light" on <html>) swaps the values below. Status colours go
    darker in day mode so green/red/amber still read on white. (Nov 2026) */
 :root {
+  --c-on-accent: var(--c-0d1117); /* text on a bright accent fill (chip, marker); Vision sets its own */
   --c-e6ffed: #e6ffed; /* label on the price map's profit zone; dark green in day mode */
   --c-ffffff: #ffffff; /* headline white — near-black in day mode */
   --rgb-0d1117: 13 17 23;

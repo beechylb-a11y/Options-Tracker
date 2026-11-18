@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sun, Moon, Monitor, Sparkles, Square } from 'lucide-react';
+import { Sun, Moon, Monitor, Sparkles, Square, Gem } from 'lucide-react';
 import { themePref, resolvedTheme, setThemePref, glassPref, setGlassPref } from '../utils/theme';
 
 // Day / night switch (Nov 2026). The header button flips day ↔ night; Settings also
@@ -41,24 +41,34 @@ export function ThemeChoice() {
   );
 }
 
-/** True while Settings › Glass is on; follows the switch live. */
-export function useGlassOn() {
-  const [on, setOn] = useState(() => glassPref() === 'on');
+function useGlassPref() {
+  const [pref, setPref] = useState(() => glassPref());
   useEffect(() => {
-    const f = () => setOn(glassPref() === 'on');
+    const f = () => setPref(glassPref());
     window.addEventListener('glasschange', f);
     return () => window.removeEventListener('glasschange', f);
   }, []);
-  return on;
+  return pref;
+}
+
+/** True while Settings › Surfaces is Glass or Vision; follows the switch live. */
+export function useGlassOn() {
+  const p = useGlassPref();
+  return p === 'on' || p === 'vision';
+}
+
+/** True while Settings › Surfaces is Vision. */
+export function useVisionOn() {
+  return useGlassPref() === 'vision';
 }
 
 export function GlassChoice() {
-  const on = useGlassOn();
-  const opts = [['off', 'Solid', Square], ['on', 'Glass', Sparkles]];
+  const pref = useGlassPref();
+  const opts = [['off', 'Solid', Square], ['on', 'Glass', Sparkles], ['vision', 'Vision', Gem]];
   return (
     <div className="inline-flex rounded-lg border border-bg-border overflow-hidden" role="radiogroup" aria-label="Surfaces">
       {opts.map(([v, label, Icon]) => {
-        const sel = (v === 'on') === on;
+        const sel = pref === v;
         return (
           <button key={v} role="radio" aria-checked={sel} data-testid={`glass-${v}`} onClick={() => setGlassPref(v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${sel ? 'bg-accent text-white' : 'text-text-muted hover:text-text hover:bg-bg-hover'}`}>

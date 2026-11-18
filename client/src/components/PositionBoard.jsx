@@ -328,7 +328,7 @@ function BoardRow({ row, on, narrow }) {
   const button = (
     <button data-testid="board-primary" onClick={e => { e.stopPropagation(); if (pr.act === 'expand') setOpen(o => !o); else on(pr.act, row.r); }}
       style={{ padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
-        color: pr.act === 'expand' ? pr.col : 'var(--c-0d1117)', background: pr.act === 'expand' ? 'transparent' : pr.col, border: `1.5px solid ${pr.col}` }}>
+        color: pr.act === 'expand' ? pr.col : 'var(--c-on-accent)', background: pr.act === 'expand' ? 'transparent' : pr.col, border: `1.5px solid ${pr.col}` }}>
       {pr.text}{pr.act === 'expand' ? (open ? ' ▴' : ' ▾') : ''}
     </button>
   );

@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shadowbook</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script>
       // Day/night theme before first paint, so day mode doesn't flash black on load.
       try { var t = localStorage.getItem('theme');
         if (t === 'light' || (t === 'auto' && matchMedia('(prefers-color-scheme: light)').matches)) document.documentElement.setAttribute('data-theme', 'light');
-        if (localStorage.getItem('glass') === 'on') document.documentElement.setAttribute('data-glass', 'on');
+        var g = localStorage.getItem('glass');
+        if (g === 'on' || g === 'vision') document.documentElement.setAttribute('data-glass', 'on');
+        if (g === 'vision') document.documentElement.setAttribute('data-vision', 'on');
       } catch (e) {}
     </script>
   </head>

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import './styles/glass.css';   // after index.css: same-specificity selectors win on order
+import './styles/vision.css';  // after glass.css: Vision only overrides
 import { applyTheme, watchSystemTheme, applyGlass } from './utils/theme';
 import { installBridgeAuth } from './utils/bridgeAuth';
 import { startLiveFeed } from './live/liveFeed';

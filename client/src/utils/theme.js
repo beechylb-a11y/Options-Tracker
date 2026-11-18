@@ -69,19 +69,24 @@ export function themeVarsCss() {
 }
 
 // ── Glass (Nov 2026) ──
-// Liquid glass on or off, per browser: data-glass="on" on <html> (absent = today's
-// solid surfaces). Off by default until the nested-surface pass is done.
+// Surfaces, per browser: 'off' (solid), 'on' (liquid glass) or 'vision' (the room
+// backdrop + one glass shell + icon rail). Vision sets data-glass="on" too, so every
+// glass rule still applies, plus data-vision="on" for the vision layer on top.
 const GLASS_KEY = 'glass';
 export function glassPref() {
-  try { return localStorage.getItem(GLASS_KEY) === 'on' ? 'on' : 'off'; } catch { return 'off'; }
+  try { const v = localStorage.getItem(GLASS_KEY); return v === 'on' || v === 'vision' ? v : 'off'; } catch { return 'off'; }
 }
 export function applyGlass(pref = glassPref()) {
   if (typeof document === 'undefined') return;
-  if (pref === 'on') document.documentElement.setAttribute('data-glass', 'on');
-  else document.documentElement.removeAttribute('data-glass');
+  const el = document.documentElement;
+  if (pref === 'on' || pref === 'vision') el.setAttribute('data-glass', 'on');
+  else el.removeAttribute('data-glass');
+  if (pref === 'vision') el.setAttribute('data-vision', 'on');
+  else el.removeAttribute('data-vision');
 }
 export function setGlassPref(pref) {
-  try { localStorage.setItem(GLASS_KEY, pref === 'on' ? 'on' : 'off'); } catch { /* private window */ }
-  applyGlass(pref);
-  try { window.dispatchEvent(new CustomEvent('glasschange', { detail: pref })); } catch { /* old browser */ }
+  const v = pref === 'on' || pref === 'vision' ? pref : 'off';
+  try { localStorage.setItem(GLASS_KEY, v); } catch { /* private window */ }
+  applyGlass(v);
+  try { window.dispatchEvent(new CustomEvent('glasschange', { detail: v })); } catch { /* old browser */ }
 }

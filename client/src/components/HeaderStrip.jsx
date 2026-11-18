@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import GlassSurface from './GlassSurface';
-import { useGlassOn } from './ThemeToggle';
+import { useGlassOn, useVisionOn } from './ThemeToggle';
 import { RefreshCw } from 'lucide-react';
 import { api, clearApiCache } from '../utils/api';
 import { fmt$, pnlColor } from '../utils/format';
@@ -160,7 +160,21 @@ function StatusDot({ state, label, title }) {
   );
 }
 
-export default function HeaderStrip({ authenticated, account, accounts, onAccountChange, onGlobalRefresh, onLogin }) {
+// Vision (Nov 2026): no bar at all — the page title as a large text tab and the
+// wells as pills, sitting straight on the shell. A plain div, so the refraction
+// filter GlassSurface mounts doesn't paint a bar back in.
+function HeaderWrap({ vision, glassOn, children }) {
+  if (vision) return <div data-testid="header-strip" className="vis-top hdr-glass">{children}</div>;
+  return (
+    <GlassSurface data-testid="header-strip" className={glassOn ? 'hdr-glass top-0 z-20' : 'sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border'}
+      glassStyle={{ position: 'sticky', borderRadius: 18, margin: '12px 12px 0 0' }}>
+      {children}
+    </GlassSurface>
+  );
+}
+
+export default function HeaderStrip({ authenticated, account, accounts, onAccountChange, onGlobalRefresh, onLogin, title }) {
+  const visionOn = useVisionOn();
   const glassOn = useGlassOn();
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
@@ -288,8 +302,8 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const gaugeColor = lossUsedPct >= 80 ? 'bg-red' : lossUsedPct >= 50 ? 'bg-amber' : 'bg-green';
 
   return (
-    <GlassSurface data-testid="header-strip" className={glassOn ? 'hdr-glass top-0 z-20' : 'sticky top-0 z-20 bg-bg-card/95 backdrop-blur border-b border-bg-border'}
-      glassStyle={{ position: 'sticky', borderRadius: 18, margin: '12px 12px 0 0' }}>
+    <HeaderWrap vision={visionOn} glassOn={glassOn}>
+      {visionOn && title && <div className="vis-title" data-testid="vision-title">{title}</div>}
       <div className="hdr-row" data-testid="header-row">
         <HdrWell testid="hdr-market">
           <NyClock stacked />
@@ -347,6 +361,6 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
           <ThemeToggle />
         </HdrWell>
       </div>
-    </GlassSurface>
+    </HeaderWrap>
   );
 }

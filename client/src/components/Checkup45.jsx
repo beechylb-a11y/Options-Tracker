@@ -292,7 +292,7 @@ export default function Checkup45({ tickets, openPositions }) {
         </div>
         <button onClick={run} disabled={busy || !list.length} data-testid="checkup-run"
           className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-50"
-          style={{ background: BLUE.solid, color: 'var(--c-0d1117)' }}>
+          style={{ background: BLUE.solid, color: 'var(--c-on-accent)' }}>
           <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />
           {busy ? 'Checking…' : `Check ${list.length} open trade${list.length === 1 ? '' : 's'}`}
         </button>

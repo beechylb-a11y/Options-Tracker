@@ -5,7 +5,7 @@ import { getSupabase } from './utils/supabase';
 import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import GlassSurface from './components/GlassSurface';
-import { useGlassOn } from './components/ThemeToggle';
+import { useGlassOn, useVisionOn } from './components/ThemeToggle';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
 import DecisionEngine from './pages/DecisionEngine';
@@ -49,6 +49,7 @@ const NAV_GROUPS = [
 ];
 
 const ALL_TABS = NAV_GROUPS.flatMap(g => g.tabs);
+const PAGE_NAMES = Object.fromEntries(ALL_TABS.map(t => [t.id, t.label]));
 const TAB_IDS = ALL_TABS.map(t => t.id);
 
 const savedTab = () => {
@@ -70,6 +71,7 @@ export default function App() {
   const [selectedAccount, setSelectedAccountState] = useState(savedAccount);
   const [refreshTick, setRefreshTick] = useState(0);
   const glassOn = useGlassOn();
+  const visionOn = useVisionOn();
 
   const [userEmail, setUserEmail] = useState('');
   const [authNotice, setAuthNotice] = useState('');
@@ -162,6 +164,77 @@ export default function App() {
 
   if (!authenticated) return <Login notice={authNotice} />;
 
+  const pages = (
+    <>
+      {/* refreshTick remounts the visible page so it refetches after a global
+          refresh — except the Decision Engine, where a remount could disturb
+          an in-progress ticket (cache is still cleared; data refetches on
+          next navigation). */}
+      <div className={visionOn ? 'max-w-[1400px] mx-auto px-1 pb-6' : 'max-w-[1400px] mx-auto p-6'} key={tab === 'decision' ? 'decision' : refreshTick}>
+        <PageBoundary key={tab} name={PAGE_NAMES[tab]}>
+        {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} />}
+        {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
+        {tab === 'knowledge' && <Knowledgebase />}
+        {tab === 'documents' && <Documents authenticated={authenticated} />}
+        {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogout} accounts={accounts} onAccountsChange={setAccounts} userEmail={userEmail} />}
+        </PageBoundary>
+      </div>
+    </>
+  );
+
+  // Vision (Nov 2026): the room, one glass shell, an icon rail inside it, and the
+  // page title as a large text tab on the top row. Same pages, same header data.
+  if (visionOn) {
+    const railBtn = t => {
+      const Icon = t.icon;
+      const active = tab === t.id;
+      return (
+        <button key={t.id} onClick={() => setTab(t.id)} className="vis-rail-btn" data-testid={`rail-${t.id}`}
+          aria-current={active ? 'page' : undefined} aria-label={t.label} title={`${t.label}${t.key ? ' (' + t.key + ')' : ''}`}>
+          <Icon size={20} strokeWidth={1.8} />
+        </button>
+      );
+    };
+    const settingsTab = ALL_TABS.find(t => t.id === 'settings');
+    return (
+      <div className="liquid-glass-backdrop vis-room">
+        <div className="vis-shell" data-testid="vision-shell">
+          <nav className="vis-rail" aria-label="Pages" data-testid="sidebar">
+            <div className="vis-rail-brand" title="Shadowbook" aria-hidden="true">S</div>
+            {NAV_GROUPS.map((g, gi) => (
+              <React.Fragment key={g.label}>
+                {gi > 0 && <div className="vis-rail-gap" aria-hidden="true" />}
+                {g.tabs.filter(t => t.id !== 'settings').map(railBtn)}
+              </React.Fragment>
+            ))}
+            <div className="flex-1" />
+            {railBtn(settingsTab)}
+            <button onClick={handleLogout} className="vis-rail-btn" aria-label="Sign out" title={`Sign out${userEmail ? ' · ' + userEmail : ''}`}>
+              <LogOut size={18} strokeWidth={1.8} />
+            </button>
+          </nav>
+          <main className="vis-main">
+            <HeaderStrip
+          authenticated={authenticated}
+          account={selectedAccount}
+          accounts={accounts}
+          onAccountChange={setSelectedAccount}
+          onGlobalRefresh={() => setRefreshTick(t => t + 1)}
+          onLogin={handleLogout}
+              title={PAGE_NAMES[tab]}
+            />
+            {pages}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex liquid-glass-backdrop">
       {/* Sidebar — with Settings › Glass on it floats, 12 px in, as a glass panel. */}
@@ -221,24 +294,7 @@ export default function App() {
           onGlobalRefresh={() => setRefreshTick(t => t + 1)}
           onLogin={handleLogout}
         />
-        {/* refreshTick remounts the visible page so it refetches after a global
-            refresh — except the Decision Engine, where a remount could disturb
-            an in-progress ticket (cache is still cleared; data refetches on
-            next navigation). */}
-        <div className="max-w-[1400px] mx-auto p-6" key={tab === 'decision' ? 'decision' : refreshTick}>
-          <PageBoundary key={tab} name={{ dashboard: 'Dashboard', trades: 'Trades', decision: 'Decision Engine', journal: 'Journal', analytics: 'Analytics', reports: 'Reports', risk: 'Portfolio Risk', knowledge: 'Knowledgebase', documents: 'Documents', settings: 'Settings' }[tab]}>
-          {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} />}
-          {tab === 'analytics' && <Analytics authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'reports' && <Reports authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
-          {tab === 'risk' && <PortfolioRisk authenticated={authenticated} account={selectedAccount} />}
-          {tab === 'knowledge' && <Knowledgebase />}
-          {tab === 'documents' && <Documents authenticated={authenticated} />}
-          {tab === 'settings' && <SettingsPage authenticated={authenticated} onLogin={handleLogout} accounts={accounts} onAccountsChange={setAccounts} userEmail={userEmail} />}
-          </PageBoundary>
-        </div>
+        {pages}
       </main>
     </div>
   );

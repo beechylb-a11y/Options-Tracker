@@ -141,7 +141,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
       <div className="card mb-6 flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h3 className="font-display font-semibold">Appearance</h3>
-          <p className="text-xs text-text-muted mt-1">Day for daylight, Night for the evening session, Auto follows your computer. Glass gives the sidebar, header, verdict and pop-ups a frosted surface (refraction in Chrome and the Claude app; frosted elsewhere).</p>
+          <p className="text-xs text-text-muted mt-1">Day for daylight, Night for the evening session, Auto follows your computer. Glass gives the sidebar, header, verdict and pop-ups a frosted surface (refraction in Chrome and the Claude app; frosted elsewhere). Vision puts every page in one glass frame with an icon rail, over a soft room; it ignores Day/Night.</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <ThemeChoice />

@@ -201,7 +201,7 @@ export default function PortfolioRisk({ authenticated, account }) {
         {bridgeUrl && (
           <button onClick={refreshLive} disabled={live.busy} data-testid="risk-refresh"
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-50"
-            style={{ background: C.solid, color: 'var(--c-0d1117)' }}>
+            style={{ background: C.solid, color: 'var(--c-on-accent)' }}>
             <RefreshCw size={14} className={live.busy ? 'animate-spin' : ''} /> {live.busy ? 'Pulling from TWS…' : 'Refresh live'}
           </button>
         )}

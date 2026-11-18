@@ -3637,7 +3637,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
               style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 14px',borderRadius:10,
               background:'var(--c-0d1117)',border:`1px solid ${n.resolved ? 'var(--c-238636)' : n.tone==='bad'?'var(--c-6e2427)':n.tone==='warn'?'var(--c-9e6a03)':'var(--c-30363d)'}`}}>
               <span className="mono" style={{width:24,height:24,borderRadius:'50%',flex:'none',display:'flex',alignItems:'center',justifyContent:'center',
-                fontSize:12.5,fontWeight:700,color:'var(--c-0d1117)',background:n.resolved ? 'var(--c-3fb950)' : n.tone==='bad'?'var(--c-f85149)':n.tone==='warn'?'var(--c-d29922)':'var(--c-8b949e)'}}>{n.resolved ? '✓' : idx+1}</span>
+                fontSize:12.5,fontWeight:700,color:'var(--c-on-accent)',background:n.resolved ? 'var(--c-3fb950)' : n.tone==='bad'?'var(--c-f85149)':n.tone==='warn'?'var(--c-d29922)':'var(--c-8b949e)'}}>{n.resolved ? '✓' : idx+1}</span>
               <div style={{flex:'1 1 280px',minWidth:0,display:'flex',flexDirection:'column',gap:3}}>
                 <span style={{fontSize:14.5,fontWeight:600,color:'var(--c-ffffff)'}}>{n.resolved ? 'Done — ' : ''}{n.title}</span>
                 {n.detail && <span style={{fontSize:13,lineHeight:1.45,color:'var(--c-a8b2be)'}}>{n.detail}</span>}
@@ -5996,7 +5996,7 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
 
       <line x1={pxX} y1="24" x2={pxX} y2="122" stroke="var(--c-ffffff)" strokeWidth="2" />
       <rect x={pxX - pillW / 2} y="120" width={pillW} height="18" rx="9" fill="var(--c-ffffff)" />
-      <text x={pxX} y="133" fill="var(--c-0d1117)" fontSize="11.5" fontWeight="700" textAnchor="middle" style={T}>{Math.round(price)}</text>
+      <text x={pxX} y="133" fill="var(--c-on-accent)" fontSize="11.5" fontWeight="700" textAnchor="middle" style={T}>{Math.round(price)}</text>
 
       <line x1={L} y1="148" x2={R} y2="148" stroke="var(--c-30363d)" />
       {ticks.map(t => (

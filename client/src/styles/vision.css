@@ -1,0 +1,335 @@
+/*!
+ * Shadowbook Vision (Nov 2026) — Settings › Appearance › Surfaces › Vision.
+ *
+ * A soft "room" backdrop, one big glass shell per page with an icon rail inside,
+ * and frosted cards with a bright top rim. Keyed on data-vision="on", which
+ * is always set together with data-glass="on", so every glass rule still applies
+ * and this file only overrides. Import AFTER glass.css. Vision ignores day/night.
+ *
+ * Contrast is measured against the vision card (~#4d4a46 effective): every text
+ * colour below holds >= 4.6:1 there, white ~8:1. The room is darker than the
+ * reference picture on purpose: a lighter room put the pastel red under 4.5:1.
+ *
+ * Every selector starts :root[data-vision="on"]:not(#_). The :not(#_) matches
+ * always and adds id weight, so Vision beats the day-mode and glass rules
+ * (some are four classes deep) without !important. Inline styles still win.
+ */
+
+/* ── Colours: night variable names, vision values (generated) ── */
+:root[data-vision="on"]:not(#_) {
+  color-scheme: dark;
+  --c-e6ffed: #e6ffed;
+  --c-ffffff: #ffffff;
+  --c-010409: #33312e;
+  --c-0b3d1a: rgba(85,230,129,0.24);
+  --c-0c1d36: rgba(85,144,230,0.18);
+  --c-0c2d6b: rgba(85,135,230,0.23);
+  --c-0d1726: rgba(85,143,230,0.17);
+  --c-1f3a5f: rgba(85,146,230,0.26);
+  --c-0d1117: #3b3936;
+  --c-0d1a0d: rgba(85,230,85,0.17);
+  --c-0d1a2b: rgba(85,148,230,0.17);
+  --c-0d1a2e: rgba(85,142,230,0.17);
+  --c-0d1f0d: rgba(85,230,85,0.17);
+  --c-0d2818: rgba(85,230,144,0.19);
+  --c-0f2417: rgba(85,230,140,0.18);
+  --c-101d14: rgba(85,230,130,0.17);
+  --c-151327: rgba(99,85,230,0.16);
+  --c-16130b: rgba(230,191,85,0.16);
+  --c-161b22: rgba(255,255,255,0.07);
+  --c-170f0a: rgba(230,141,85,0.16);
+  --c-1a160c: rgba(230,189,85,0.16);
+  --c-1a1726: rgba(114,85,230,0.17);
+  --c-1a1a1a: rgba(255,255,255,0.10);
+  --c-1a4d24: rgba(85,230,113,0.30);
+  --c-1b0d0f: rgba(230,85,106,0.16);
+  --c-1c1333: rgba(126,85,230,0.17);
+  --c-1c2128: rgba(255,255,255,0.12);
+  --c-1f0d0d: rgba(230,85,85,0.16);
+  --c-1f1214: rgba(230,85,107,0.16);
+  --c-1f1a0d: rgba(230,190,85,0.17);
+  --c-1f2937: rgba(255,255,255,0.12);
+  --c-1f6feb: #1f6feb;
+  --c-21262d: rgba(255,255,255,0.10);
+  --c-238636: #238636;
+  --c-24160c: rgba(230,145,85,0.17);
+  --c-2a1012: rgba(230,85,96,0.17);
+  --c-2a1418: rgba(230,85,111,0.17);
+  --c-2a1f00: rgba(230,192,85,0.18);
+  --c-2a2410: rgba(230,197,85,0.19);
+  --c-2d0f0f: rgba(230,85,85,0.17);
+  --c-2d0f11: rgba(230,85,95,0.17);
+  --c-2d1a0d: rgba(230,144,85,0.18);
+  --c-2d1e0a: rgba(230,168,85,0.19);
+  --c-2d1f0a: rgba(230,172,85,0.19);
+  --c-2ea043: #2ea043;
+  --c-2f81f7: #9cc4ff;
+  --c-30363d: rgba(255,255,255,0.16);
+  --c-39c5cf: #55cdd6;
+  --c-3a2d00: rgba(230,198,85,0.22);
+  --c-3d1214: rgba(230,85,92,0.18);
+  --c-3d1418: rgba(230,85,99,0.19);
+  --c-3fb950: #86efac;
+  --c-444c56: rgba(255,255,255,0.22);
+  --c-484f58: rgba(255,255,255,0.26);
+  --c-4b3f7a: rgba(114,85,230,0.30);
+  --c-4d8c2a: #4d8c2a;
+  --c-555: #bebebe;
+  --c-58a6ff: #a9cdff;
+  --c-5a1e22: rgba(230,85,95,0.24);
+  --c-5a3a1a: rgba(230,158,85,0.30);
+  --c-5a4a12: rgba(230,198,85,0.30);
+  --c-5c1f1f: rgba(230,85,85,0.24);
+  --c-666: #bcbcbc;
+  --c-6e2427: rgba(230,85,91,0.28);
+  --c-6e7681: #b9bdc3;
+  --c-79c0ff: #7ec3ff;
+  --c-7bc74d: #8bce62;
+  --c-7d2b2b: rgba(230,85,85,0.30);
+  --c-7ee787: #7ee787;
+  --c-888: #bcbcbc;
+  --c-8957e5: #8957e5;
+  --c-8b2025: rgba(230,85,92,0.30);
+  --c-8b949e: #d6d3ce;
+  --c-999: #bcbcbc;
+  --c-9a4f1c: #d7b9a4;
+  --c-9aa4b0: #d6d3ce;
+  --c-9e6a03: #9e6a03;
+  --c-9ecbff: #9ecbff;
+  --c-a371f7: #d8b9ff;
+  --c-a8b2be: #e4e2de;
+  --c-b9a7ff: #c1b2ff;
+  --c-bc8cff: #d8b9ff;
+  --c-c9d1d9: #ecebe8;
+  --c-d29922: #ffd479;
+  --c-da3633: #da3633;
+  --c-ddd: #eeedea;
+  --c-e3833c: #edb082;
+  --c-e3a008: #e9b339;
+  --c-e3b341: #e4b545;
+  --c-e6edf3: #f6f6f4;
+  --c-eee: #f3f2ef;
+  --c-f0883e: #f4ac78;
+  --c-f0a0a0: #f2aaaa;
+  --c-f0c040: #f0c040;
+  --c-f0f0f0: #f3f2ef;
+  --c-f5f5f5: #f6f6f4;
+  --c-f778ba: #faa3d0;
+  --c-f85149: #ffb3ab;
+  --c-ff7b72: #ffb3ab;
+  --c-ffb4b4: #ffb4b4;
+  --c-ffc1bc: #ffc1bc;
+
+  --c-on-accent: #1c1b19;
+
+  /* Tailwind triplets (rgb(var(--rgb-…) / a)) — text and status go pastel, the
+     surface ones are overridden as classes below because a triplet can't be clear. */
+  --rgb-e6edf3: 246 246 244;
+  --rgb-a8b2be: 228 226 222;
+  --rgb-8b949e: 214 211 206;
+  --rgb-3fb950: 134 239 172;
+  --rgb-f85149: 255 179 171;
+  --rgb-d29922: 255 212 121;
+  --rgb-2f81f7: 156 196 255;
+  --rgb-388bfd: 176 208 255;
+  --rgb-0d1117: 59 57 54;
+  --rgb-161b22: 77 74 70;
+  --rgb-1c2128: 92 89 84;
+  --rgb-30363d: 120 116 110;
+  --rgb-0d1f0d: 60 88 66;
+  --rgb-1f0d0d: 96 62 60;
+  --rgb-1f1a0d: 94 82 56;
+
+  /* Glass tokens → the vision card recipe */
+  --glass-tint-top: rgba(255, 255, 255, 0.09);
+  --glass-tint-bottom: rgba(255, 255, 255, 0.04);
+  --glass-tint-top-hover: rgba(255, 255, 255, 0.13);
+  --glass-tint-bottom-hover: rgba(255, 255, 255, 0.07);
+  --glass-rim-top: rgba(255, 255, 255, 0.28);
+  --glass-rim-hairline: rgba(255, 255, 255, 0.06);
+  --glass-rim-bottom: rgba(0, 0, 0, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.16);
+  --glass-shadow: 0 20px 44px -18px rgba(0, 0, 0, 0.45);
+  --glass-divider: rgba(255, 255, 255, 0.10);
+  --glass-menu-surface: #4a4743;
+  --glass-modal-tint: rgba(58, 55, 52, 0.62);
+  --glass-scrim: rgba(20, 19, 17, 0.45);
+  --glass-page-bg: #3f3c39;
+  --glass-radius: 22px;
+  --glass-radius-lg: 32px;
+
+  --vision-shell-radius: 44px;
+  --vision-card-radius: 28px;
+  --vision-tile-radius: 22px;
+}
+
+/* ── Type: Inter everywhere, numbers stay column-aligned ── */
+:root[data-vision="on"]:not(#_),
+:root[data-vision="on"]:not(#_) body,
+:root[data-vision="on"]:not(#_) .mono,
+:root[data-vision="on"]:not(#_) .font-mono,
+:root[data-vision="on"]:not(#_) .kpi-value {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+}
+:root[data-vision="on"]:not(#_) :is(input, select, textarea, button) { font-family: inherit; }
+
+/* ── The room ──
+   Warm grey wall, a window glow top-right, a lamp glow lower-left, darker floor.
+   Painted on the body (fixed) so the shell's glass has something to bend. */
+:root[data-vision="on"]:not(#_) body.bg-bg,
+:root[data-vision="on"]:not(#_) body { background: #3f3c39; }
+:root[data-vision="on"]:not(#_) .liquid-glass-backdrop { background: transparent; }
+:root[data-vision="on"]:not(#_) .liquid-glass-backdrop::before {
+  background:
+    radial-gradient(48rem 34rem at 88% 4%, rgba(255, 248, 236, 0.25), transparent 62%),
+    radial-gradient(30rem 22rem at 70% 18%, rgba(255, 255, 255, 0.08), transparent 60%),
+    radial-gradient(34rem 26rem at 10% 78%, rgba(255, 196, 132, 0.10), transparent 64%),
+    linear-gradient(180deg, #5b5853 0%, #4b4844 46%, #403d3a 72%, #33312e 100%);
+}
+
+/* ── The shell: one big glass pane per page, rail inside ── */
+:root[data-vision="on"]:not(#_) .vis-room { padding: 18px; min-height: 100vh; }
+:root[data-vision="on"]:not(#_) .vis-shell {
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  min-height: calc(100vh - 36px);
+  border-radius: var(--vision-shell-radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.04));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 40px 90px -30px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(30px) saturate(140%);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+}
+
+/* Icon rail */
+:root[data-vision="on"]:not(#_) .vis-rail {
+  position: sticky;
+  top: 18px;
+  align-self: flex-start;
+  width: 76px;
+  height: calc(100vh - 72px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  border-radius: 38px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+:root[data-vision="on"]:not(#_) .vis-rail-brand {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 18px; color: #fff;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.30), rgba(255, 255, 255, 0.10));
+  margin-bottom: 6px;
+}
+:root[data-vision="on"]:not(#_) .vis-rail-btn {
+  position: relative;
+  width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center;
+  color: #e4e2de;
+  transition: background 160ms ease, color 160ms ease;
+}
+:root[data-vision="on"]:not(#_) .vis-rail-btn:hover { background: rgba(255, 255, 255, 0.10); color: #fff; }
+:root[data-vision="on"]:not(#_) .vis-rail-btn[aria-current="page"] {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.20));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 6px 16px -6px rgba(0, 0, 0, 0.4);
+}
+:root[data-vision="on"]:not(#_) .vis-rail-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+:root[data-vision="on"]:not(#_) .vis-rail-gap { height: 6px; width: 28px; border-top: 1px solid rgba(255, 255, 255, 0.12); margin-top: 6px; }
+:root[data-vision="on"]:not(#_) .vis-main { flex: 1; min-width: 0; }
+
+/* ── Top row: large text tab for the page + the header wells, no bar ── */
+:root[data-vision="on"]:not(#_) .vis-top {
+  position: sticky; top: 18px; z-index: 20;
+  display: flex; align-items: center; gap: 18px;
+  padding: 4px 6px 10px;
+}
+:root[data-vision="on"]:not(#_) .vis-title {
+  position: relative;
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em; color: #fff;
+  padding: 0 4px 10px; white-space: nowrap;
+}
+:root[data-vision="on"]:not(#_) .vis-title::after {
+  content: ''; position: absolute; left: 4px; bottom: 0;
+  width: 28px; height: 3px; border-radius: 3px; background: #fff;
+}
+:root[data-vision="on"]:not(#_) .vis-top .hdr-row { flex: 1; min-width: 0; padding: 0; }
+:root[data-vision="on"]:not(#_) .hdr-glass { background: transparent; border: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+:root[data-vision="on"]:not(#_) .hdr-well {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+:root[data-vision="on"]:not(#_) .hdr-stat + .hdr-stat { border-left-color: rgba(255, 255, 255, 0.12); }
+:root[data-vision="on"]:not(#_) .hdr-value { text-shadow: none; }
+:root[data-vision="on"]:not(#_) .hdr-select { background: transparent; }
+
+/* ── Cards: the vision recipe on every .card / .kpi ── */
+:root[data-vision="on"]:not(#_) .card,
+:root[data-vision="on"]:not(#_) .kpi {
+  border-radius: var(--vision-card-radius);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  box-shadow:
+    0 20px 44px -18px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+/* A card inside a card is a tile: lighter wash, smaller radius, no shadow. */
+:root[data-vision="on"]:not(#_) :is(.card, .kpi, .liquid-glass) :is(.card, .kpi) {
+  border-radius: var(--vision-tile-radius);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-vision="on"]:not(#_) .kpi-label { color: #e4e2de; letter-spacing: 0.02em; text-transform: none; font-weight: 500; }
+
+/* ── Surfaces as Tailwind classes (triplets can't be clear) ── */
+:root[data-vision="on"]:not(#_) .bg-bg-card,
+:root[data-vision="on"]:not(#_) .bg-bg-card\/95 { background-color: rgba(255, 255, 255, 0.07); }
+:root[data-vision="on"]:not(#_) .bg-bg-hover,
+:root[data-vision="on"]:not(#_) .hover\:bg-bg-hover:hover { background-color: rgba(255, 255, 255, 0.12); }
+:root[data-vision="on"]:not(#_) .bg-bg-border { background-color: rgba(255, 255, 255, 0.16); }
+:root[data-vision="on"]:not(#_) .border-bg-border { border-color: rgba(255, 255, 255, 0.16); }
+:root[data-vision="on"]:not(#_) .bg-green-bg { background-color: rgba(134, 239, 172, 0.14); }
+:root[data-vision="on"]:not(#_) .bg-red-bg { background-color: rgba(255, 179, 171, 0.14); }
+:root[data-vision="on"]:not(#_) .bg-amber-bg { background-color: rgba(255, 212, 121, 0.14); }
+
+/* Filled buttons keep white text: the fill goes to a deeper shade, not the pastel. */
+:root[data-vision="on"]:not(#_) .bg-accent { background-color: #2a6cd6; }
+:root[data-vision="on"]:not(#_) .hover\:bg-accent-hover:hover { background-color: #2f6fd8; }
+:root[data-vision="on"]:not(#_) .hover\:bg-green:hover { background-color: #237f3b; }
+:root[data-vision="on"]:not(#_) .hover\:bg-red:hover { background-color: #c33a36; }
+
+/* ── Glass surfaces and modals pick up the recipe ── */
+:root[data-vision="on"]:not(#_) .liquid-glass { backdrop-filter: blur(28px) saturate(140%); -webkit-backdrop-filter: blur(28px) saturate(140%); }
+:root[data-vision="on"]:not(#_) .liquid-glass--modal { border-radius: var(--glass-radius-lg); }
+:root[data-vision="on"]:not(#_) .liquid-glass-scrim { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+
+/* ── Off switches ── */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-vision="on"]:not(#_) :is(.vis-shell, .vis-rail, .card, .kpi, .hdr-well) {
+    background: #4a4743 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+@media print {
+  :root[data-vision="on"]:not(#_) .vis-rail { display: none; }
+  :root[data-vision="on"]:not(#_) .vis-shell { background: #fff; box-shadow: none; border: none; padding: 0; }
+}
