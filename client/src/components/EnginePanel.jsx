@@ -1800,9 +1800,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     detail: canPrice ? 'One press fills Net (the mid), Win, Risk and POP, and fetches the greeks. Edge score, EV and Kelly size wait on them.'
       : 'Edge score, EV and Kelly size wait on win, risk and POP.',
     actions: canPrice ? [priceAct] : [] });
+  // A delayed feed is not "the last close" (Nov 2026): on a login without real-time
+  // index data every pull comes back ~15 min late, and the old wording asked for a
+  // pull that could never clear it.
+  const fedDelayed = dataFresh && /delayed/.test(dataFresh.dataType || '');
   if (dataFresh && !dataFresh.isLive && sessionOpen) needs.push({ key: 'close', tone: 'warn',
-    title: 'Market data is from the last close',
-    detail: 'The session is open — pull live prices before deciding.', actions: [autoFillAct] });
+    title: fedDelayed ? `${secBag.underlying || 'The index'} price is delayed ~15 min` : 'Market data is from the last close',
+    detail: fedDelayed
+      ? 'TWS has no real-time feed for it on this login (the option quotes are real-time). Pull again: during the session the bridge prices it from today’s at-the-money call and put instead. To fix it at the source, add the index data subscription in IBKR and share it with the paper account.'
+      : 'The session is open — pull live prices before deciding.', actions: [autoFillAct] });
   if (feedMissing.length) needs.push({ key: 'feed', tone: 'warn',
     title: `${feedMissing.length} value${feedMissing.length > 1 ? 's' : ''} didn’t come back from the last pull`,
     detail: feedMissing.join(', ') + ' — still showing the previous number.', actions: [autoFillAct, openInputsAct] });
@@ -1918,7 +1924,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     : (dataFresh && dataFresh.isLive) ? 'var(--c-3fb950)' : 'var(--c-8b949e)';
   const drawerTabs = [
     { id: 'inputs', label: 'Inputs', dot: inputsDot,
-      meta: nMissing ? `${nMissing} to enter` : heldKeys.length ? `${heldKeys.length} typed` : dataFresh ? (dataFresh.isLive ? 'live' : 'last close') : '' },
+      meta: nMissing ? `${nMissing} to enter` : heldKeys.length ? `${heldKeys.length} typed` : dataFresh ? (dataFresh.isLive ? 'live' : /delayed/.test(dataFresh.dataType || '') ? 'delayed' : 'last close') : '' },
     { id: 'setup', label: 'Setup quality', dot: sClr, meta: String(r.setupScore ?? '') },
     { id: 'structures', label: 'Structures', dot: 'var(--c-58a6ff)', meta: String((r.ratings || []).length || '') },
     { id: 'sizing', label: 'Sizing & price', dot: missingInputs ? 'var(--c-484f58)' : r.ev > 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)',
@@ -2365,7 +2371,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
       // Feed freshness (real-time / delayed / frozen) + the underlying price the model used.
       setGreeksFresh(d.dataType ? { dataType: d.dataType, label: d.dataTypeLabel || '', asOf: d.asOf, undPrice: d.undPrice,
-        greekSource: d.greekSource, greeksMixed: !!d.greeksMixed } : null);
+        greekSource: d.greekSource, greeksMixed: !!d.greeksMixed, undPriceSource: d.undPriceSource || null } : null);
       const freshPx = (d.undPrice != null && d.undPrice > 0) ? String(d.undPrice) : null;
       // ── Live price → Net, Win, Risk, POP (Nov 2026) ──
       // The Strategy Builder numbers, from the same quotes: the combo mid fills Net, and
@@ -3990,7 +3996,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     background: dataFresh.isLive ? 'var(--c-0d2818)' : 'var(--c-161b22)',
                     color: dataFresh.isLive ? 'var(--c-3fb950)' : 'var(--c-a8b2be)',
                     border: '1px solid ' + (dataFresh.isLive ? 'var(--c-238636)' : 'var(--c-30363d)')}}>
-                  {dataFresh.isLive ? '\u25cf LIVE' : '\u25cb LAST CLOSE'}
+                  {dataFresh.isLive ? (dataFresh.dataType === 'implied' ? '\u25cf LIVE \u00b7 FROM OPTIONS' : '\u25cf LIVE') : /delayed/.test(dataFresh.dataType || '') ? '\u25cb DELAYED' : '\u25cb LAST CLOSE'}
                   {(dataFresh.pulledAt || dataFresh.asOf) && <span style={{fontWeight:600}}> {clockOf(dataFresh.pulledAt || dataFresh.asOf)}</span>}
                   <span style={{fontWeight:400,opacity:0.75}}> · {agoOf(dataFresh.pulledAt || dataFresh.asOf, tick)}</span>
                 </span>
@@ -4576,9 +4582,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 // Net greeks are only a valid sum when every leg came off the same
                 // computation. Amber the badge and name the source when they did not.
                 const mixed = !!greeksFresh.greeksMixed;
-                const srcTxt = mixed ? ' \u00b7 ' + String(greeksFresh.greekSource || 'non-model').toUpperCase() : '';
+                const computed = greeksFresh.greekSource === 'computed';
+                const srcTxt = mixed ? ' \u00b7 ' + String(greeksFresh.greekSource || 'non-model').toUpperCase() : computed ? ' \u00b7 COMPUTED' : '';
                 return <span title={(greeksFresh.label || '') + (greeksFresh.undPrice ? ' \u00b7 model px ' + greeksFresh.undPrice : '')
-                    + (mixed ? ' \u00b7 not model greeks: legs served by ' + greeksFresh.greekSource + ' computation, so the net sum is unreliable - refetch' : '')}
+                    + (mixed ? ' \u00b7 not model greeks: legs served by ' + greeksFresh.greekSource + ' computation, so the net sum is unreliable - refetch' : '')
+                    + (computed ? ' \u00b7 TWS sent quotes but no model greeks (no real-time underlying on this login); computed by the bridge from each leg\u2019s mid, underlying ' + (greeksFresh.undPriceSource === 'parity' ? 'from put\u2013call parity' : 'from ' + (greeksFresh.undPriceSource || 'the feed')) : '')}
                   style={{fontSize:12,fontWeight:700,letterSpacing:'0.04em',padding:'2px 8px',borderRadius:4,
                     background: mixed ? 'var(--c-2d1e0a)' : rt ? 'var(--c-0d2818)' : 'var(--c-161b22)',
                     color: mixed ? 'var(--c-e3a008)' : rt ? 'var(--c-3fb950)' : dl ? 'var(--c-e3a008)' : 'var(--c-a8b2be)',

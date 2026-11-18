@@ -16,8 +16,9 @@ import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
+import { greeksFromQuote, parityspot, nyRth, DAILY_GRID } from './bsModel.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
-import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
+import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, markOf, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -106,6 +107,7 @@ function scheduleReconnect(delayMs = 20000, startedAt = Date.now()) {
 }
 
 function getReqId() { return nextReqId++; }
+const recentIbErrors = [];
 
 // Fast TCP preflight: is anything actually listening on this port? Lets us fail over
 // between TWS/Gateway quickly when one is down, and — crucially — never abandon a port
@@ -181,6 +183,10 @@ function connectTWS() {
       ib.on(EventName.error, (err, code, reqId) => {
         if (code === 2104 || code === 2106 || code === 2158) return; // info messages
         console.error('[BRIDGE] IBKR Error:', code, err?.message || err);
+        // Kept for /api/health, so a failure can be read from the app or a browser
+        // without the bridge's log file. (Nov 2026.)
+        recentIbErrors.push({ at: new Date().toISOString(), code, reqId: reqId ?? null, msg: String(err?.message || err).slice(0, 240) });
+        if (recentIbErrors.length > 40) recentIbErrors.splice(0, recentIbErrors.length - 40);
       });
 
       ib.connect();
@@ -315,6 +321,7 @@ function getOptionGreeks(contract) {
       }
       if (graceTimer) clearTimeout(graceTimer);
       if (hardTimer) clearTimeout(hardTimer);
+      if (quoteTimer) clearTimeout(quoteTimer);
       ib.removeListener(EventName.tickOptionComputation, onGreeks);
       ib.removeListener(EventName.tickPrice, onPrice);
       ib.removeListener(EventName.tickSnapshotEnd, onEnd);
@@ -358,12 +365,21 @@ function getOptionGreeks(contract) {
       if (!fallback || (TICK_RANK[tickType] || 0) > (TICK_RANK[fallback.tickType] || 0)) fallback = g;
       if (!graceTimer) graceTimer = setTimeout(() => done(fallback), 1500);
     };
+    // No computation at all (Nov 2026): TWS's model needs a live underlying, and a
+    // login without real-time index data (paper: SPX/XSP delayed) streams the option
+    // quote but never a greeks tick. Keep the quote — the route computes greeks from
+    // it — and stop waiting 2 s after both sides are in rather than the full 7 s.
+    const priceOnly = () => (quote.bid != null || quote.ask != null)
+      ? { priceOnly: true, iv: null, delta: null, gamma: null, theta: null, vega: null, optPrice: null, undPrice: null, tickType: null, mdType }
+      : null;
+    let quoteTimer = null;
     const onPrice = (id, field, value) => {
       if (id !== reqId || value == null || !(value >= 0)) return;
       if (field === 1 || field === 66) quote.bid = +Number(value).toFixed(2);
       else if (field === 2 || field === 67) quote.ask = +Number(value).toFixed(2);
+      if (quote.bid != null && quote.ask != null && !quoteTimer && !fallback) quoteTimer = setTimeout(() => done(fallback || priceOnly()), 2000);
     };
-    const onEnd = (id) => { if (id === reqId) done(fallback); };
+    const onEnd = (id) => { if (id === reqId) done(fallback || priceOnly()); };
     const onMdType = (id, type) => { if (id === reqId) mdType = type; };
     // Market-data-not-subscribed errors (scoped to THIS request).
     const onErr = (err, code, id) => {
@@ -378,7 +394,7 @@ function getOptionGreeks(contract) {
     // genericTickList '106' = implied vol / model greeks; snapshot=false because
     // greeks stream after a short delay, so we time out ourselves.
     ib.reqMktData(reqId, contract, '106', false, false);
-    hardTimer = setTimeout(() => done(fallback || (notSubscribed ? { notSubscribed: true } : null)), 7000);
+    hardTimer = setTimeout(() => done(fallback || priceOnly() || (notSubscribed ? { notSubscribed: true } : null)), 7000);
   });
 }
 
@@ -928,7 +944,35 @@ app.get('/api/market-data', async (req, res) => {
       spyVwap: usesSPYVwap
     };
 
-    console.log(`[BRIDGE] ${underlying}: price=${result.price} vix=${result.vix} em=${result.em} atr=${result.atr}`);
+    // Delayed index, live options (Nov 2026): a login without real-time index data
+    // (paper) gets SPX/XSP ~15 min late while OPRA quotes are real-time. In the session,
+    // put–call parity at today's at-the-money strike gives the spot the options are
+    // pricing now; it replaces the late price, and the late one is kept beside it.
+    // VWAP, high/low and ATR stay on the delayed feed and say so.
+    if (result.priceDelayed && DAILY_GRID[underlying] && result.price > 0) {
+      const rth = nyRth();
+      if (rth.open) {
+        try {
+          const grid = DAILY_GRID[underlying], K = Math.round(result.price / grid) * grid;
+          const leg = r => liveGreeksFor(underlying, rth.ymd, K, r)
+            || Promise.race([getOptionGreeks(buildOptionContract(underlying, rth.ymd, K, r)), new Promise(z => setTimeout(() => z(null), 5000))]);
+          try { ib.reqMarketDataType(2); } catch (e) {}
+          const [c, p] = await Promise.all([leg('C'), leg('P')]);
+          const S = parityspot({ call: c, put: p, strike: K, expiry: rth.ymd, q: ['SPX', 'XSP'].includes(underlying) ? 0.013 : 0 });
+          if (S > 0 && Math.abs(S - result.price) / result.price < 0.03) {
+            result.priceDelayedValue = result.price;
+            result.price = Math.round(S * 100) / 100;
+            result.priceSource = 'parity';
+            result.priceDelayed = false;
+            result.isLive = true;
+            result.dataType = 'implied';
+            result.dataTypeLabel = `Real-time, from the ${K} call and put (index feed delayed)`;
+          }
+        } catch (e) { /* keep the delayed price */ }
+      }
+    }
+
+    console.log(`[BRIDGE] ${underlying}: price=${result.price}${result.priceSource === 'parity' ? ' (parity)' : ''} vix=${result.vix} em=${result.em} atr=${result.atr}`);
     res.json(result);
   } catch (err) {
     console.error('[BRIDGE] Error:', err.message);
@@ -1267,7 +1311,8 @@ app.get('/api/health', (req, res) => {
     reconnecting: !!reconnectTimer, canRestart: true,
     app: connected ? session.app : '', mode: connected ? session.mode : '',
     port: connected ? session.port : null, accounts: connected ? session.accounts : [],
-    live: { lines: book.lines(), maxLines: LIVE_MAX_LINES, clients: streamClients.size, positionsReady: livePositionsReady } });
+    live: { lines: book.lines(), maxLines: LIVE_MAX_LINES, clients: streamClients.size, positionsReady: livePositionsReady },
+    recentErrors: recentIbErrors.slice(-12), lastContractLookupFail: lastConIdFail });
 });
 
 // ── Control from the app (Oct 2026) ──
@@ -1317,9 +1362,66 @@ app.get('/api/option-greeks', async (req, res) => {
       // expiry is the default for every other structure. (Oct 2026.)
       const legExp = /^\d{8}$/.test(String(leg.expiry || '')) ? String(leg.expiry) : expiry;
       const contract = buildOptionContract(underlying, legExp, leg.strike, leg.right);
-      const g = await getOptionGreeks(contract);
+      // The live book first (Nov 2026): a leg it holds with a fresh quote answers at
+      // once — the app's ticket legs and every open leg are in it — instead of a new
+      // subscription and up to 7 s per leg.
+      const g = liveGreeksFor(underlying, legExp, leg.strike, leg.right) || await getOptionGreeks(contract);
       if (g && g.notSubscribed) { anyNotSubscribed = true; results.push({ strike: leg.strike, right: leg.right, expiry: legExp, qty: leg.qty || 1, greeks: null }); }
       else results.push({ strike: leg.strike, right: leg.right, expiry: legExp, qty: leg.qty || 1, greeks: g });
+    }
+
+    // The underlying's price, needed below to compute greeks for legs TWS sent only a
+    // quote for: the live book's, else any leg's model tick, else a snapshot.
+    let _und = null, _undSource = null;
+    {
+      const bq = book.has(underlying) ? book.snapshot().quotes[underlying] : null;
+      const bm = bq && bq.ts && Date.now() - bq.ts < 120000 ? (bq.bid > 0 && bq.ask > 0 ? (bq.bid + bq.ask) / 2 : bq.last) : null;
+      if (bm > 0) { _und = +Number(bm).toFixed(2); _undSource = 'stream'; }
+    }
+    if (!_und) {
+      const m = results.find(r => r.greeks && r.greeks.undPrice > 0);
+      if (m) { _und = m.greeks.undPrice; _undSource = 'model'; }
+    }
+    // A delayed underlying (paper: index data ~15 min late) is no base for greeks on
+    // real-time option quotes. Put–call parity at the leg strike nearest the money
+    // gives the spot the option market is pricing right now. (Nov 2026.)
+    const needCompute = results.some(r => r.greeks && !r.greeks.notSubscribed && !Number.isFinite(r.greeks.delta));
+    const undDelayed = (() => { const bq = book.has(underlying) ? book.snapshot().quotes[underlying] : null; return !bq || !!bq.delayed || bq.mdType === 3 || bq.mdType === 4; })();
+    if (needCompute && undDelayed && results.length) {
+      const ref = _und || (results.find(r => r.strike) || {}).strike;
+      const near = [...results].sort((a, b) => Math.abs(a.strike - ref) - Math.abs(b.strike - ref))[0];
+      if (near && near.greeks && near.greeks.bid != null && near.greeks.ask != null) {
+        const other = near.right === 'P' ? 'C' : 'P';
+        const og = liveGreeksFor(underlying, near.expiry, near.strike, other)
+          || await getOptionGreeks(buildOptionContract(underlying, near.expiry, near.strike, other)).catch(() => null);
+        if (og && og.bid != null && og.ask != null) {
+          const legQ = { bid: near.greeks.bid, ask: near.greeks.ask };
+          const S = parityspot({ call: other === 'C' ? og : legQ, put: other === 'P' ? og : legQ, strike: near.strike, expiry: near.expiry,
+            q: ['SPX', 'XSP', 'RUT', 'NDX'].includes(underlying) ? 0.013 : 0 });
+          if (S > 0 && (!_und || Math.abs(S - _und) / _und < 0.05)) { _und = +S.toFixed(2); _undSource = 'parity'; }
+        }
+      }
+    }
+    if (!_und) {
+      try {
+        const uc = contractOf(underlying);
+        if (uc) {
+          try { ib.reqMarketDataType(3); } catch (e) {}
+          const sn = await Promise.race([getSnapshot(uc), new Promise(r => setTimeout(() => r(null), 4000))]).catch(() => null);
+          const v = sn && (sn.mid > 0 ? sn.mid : sn.last > 0 ? sn.last : 0);
+          if (v > 0) { _und = +Number(v).toFixed(2); _undSource = sn.mid > 0 ? 'mid' : 'last'; }
+        }
+      } catch (e) { /* the app falls back to its own price read */ }
+    }
+    // Greeks for legs that came with a quote and no computation: implied vol from the
+    // mid, Black–Scholes on calendar time to the 16:00 close (bsModel.js). Marked
+    // tickType 'bs' so the app can say they are computed, not TWS's. (Nov 2026.)
+    for (const r of results) {
+      const g0 = r.greeks;
+      if (!g0 || g0.notSubscribed || Number.isFinite(g0.delta)) continue;
+      const c = _und ? greeksFromQuote({ bid: g0.bid, ask: g0.ask, und: _und, strike: r.strike, right: r.right, expiry: r.expiry,
+        q: ['SPX', 'XSP', 'RUT', 'NDX'].includes(underlying) ? 0.013 : 0 }) : null;
+      r.greeks = c ? { ...g0, ...c, bid: g0.bid, ask: g0.ask, mdType: g0.mdType, priceOnly: undefined } : g0;
     }
 
     // Net position greeks (sum of qty × per-contract greek). For a butterfly the
@@ -1327,7 +1429,7 @@ app.get('/api/option-greeks', async (req, res) => {
     const net = { delta: 0, gamma: 0, theta: 0, vega: 0 };
     let haveAny = false;
     for (const r of results) {
-      if (!r.greeks) continue;
+      if (!r.greeks || !Number.isFinite(r.greeks.delta)) continue;
       haveAny = true;
       const q = r.qty || 1;
       net.delta += (r.greeks.delta || 0) * q * 100; // ×100 → position dollars per $1 move
@@ -1366,13 +1468,16 @@ app.get('/api/option-greeks', async (req, res) => {
     // underlying price the model used — lets the app show real-time vs delayed.
     // Which computation actually served each leg. A net position greek is only a
     // valid sum when every leg came off the same one; say so when it did not.
-    const _tt = results.filter(r => r.greeks).map(r => r.greeks.tickType);
-    const _TTLBL = { 13: 'model', 12: 'last', 11: 'ask', 10: 'bid' };
+    const _tt = results.filter(r => r.greeks && Number.isFinite(r.greeks.delta)).map(r => r.greeks.tickType);
+    const _TTLBL = { 13: 'model', 12: 'last', 11: 'ask', 10: 'bid', bs: 'computed' };
+    // 'computed' = every leg's greeks from its own quote on one model (bsModel.js):
+    // a consistent sum, just not TWS's numbers.
     const greekSource = _tt.length === 0 ? null
       : _tt.every(t => t === 13) ? 'model'
+      : _tt.every(t => t === 'bs') ? 'computed'
       : new Set(_tt).size > 1 ? 'mixed'
       : (_TTLBL[_tt[0]] || 'non-model');
-    const greeksMixed = greekSource != null && greekSource !== 'model';
+    const greeksMixed = greekSource != null && greekSource !== 'model' && greekSource !== 'computed';
 
     const _leg0 = results.find(r => r.greeks);
     const _md = _leg0 && _leg0.greeks ? _leg0.greeks.mdType : null;
@@ -1380,20 +1485,6 @@ app.get('/api/option-greeks', async (req, res) => {
     // (QQQ on the paper account, Oct 2026) that field arrives empty while the quotes
     // are real-time — and the app then drew the payoff at the ENTRY price. Any leg's
     // value will do; failing that, a quick snapshot of the underlying itself.
-    let _und = (results.find(r => r.greeks && r.greeks.undPrice > 0) || {}).greeks;
-    _und = _und ? _und.undPrice : null;
-    let _undSource = _und ? 'model' : null;
-    if (!_und) {
-      try {
-        const uc = contractOf(underlying);
-        if (uc) {
-          try { ib.reqMarketDataType(3); } catch (e) {}
-          const sn = await Promise.race([getSnapshot(uc), new Promise(r => setTimeout(() => r(null), 4000))]).catch(() => null);
-          const v = sn && (sn.mid > 0 ? sn.mid : sn.last > 0 ? sn.last : 0);
-          if (v > 0) { _und = +Number(v).toFixed(2); _undSource = sn.mid > 0 ? 'mid' : 'last'; }
-        }
-      } catch (e) { /* the app falls back to its own price read */ }
-    }
     const _MDLBL = { 1: 'Real-time', 2: 'Frozen (last)', 3: 'Delayed ~15m', 4: 'Delayed-frozen' };
     const dataType = _md === 1 ? 'realtime' : _md === 2 ? 'frozen' : _md === 3 ? 'delayed' : _md === 4 ? 'delayed-frozen' : 'unknown';
     res.json({ underlying, expiry, legs: results, net: netOut,
@@ -1503,6 +1594,7 @@ app.get('/api/atm-straddle', async (req, res) => {
 //  and the rest still returns, so one dead leg never blanks the panel.
 // ================================================================
 const vsCache = { chain: {}, hist: {} };
+let lastConIdFail = null;   // why the last contract lookup failed, for the error text
 const HIST_TTL_MS = 30 * 60 * 1000;   // IVR/HV move slowly; 30 min keeps the pull cheap
 
 function getConId(contract) {
@@ -1520,7 +1612,13 @@ function getConId(contract) {
     ib.on(EventName.contractDetails, onDet);
     ib.on(EventName.contractDetailsEnd, onEnd);
     ib.reqContractDetails(reqId, contract);
-    setTimeout(finish, 6000);
+    setTimeout(() => {
+      if (!done && !conId) {
+        const e = recentIbErrors.filter(x => x.reqId === reqId).pop();
+        lastConIdFail = { at: new Date().toISOString(), symbol: contract && contract.symbol, why: e ? `${e.code}: ${e.msg}` : 'no answer from TWS in 6 s' };
+      }
+      finish();
+    }, 6000);
   });
 }
 
@@ -1624,7 +1722,8 @@ app.get('/api/option-chain', async (req, res) => {
     const underlying = (req.query.underlying || 'SPX').toUpperCase();
     if (!contractOf(underlying)) return res.status(400).json({ error: `No option chain for ${underlying}` });
     const chain = await getOptionChain(underlying);
-    if (!chain) return res.status(502).json({ error: 'TWS returned no option chain' });
+    if (!chain) return res.status(502).json({ error: 'TWS returned no option chain'
+      + (lastConIdFail && lastConIdFail.symbol === underlying ? ` (contract lookup: ${lastConIdFail.why})` : '') });
     const today = nyToday();
     const limit = addDays(today, 430);
     res.json({
@@ -2451,6 +2550,24 @@ function liveWant(key, reason, ttl = Infinity) {
   return r;
 }
 function liveRelease(key, reason) { if (book.release(key, reason)) liveUnsubscribe(key); }
+
+// An option leg from the live book, in getOptionGreeks' shape: TWS's model greeks
+// when the book has them (tick 13), else the quote alone for the route to compute
+// greeks from. Null when the book does not hold the leg or its quote is over 30 s old.
+function liveGreeksFor(underlying, expiry, strike, right) {
+  const key = liveKey(underlying, expiry, strike, right);
+  if (!book.has(key)) return null;
+  const q = book.snapshot().quotes[key];
+  if (!q || !q.ts || Date.now() - q.ts > 30000) return null;
+  if (!(q.bid != null && q.ask != null) && !(q.last > 0)) return null;
+  const model = Number.isFinite(q.delta);
+  return {
+    iv: model && q.iv > 0 ? q.iv : null, delta: model ? q.delta : null, gamma: model ? q.gamma ?? null : null,
+    theta: model ? q.theta ?? null : null, vega: model ? q.vega ?? null : null,
+    optPrice: q.mark ?? markOf(q), undPrice: q.und ?? null, tickType: model ? 13 : null, mdType: q.mdType ?? null,
+    bid: q.bid ?? null, ask: q.ask ?? null, priceOnly: !model || undefined, fromBook: true,
+  };
+}
 
 // A fresh quote from the book saves getSnapshot a new subscription and its 0.5–6 s wait.
 function liveSnapshotFor(contract) {
