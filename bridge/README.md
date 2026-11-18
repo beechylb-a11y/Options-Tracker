@@ -54,6 +54,23 @@ Calls made directly on the Mac (`curl localhost:3333/...`) don't need the key.
 The capture fills `options.tws_executions`, `options.tws_positions` and
 `options.tws_capture_runs`, which the Saturday review reconciles against.
 
+## Live book and push stream (Nov 2026)
+
+The bridge keeps one set of always-on TWS subscriptions and pushes changes to the app
+over a single stream, instead of opening a fresh request on every poll.
+
+- **What streams:** the watched underlyings (`LIVE_WATCH`, default `SPX,XSP,SPY,QQQ,IWM,VIX,VIX1D`),
+  every option leg you hold a position in (added and dropped as TWS reports positions), and the legs
+  of a ticket open in the app (they expire 2 minutes after the app stops asking).
+- **Data lines:** `LIVE_MAX_LINES` (default 60) caps the lines the live book uses, leaving the rest of
+  your allowance to TWS's own windows. Positions and watched underlyings always get a line; ticket legs
+  are refused when the budget is full (the app says so).
+- **Endpoints:** `GET /api/stream` (Server-Sent Events: `snapshot`, then `delta` at most 4×/s, `ping`
+  every 15 s) · `GET /api/live` (the whole book as JSON) · `POST /api/live/watch` · `POST /api/live/unwatch`.
+- `/api/positions` and every `getSnapshot` caller now answer from the book when it already holds the data.
+
+Check it by hand on the Mac: `curl -N localhost:3333/api/stream`.
+
 ## Test
 ```bash
 # Check bridge is running

@@ -4,8 +4,10 @@ import App from './App';
 import './index.css';
 import { applyTheme, watchSystemTheme } from './utils/theme';
 import { installBridgeAuth } from './utils/bridgeAuth';
+import { startLiveFeed } from './live/liveFeed';
 
 installBridgeAuth();
+startLiveFeed();   // after the fetch wrapper, so the stream carries the bridge key
 applyTheme();
 watchSystemTheme();
 

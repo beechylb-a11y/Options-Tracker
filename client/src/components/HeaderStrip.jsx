@@ -5,6 +5,9 @@ import { fmt$, pnlColor } from '../utils/format';
 import { mergeClosedTrades, todayPnlOf, filterTracker } from '../utils/stats';
 import { marketClock } from '../engine/marketClock';
 import ThemeToggle from './ThemeToggle';
+import FreshDot from './FreshDot';
+import { useLiveQuote, useLiveConnection, useFreshness } from '../live/useLive';
+import { reconnectLiveFeed } from '../live/liveFeed';
 
 // Persistent context strip: account switcher, today P&L, daily-loss gauge,
 // open-position count, data freshness + global refresh, Sheets/bridge status.
@@ -18,7 +21,7 @@ const clockFmt = ts =>
 // restart the bridge process, so a TWS restart no longer means a trip to Terminal.
 // Both only work while the bridge process and its ngrok tunnel are up — if the
 // bridge itself is unreachable there is nothing on the other end to ask.
-function BridgeControl({ state, title, onAction, busy, note, mode }) {
+function BridgeControl({ state, title, onAction, busy, note, mode, liveLine }) {
   const [open, setOpen] = useState(false);
   const color = state === 'ok' ? 'bg-green' : state === 'warn' ? 'bg-amber' : state === 'off' ? 'bg-bg-border' : 'bg-red';
   const btn = 'w-full text-left px-3 py-1.5 text-[12.5px] rounded hover:bg-bg-hover disabled:opacity-50';
@@ -36,6 +39,7 @@ function BridgeControl({ state, title, onAction, busy, note, mode }) {
         <div className="absolute right-0 mt-2 w-72 p-2 rounded-lg border border-bg-border bg-bg-card shadow-lg z-30"
           onMouseLeave={() => setOpen(false)}>
           <div className="px-3 py-1 text-[12px] text-text-muted leading-snug">{busy || note || title}</div>
+          {liveLine && <div data-testid="live-line" className="px-3 pb-1 text-[12px] text-text-faint leading-snug">{liveLine}</div>}
           <button className={btn} disabled={!!busy || state === 'off'} onClick={() => onAction('reconnect')}>
             ↻ Reconnect to TWS
             <div className="text-[11px] text-text-faint">Use after TWS restarts or re-logs in</div>
@@ -81,6 +85,33 @@ export function NyClock() {
   );
 }
 
+// SPX from the live stream (Nov 2026): price, change on the day and how live it is.
+export function LivePrice({ symbol = 'SPX' }) {
+  const q = useLiveQuote(symbol);
+  const fresh = useFreshness(q);
+  const px = q && (q.mark ?? q.last);
+  if (!(px > 0)) return null;
+  const chg = q.close > 0 ? (px - q.close) / q.close * 100 : null;
+  return (
+    <div className="flex items-center gap-1.5" data-testid="live-price">
+      <span className="text-[12px] text-text-faint uppercase tracking-wider">{symbol}</span>
+      <span className="mono text-sm font-bold text-text">{px.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      {chg != null && <span className="mono text-[12px]" style={{ color: chg >= 0 ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{chg >= 0 ? '+' : '−'}{Math.abs(chg).toFixed(2)}%</span>}
+      <FreshDot state={fresh} ts={q.ts} />
+    </div>
+  );
+}
+
+// What the live stream says, for the bridge menu and its dot.
+export function liveSummary(live) {
+  if (live.connection === 'off') return '';
+  if (live.connection !== 'open') return `Live stream ${live.connection === 'connecting' ? 'connecting…' : 'down' + (live.error ? ': ' + live.error : '')}`;
+  const s = live.status || {};
+  return `Live stream on · ${s.lines ?? 0} of ${s.maxLines ?? '?'} data lines`
+    + (s.refused ? ` · ${s.refused} refused (budget full)` : '')
+    + (s.farmOk === false ? ' · TWS lost its data farm' : '');
+}
+
 function StatusDot({ state, label, title }) {
   const color =
     state === 'ok' ? 'bg-green' :
@@ -109,6 +140,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [bridgeNote, setBridgeNote] = useState('');
   const [pingTick, setPingTick] = useState(0);
   const [bridgeTitle, setBridgeTitle] = useState('Bridge URL not configured');
+  const live = useLiveConnection();
 
   const loadData = useCallback(() => {
     if (!authenticated) return;
@@ -198,6 +230,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
     }
     setBridgeBusy('');
     setPingTick(t => t + 1);
+    reconnectLiveFeed();
   }
 
   async function handleRefresh() {
@@ -238,6 +271,8 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
 
         <NyClock />
 
+        <LivePrice symbol="SPX" />
+
         {authenticated && (
           <>
             <div className="flex items-baseline gap-1.5">
@@ -275,7 +310,13 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
         </button>
 
         <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
-        <BridgeControl state={bridgeState} title={bridgeTitle} onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote} mode={bridgeMode} />
+        <BridgeControl
+          // The stream knows within a second when TWS drops; the 60 s heartbeat is the fallback.
+          state={live.connection === 'open' ? (live.status.connected ? 'ok' : 'warn') : bridgeState}
+          title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
+          onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
+          mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
+          liveLine={liveSummary(live)} />
         <ThemeToggle />
       </div>
     </div>

@@ -17,6 +17,7 @@ import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage } from './stageOrder.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
+import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -163,6 +164,7 @@ function connectTWS() {
         // ticks during RTH, which is why greeks came back null after the close). (Jul 2026)
         ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
         resolve();
+        liveOnConnect();
       });
 
       // Live fills of this client's orders (the staged ones) — quote the market the
@@ -172,6 +174,7 @@ function connectTWS() {
       ib.on(EventName.disconnected, () => {
         console.log('[BRIDGE] Disconnected from IBKR');
         connected = false;
+        liveOnDisconnect();
         scheduleReconnect();
       });
 
@@ -202,6 +205,8 @@ const NOT_SUBSCRIBED = [10089, 10090, 10091, 10167, 10168, 354, 10197];
 
 // ── Request market data snapshot ──
 function getSnapshot(contract) {
+  const live = liveSnapshotFor(contract);
+  if (live) return Promise.resolve(live);
   return new Promise((resolve, reject) => {
     const reqId = getReqId();
     const data = {};
@@ -1261,7 +1266,8 @@ app.get('/api/health', (req, res) => {
     startedAt: STARTED_AT, lastError: connected ? '' : lastConnectError,
     reconnecting: !!reconnectTimer, canRestart: true,
     app: connected ? session.app : '', mode: connected ? session.mode : '',
-    port: connected ? session.port : null, accounts: connected ? session.accounts : [] });
+    port: connected ? session.port : null, accounts: connected ? session.accounts : [],
+    live: { lines: book.lines(), maxLines: LIVE_MAX_LINES, clients: streamClients.size, positionsReady: livePositionsReady } });
 });
 
 // ── Control from the app (Oct 2026) ──
@@ -2214,13 +2220,15 @@ app.get('/api/positions', async (req, res) => {
   try {
     await connectTWS();
     if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    // The live book already holds every position, streamed by TWS — answer from it.
+    if (livePositionsReady) return res.json(groupIntoStructures(livePositionLegs()));
 
     const positions = [];
     await new Promise((resolve) => {
       const timeout = setTimeout(() => {
         ib.removeListener(EventName.position, onPos);
         ib.removeListener(EventName.positionEnd, onEnd);
-        try { ib.cancelPositions(); } catch (e) {}
+        // No cancelPositions: the live book keeps this one subscription open (liveBook.js).
         resolve();
       }, 8000);
 
@@ -2243,7 +2251,7 @@ app.get('/api/positions', async (req, res) => {
         clearTimeout(timeout);
         ib.removeListener(EventName.position, onPos);
         ib.removeListener(EventName.positionEnd, onEnd);
-        try { ib.cancelPositions(); } catch (e) {}
+        // No cancelPositions: the live book keeps this one subscription open (liveBook.js).
         resolve();
       }
       ib.on(EventName.position, onPos);
@@ -2307,6 +2315,209 @@ app.get('/api/open-orders', async (req, res) => {
     console.log('[BRIDGE] open-orders error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+
+// ================================================================
+//  LIVE BOOK + PUSH STREAM (Nov 2026)
+//  Always-on subscriptions for the watched underlyings, every open option leg and
+//  the legs of whatever ticket the app has open, held in liveBook.js and pushed to
+//  the app over one Server-Sent Events stream (/api/stream). The REST endpoints stay
+//  for everything that is not a live quote (history, vol surface, chain scans).
+// ================================================================
+const LIVE_WATCH = (process.env.LIVE_WATCH || 'SPX,XSP,SPY,QQQ,IWM,VIX,VIX1D')
+  .split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+const LIVE_MAX_LINES = parseInt(process.env.LIVE_MAX_LINES || String(DEFAULT_MAX_LINES));
+const LIVE_PUSH_MS = 250;      // at most 4 updates a second to each app
+const LIVE_PING_MS = 15000;    // keeps ngrok and proxies from closing an idle stream
+const book = createLiveBook({ maxLines: LIVE_MAX_LINES });
+const liveReq = new Map();       // reqId → key
+const liveReqOf = new Map();     // key → reqId
+const liveSubAt = new Map();     // key → when this connection subscribed it
+const liveContracts = new Map(); // key → TWS's own contract ({ conId, exchange }) when a position told us
+const streamClients = new Set();
+let livePositionsReady = false;
+for (const u of LIVE_WATCH) book.want(u, 'watch');
+
+function liveContractOf(key) {
+  if (liveContracts.has(key)) return liveContracts.get(key);
+  const p = parseLiveKey(key);
+  if (!p) return null;
+  if (!p.expiry) return p.underlying === 'ES' ? null : contractOf(p.underlying);
+  return buildOptionContract(p.underlying, p.expiry, p.strike, p.right);
+}
+
+function liveSubscribe(key) {
+  if (!connected || !ib || liveReqOf.has(key)) return;
+  const c = liveContractOf(key);
+  if (!c) return;
+  const reqId = getReqId();
+  liveReq.set(reqId, key); liveReqOf.set(key, reqId); liveSubAt.set(key, Date.now());
+  book.setSubscribed(key, true);
+  const isOpt = c.secType === SecType.OPT || /\s[CP]$/.test(key);
+  try { ib.reqMktData(reqId, c, isOpt ? '106' : '', false, false); }
+  catch (e) { console.log('[BRIDGE] live subscribe failed', key, e.message); liveReq.delete(reqId); liveReqOf.delete(key); }
+}
+
+function liveUnsubscribe(key) {
+  const reqId = liveReqOf.get(key);
+  if (reqId == null) return;
+  liveReqOf.delete(key); liveReq.delete(reqId); liveSubAt.delete(key);
+  try { if (ib && connected) ib.cancelMktData(reqId); } catch (e) {}
+}
+
+function liveWant(key, reason, ttl = Infinity) {
+  const r = book.want(key, reason, ttl);
+  if (r !== 'refused' && !liveReqOf.has(key)) liveSubscribe(key);
+  return r;
+}
+function liveRelease(key, reason) { if (book.release(key, reason)) liveUnsubscribe(key); }
+
+// A fresh quote from the book saves getSnapshot a new subscription and its 0.5–6 s wait.
+function liveSnapshotFor(contract) {
+  if (!contract || contract.secType === SecType.OPT || contract.secType === SecType.FUT) return null;
+  const key = String(contract.symbol || '').toUpperCase();
+  const at = liveSubAt.get(key);
+  if (!at || !book.has(key)) return null;
+  const q = book.snapshot().quotes[key];
+  if (!q || !q.ts || q.ts < at || q.notEntitled) return null;
+  const hasPrice = (q.bid && q.ask) || q.last;
+  if (!hasPrice || !q.close) return null;
+  return { bid: q.bid, ask: q.ask, last: q.last, high: q.high, low: q.low, prevClose: q.close, open: q.open,
+    mid: (q.bid && q.ask) ? (q.bid + q.ask) / 2 : q.last, delayed: !!q.delayed || q.mdType === 3 || q.mdType === 4,
+    frozen: q.mdType === 2 || q.mdType === 4, mdType: q.mdType ?? null, notSubscribed: false, noTicks: false, live: true };
+}
+
+function livePositionLegs() {
+  return book.snapshot().positions.map(p => {
+    const k = parseLiveKey(p.key) || {};
+    return { account: p.account, underlying: k.underlying, expiry: k.expiry || '', strike: k.strike || 0, right: k.right || '',
+      qty: p.qty, avgCost: p.avgCost, multiplier: p.multiplier, perShare: legPerShare(p.avgCost, p.multiplier, 'contract') };
+  });
+}
+
+// Every new IBApi instance (each connect / reconnect) gets these listeners and the
+// whole book re-subscribed. resetIB() strips them with the dead instance.
+function liveOnConnect() {
+  if (!ib) return;
+  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear();
+  livePositionsReady = false;
+  for (const k of book.keys()) book.setSubscribed(k, false);
+  ib.on(EventName.tickPrice, (id, field, value) => { const k = liveReq.get(id); if (k) book.applyTick(k, field, value); });
+  // (reqId, tickType, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice) — 13 = IB's model.
+  ib.on(EventName.tickOptionComputation, (id, tickType, iv, delta, optPrice, pvDividend, gamma, vega, theta, und) => {
+    const k = liveReq.get(id);
+    if (!k || tickType !== 13 || delta == null || Number.isNaN(delta)) return;
+    book.applyGreeks(k, { iv: iv > 0 ? +(iv * 100).toFixed(2) : null, delta, gamma, theta, vega, und: und > 0 ? und : null });
+  });
+  ib.on(EventName.marketDataType, (id, type) => { const k = liveReq.get(id); if (k) book.applyMdType(k, type); });
+  ib.on(EventName.error, (err, code, id) => {
+    const k = liveReq.get(id);
+    if (k && NOT_SUBSCRIBED.includes(code)) book.markNotEntitled(k);
+    if (code === 2103 || code === 2105 || code === 2157) book.setStatus({ farmOk: false });   // data farm lost
+    if (code === 2104 || code === 2106 || code === 2158) book.setStatus({ farmOk: true });    // data farm back
+  });
+  ib.on(EventName.position, (account, contract, pos, avgCost) => {
+    if (!contract || contract.secType !== 'OPT') return;
+    const key = liveKey(contract.symbol, contract.lastTradeDateOrContractMonth, contract.strike, contract.right);
+    if (contract.conId) liveContracts.set(key, { conId: contract.conId, exchange: 'SMART', secType: SecType.OPT });
+    book.setPosition(account, key, pos, avgCost, contract.multiplier);
+    if (pos) liveWant(key, 'position'); else liveRelease(key, 'position');
+  });
+  ib.on(EventName.positionEnd, () => { livePositionsReady = true; book.setStatus({ positionsReady: true }); });
+  ib.on(EventName.openOrder, (orderId, contract, order, state) => {
+    book.setOrder(orderId, { symbol: contract && contract.symbol, secType: contract && contract.secType,
+      action: order && order.action, totalQty: order && order.totalQuantity, lmtPrice: order && order.lmtPrice,
+      orderType: order && order.orderType, tif: order && order.tif, ref: (order && order.orderRef) || '',
+      parentId: (order && order.parentId) || 0, status: state && state.status ? state.status : undefined });
+  });
+  ib.on(EventName.orderStatus, (orderId, status, filled, remaining, avgFillPrice) => {
+    book.setOrder(orderId, { status, filled: Number(filled) || 0, remaining: Number(remaining) || 0, avgFillPrice: Number(avgFillPrice) || 0 });
+  });
+  book.setStatus({ connected: true, farmOk: true, positionsReady: false, app: session.app, mode: session.mode, accounts: session.accounts });
+  for (const k of book.keys()) liveSubscribe(k);
+  try { ib.reqPositions(); } catch (e) { console.log('[BRIDGE] live reqPositions failed', e.message); }
+  try { ib.reqAllOpenOrders(); } catch (e) {}
+  console.log(`[BRIDGE] Live book: ${book.lines()} lines subscribed (max ${LIVE_MAX_LINES})`);
+}
+
+function liveOnDisconnect() {
+  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear();
+  livePositionsReady = false;
+  for (const k of book.keys()) book.setSubscribed(k, false);
+  book.setStatus({ connected: false, positionsReady: false });
+}
+
+// Housekeeping: expire tickets nobody renewed, forget old finished orders, and pick up
+// orders placed in TWS itself (only this client's orders report on their own).
+setInterval(() => {
+  for (const k of book.expire()) liveUnsubscribe(k);
+  book.pruneOrders();
+}, 5000);
+setInterval(() => { if (connected && ib) { try { ib.reqAllOpenOrders(); } catch (e) {} } }, 15000);
+// Accounts arrive just after connect; keep the status the app sees in step.
+setInterval(() => { if (connected) book.setStatus({ connected: true, app: session.app, mode: session.mode, accounts: session.accounts }); }, 30000);
+
+function liveOut(snap) { return { ...snap, session: { connected, app: session.app, mode: session.mode, accounts: session.accounts, port: session.port } }; }
+
+// GET /api/stream — one push stream per app tab. First frame: the whole book. Then
+// only what changed, at most every 250 ms, and a ping every 15 s.
+app.get('/api/stream', (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  if (res.flushHeaders) res.flushHeaders();
+  const snap = liveOut(book.snapshot());
+  const client = { res, seq: snap.seq, known: new Set(Object.keys(snap.quotes)) };
+  res.write('retry: 3000\n\n' + sseFrame('snapshot', snap, snap.seq));
+  streamClients.add(client);
+  req.on('close', () => streamClients.delete(client));
+});
+
+setInterval(() => {
+  if (!streamClients.size) return;
+  for (const c of streamClients) {
+    if (book.seq <= c.seq) continue;
+    const d = book.changesSince(c.seq, c.known);
+    c.seq = d.seq;
+    for (const k of Object.keys(d.quotes)) c.known.add(k);
+    for (const k of d.removed) c.known.delete(k);
+    try { c.res.write(sseFrame('delta', d, d.seq)); } catch (e) { streamClients.delete(c); }
+  }
+}, LIVE_PUSH_MS);
+
+setInterval(() => {
+  for (const c of streamClients) {
+    try { c.res.write(sseFrame('ping', { at: Date.now(), status: { ...book.snapshot().status }, session: { connected, mode: session.mode } })); }
+    catch (e) { streamClients.delete(c); }
+  }
+}, LIVE_PING_MS);
+
+// GET /api/live → the whole book as JSON (a fallback, and a check by hand).
+app.get('/api/live', (req, res) => res.json(liveOut(book.snapshot())));
+
+// POST /api/live/watch  { legs: [{ underlying, expiry, strike, right }], underlyings: ['SPX'], ttlMs }
+// Legs of an open ticket. They expire after ttlMs (default 2 min) unless the app asks
+// again, so closing the tab gives the data lines back.
+app.post('/api/live/watch', (req, res) => {
+  const b = req.body || {};
+  const ttl = Math.min(Math.max(Number(b.ttlMs) || TICKET_TTL_MS, 10000), 10 * 60000);
+  const keys = [
+    ...(Array.isArray(b.underlyings) ? b.underlyings.map(u => liveKey(u)) : []),
+    ...(Array.isArray(b.legs) ? b.legs.filter(l => l && l.underlying && l.expiry && l.strike && l.right)
+      .map(l => liveKey(l.underlying, l.expiry, l.strike, l.right)) : []),
+    ...(Array.isArray(b.keys) ? b.keys.map(String) : []),
+  ].filter(k => parseLiveKey(k));
+  const held = [], refused = [];
+  for (const k of [...new Set(keys)]) (liveWant(k, 'ticket', ttl) === 'refused' ? refused : held).push(k);
+  const snap = book.snapshot();
+  const legs = Array.isArray(b.legs) ? b.legs.map(l => ({ key: liveKey(l.underlying, l.expiry, l.strike, l.right), qty: Number(l.qty) || 0 })) : [];
+  res.json({ ok: true, held, refused, combo: legs.length ? comboQuote(legs, snap.quotes) : null,
+    status: { ...snap.status }, note: refused.length ? `Data-line budget (${LIVE_MAX_LINES}) is full — ${refused.length} leg(s) not streamed.` : '' });
+});
+
+app.post('/api/live/unwatch', (req, res) => {
+  const keys = Array.isArray(req.body && req.body.keys) ? req.body.keys.map(String) : [];
+  for (const k of keys) liveRelease(k, 'ticket');
+  res.json({ ok: true, lines: book.lines() });
 });
 
 // Group option legs by underlying+expiry into structures the engine can read.
