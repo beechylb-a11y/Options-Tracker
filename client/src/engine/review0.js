@@ -78,13 +78,17 @@ export function review0(p) {
   const near = [...shorts].sort((a, b) => Math.abs(a.away) - Math.abs(b.away))[0] || null;
   const cash = cashSettled(underlying);
   const mins = nyMinutes(now.at || new Date());
-  const toExit = T.exit - mins, toBell = T.bell - mins, toLastCall = T.lastCall - mins;
+  // A strategy with a time exit (iron fly 13:30 ET, Nov 2026) is out by then.
+  const closeEt = rule0.closeEt || null;
+  const exitMin = closeEt ? (([h, m]) => h * 60 + m)(closeEt.split(':').map(Number)) : T.exit;
+  const exitEt = closeEt || '15:00';
+  const toExit = exitMin - mins, toBell = T.bell - mins, toLastCall = T.lastCall - mins;
   const phase = mins >= T.bell ? 'settled' : mins >= T.lastCall ? 'last' : mins >= T.exit ? 'after-exit' : mins >= T.exitWindow ? 'exit-window' : 'open';
 
   out.metrics = {
     pnl$, pnlShare: +pnlShare.toFixed(4), target$, targetPrice, stop$, stopPrice, stopPct, targetLabel: `${rule.target}% of ${rule.basis === 'entry' ? 'the entry' : 'max profit'}`,
     ncd, isCredit: pos.isCredit, closePrice: +closePrice.toFixed(2), atExpiry$, max$, inside, shorts, near,
-    settle: cash ? 'cash' : 'shares', phase, minutesToExit: toExit, minutesToBell: toBell, minutesToLastCall: toLastCall,
+    settle: cash ? 'cash' : 'shares', phase, minutesToExit: toExit, minutesToBell: toBell, minutesToLastCall: toLastCall, exitEt,
     pnl$Lot: Math.round(pnlShare * 100),
   };
   const act = (action, tone, headline) => { out.action = action; out.tone = tone; out.headline = headline; };
@@ -110,6 +114,13 @@ export function review0(p) {
   if (pnl$ <= stop$) {
     act('close', 'red', `At the stop — ${money(pnl$)} vs ${money(stop$)}`);
     S.push(`Close: the plan's stop is ${stopPct}% of the entry.`);
+    return out;
+  }
+  // Time exit: past it, the plan is to be out whatever the P&L.
+  if (closeEt && toExit <= 0) {
+    act('close', 'amber', `Past the ${closeEt} time exit — close it (${money(pnl$)} now)`);
+    S.push(`The plan for a ${strategy || 'this structure'} is out by ${closeEt} ET, win or lose: in the replay, closing then beat holding into the afternoon, when gamma at the body is highest.`);
+    if (keepLine) S.push(keepLine);
     return out;
   }
 
@@ -154,10 +165,10 @@ export function review0(p) {
 
   if (inside === false && near && (near.itm || near.pressured)) {
     act('watch', 'amber', near.itm ? `Through the ${near.strike}${near.right} — outside the profit zone` : `Close to the ${near.strike}${near.right} short`);
-    S.push(`Stop at ${money(stop$)}; target ${money(target$)}. ${toExit > 0 ? `${Math.floor(toExit / 60)}h ${toExit % 60}m to the 15:00 exit.` : ''}`);
+    S.push(`Stop at ${money(stop$)}; target ${money(target$)}. ${toExit > 0 ? `${Math.floor(toExit / 60)}h ${toExit % 60}m to the ${exitEt} exit.` : ''}`);
     return out;
   }
   act('hold', 'green', pnl$ >= 0 ? 'Hold — on plan' : 'Hold — inside the stop');
-  S.push(`Target ${money(target$)} (sell at ${targetPrice.toFixed(2)}), stop ${money(stop$)}. ${toExit > 0 ? `${Math.floor(toExit / 60)}h ${toExit % 60}m to the 15:00 exit.` : ''}`);
+  S.push(`Target ${money(target$)} (sell at ${targetPrice.toFixed(2)}), stop ${money(stop$)}. ${toExit > 0 ? `${Math.floor(toExit / 60)}h ${toExit % 60}m to the ${exitEt} exit.` : ''}`);
   return out;
 }

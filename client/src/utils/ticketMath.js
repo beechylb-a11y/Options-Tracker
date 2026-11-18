@@ -320,5 +320,8 @@ export function planText(pos, rows, stopPct, closeBy = null) {
   if (closeBy && closeBy.closeDte) {
     lines.push(`  Close by: ${closeBy.closeDte} DTE${closeBy.closeLeg ? ' on the ' + closeBy.closeLeg : ''}${closeBy.date ? ` (${closeBy.date})` : ''}, whatever the P&L`);
   }
+  if (closeBy && closeBy.closeEt) {
+    lines.push(`  Close by: ${closeBy.closeEt} ET, whatever the P&L (time exit)`);
+  }
   return '--- Exit plan ---\n' + lines.join('\n');
 }

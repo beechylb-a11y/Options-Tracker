@@ -220,7 +220,11 @@ export const EXIT_RULES = {
     // the first half of the day; never sell premium in the last 30 minutes.
     'Iron Condor - Normal':  R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
     'Chicken condor':        R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
-    'Iron butterfly':        R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
+    // Time exit (Nov 2026): replay of tastylive's "How To Manage 0DTE Losers" on 695
+    // sessions — closing an ATM iron fly at 13:30 ET was the most consistent exit (58% win
+    // vs 45% held, drawdown about 70% smaller); stops added nothing on defined risk.
+    'Iron butterfly':        R0(25, [15, 25, 50], '0DTE iron fly: close at 15–25%, or everything by 13:30 ET',
+                               { closeEt: '13:30' }),
     'Bull put spread':       R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
     'Bear call spread':      R0(25, [15, 25, 50], '0DTE short premium: close at 15–25%'),
   },

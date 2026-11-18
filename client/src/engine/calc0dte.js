@@ -776,6 +776,28 @@ export function calc0DTE(inputs) {
       tiebreakApplied = ranked[0].name !== topTied[0].name; // coherence changed the array-order pick
     }
   }
+  // ── A centred fly is built as an iron fly (Nov 2026) ──
+  // The standard fly and the iron fly are the same payoff and rate the same in every
+  // cell of the table, and as containment structures they score the same coherence —
+  // so every tie fell to list order and the iron fly was never picked. The difference
+  // is the fill: a call fly carries an in-the-money lower call (a put fly, an ITM upper
+  // put), and ITM 0DTE options quote the widest markets. With the body at the money an
+  // iron fly is all ATM/OTM options — the tightest on the board — and it can be closed
+  // as one credit combo. So when the fly is centred (body within a quarter of the wing,
+  // or one strike, of spot) and the two share the top rating, build the iron fly. A
+  // body moved off spot by conviction or a gamma strike keeps the call/put fly: there
+  // the iron fly's short on the far side would itself be in the money.
+  const flyCentred = price > 0 && D > 0 && Math.abs(price - gs) <= Math.max(roundTo, 0.25 * D);
+  let flyForm = null;
+  if (best && best.name === 'Standard butterfly' && flyCentred) {
+    const iron = sorted.find(s => s.name === 'Iron butterfly');
+    if (iron && iron.rating === best.rating) {
+      runnerUp = { name: 'Standard butterfly', rating: best.rating };
+      best = iron;
+      tiebreakApplied = false;
+      flyForm = 'iron';
+    }
+  }
   const bestStrat = best ? best.name : 'No suitable structure';
   const bestRating = best ? best.rating : 'POOR';
 
@@ -2872,7 +2894,7 @@ export function calc0DTE(inputs) {
     totalDirConsumed, totalRangeConsumed,
     trendPattern, trendStrength,
     // Strategy
-    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied,
+    ratings: sorted, bestStrat, bestRating, legStrat, overrideStrategy, runnerUp, tiebreakApplied, flyForm,
     // Strikes (legs = post-override; engineLegs = the engine's own suggestion)
     legs, engineLegs, strikeOrderWarning, listedFit, listedOk: !!listed0,
     vertVariants, vertVariant: vertVariantId, priceCheck, flyBand: flyBandR,

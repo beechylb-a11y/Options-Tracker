@@ -65,7 +65,7 @@ export function boardRow(r, { chain = null, expiry = null, check = null } = {}) 
     key: r.ticketRef, r, check, action, tone, label, headline: rv && rv.action !== 'unknown' ? rv.headline : null,
     underlying: pos.underlying, strikes: parseStrikes(r.legs || ''), strategy, qtyOpen, qty: n(r.qty),
     engine: pos.engine, is45: /45/.test(pos.engine || ''), is0: /0DTE/i.test(pos.engine || ''), resting,
-    minutesToExit: m.minutesToExit, minutesToBell: m.minutesToBell, minutesToLastCall: m.minutesToLastCall, settle: m.settle, phase: m.phase,
+    minutesToExit: m.minutesToExit, exitEt: m.exitEt, minutesToBell: m.minutesToBell, minutesToLastCall: m.minutesToLastCall, settle: m.settle, phase: m.phase,
     expiry: exp, dte, closeYmd, daysToClose, daysHeld: m.daysHeld, planDays: m.planDays, events: m.events || [],
     banked, chain, ticketPnl, posPnl: ticketPnl != null ? ticketPnl + banked : null,
     // The check-up's own numbers when it ran (so this row and the card under it are
@@ -188,7 +188,7 @@ function ClockRing0({ row }) {
         <text x="20" y="24" textAnchor="middle" fontSize={txt.length > 3 ? 10 : 11.5} fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{txt}</text>
       </svg>
       <div style={{ fontSize: 11.5, lineHeight: 1.35, color: C.grey }}>
-        <div className="mono" style={{ color: col, fontWeight: 700 }}>{pastExit ? (row.settle === 'shares' ? 'out by 15:45' : 'bell 16:00') : 'exit 15:00'}</div>
+        <div className="mono" style={{ color: col, fontWeight: 700 }}>{pastExit ? (row.exitEt && row.exitEt !== '15:00' ? `past ${row.exitEt} exit` : row.settle === 'shares' ? 'out by 15:45' : 'bell 16:00') : `exit ${row.exitEt || '15:00'}`}</div>
         <div>{row.settle === 'cash' ? 'cash settled' : row.settle === 'shares' ? 'into shares' : ''}</div>
       </div>
     </div>

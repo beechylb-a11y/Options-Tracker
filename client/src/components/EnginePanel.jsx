@@ -1280,12 +1280,20 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // 45DTE close-by line for the logged exit plan: N DTE on the (front) expiry and the
   // calendar date that falls on.
   // 0DTE: the managed exit is 15:00 ET; the hours box is "3pm ET minus now".
+  // A strategy with a time exit (iron fly: 13:30 ET, Nov 2026) is out by then instead.
   function exitWhen0() {
+    const closeEt = exitRuleFor('0DTE', effectiveStrat).closeEt;
+    if (closeEt) {
+      const [hh, mm] = closeEt.split(':').map(Number);
+      const left = (hh * 60 + mm - nyMinutes()) / 60;
+      return { label: `exit by ${closeEt} ET`, hours: left > 0 ? left : 0, sub: 'time exit — close whatever the P&L' };
+    }
     const h = parseFloat(i0.hours);
     return { label: 'exit by 15:00 ET', hours: isFinite(h) && h >= 0 ? h : null };
   }
   function planCloseBy() {
-    if (is0 || !exitPlan || !exitPlan.closeDte) return null;
+    if (is0) { const closeEt = exitRuleFor('0DTE', effectiveStrat).closeEt; return closeEt ? { closeEt } : null; }
+    if (!exitPlan || !exitPlan.closeDte) return null;
     const exp = isTimeSpread ? nearExp : singleExp;
     const ymd = exp ? addDaysYmd(exp, -exitPlan.closeDte) : null;
     return { closeDte: exitPlan.closeDte, closeLeg: exitPlan.closeLeg || null,
@@ -4518,7 +4526,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             </div>
             {r.runnerUp && !isOverride && (
               <div style={{fontSize:12.5,color:'var(--c-a8b2be)',marginBottom:6,lineHeight:1.5}}>
-                {r.tiebreakApplied ? <>Tiebreak: chose <b style={{color:'var(--c-c9d1d9)'}}>{r.bestStrat}</b> over </> : <>Also {r.runnerUp.rating.toLowerCase()}: </>}
+                {r.flyForm === 'iron' ? <span data-testid="fly-as-iron">Built as an <b style={{color:'var(--c-c9d1d9)'}}>iron fly</b>: the body is at the money, so every leg is at or out of the money — tighter markets than a call or put fly with an in-the-money wing. Same payoff as the </span>
+                  : r.tiebreakApplied ? <>Tiebreak: chose <b style={{color:'var(--c-c9d1d9)'}}>{r.bestStrat}</b> over </> : <>Also {r.runnerUp.rating.toLowerCase()}: </>}
                 <span onClick={()=>setOverrideStrat(r.runnerUp.name)} title="Switch to this structure"
                   style={{color:'var(--c-58a6ff)',cursor:'pointer',textDecoration:'underline'}}>{r.runnerUp.name}</span>
                 {r.tiebreakApplied ? <> (closer regime fit) · click to switch</> : <> · click to switch</>}

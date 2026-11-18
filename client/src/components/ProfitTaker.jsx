@@ -85,7 +85,7 @@ export default function ProfitTaker({ ncd, win, contracts, kelly = null, underly
     price: !split && i === 0 ? tPrice : priceOf(r.pct) }));
   useEffect(() => {
     onPlan && onPlan({ rows: effRows.map(r => ({ qty: Number(r.qty) || 0, pct: Number(r.pct) || 0 })), stopPct: stopPct === '' ? '' : Math.abs(parseFloat(stopPct)),
-      basis: pos.basis, closeDte: closeBy, closeLeg: closeBy ? (rule.closeLeg || null) : null,
+      basis: pos.basis, closeDte: closeBy, closeLeg: closeBy ? (rule.closeLeg || null) : null, closeEt: is0 ? (rule.closeEt || null) : null,
       priced: pricedRows, stopPrice: stop, commRoundTrip: roundTrip(qty), isCredit: pos.isCredit, entry, tick });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(pricedRows), stopPct, stop, pos.basis, closeBy, rule.closeLeg, comm, qty, entry]);
