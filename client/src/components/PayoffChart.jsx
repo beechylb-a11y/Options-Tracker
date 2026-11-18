@@ -80,7 +80,8 @@ export function strikeBlocks(cl, x) {
 
 export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
   todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, targets, stop,
-  closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '' }) {
+  closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '', scopeNote = '' }) {
+  // scopeNote: replaces "Per contract." when the curves are a whole position (manage view).
   // target: { dollars, label } — the 45DTE rule's profit target per contract.
   // targets: [{ pnl, label, color }] — 0DTE target lines (the old diagram's list).
   // stop: { dollars (negative), label } — drawn "info only".
@@ -386,11 +387,11 @@ export default function PayoffChart({ cl, net, netSource, spot, lo, hi, sigmaNea
       <details style={{ marginTop: 8 }}>
         <summary style={{ fontSize: 12, color: C.grey, cursor: 'pointer' }}>How this chart is drawn</summary>
         <div style={{ marginTop: 6, fontSize: 11.5, color: C.grey, lineHeight: 1.5 }}>
-          Black-Scholes per leg at its own expiry and IV ({cl.map(l => `${l.sign < 0 ? 'S' : 'L'} ${l.strike}${l.right} ${intraday ? hoursOf(l.dte).toFixed(1) + 'h' : l.dte + 'd'} ${(l.iv * 100).toFixed(1)}%`).join(' · ')}),
+          Black-Scholes per leg at its own expiry and IV ({cl.map(l => `${l.sign < 0 ? 'S' : 'L'} ${l.strike}${l.right} ${intraday ? hoursOf(l.dte).toFixed(1) + 'h' : (Number.isInteger(l.dte) ? l.dte : l.dte.toFixed(1)) + 'd'} ${(l.iv * 100).toFixed(1)}%`).join(' · ')}),
           {' '}rate {(RATE * 100).toFixed(1)}%, div {((divYield || 0) * 100).toFixed(1)}%, IVs held constant{ivShift ? ` and shifted ${ivShift > 0 ? '+' : '−'}${Math.abs(ivShift)} pts` : ''}.
           {' '}Entry {netSource === 'ticket' ? `at the ticket's net ${net >= 0 ? 'credit' : 'debit'} ${Math.abs(net).toFixed(2)}` : `at model fair ${Math.abs(net).toFixed(2)} ${net >= 0 ? 'credit' : 'debit'} — enter the fill to anchor it`}.
           {' '}Win chance is lognormal at {(sigmaNear * 100).toFixed(1)}% IV; the bands and the bell use the same IV over the time from now to the moment shown{intraday ? ', counted in trading time (6.5 h × 252 days a year)' : ''}.
-          {' '}Per contract.
+          {' '}{scopeNote || 'Per contract.'}
         </div>
       </details>
     </div>

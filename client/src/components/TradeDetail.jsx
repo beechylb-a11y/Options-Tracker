@@ -1,11 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, RefreshCw, Radio } from 'lucide-react';
 import { api } from '../utils/api';
-import { buildBook, positionRisk, stopFor, targetFor, plannedExit, isoOfYmd } from '../engine/portfolio';
+import { buildBook, positionRisk, stopFor, targetFor, plannedExit, isoOfYmd, etWall, daysBetween } from '../engine/portfolio';
 import { payoffSeries, whereIsPrice } from '../engine/tradeView';
 import { marketClock } from '../engine/marketClock';
 import { tradingSession } from '../engine/session';
 import { loadPlan } from '../utils/ticketMath';
+import { curveAt, probProfit } from '../engine/payoffCurve';
+import { liveQuotesFor, legKeysOf, positionCurve, manageVerdict, positionOrders, tradeStory } from '../engine/manageView';
+import { useLiveQuotes, useLiveOrders, useLiveWatch, useLiveConnection, useFreshness } from '../live/useLive';
+import { comboQuote, FRESH_LABEL, ageText } from '../live/liveStore';
+import PayoffChart from './PayoffChart';
+import { LiveLegs } from './MarketCard';
+import FreshDot from './FreshDot';
 
 // ── Trade details (Oct 2026) ──
 // One open trade on demand: a colour payoff diagram — at expiry, now, and at the
@@ -68,6 +75,18 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
     return buildBook({ open: [row], decisions: hist.decisions, closes: hist.closes, raw, todayYmd })[0] || null;
   }, [hist, raw, row, todayYmd]);
 
+  // The push stream (phase 4): the legs and the underlying are held in the bridge's
+  // live book while this is open; once every leg has a price the position is valued
+  // off the stream and the 30 s re-pull stops.
+  const watch = useMemo(() => (p && p.legs ? p.legs.map(l => ({ underlying: p.underlying, expiry: l.expiry, strike: l.strike, right: l.right, qty: Number(l.qty) || 0 })) : []), [p]);
+  useLiveWatch(watch, { underlyings: p ? [p.underlying] : [] });
+  const liveQ = useLiveQuotes();
+  const liveOrders = useLiveOrders();
+  const { connection } = useLiveConnection();
+  const streamQ = useMemo(() => (p && p.legs ? liveQuotesFor(p, liveQ) : null), [p, liveQ]);
+  const streamFresh = useFreshness(streamQ && streamQ.ts ? { ts: streamQ.ts, delayed: streamQ.delayed } : null);
+  const useStream = !!(streamQ && streamFresh !== 'off');
+
   const [spotHint, setSpotHint] = useState(null);
   const spotAt = useRef(0);
   const pull = useCallback(async () => {
@@ -93,7 +112,7 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   useEffect(() => { pull(); }, [p]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const clock = marketClock(now);
-  const auto = !!(p && p.engine === '0DTE' && bridgeUrl && live && (clock.phase === 'open' || clock.phase === 'late'));
+  const auto = !!(p && p.engine === '0DTE' && bridgeUrl && live && !useStream && (clock.phase === 'open' || clock.phase === 'late'));
   const timer = useRef(null);
   useEffect(() => {
     clearInterval(timer.current);
@@ -105,11 +124,11 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   const view = useMemo(() => {
     if (!p || !p.legs) return null;
     const pv = p.live > 0 ? p : { ...p, live: p.qty || 1 };      // a working order: as if filled
-    const r = positionRisk(pv, quotes, { now, spotHint });
+    const r = positionRisk(pv, useStream ? streamQ : quotes, { now, spotHint });
     if (!r || !(r.spot > 0)) return { r, series: null };
     const series = payoffSeries(p, r.legs, r.spot, { now, banked: p.chain ? p.chain.banked : 0 });
     return { r, series, where: whereIsPrice(series, r.spot) };
-  }, [p, quotes, now, spotHint]);
+  }, [p, quotes, now, spotHint, useStream, streamQ]);
 
   const plan = row && row.timestamp ? loadPlan(row.timestamp) : null;
   const stop = p ? stopFor(p.live > 0 ? p : { ...p, live: p.qty || 1 }, plan) : null;
@@ -123,6 +142,33 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
   const stopPos = stop ? { ...stop, loss: stop.loss + banked } : null;
   const tgtPos = tgt ? { ...tgt, gain: tgt.gain + banked } : null;
   const closeYmd = p ? plannedExit(p) : null;
+
+  // The manage view: the chart's inputs, the verdict and its one action, the orders
+  // working on this underlying, and the roll chain as a story.
+  const curve = useMemo(() => (p && r && r.spot > 0 ? positionCurve(p, r.legs, r.spot, { now, banked }) : null), [p, r, now, banked]);
+  const winChance = useMemo(() => {
+    if (!curve) return null;
+    const sel = curveAt(curve.cl, { net: curve.net, lo: curve.lo, hi: curve.hi, days: curve.closeDay });
+    return probProfit(sel, r.spot, curve.sigmaNear, curve.closeDay);
+  }, [curve, r]);
+  const canRoll = !!(onRoll && /45/.test(row.engine || '') && p && p.live > 0);
+  const w = etWall(now);
+  const minsToExit = p && p.engine === '0DTE' && p.expiry === w.ymd && curve && curve.closeEt
+    ? (([h, m]) => h * 60 + m)(curve.closeEt.split(':').map(Number)) - w.min : null;
+  const daysToClose = p && p.engine !== '0DTE' && closeYmd ? daysBetween(todayYmd, closeYmd) : null;
+  const verdict = p && p.legs ? manageVerdict({ engine: p.engine, working: !(p.live > 0), pnl: posPnl, stopLoss: stopPos ? stopPos.loss : null,
+    targetGain: tgtPos ? tgtPos.gain : null, where, minsToExit, daysToClose, canRoll, markSource: r && r.markSource,
+    closeDte: curve ? curve.closeDte : null, closeYmd }) : null;
+  const orders = useMemo(() => positionOrders(liveOrders, p), [liveOrders, p]);
+  const story = useMemo(() => tradeStory(p, r && r.pnl != null ? r.pnl : null), [p, r]);
+  const closeQuote = useMemo(() => {
+    if (!p || !p.legs) return null;
+    const keys = legKeysOf(p);
+    const c = comboQuote(keys.map((k, i) => ({ key: k, qty: -(Number(p.legs[i].qty) || 0) })), liveQ);
+    return c.complete ? c : null;
+  }, [p, liveQ]);
+  const doSell = onSell ? () => onSell(row) : null;
+  const doRoll = canRoll ? () => onRoll(row) : null;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
@@ -140,31 +186,28 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
               {p && p.expiry ? ` · exp ${isoOfYmd(p.expiry)}` : ''} · {p ? (p.live > 0 ? `${p.live} open` : `${p.resting} working (shown as if filled)`) : ''}
               {p && p.pos && p.pos.ncd ? ` · entry ${Math.abs(p.pos.ncd).toFixed(2)} ${p.pos.isCredit ? 'cr' : 'db'}` : ''}
             </div>
-            {p && p.chain && <div className="mono" style={{ fontSize: 12, color: 'var(--c-a8b2be)', marginTop: 2 }}>
-              rolled from {p.chain.links.map(l => `${l.strikes} (${money(l.realised)})`).join(' · ')}</div>}
           </div>
-          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <div className="mono" data-testid="detail-pnl" style={{ fontSize: 24, fontWeight: 800, color: pc(r && r.pnl != null ? r.pnl + banked : null) }}>
-              {r && r.pnl != null ? money(r.pnl + banked) : '—'}</div>
-            <div style={{ fontSize: 11.5, color: C.muted }}>
-              {p && p.chain ? <>position · ticket {money(r && r.pnl)} + roll {money(banked)}</> : 'open P&L'}
-              {r && r.markSource === 'model' ? ' · model mark' : r && r.markSource === 'quotes' ? ' · at the mid' : ''}
-            </div>
-          </div>
+          <span style={{ flex: 1 }} />
           <button onClick={onClose} aria-label="Close" style={{ color: C.muted, marginLeft: 4 }}><X size={18} /></button>
         </div>
 
+        {verdict && <DecisionStrip v={verdict} pnl={posPnl} r={r} banked={banked} chain={!!(p && p.chain)} winChance={winChance}
+          curve={curve} clock={clock} p={p} todayYmd={todayYmd} closeYmd={closeYmd} minsToExit={minsToExit} onSell={doSell} onRoll={doRoll} />}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap', fontSize: 12.5, color: C.muted }}>
           <span className="mono">NY {clock.time} · {clock.status.toLowerCase()}{p && p.engine === '0DTE' && clock.phase === 'open' ? ` · ${clock.detail.split(' · ')[0]}` : ''}</span>
-          {at && <span>quotes {at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</span>}
+          {useStream
+            ? <span data-testid="detail-stream" className="flex items-center gap-1"><FreshDot state={streamFresh} ts={streamQ.ts} size={7} />
+                quotes {FRESH_LABEL[streamFresh] || streamFresh} · TWS stream · {ageText(streamQ.ts)}</span>
+            : at && <span>quotes {at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</span>}
           <button onClick={() => { setStatus('loading'); pull(); }} className="flex items-center gap-1" style={{ color: C.blue }} data-testid="detail-refresh">
             <RefreshCw size={12} className={status === 'loading' ? 'animate-spin' : ''} /> Refresh</button>
-          {p && p.engine === '0DTE' && bridgeUrl && (
+          {p && p.engine === '0DTE' && bridgeUrl && !useStream && (
             <button onClick={() => setLive(v => !v)} className="flex items-center gap-1" style={{ color: auto ? C.green : C.muted }}
               title="Re-pull quotes every 30 s while the market is open">
               <Radio size={12} /> {auto ? 'Live · 30 s' : live ? 'Live (market closed)' : 'Live off'}</button>
           )}
-          {note && <span style={{ color: 'var(--c-d29922)' }}>{note}</span>}
+          {note && !useStream && <span style={{ color: 'var(--c-d29922)' }}>{note}</span>}
           {r && r.spotSource === 'entry' && <span style={{ color: 'var(--c-d29922)' }}>No live price — drawn at the entry price {px(r.spot)}.</span>}
         </div>
 
@@ -176,33 +219,165 @@ export default function TradeDetail({ row, account, onClose, onSell, onRoll }) {
         ) : !series ? (
           <div style={{ marginTop: 16, color: C.muted, fontSize: 13 }}>{status === 'loading' ? 'Loading…' : 'No price for the underlying — nothing to draw.'}</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 290px', gap: 16, marginTop: 12 }}>
-            <div>
-              <PayoffDiagram series={series} spot={r.spot} pnlNow={posPnl} target={tgtPos ? tgtPos.gain : null} stop={stopPos ? stopPos.loss : null}
-                pick={pick} onPick={setPick} underlying={row.underlying} />
-              {pick != null && (
-                <div data-testid="detail-pick" style={{ marginTop: 6, fontSize: 13, color: C.text, padding: '8px 10px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-                  If {row.underlying} is at <b className="mono">{px(pick)}</b> ({pick >= r.spot ? '+' : '−'}{px(Math.abs(pick - r.spot))}, {series.sd > 0 ? `${((pick - r.spot) / series.sd).toFixed(1)}σ` : ''}):
-                  {' '}now <b className="mono" style={{ color: pc(series.nowAt(pick)) }}>{money(series.nowAt(pick))}</b>
-                  {series.exitAt && <> · {series.exitLabel.toLowerCase()} <b className="mono" style={{ color: pc(series.exitAt(pick)) }}>{money(series.exitAt(pick))}</b></>}
-                  {' '}· at expiry <b className="mono" style={{ color: pc(series.expiryAt(pick)) }}>{money(series.expiryAt(pick))}</b>
-                  <button onClick={() => setPick(null)} style={{ marginLeft: 8, color: C.muted, fontSize: 12 }}>clear</button>
-                </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 16, marginTop: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              {curve ? (
+                <PayoffChart cl={curve.cl} net={curve.net} netSource="ticket" spot={r.spot} lo={curve.lo} hi={curve.hi}
+                  sigmaNear={curve.sigmaNear} nearDte={curve.nearDte} closeDay={curve.closeDay} todayYmd={todayYmd}
+                  isTimeSpread={curve.isTimeSpread} underlying={row.underlying} divYield={curve.divYield}
+                  closeDte={curve.closeDte || undefined} intraday={curve.intraday} closeEt={curve.closeEt}
+                  target={tgtPos && tgtPos.gain > 0 ? { dollars: tgtPos.gain, label: `${tgtPos.pct}% target, whole position` } : null}
+                  stop={stopPos && stopPos.loss < 0 ? { dollars: stopPos.loss, label: 'stop' } : null}
+                  scopeNote={`Whole position: ${curve.lots} lot${curve.lots === 1 ? '' : 's'}, so the entry figure is the net for all of them${banked ? ', rolls included' : ''}.`
+                    + (curve.intraday && r.legs.some(l => l.iv > 0) ? ' Live TWS IVs are restated on the trading clock with the same variance to the bell, so the now curve matches the market mark.' : '')} />
+              ) : (
+                <PayoffDiagram series={series} spot={r.spot} pnlNow={posPnl} target={tgtPos ? tgtPos.gain : null} stop={stopPos ? stopPos.loss : null}
+                  pick={pick} onPick={setPick} underlying={row.underlying} />
               )}
-              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11.5, color: C.muted, marginTop: 6 }}>
-                <span><span style={{ color: 'var(--c-c9d1d9)' }}>━</span> at expiry (green profit, red loss)</span>
-                <span><span style={{ color: C.blue }}>╍</span> now</span>
-                {series.exitAt && <span><span style={{ color: C.amber }}>╍</span> {series.exitLabel.toLowerCase()}</span>}
-                <span><span style={{ color: C.blue, opacity: 0.6 }}>▮</span> ±1σ move left ({px(series.sd)} pts)</span>
-                <span>click to pin a price</span>
-              </div>
+              <details data-testid="detail-more" style={{ marginTop: 10 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12.5, color: C.muted }}>Detail — every number on this trade</summary>
+                <div style={{ marginTop: 8 }}>
+                  <Side p={p} r={r} pnl={posPnl} series={series} where={where} stop={stopPos} tgt={tgtPos} clock={clock} closeYmd={closeYmd} todayYmd={todayYmd} />
+                </div>
+              </details>
             </div>
-            <Side p={p} r={r} pnl={posPnl} series={series} where={where} stop={stopPos} tgt={tgtPos} clock={clock} closeYmd={closeYmd} todayYmd={todayYmd}
-              onSell={onSell ? () => onSell(row) : null} onRoll={onRoll && /45/.test(row.engine || '') && p.live > 0 ? () => onRoll(row) : null} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+              <section className="card" data-testid="detail-market" style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Market</span>
+                  <span style={{ flex: 1 }} />
+                  {connection !== 'open' && <span style={{ fontSize: 12, color: C.faint }}>{connection === 'off' ? 'no bridge URL' : 'live stream ' + connection}</span>}
+                </div>
+                <CloseMarket q={closeQuote} isCredit={!!(p.pos && p.pos.isCredit)} lots={p.live > 0 ? p.live : p.qty || 1} />
+                <LiveLegs underlying={p.underlying} legs={watch} />
+              </section>
+              <WorkingOrders orders={orders} />
+              {story && <TradeStory story={story} />}
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+const TONE = { green: C.green, amber: C.amber, red: C.red, purple: 'var(--c-a371f7)', grey: C.muted, blue: C.blue };
+
+// Verdict first, one primary action. The other buttons stay, outlined.
+function DecisionStrip({ v, pnl, r, banked, chain, winChance, curve, clock, p, todayYmd, closeYmd, minsToExit, onSell, onRoll }) {
+  const tone = TONE[v.tone] || C.muted;
+  const time = p.engine === '0DTE'
+    ? (minsToExit != null ? (minsToExit > 0 ? `${Math.floor(minsToExit / 60)}h ${String(Math.round(minsToExit % 60)).padStart(2, '0')}m to ${curve ? curve.closeEt : '15:00'}` : `past ${curve ? curve.closeEt : '15:00'}`) : clock.status.toLowerCase())
+    : closeYmd ? `${Math.max(0, daysBetween(todayYmd, closeYmd))}d to close · ${p.expiry ? daysBetween(todayYmd, p.expiry) : '—'} DTE` : '—';
+  const btn = (kind, label, fn, testid) => {
+    if (!fn) return null;
+    const primary = v.action === kind;
+    const col = kind === 'roll' ? 'var(--c-d29922)' : C.red;
+    return <button key={kind} type="button" onClick={fn} data-testid={testid} data-primary={primary ? '1' : '0'}
+      style={{ padding: '8px 14px', borderRadius: 9, fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+        border: `1px solid ${col}`, color: primary ? 'var(--c-ffffff)' : col, background: primary ? `color-mix(in srgb, ${col} 32%, transparent)` : 'transparent' }}>{label}</button>;
+  };
+  const cell = (k, val, sub, color, testid) => (
+    <div data-testid={testid} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <span style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.faint }}>{k}</span>
+      <span className="mono" style={{ fontSize: 18, fontWeight: 800, color: color || C.text, whiteSpace: 'nowrap' }}>{val}</span>
+      {sub && <span style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{sub}</span>}
+    </div>
+  );
+  const rest = v.alerts.filter(a => a.text !== v.why);
+  return (
+    <div data-testid="manage-strip" data-tone={v.tone} style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
+      borderLeft: `4px solid ${tone}`, background: `color-mix(in srgb, ${tone} 7%, var(--c-0d1117))` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+          <div data-testid="manage-verdict" style={{ fontSize: 16, fontWeight: 800, color: tone }}>{v.title}</div>
+          <div style={{ fontSize: 12.5, color: C.text, marginTop: 2 }}>{v.why}</div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.faint }}>Open P&L</span>
+          <span className="mono" data-testid="detail-pnl" style={{ fontSize: 22, fontWeight: 800, color: pc(pnl) }}>{pnl != null ? money(pnl) : '—'}</span>
+          <span style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+            {chain ? <>ticket {money(r && r.pnl)} + roll {money(banked)}</> : 'whole position'}
+            {r && r.markSource === 'model' ? ' · model mark' : r && r.markSource === 'quotes' ? ' · at the mid' : ''}</span>
+        </div>
+        {cell('Win chance', winChance != null ? `${Math.round(winChance * 100)}%` : '—', curve ? (curve.intraday ? `at ${curve.closeEt}` : 'at the planned close') : null, null, 'manage-pop')}
+        {cell('Time left', time.split(' · ')[0], time.split(' · ')[1] || null, v.alerts.some(a => /exit|close day/i.test(a.title || '')) ? TONE[v.tone] : null, 'manage-time')}
+        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+          {v.action === 'roll' ? [btn('roll', 'Roll', onRoll, 'detail-roll'), btn('close', 'Close', onSell, 'detail-sell')]
+            : [btn('close', 'Close', onSell, 'detail-sell'), btn('roll', 'Roll', onRoll, 'detail-roll')]}
+        </div>
+      </div>
+      {rest.length > 0 && (
+        <div data-testid="manage-alerts" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+          {rest.map((a, i) => <span key={i} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 999, border: `1px solid ${TONE[a.tone]}`, color: TONE[a.tone] }}>{a.text}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What closing costs right now, from the stream: the mid, and crossing the spread.
+function CloseMarket({ q, isCredit, lots }) {
+  if (!q) return <div style={{ fontSize: 12.5, color: C.faint }}>Close price appears when every leg has a live quote.</div>;
+  const t = v => `${Math.abs(v).toFixed(2)} ${v >= 0 ? 'cr' : 'db'}`;
+  return (
+    <div data-testid="close-market" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+      {[['Close at mid', q.mid, C.text], ['Crossing', q.natural, C.muted]].map(([k, v, col]) => (
+        <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.faint }}>{k}</span>
+          <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: col }}>{t(v)}</span>
+          <span style={{ fontSize: 11, color: C.faint }}>{money(v * 100 * lots)} for {lots} lot{lots === 1 ? '' : 's'}</span>
+        </div>
+      ))}
+      <span style={{ gridColumn: '1 / -1', fontSize: 11, color: C.faint }}>{isCredit ? 'Buying back a credit trade' : 'Selling a debit trade'} — per spread.</span>
+    </div>
+  );
+}
+
+// Orders TWS is holding on this underlying, from the live book. Purple = working.
+function WorkingOrders({ orders }) {
+  const P = 'var(--c-a371f7)';
+  return (
+    <section className="card" data-testid="detail-orders" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Working orders</span>
+      {!orders.length ? <span style={{ fontSize: 12.5, color: C.faint }}>None in TWS on this underlying.</span> : orders.map(o => (
+        <div key={o.orderId} data-testid="detail-order" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '6px 8px', borderRadius: 8,
+          border: `1px solid color-mix(in srgb, ${P} 45%, transparent)`, background: `color-mix(in srgb, ${P} 8%, transparent)` }}>
+          <span style={{ color: P, fontWeight: 700, whiteSpace: 'nowrap' }}>{o.action} {o.totalQty}</span>
+          <span className="mono" style={{ color: C.text, whiteSpace: 'nowrap' }}>{o.orderType}{o.lmtPrice != null && o.orderType !== 'MKT' ? ` ${Number(o.lmtPrice).toFixed(2)}` : ''}</span>
+          <span style={{ color: C.muted }}>{o.status || '—'}{o.filled ? ` · ${o.filled} filled` : ''}</span>
+          <span style={{ flex: 1 }} />
+          {o.mine && <span style={{ fontSize: 11, color: P, whiteSpace: 'nowrap' }}>this ticket</span>}
+          <span className="mono" style={{ fontSize: 11, color: C.faint }}>#{o.orderId}</span>
+        </div>
+      ))}
+      <span style={{ fontSize: 11, color: C.faint }}>Change or cancel in TWS. Nothing here sends orders.</span>
+    </section>
+  );
+}
+
+// How the position got here: each ticket it was rolled from and what it banked.
+function TradeStory({ story }) {
+  return (
+    <section className="card" data-testid="detail-story" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Trade story</span>
+        <span style={{ fontSize: 12, color: C.muted }}>{story.rolls} roll{story.rolls === 1 ? '' : 's'} · banked <b className="mono" style={{ color: pc(story.banked) }}>{money(story.banked)}</b></span>
+      </div>
+      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {story.steps.map((st, i) => (
+          <li key={i} data-testid="story-step" style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 8, flex: 'none', background: st.kind === 'now' ? C.blue : C.muted }} />
+            <span style={{ color: C.muted, width: 56 }}>{st.kind === 'opened' ? 'Opened' : st.kind === 'rolled' ? 'Rolled to' : 'Now'}</span>
+            <span className="mono" style={{ color: C.text, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{st.strikes}</span>
+            <span className="mono" style={{ color: pc(st.kind === 'now' ? st.open : st.realised) }}>
+              {st.kind === 'now' ? (st.open != null ? `${money(st.open)} open` : '—') : st.realised != null ? money(st.realised) : '—'}</span>
+          </li>
+        ))}
+      </ol>
+      {story.total != null && <div style={{ fontSize: 12, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
+        Position <b className="mono" style={{ color: pc(story.total) }}>{money(story.total)}</b> = open {money(story.total - story.banked)} + banked {money(story.banked)}</div>}
+    </section>
   );
 }
 
@@ -218,7 +393,7 @@ function Stat({ k, v, color, sub, testid }) {
   );
 }
 
-function Side({ p, r, pnl, series, where, stop, tgt, clock, closeYmd, todayYmd, onSell, onRoll }) {
+function Side({ p, r, pnl, series, where, stop, tgt, clock, closeYmd, todayYmd }) {
   const nr = where && where.near;
   const toStop = stop && pnl != null ? pnl - stop.loss : null;
   const toTgt = tgt && pnl != null ? tgt.gain - pnl : null;
@@ -244,12 +419,6 @@ function Side({ p, r, pnl, series, where, stop, tgt, clock, closeYmd, todayYmd, 
       {series.exitAt && <Stat k={`${series.exitLabel}, price unchanged`} v={money(series.exitAt(r.spot))} color={pc(series.exitAt(r.spot))} />}
       <Stat k="Greeks (all contracts)" v={`delta ${Math.round(g.delta || 0)} · theta ${money(g.theta)}/day`}
         sub={`vega ${money(g.vega)} per vol pt · ${r.greeksSource === 'quotes' ? 'live' : 'model'}`} />
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        {onSell && <button onClick={onSell} data-testid="detail-sell" className="px-3 py-1.5 text-sm font-semibold rounded-lg"
-          style={{ border: '1px solid var(--c-da3633)', color: C.red }}>Sell ticket</button>}
-        {onRoll && <button onClick={onRoll} className="px-3 py-1.5 text-sm font-semibold rounded-lg"
-          style={{ border: '1px solid var(--c-9e6a03)', color: 'var(--c-d29922)' }}>Roll</button>}
-      </div>
     </div>
   );
 }

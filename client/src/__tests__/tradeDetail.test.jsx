@@ -94,7 +94,7 @@ describe('trade detail panel', () => {
       });
     });
     render(<TradeDetail row={ROW} onClose={() => {}} onSell={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('trade-detail').textContent).toMatch(/SPX 6745/));
+    await waitFor(() => expect(screen.getByTestId('trade-detail').textContent).toMatch(/Price\s*6745/));
     expect(screen.getByTestId('trade-detail').textContent).not.toMatch(/No live price/);
   });
 
@@ -103,6 +103,6 @@ describe('trade detail panel', () => {
     await waitFor(() => expect(screen.getByTestId('op-details')).toBeTruthy());
     fireEvent.click(screen.getByTestId('op-details'));
     await waitFor(() => expect(screen.getByTestId('trade-detail')).toBeTruthy());
-    await waitFor(() => expect(screen.getByTestId('payoff-diagram')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('payoff-time-chart')).toBeTruthy());
   });
 });
