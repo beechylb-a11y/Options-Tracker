@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useScanStatus, summarise, etaText, stopScan, scanStore } from '../utils/scanStatus';
 
 // What a running scan looks like (Nov 2026): a progress pill in place of the Scan
@@ -128,17 +128,27 @@ export function ScanChip({ onOpen }) {
   );
 }
 
-/** When a scan finishes: a card for eight seconds, from any page. */
+/** When a scan finishes: a card for eight seconds, from any page.
+ *  Each finished scan is shown once: dismissing it (✕, Show results, or the timer)
+ *  sticks. It used to come straight back, because "not yet shown for this scan" was
+ *  read from the same state the dismiss cleared (fixed 20 Nov 2026).
+ *  Show results asks the Engine to open the group the best result came from and
+ *  scroll to its scan panel (requestShowResults → the Engine reads showReq). */
 export function ScanDoneToast({ onOpen }) {
   const p = useScanStatus();
   const [shown, setShown] = useState(null);
+  const seen = useRef(null);                       // finishedAt of the last scan already shown
   useEffect(() => {
-    if (p && !p.running && p.finishedAt && p.summary && shown !== p.finishedAt) {
+    if (p && !p.running && p.finishedAt && p.summary && seen.current !== p.finishedAt) {
+      seen.current = p.finishedAt;
       setShown(p.finishedAt);
-      const h = setTimeout(() => setShown(x => (x === p.finishedAt ? -1 : x)), 8000);
-      return () => clearTimeout(h);
     }
-  }, [p, shown]);
+  }, [p]);
+  useEffect(() => {
+    if (shown == null || shown === -1) return undefined;
+    const h = setTimeout(() => setShown(x => (x === shown ? -1 : x)), 8000);
+    return () => clearTimeout(h);
+  }, [shown]);
   if (!p || p.running || !p.summary || shown !== p.finishedAt) return null;
   const m = p.summary;
   return (
@@ -149,10 +159,16 @@ export function ScanDoneToast({ onOpen }) {
         <div className="font-semibold text-[14px]">{m.stopped ? 'Scan stopped' : 'Scan done'} · {m.names} name{m.names === 1 ? '' : 's'} in {m.secs} s</div>
         <div className="text-[12.5px] opacity-85">{m.best ? `Best ${m.best}` : 'No setup scored'}{m.needs ? ` · ${m.needs}` : ''}</div>
       </div>
-      {onOpen && <button type="button" onClick={() => { setShown(-1); onOpen(); }} className="px-3 py-1 rounded-full text-[12.5px] font-semibold" style={{ background: BLUE }}>Show results</button>}
-      <button type="button" onClick={() => setShown(-1)} aria-label="Dismiss" className="px-2 py-1 rounded-full text-[12.5px] opacity-80 hover:opacity-100">✕</button>
+      {onOpen && <button type="button" data-testid="scan-done-open" onClick={() => { setShown(-1); requestShowResults(); onOpen(m); }} className="px-3 py-1 rounded-full text-[12.5px] font-semibold shrink-0" style={{ background: BLUE }}>Show results</button>}
+      <button type="button" data-testid="scan-done-close" onClick={() => setShown(-1)} aria-label="Dismiss" className="px-2 py-1 rounded-full text-[12.5px] opacity-80 hover:opacity-100 shrink-0">✕</button>
     </div>
   );
+}
+
+/** Ask the Engine to show the last scan's results (it may not be mounted yet: the
+ *  request waits in the scan store and the Engine acts on it when it mounts). */
+export function requestShowResults(now = Date.now()) {
+  scanStore.update(p => (p ? { ...p, showReq: now } : p));
 }
 
 export { scanStore };

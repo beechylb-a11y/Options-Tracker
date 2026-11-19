@@ -284,6 +284,25 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
     setActiveId(target ? target.id : null);
   }
 
+  // Show results from the "Scan done" card (from any page): open the group the best
+  // result came from and bring its scan panel into view. The request waits in the scan
+  // store, so it still works when the card was clicked on another page and the Engine
+  // mounts afterwards.
+  const showHandled = useRef(null);
+  const scanForShow = useScanStatus();
+  const showReq = scanForShow && scanForShow.showReq;
+  useEffect(() => {
+    if (!showReq || showHandled.current === showReq) return;
+    showHandled.current = showReq;
+    const g = scanForShow.summary && scanForShow.summary.group;
+    if (g && g.includes('|')) { const [m, c] = g.split('|'); openGroup(m, c); }
+    setPanel('multiscan');   // declared further down; the effect runs after render, so it is set by then
+    setTimeout(() => {
+      const el = document.querySelector('[data-testid="multiscan"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }, [showReq]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Close every ticket in the group on screen. Two-step: the first click arms it.
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
@@ -399,7 +418,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   // Stop aborts between names; a name already asking TWS finishes its call.
   const scanAbort = useRef(null);
   const groupLabelOf = g => { const [m, c] = g.split('|'); return `${CLASS_LABEL[c] || c} · ${modeUi(m).short}`; };
-  function finishProgress({ stopped = false, results = [], names = 0, final = true } = {}) {
+  function finishProgress({ stopped = false, results = [], names = 0, final = true, group = null } = {}) {
     scanStore.update(p => {
       if (!p) return p;
       const secs = Math.max(1, Math.round((Date.now() - (p.firstStartedAt || p.startedAt)) / 1000));
@@ -409,6 +428,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         ...p, running: false, finishedAt: Date.now(), stopped,
         summary: { stopped, names: names || p.order.length, secs,
           best: best ? `${best.underlying} ${best.result.setupScore}/100` : null,
+          // The group Show results opens: the best result's (Scan everything), else the one scanned.
+          group: (best && best._group) || group,
           needs: errs.length ? `${errs.length} with no data (${errs.slice(0, 2).map(r => r.underlying).join(', ')})` : '' },
       } : p;
     });
@@ -437,9 +458,9 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       const results = computeScan(m, list, mergedData);
       setScans(prev2 => ({ ...prev2, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData, list } }));
       out = { results, names: list.length };
-      if (own) finishProgress({ results, names: list.length });
+      if (own) finishProgress({ results, names: list.length, group: g });
     } catch (e) {
-      if (e && e.name === 'AbortError') { if (own) finishProgress({ stopped: true }); out.stopped = true; }
+      if (e && e.name === 'AbortError') { if (own) finishProgress({ stopped: true, group: g }); out.stopped = true; }
       else { showToast('Scan failed: ' + e.message, 'error'); if (own) scanStore.update(p => (p ? { ...p, running: false } : p)); }
     }
     setScanBusy(b => { const o = { ...b }; delete o[g]; return o; });
@@ -455,7 +476,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
       const [m, c] = GROUPS[i];
       setMaster({ i: i + 1, n: GROUPS.length, label: `${modeUi(m).short} · ${CLASS_LABEL[c]}` });
       const r = await runGroupScan(groupKey(m, c), cache, null, { signal: ctl.signal, master: { i: i + 1, n: GROUPS.length } });
-      all.push(...(r.results || [])); names += r.names || 0;
+      all.push(...(r.results || []).map(x => ({ ...x, _group: groupKey(m, c) }))); names += r.names || 0;
       if (r.stopped || ctl.signal.aborted) { stopped = true; break; }
     }
     setMaster(null);
