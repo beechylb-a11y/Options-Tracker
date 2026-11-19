@@ -114,6 +114,13 @@ export function buildStage(p) {
   if (side === 'debit' && targets.some(t => t.price <= entry)) return { error: 'A debit trade’s profit target must sell for more than it cost' };
 
   const credit = side === 'credit';
+  // Onto the contract's price grid, in the trader's favour (20 Nov 2026): TWS rejects an
+  // SPX combo at 22.12 with "110: The price does not conform to the minimum price
+  // variation". The app already rounds; this is the safety net for any other caller.
+  const tick = comboTick(p.underlying);
+  const onGrid = (x, dir) => roundToTick(x, tick, dir);
+  const entryT = onGrid(entry, credit ? 'up' : 'down');
+  targets.forEach(t => { t.price = onGrid(t.price, credit ? 'down' : 'up'); });
   const common = {
     orderType: 'LMT',
     transmit: false,                          // ALWAYS — the trader transmits in TWS
@@ -132,7 +139,7 @@ export function buildStage(p) {
     cancelAt = nyToUtcMs(g.ymd, hh, mm);
     entryTif = { tif: 'DAY' }; entryLabel = `DAY · cancels ${GTD_CUTOFF_ET} ET if unfilled`;
   }
-  const parent = { ...common, action: credit ? 'SELL' : 'BUY', totalQuantity: lots, lmtPrice: round2(entry), ...entryTif };
+  const parent = { ...common, action: credit ? 'SELL' : 'BUY', totalQuantity: lots, lmtPrice: round2(entryT), ...entryTif };
   const children = targets.map(t => ({ ...common, action: credit ? 'BUY' : 'SELL', totalQuantity: t.qty, lmtPrice: round2(t.price), tif: p.tif === 'GTC' ? 'GTC' : 'DAY' }));
   const comboLegs = legs.map(l => ({
     legKey: `${String(l.expiry)}|${Number(l.strike)}|${String(l.right).toUpperCase()[0]}`,
@@ -142,7 +149,7 @@ export function buildStage(p) {
   }));
   const ks = legs.map(l => Number(l.strike)).join('/');
   const summary = [
-    `${credit ? 'SELL' : 'BUY'} ${lots} ${String(p.underlying || '').toUpperCase()} ${ks} @ ${entry.toFixed(2)} ${side === 'credit' ? 'cr' : 'db'} ${entryLabel}`,
+    `${credit ? 'SELL' : 'BUY'} ${lots} ${String(p.underlying || '').toUpperCase()} ${ks} @ ${entryT.toFixed(2)} ${side === 'credit' ? 'cr' : 'db'} ${entryLabel}`,
     ...targets.map(t => `${credit ? 'BUY' : 'SELL'} ${t.qty} @ ${t.price.toFixed(2)} (profit target) ${p.tif === 'GTC' ? 'GTC' : 'DAY'}`),
   ];
   return { comboLegs, parent, children, summary, entryTif: entryLabel, cancelAt };
@@ -174,4 +181,16 @@ export function whatIfSummary(state) {
 export function excessAfter(w) {
   if (!w || w.equityWithLoanAfter == null || w.initMarginAfter == null) return null;
   return Math.round((w.equityWithLoanAfter - w.initMarginAfter) * 100) / 100;
+}
+
+// Combo price increments — same table as client/src/engine/ticks.js (a test holds them
+// equal). Measured 20 Nov 2026 with what-if orders: SPX $0.05; XSP and SPY $0.01.
+export const COMBO_TICK = { SPX: 0.05, SPXW: 0.05, NDX: 0.05, NDXP: 0.05, RUT: 0.05, RUTW: 0.05 };
+export function comboTick(underlying) { return COMBO_TICK[String(underlying || '').toUpperCase()] || 0.01; }
+export function roundToTick(price, tick = 0.01, dir = 'near') {
+  const x = Number(price);
+  if (!isFinite(x) || !(tick > 0)) return x;
+  const steps = Math.round((x / tick) * 1e6) / 1e6;
+  const n = dir === 'down' ? Math.floor(steps) : dir === 'up' ? Math.ceil(steps) : Math.round(steps);
+  return Number((n * tick).toFixed(2));
 }

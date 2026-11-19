@@ -17,6 +17,7 @@
 //   outcomes   what each exit is worth after commission, and reward : risk.
 
 import React, { useEffect, useState } from 'react';
+import { comboTick, tickEntry, tickTarget, DEFAULT_TICK } from '../engine/ticks';
 import { Clock, Copy, Check, Send } from 'lucide-react';
 import { normalisePosition, pnlAt } from '../utils/ticketMath';
 import { alpha } from '../utils/theme';
@@ -54,16 +55,25 @@ export function spreadLabels(xs, gap = 12, lo = 5, hi = 95) {
 }
 
 /** The exit plan as numbers — pure, so the tests check the arithmetic. */
-export function exitNumbers({ net, win, qty, plan, maxRisk }) {
+export function exitNumbers({ net, win, qty, plan, maxRisk, tick = DEFAULT_TICK }) {
   const n = Number(net);
   const q = Math.max(1, Number(qty) || 1);
   if (!isFinite(n) || n === 0) return null;
-  const pos = normalisePosition({ qty: q, qtyOpen: q, entryPrice: n, maxProfit: win > 0 ? win * q : '', basis: plan && plan.basis });
-  const entry = Math.abs(n);
+  // Prices go onto the contract's tick grid, in the trader's favour (engine/ticks.js):
+  // SPX combos trade in $0.05 steps and TWS rejects 22.12 with error 110.
+  const credit = n > 0;
+  const rawEntry = Math.abs(n);
+  const entry = tickEntry(rawEntry, credit, tick) || rawEntry;
+  const nT = credit ? entry : -entry;
+  const pos = normalisePosition({ qty: q, qtyOpen: q, entryPrice: nT, maxProfit: win > 0 ? win * q : '', basis: plan && plan.basis });
   const priced = plan && Array.isArray(plan.priced) ? plan.priced : [];
   const targets = priced.filter(t => Number(t.qty) > 0 && isFinite(Number(t.price)))
-    .map((t, i, a) => ({ label: a.length > 1 ? `T${i + 1}` : 'Target', pct: Number(t.pct) || 0, qty: Number(t.qty), price: Number(t.price),
-      gain: pnlAt(pos, Number(t.price), Number(t.qty)) }));
+    .map((t, i, a) => {
+      const px = tickTarget(Number(t.price), credit, tick);
+      return { label: a.length > 1 ? `T${i + 1}` : 'Target', pct: Number(t.pct) || 0, qty: Number(t.qty), price: px, rawPrice: Number(t.price),
+        gain: pnlAt(pos, px, Number(t.qty)) };
+    });
+  const ticked = entry !== rawEntry || targets.some(t => t.price !== t.rawPrice);
   const targetAll = targets.reduce((a, t) => a + t.gain, 0);
   let stopPrice = plan && plan.stopPrice != null && isFinite(Number(plan.stopPrice)) ? Number(plan.stopPrice) : null;
   let stop = stopPrice != null ? pnlAt(pos, stopPrice, q) : null;
@@ -85,7 +95,7 @@ export function exitNumbers({ net, win, qty, plan, maxRisk }) {
   const reward = targets.length ? targetAll - comm : null;
   const rr = risk > 0 && reward != null ? reward / risk : null;
   const breakEvenWin = risk > 0 && reward > 0 ? risk / (risk + reward) : null;
-  return { pos, q, entry, isCredit: pos.isCredit, targets, targetAll, stopPrice, stop, stopBeyondMax, max, maxPrice, worst, comm, reward, risk, rr, breakEvenWin };
+  return { pos, q, entry, rawEntry, tick, ticked, isCredit: pos.isCredit, targets, targetAll, stopPrice, stop, stopBeyondMax, max, maxPrice, worst, comm, reward, risk, rr, breakEvenWin };
 }
 
 function CopyBtn({ text, label = 'Copy', testid }) {
@@ -164,7 +174,7 @@ const note = { fontSize: 12.5, color: C.grey, lineHeight: 1.45, minWidth: 0 };
 const fmtSigned = v => { const n = Number(v); return !isFinite(n) ? '—' : `${Math.abs(n).toFixed(2)} ${n >= 0 ? 'cr' : 'db'}`; };
 
 export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, when, stageLegs, stageWhyNot, tif = 'DAY', entryTif = 'DAY', orderRef, editor, onStaged }) {
-  const N = exitNumbers({ net, win, qty, plan, maxRisk });
+  const N = exitNumbers({ net, win, qty, plan, maxRisk, tick: comboTick(head.underlying) });
   const [health, setHealth] = useState(null);
   const [acct, setAcct] = useState(() => { try { return localStorage.getItem(ACCT_KEY) || ''; } catch { return ''; } });
   const [st, setSt] = useState({ s: 'idle' });
@@ -317,6 +327,10 @@ export default function ExitPlanCard({ head = {}, net, win, qty, plan, maxRisk, 
               <span style={note}>
                 {health && health.connected === false ? 'TWS is not connected to the bridge.'
                   : <>Sends {openAct} {N.q} @ {N.entry.toFixed(2)} + {N.targets.length > 1 ? `${N.targets.length} profit targets` : `the profit target @ ${N.targets[0].price.toFixed(2)}`} with <b>transmit off</b>. Entry is {cutoff ? <><b>DAY</b>, and the bridge <b>cancels it at 12:30 ET if nothing has filled</b> (TWS won’t take a timed order on this combo)</> : entryTifLabel}. Nothing trades until you click Transmit in TWS. No stop is sent.</>}
+                {N.ticked && <span data-testid="tick-note" style={{ display: 'block', marginTop: 4 }}>
+                  {head.underlying || 'This'} combos trade in ${N.tick.toFixed(2)} steps, so the prices above are rounded your way:
+                  {' '}entry {N.entry.toFixed(2)} (ticket {N.rawEntry.toFixed(2)}){N.targets.filter(t => t.price !== t.rawPrice).map((t, i) => <span key={i}>, {t.label.toLowerCase()} {t.price.toFixed(2)} ({t.rawPrice.toFixed(2)})</span>)}.
+                </span>}
               </span>
             </>
           ) : (
