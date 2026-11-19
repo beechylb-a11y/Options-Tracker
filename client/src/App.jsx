@@ -175,7 +175,7 @@ export default function App() {
           next navigation). */}
       <div className={visionOn ? 'max-w-[1400px] mx-auto px-1 pb-6' : 'max-w-[1400px] mx-auto p-6'} key={tab === 'decision' ? 'decision' : refreshTick}>
         <PageBoundary key={tab} name={PAGE_NAMES[tab]}>
-        {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
+        {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} onNavigate={setTab} />}
         {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
         {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
         {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} />}

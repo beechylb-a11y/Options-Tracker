@@ -11,6 +11,8 @@ import FreshDot from './FreshDot';
 import { useLiveQuote, useLiveConnection, useFreshness } from '../live/useLive';
 import { reconnectLiveFeed } from '../live/liveFeed';
 import { ScanChip } from './ScanProgress';
+import { useTopTabs } from '../utils/topTabs';
+import { Plus } from 'lucide-react';
 
 // Persistent context strip: account switcher, today P&L, daily-loss gauge,
 // open-position count, data freshness + global refresh, Sheets/bridge status.
@@ -24,12 +26,18 @@ const clockFmt = ts =>
 // restart the bridge process, so a TWS restart no longer means a trip to Terminal.
 // Both only work while the bridge process and its ngrok tunnel are up — if the
 // bridge itself is unreachable there is nothing on the other end to ask.
-function BridgeControl({ state, title, onAction, busy, note, mode, liveLine }) {
+function BridgeControl({ state, title, onAction, busy, note, mode, liveLine, chip = false, db = 'ok' }) {
   const [open, setOpen] = useState(false);
   const color = state === 'ok' ? 'bg-green' : state === 'warn' ? 'bg-amber' : state === 'off' ? 'bg-bg-border' : 'bg-red';
   const btn = 'w-full text-left px-3 py-1.5 text-[12.5px] rounded hover:bg-bg-hover disabled:opacity-50';
+  // Vision account chip: one quiet line under the account name, "paper · bridge live".
+  const chipText = `${mode ? mode + ' · ' : ''}bridge ${busy ? 'working…' : state === 'ok' ? 'live' : state === 'warn' ? 'no TWS' : state === 'off' ? 'off' : 'down'}${db !== 'ok' && db !== 'off' ? ' · DB down' : ''}`;
   return (
     <div className="relative">
+      {chip ? (
+        <button onClick={() => setOpen(o => !o)} title={title} data-testid="bridge-chip"
+          className={`vis-acct-sub ${state === 'ok' && (db === 'ok' || db === 'off') ? '' : 'warn'}`}>{chipText}</button>
+      ) : (
       <button onClick={() => setOpen(o => !o)} title={title} className="flex items-center gap-1.5">
         <div className={`w-2 h-2 rounded-full ${color} ${busy ? 'animate-pulse' : ''}`} />
         <span className="text-[12.5px] text-text-muted">Bridge</span>
@@ -38,6 +46,7 @@ function BridgeControl({ state, title, onAction, busy, note, mode, liveLine }) {
         )}
         <span className="text-[12.5px] text-text-muted">▾</span>
       </button>
+      )}
       {open && (
         <div className="absolute right-0 mt-2 w-72 p-2 rounded-lg border border-bg-border bg-bg-card shadow-lg z-30"
           onMouseLeave={() => setOpen(false)}>
@@ -223,6 +232,16 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [pingTick, setPingTick] = useState(0);
   const [bridgeTitle, setBridgeTitle] = useState('Bridge URL not configured');
   const live = useLiveConnection();
+  const pageTabs = useTopTabs();
+  // Vision: the top row sits on the shell like the design; only once the page scrolls
+  // under it does it take a frosted backing (the page used to show through it).
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!visionOn) return undefined;
+    const on = () => setStuck(window.scrollY > 8);
+    on(); window.addEventListener('scroll', on, { passive: true });
+    return () => window.removeEventListener('scroll', on);
+  }, [visionOn]);
 
   const loadData = useCallback(() => {
     if (!authenticated) return;
@@ -340,10 +359,23 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   // page no longer shows through it when you scroll.
   if (visionOn) {
     const bridgeState = live.connection === 'open' ? (live.status.connected ? 'ok' : 'warn') : bridgeStateRaw;
+    const tabsHere = !!(pageTabs && pageTabs.page === title && pageTabs.tabs && pageTabs.tabs.length);
+    const acct = accounts.find(a => a.id === account);
+    const acctName = account === 'all' || !acct ? 'All accounts' : acct.name;
+    const initials = acctName.replace(/[^A-Za-z ]/g, ' ').split(/\s+|(?=[A-Z])/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'SB';
     return (
-      <div data-testid="header-strip" className="vis-top vis-top--compact hdr-glass">
-        {title && <div className="vis-title" data-testid="vision-title">{title}</div>}
-        <div className="vis-chips" data-testid="header-row">
+      <div data-testid="header-strip" className={`vis-top vis-top--compact hdr-glass${stuck ? ' is-stuck' : ''}`}>
+        {/* A page with views of its own puts them here as text tabs (the design's
+            "Overview · Open · Expiring · Activity"); otherwise the page name. */}
+        {tabsHere ? (
+          <nav className="vis-page-tabs" aria-label={`${title} views`} data-testid="vision-page-tabs">
+            {pageTabs.tabs.map(([id, label]) => (
+              <button key={id} type="button" className="vis-title vis-page-tab" aria-current={pageTabs.value === id ? 'page' : undefined}
+                data-testid={'page-tab-' + id} onClick={() => pageTabs.onChange(id)}>{label}</button>
+            ))}
+          </nav>
+        ) : title && <div className="vis-title" data-testid="vision-title">{title}</div>}
+        <div className="vis-chips" data-testid="header-row" style={tabsHere ? { display: 'none' } : undefined}>
           <VisClock />
           <VisPrice symbol="SPX" />
           {authenticated && <>
@@ -366,29 +398,33 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
           <ScanChip onOpen={onOpenEngine} />
         </div>
         <div className="flex-1" />
-        <div className="vis-chips vis-chips--tools" data-testid="hdr-system">
-          {authenticated && accounts.length > 0 ? (
-            <select value={account} onChange={e => onAccountChange(e.target.value)} className="hdr-select vis-select" aria-label="Account">
-              <option value="all">All accounts</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          ) : !authenticated ? (
-            <button onClick={onLogin} className="px-3 py-1 bg-accent text-white text-xs font-medium rounded-full">Sign in</button>
-          ) : null}
-          <button onClick={handleRefresh} className="vis-chip vis-chip-btn" aria-label="Refresh all data"
+        {tabsHere && <ScanChip onOpen={onOpenEngine} />}
+        <div className="vis-tools" data-testid="hdr-system">
+          {/* Round buttons and the account chip, as in the design. */}
+          {onOpenEngine && <button type="button" onClick={onOpenEngine} className="vis-round vis-round--dashed" aria-label="New trade — open the Decision Engine" title="New trade"><Plus size={20} /></button>}
+          <span className="vis-tools-gap" aria-hidden="true" />
+          <button type="button" onClick={handleRefresh} className="vis-round" aria-label="Refresh all data"
             title={`Refresh all data${lastSynced ? ' · last synced ' + clockFmt(lastSynced) : ''}`}>
-            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-            <span className="vis-chip-value">{lastSynced ? clockFmt(lastSynced) : '—'}</span>
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
           </button>
-          <span className="vis-chip">
-            <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
-            <BridgeControl state={bridgeState}
-              title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
-              onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
-              mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
-              liveLine={liveSummary(live)} />
-          </span>
-          <ThemeToggle />
+          <div className="vis-acct" data-testid="account-chip">
+            <span className="vis-acct-avatar" aria-hidden="true">{initials}</span>
+            <span className="vis-acct-text">
+              {authenticated && accounts.length > 0 ? (
+                <select value={account} onChange={e => onAccountChange(e.target.value)} className="hdr-select vis-acct-name" aria-label="Account">
+                  <option value="all">All accounts</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              ) : !authenticated ? (
+                <button onClick={onLogin} className="vis-acct-name">Sign in</button>
+              ) : <span className="vis-acct-name">{acctName}</span>}
+              <BridgeControl chip db={sheetsState} state={bridgeState}
+                title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
+                onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
+                mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
+                liveLine={liveSummary(live)} />
+            </span>
+          </div>
         </div>
       </div>
     );

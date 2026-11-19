@@ -8,7 +8,8 @@ import UpcomingExpiries from '../components/UpcomingExpiries';
 import { fmt$, fmtPct, fmtDate, fmtDateShort, pnlColor, localISODate } from '../utils/format';
 import { filterTracker, computeStats, mergeClosedTrades, rowWl, BA_GREEN, BA_RED } from '../utils/stats';
 import ErrorBanner from '../components/ErrorBanner';
-import VisionDashHero from '../components/VisionDashHero';
+import VisionDashboard from '../components/VisionDashboard';
+import { topTabs } from '../utils/topTabs';
 import { useVisionOn } from '../components/ThemeToggle';
 import { eventOutlook, nowET } from '../engine/events';
 
@@ -19,8 +20,22 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 // 2026-10-27 → 27 Oct, one date format across the app.
 const shortDate = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : String(d || ''); };
 
-export default function Dashboard({ authenticated, account, accounts = [] }) {
+const DASH_TABS = [['overview', 'Overview'], ['open', 'Open'], ['expiring', 'Expiring'], ['activity', 'Activity']];
+const DASH_TAB_KEY = 'ot_dash_tab';
+
+export default function Dashboard({ authenticated, account, accounts = [], onNavigate }) {
   const visionOn = useVisionOn();
+  // Vision (Nov 2026): the Dashboard's views as text tabs in the top row, as in the
+  // design — Overview (the cards), Open (positions), Expiring (expiries and the macro
+  // calendar), Activity (closed-trade history). Solid and Glass keep one long page.
+  const [dashTab, setDashTabState] = useState(() => { try { const v = localStorage.getItem(DASH_TAB_KEY); return DASH_TABS.some(t => t[0] === v) ? v : 'overview'; } catch { return 'overview'; } });
+  const setDashTab = id => { setDashTabState(id); try { localStorage.setItem(DASH_TAB_KEY, id); } catch { /* ignore */ } };
+  useEffect(() => {
+    if (!visionOn) { topTabs.clear('Dashboard'); return undefined; }
+    topTabs.set({ page: 'Dashboard', tabs: DASH_TABS, value: dashTab, onChange: setDashTab });
+    return () => topTabs.clear('Dashboard');
+  }, [visionOn, dashTab]);
+  const show = id => !visionOn || dashTab === id;
   const [stats, setStats] = useState(null);
   const [config, setConfig] = useState({});
   const [tracker, setTracker] = useState([]);
@@ -237,13 +252,13 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           onRetry={() => setRetryTick(t => t + 1)}
         />
       )}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+      {show('activity') && <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h2 className="page-title font-display text-2xl font-bold">Dashboard</h2>
           <p className="text-text-muted text-sm mt-0.5">
             {aggregated
               ? 'All accounts — aggregated (excl. PaperTrade)'
-              : `Account: ${account}`}
+              : `Account: ${acctName(account)}`}
           </p>
         </div>
         <div className="flex items-center gap-4 flex-wrap">
@@ -257,24 +272,31 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           </div>
           <div className="text-right">
             <div className="text-xs text-text-faint">{aggregated ? 'Combined bankroll' : 'Current bankroll'}</div>
-            <div className="font-display text-xl font-bold mono" style={{ color: pnlColor(bankroll - startBR) }}>{fmt$(bankroll)}</div>
+            <div className="font-display text-xl font-bold mono" style={{ color: visionOn ? '#fff' : pnlColor(bankroll - startBR) }}>{fmt$(bankroll)}</div>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Vision: the three headline cards first (today, month vs target, watching). */}
-      {visionOn && <VisionDashHero closedTrades={closedTrades} tracker={tracker} decisions={decisions} account={account} accounts={accounts} />}
+      {visionOn && dashTab === 'overview' && (
+        <VisionDashboard authenticated={authenticated} account={account} accounts={accounts} closedTrades={closedTrades}
+          tracker={tracker} decisions={decisions} config={config} onTab={setDashTab} onOpenEngine={onNavigate ? () => onNavigate('decision') : null} />
+      )}
 
-      <EventBanner />
+      {/* The macro calendar: its own place on Expiring; on Overview only when something
+          is scheduled inside today's session. */}
+      {(show('expiring') || (visionOn && dashTab === 'overview')) && <EventBanner onlyIfToday={visionOn && dashTab === 'overview'} />}
+      {visionOn && dashTab === 'expiring' && <UpcomingExpiries authenticated={authenticated} account={account} />}
 
       {/* Live first: the open positions board is the only thing on the Dashboard that
           can still change, and it carries the open P&L, risk against the cap and what
           needs a look. History sits under it as ONE strip of six (Oct 2026 — it was two
           rows of twelve tiles, and the open-risk tile repeated the board's number). */}
-      <div className="mb-4">
+      {show('open') && <div className="mb-4">
         <OpenPositions authenticated={authenticated} account={account} compact maxOpenRisk={maxOpenRisk} />
-      </div>
+      </div>}
 
+      {show('activity') && <>
       <div data-testid="perf-strip" className="card mb-6" style={{ padding: '14px 16px' }}>
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
           <span className="text-sm" style={{ fontWeight: 600 }}>Closed trades <span className="text-text-muted" style={{ fontWeight: 400 }}>· {range === 'All' ? 'all time' : range} · {tradeCount}</span></span>
@@ -347,7 +369,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
       </div>
 
       {/* Row 3: Daily P&L chart + Upcoming expiries */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div className={visionOn ? "mb-4" : "grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4"}>
         <div className="lg:col-span-2 card">
           <h3 className="text-sm font-medium text-text-muted mb-3">Daily P&L — last 30 days with closes</h3>
           {pnlByDate.length > 0 ? (
@@ -376,7 +398,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           )}
         </div>
 
-        <UpcomingExpiries authenticated={authenticated} account={account} />
+        {!visionOn && <UpcomingExpiries authenticated={authenticated} account={account} />}
       </div>
 
       {/* Row 4: Recent Trades */}
@@ -420,6 +442,7 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
           <div className="h-20 flex items-center justify-center text-text-faint text-sm">No closed trades yet</div>
         )}
       </div>
+      </>}
     </div>
   );
 }
@@ -434,9 +457,10 @@ export const plainNotice = n => String(n || '')
   .replace(/\s*[—–-]?\s*(refresh soon|run|fix):\s*node tools\/refresh-calendar\.mjs\.?/i, ' — the event calendar needs refreshing')
   .replace(/\s+/g, ' ').trim();
 
-function EventBanner() {
+function EventBanner({ onlyIfToday = false }) {
   const { dateISO, minutes } = nowET();
   const o = useMemo(() => eventOutlook(dateISO, minutes, 21), [dateISO, minutes]);
+  if (onlyIfToday && !o.todayWarnings.length) return null;
 
   const todayHigh = o.highToday;
   const border = o.todayWarnings.length ? (todayHigh ? 'var(--c-6e2427)' : 'var(--c-4b3f7a)') : 'var(--c-21262d)';
