@@ -511,6 +511,39 @@
 :root[data-vision="on"]:not(#_) [data-testid="edge-row"] > div > div.mono { font-size: 26px !important; font-weight: 600 !important; line-height: 1.15 !important; margin-top: 2px; }
 :root[data-vision="on"]:not(#_) [data-testid="verdict-band"] { padding: 24px 28px !important; }
 
+/* ══ Step 5: the other tabs ═════════════════════════════════════════
+   Data panels: a card holding a table is the "data tier" — its frost washed back
+   (denser tint, less of the room showing) so small numbers stay readable. Column
+   heads in sentence case, quiet separators, a soft row hover. Trades, Analytics,
+   Reports, Risk and Journal all pick this up from the markup they already have. */
+:root[data-vision="on"]:not(#_) :is(.card, .kpi):has(table) {
+  background: linear-gradient(180deg, rgba(62, 59, 56, 0.62), rgba(52, 50, 47, 0.62));
+}
+:root[data-vision="on"]:not(#_) table { border-collapse: separate; border-spacing: 0; }
+:root[data-vision="on"]:not(#_) table thead tr,
+:root[data-vision="on"]:not(#_) table tr:is(.uppercase, [class*="uppercase"]):first-child {
+  text-transform: none;
+  letter-spacing: 0;
+}
+:root[data-vision="on"]:not(#_) table th {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e4e2de;
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+:root[data-vision="on"]:not(#_) table tbody tr { transition: background-color 120ms ease; }
+:root[data-vision="on"]:not(#_) table tbody tr:hover { background-color: rgba(255, 255, 255, 0.06); }
+:root[data-vision="on"]:not(#_) table tbody td { border-bottom-color: rgba(255, 255, 255, 0.08); }
+:root[data-vision="on"]:not(#_) table tbody tr > td:first-child { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
+:root[data-vision="on"]:not(#_) table tbody tr > td:last-child { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
+:root[data-vision="on"]:not(#_) table tfoot td { border-top: 1px solid rgba(255, 255, 255, 0.14); font-weight: 600; }
+
+/* Reading pages (Knowledgebase, Documents, Reports notes): long text keeps a
+   comfortable line length inside the wide card. */
+:root[data-vision="on"]:not(#_) :is(.card, .kpi) p:not([class*="text-xs"]):not([class*="text-[1"]) { max-width: 84ch; }
+
 /* ── Off switches ── */
 @media (prefers-reduced-transparency: reduce) {
   :root[data-vision="on"]:not(#_) :is(.vis-shell, .vis-rail, .card, .kpi, .hdr-well) {
@@ -520,6 +553,16 @@
   }
 }
 @media print {
-  :root[data-vision="on"]:not(#_) .vis-rail { display: none; }
-  :root[data-vision="on"]:not(#_) .vis-shell { background: #fff; box-shadow: none; border: none; padding: 0; }
+  /* Print keeps today's white: no room, no frost, dark text. */
+  :root[data-vision="on"]:not(#_) { color-scheme: light; }
+  :root[data-vision="on"]:not(#_),
+  :root[data-vision="on"]:not(#_) body,
+  :root[data-vision="on"]:not(#_) .vis-room,
+  :root[data-vision="on"]:not(#_) .vis-shell { background: #fff !important; box-shadow: none !important; border: none !important; padding: 0 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+  :root[data-vision="on"]:not(#_) .liquid-glass-backdrop::before { display: none; }
+  :root[data-vision="on"]:not(#_) .vis-rail, :root[data-vision="on"]:not(#_) .vis-top { display: none; }
+  :root[data-vision="on"]:not(#_) :is(.card, .kpi, .liquid-glass) { background: #fff !important; border: 1px solid #d0d7de !important; box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; break-inside: avoid; }
+  :root[data-vision="on"]:not(#_) .vis-main, :root[data-vision="on"]:not(#_) .vis-main * { color: #1f2328 !important; text-shadow: none !important; }
+  :root[data-vision="on"]:not(#_) .vis-main :is(.text-green, [style*="--c-3fb950"]) { color: #1a7f37 !important; }
+  :root[data-vision="on"]:not(#_) .vis-main :is(.text-red, [style*="--c-f85149"]) { color: #cf222e !important; }
 }

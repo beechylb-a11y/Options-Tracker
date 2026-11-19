@@ -160,7 +160,7 @@ describe('vision.css step 4: layouts', () => {
     const dir = path.resolve(__dirname, '../pages');
     for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.jsx'))) {
       const src = fs.readFileSync(path.join(dir, f), 'utf8');
-      const all = (src.match(/<h2 className="[^"]*font-display text-2xl[^"]*"/g) || []);
+      const all = (src.match(/<h2 className="[^"]*(font-display text-2xl|text-2xl font-display)[^"]*"/g) || []);
       for (const h of all) expect(h, f).toContain('page-title');
     }
   });
@@ -169,6 +169,24 @@ describe('vision.css step 4: layouts', () => {
     expect(grid.nodes.find(d => d.prop === 'grid-template-columns').value).toBe('repeat(2, minmax(0, 1fr))');
     const num = rules.find(x => x.selector.endsWith('[data-testid="edge-row"] > div > div.mono'));
     expect(num.nodes.find(d => d.prop === 'font-size').value).toBe('26px');
+  });
+});
+
+describe('vision.css step 5: the other tabs', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../styles/vision.css'), 'utf8');
+  const rules = []; postcss.parse(css).walkRules(r => rules.push(r));
+  const decl = (r, p) => (r.nodes.find(d => d.prop === p) || {}).value;
+  it('a card holding a table is a denser data panel; column heads in sentence case', () => {
+    const panel = rules.find(r => r.selector.endsWith(':is(.card, .kpi):has(table)'));
+    expect(decl(panel, 'background')).toMatch(/rgba\(6\d, 5\d, 5\d, 0\.6\d\)/);
+    const th = rules.find(r => r.selector.endsWith(' table th'));
+    expect(decl(th, 'text-transform')).toBe('none');
+  });
+  it('print keeps white paper and dark text, with no rail or top row', () => {
+    const inPrint = rules.filter(r => r.parent.type === 'atrule' && r.parent.name === 'media' && r.parent.params === 'print');
+    expect(inPrint.some(r => r.selector.includes('.vis-rail') && decl(r, 'display') === 'none')).toBe(true);
+    expect(inPrint.some(r => r.selector.includes('.vis-main *') && /#1f2328/.test(decl(r, 'color')))).toBe(true);
+    expect(inPrint.some(r => r.selector.includes(':is(.card, .kpi, .liquid-glass)') && /#fff/.test(decl(r, 'background')))).toBe(true);
   });
 });
 
