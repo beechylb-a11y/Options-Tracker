@@ -779,7 +779,7 @@
   :root[data-vision="on"]:not(#_) .vd-round { width: 48px; height: 48px; }
 }
 :root[data-vision="on"]:not(#_) .vd-grid { align-items: stretch; }
-:root[data-vision="on"]:not(#_) .vd-target { flex: 1; display: flex; flex-direction: column; }
-:root[data-vision="on"]:not(#_) .vd-target > .flex.justify-center { flex: 1; align-items: center; }
+/* Nov 2026: the target tile is as tall as its content (it no longer stretches to fill the column). */
+:root[data-vision="on"]:not(#_) .vd-target { display: flex; flex-direction: column; }
 :root[data-vision="on"]:not(#_) .vd-pair .vd-h { font-size: 20px; }
 :root[data-vision="on"]:not(#_) .vd-pill-btn { white-space: nowrap; }

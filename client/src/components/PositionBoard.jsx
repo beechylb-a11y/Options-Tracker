@@ -23,6 +23,8 @@ import { daysBetweenYmd } from '../utils/ticketExpiry';
 import { tradingSession } from '../engine/session';
 import { STATUS } from '../engine/fills';
 import { alpha } from '../utils/theme';
+import { accountColor, accountName, useAccountsList } from '../utils/accountColors';
+import { recordMarks } from '../live/markLog';
 
 const money = v => (v == null || !isFinite(v) ? '—' : (v >= 0 ? '+$' : '−$') + Math.abs(Math.round(v)).toLocaleString());
 const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
@@ -66,7 +68,8 @@ export function boardRow(r, { chain = null, expiry = null, check = null, liveMar
   const ncdPos = m.ncd != null ? m.ncd + (qtyOpen ? banked / (100 * qtyOpen) : 0) : null;
   const strategy = String(pos.strategy || '').replace(/\s*-\s*Normal\b/i, '');
   return {
-    key: r.ticketRef, r, check, action, tone, label, headline: rv && rv.action !== 'unknown' ? rv.headline : null,
+    key: r.ticketRef, r, check, action, tone, label, account: r.account || '',
+    startYmd: (expiry && expiry.startYmd) || (r.entryDate ? String(r.entryDate).slice(0, 10).replace(/-/g, '') : null), headline: rv && rv.action !== 'unknown' ? rv.headline : null,
     underlying: pos.underlying, strikes: parseStrikes(r.legs || ''), strategy, qtyOpen, qty: n(r.qty),
     engine: pos.engine, is45: /45/.test(pos.engine || ''), is0: /0DTE/i.test(pos.engine || ''), resting,
     minutesToExit: m.minutesToExit, exitEt: m.exitEt, minutesToBell: m.minutesToBell, minutesToLastCall: m.minutesToLastCall, settle: m.settle, phase: m.phase,
@@ -102,29 +105,78 @@ function Badge({ row }) {
   return <span data-testid="board-action"><ActionBadge action={row.action} tone={row.tone} label={row.label} /></span>;
 }
 
-/** stop ◀━━━━━┿━━●━━━━▶ target, whole position; no dot when there is no live mark. */
-function MiniMeter({ row }) {
+/**
+ * P&L toward the exit lines, whole position (Nov 2026). Zero sits in the middle: the
+ * left half fills toward the stop, the right half toward the target, each to its own
+ * scale, with the share of the way written beside the number. No fill when unpriced.
+ */
+export function exitProgress(now, stop, target) {
+  if (now == null) return null;
+  if (now >= 0) return target != null && target > 0 ? { side: 'target', frac: Math.min(1, now / target) } : null;
+  return stop != null && stop < 0 ? { side: 'stop', frac: Math.min(1, now / stop) } : null;
+}
+function ExitMeter({ row, narrow }) {
   const { posPnl: now, stop, target } = row;
-  if (stop == null && target == null) return <span style={{ color: C.dim, fontSize: 12 }}>no exit plan</span>;
-  const xs = [stop ?? 0, target ?? 0, 0, now ?? 0];
-  const lo = Math.min(...xs), hi = Math.max(...xs);
-  const P = v => ((v - lo) / Math.max(1, hi - lo)) * 100;
+  const pg = exitProgress(now, stop, target);
   const col = now == null ? C.grey : now >= 0 ? C.green : C.red;
+  const half = 50;
+  const x0 = pg ? (pg.side === 'target' ? half : half - pg.frac * half) : half;
+  const x1 = pg ? (pg.side === 'target' ? half + pg.frac * half : half) : half;
   return (
-    <div data-testid="board-meter" title={`stop ${money(stop)} · now ${money(now)} · target ${money(target)} — whole position`}>
-      <div style={{ position: 'relative', height: 16 }}>
-        <div style={{ position: 'absolute', left: 0, right: 0, top: 6, height: 5, borderRadius: 3,
-          background: `linear-gradient(90deg, ${C.red} 0%, ${alpha(C.red, '55')} ${P(0)}%, ${alpha(C.green, '55')} ${P(0)}%, ${C.green} 100%)` }} />
-        <div style={{ position: 'absolute', left: `${P(0)}%`, top: 2, width: 2, height: 13, background: C.text, opacity: 0.5, marginLeft: -1 }} />
-        {now != null && <div style={{ position: 'absolute', left: `${P(now)}%`, top: 1, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
-          background: col, border: `2px solid ${C.bg}`, boxShadow: `0 0 0 2px ${alpha(col, '55')}` }} />}
+    <div data-testid="board-pnl" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <span className="mono" data-testid="board-pnl-value" data-source={row.pnlSource || ''}
+          title={row.pnlSource === 'stream' ? 'Marked live from the TWS stream' : row.pnlSource === 'check-up' ? 'From the last check-up' : ''}
+          style={{ fontSize: narrow ? 20 : 21, fontWeight: 800, lineHeight: 1, color: col }}>{now != null ? money(now) : '—'}</span>
+        <span data-testid="board-progress" style={{ fontSize: 12, color: C.grey, whiteSpace: 'nowrap' }}>
+          {pg ? `${Math.round(pg.frac * 100)}% to ${pg.side}` : row.chain ? <>banked <span style={{ color: row.banked >= 0 ? C.green : C.red }}>{money(row.banked)}</span></> : `risk $${Math.round(row.risk).toLocaleString()}`}
+        </span>
       </div>
-      <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2, gap: 6 }}>
-        <span style={{ color: C.red }}>{stop != null ? money(stop) : ''}</span>
-        <span style={{ color: C.green }}>{target != null ? money(target) : ''}</span>
-      </div>
+      {stop == null && target == null ? <span style={{ color: C.dim, fontSize: 12 }}>no exit plan</span> : (
+        <div data-testid="board-meter" title={`stop ${money(stop)} · now ${money(now)} · target ${money(target)} — whole position`}>
+          <div style={{ position: 'relative', height: 16 }}>
+            <div style={{ position: 'absolute', left: 0, width: '50%', top: 5, height: 6, borderRadius: 3, background: alpha(C.red, '38') }} />
+            <div style={{ position: 'absolute', left: '50%', right: 0, top: 5, height: 6, borderRadius: 3, background: alpha(C.green, '38') }} />
+            {pg && <div style={{ position: 'absolute', left: `${x0}%`, width: `${Math.max(1, x1 - x0)}%`, top: 5, height: 6, borderRadius: 3, background: col }} />}
+            <div style={{ position: 'absolute', left: '50%', top: 0, width: 2, height: 16, marginLeft: -1, background: C.text, opacity: 0.7 }} />
+            {pg && <div style={{ position: 'absolute', left: `${pg.side === 'target' ? x1 : x0}%`, top: 1, width: 14, height: 14, marginLeft: -7, borderRadius: '50%',
+              background: '#ffffff', border: `3px solid ${col}`, boxSizing: 'border-box' }} />}
+          </div>
+          <div className="mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2, gap: 6, color: C.grey }}>
+            <span>{stop != null ? `stop ${money(stop)}` : ''}</span>
+            <span>{target != null ? `target ${money(target)}` : ''}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * How far price is from trouble, in one line (Nov 2026). A credit position measures to
+ * its nearest short strike (where tastylive-style management starts); a debit one to
+ * its nearest break-even. Positive = the safe side.
+ */
+export function cushionOf({ legs, spot, credit, breakevens = [] }) {
+  const s = Number(spot);
+  if (!(s > 0)) return null;
+  const pct = d => (Math.abs(d) / s * 100).toFixed(1);
+  if (credit) {
+    const shorts = (legs || []).filter(l => l.qty < 0 && (l.right === 'P' || l.right === 'C'));
+    if (!shorts.length) return null;
+    const ds = shorts.map(l => ({ l, d: l.right === 'P' ? s - l.strike : l.strike - s })).sort((a, b) => a.d - b.d);
+    const { l, d } = ds[0];
+    const name = `${l.strike}${l.right}`;
+    return d >= 0
+      ? { ok: true, text: `${d.toFixed(2)} ${l.right === 'P' ? 'above' : 'below'} the ${name} · ${pct(d)}%` }
+      : { ok: false, text: `${Math.abs(d).toFixed(2)} through the ${name} · ${pct(d)}%` };
+  }
+  if (!breakevens.length) return null;
+  const b = [...breakevens].sort((x, y) => Math.abs(s - x) - Math.abs(s - y))[0];
+  const lo = Math.min(...breakevens), hi = Math.max(...breakevens);
+  const inside = breakevens.length >= 2 ? s >= lo && s <= hi : null;
+  const d = Math.abs(s - b);
+  return { ok: inside !== false, text: `${d.toFixed(2)} ${inside === false ? 'outside' : 'from'} the ${b.toFixed(2)} break-even · ${pct(d)}%` };
 }
 
 /** Shorts, longs, the green profit zone and price — at a glance. */
@@ -147,6 +199,7 @@ function MiniStrip({ row }) {
   const shortOf = k => row.shorts.find(s => s.strike === k.strike && s.right === k.right);
   const uniq = [];
   strip.strikes.forEach(k => { if (!uniq.some(u => u.strike === k.strike && u.right === k.right)) uniq.push(k); });
+  const cush = cushionOf({ legs: row.legs, spot: strip.spot.value, credit: row.ncdPos != null && row.ncdPos > 0, breakevens: strip.breakevens.map(b => b.value) });
   return (
     <div ref={ref} data-testid="board-strip">
       <svg width={w} height={H} role="img" aria-label={`${row.underlying} ${strip.spot.value} ${strip.spot.inProfit ? 'inside' : 'outside'} the break-evens`}>
@@ -167,6 +220,7 @@ function MiniStrip({ row }) {
         <text x={Math.min(w - 20, Math.max(20, X(strip.spot.x)))} y="8" fontSize="10.5" fontWeight="700" textAnchor="middle" fill={C.text}
           fontFamily="JetBrains Mono,monospace">{strip.spot.value}</text>
       </svg>
+      {cush && <div data-testid="board-cushion" className="mono" style={{ fontSize: 11.5, color: cush.ok ? C.grey : C.red, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cush.text}</div>}
     </div>
   );
 }
@@ -199,28 +253,47 @@ function ClockRing0({ row }) {
   );
 }
 
+/**
+ * Open → today → manage line → expiry on one bar (Nov 2026), with the trade's events
+ * as diamonds. Replaces the ring, which showed days left but not where in the trade
+ * you are or what comes before expiry.
+ */
+export function timelineOf(row, todayYmd) {
+  if (!row.expiry || !row.startYmd) return null;
+  const total = daysBetweenYmd(row.startYmd, row.expiry);
+  if (!(total > 0)) return null;
+  const at = y => Math.max(0, Math.min(1, daysBetweenYmd(row.startYmd, y) / total));
+  const evYmd = e => String(e.date || '').slice(0, 10).replace(/-/g, '');
+  return {
+    now: at(todayYmd),
+    manage: row.closeYmd ? at(row.closeYmd) : null,
+    managePassed: row.closeYmd ? todayYmd >= row.closeYmd : false,
+    events: (row.events || []).filter(e => /^\d{8}$/.test(evYmd(e)) && evYmd(e) >= row.startYmd && evYmd(e) <= row.expiry)
+      .map(e => ({ x: at(evYmd(e)), label: `${e.label || shortEvent(e)} ${fmtYmd(evYmd(e))}` })),
+  };
+}
 function TimeRing({ row }) {
   if (row.is0) return <ClockRing0 row={row} />;
-  const days = row.daysToClose != null ? row.daysToClose : row.dte;
-  const label = row.daysToClose != null ? `close by ${fmtYmd(row.closeYmd)}` : row.dte != null ? (row.dte <= 0 ? 'expires today' : `expires ${fmtYmd(row.expiry)}`) : '';
+  const days = row.dte;
   if (days == null) return <span style={{ color: C.dim, fontSize: 12 }}>—</span>;
-  const span = row.planDays || (row.daysToClose != null ? Math.max(days, 1) + (row.daysHeld || 0) : Math.max(days, 1));
-  const used = span ? Math.max(0.04, Math.min(1, 1 - days / span)) : 0;
-  const r = 15, c = 2 * Math.PI * r;
-  const col = days <= 0 ? C.red : days <= 5 ? C.amber : C.blue;
-  const ev = (row.events || []).filter(e => !row.closeYmd || String(e.date || '').replace(/-/g, '') <= row.closeYmd);
+  const tl = timelineOf(row, tradingSession().yyyymmdd);
+  const toClose = row.daysToClose;
+  const col = days <= 0 || (toClose != null && toClose < 0) ? C.red : toClose != null && toClose <= 5 ? C.amber : TONES[row.tone] && row.tone !== 'grey' ? TONES[row.tone] : C.blue;
+  const sub = row.closeYmd ? (toClose != null && toClose < 0 ? 'past the manage line' : `manage ${fmtYmd(row.closeYmd)}`) : `expires ${fmtYmd(row.expiry)}`;
   return (
-    <div data-testid="board-time" style={{ display: 'flex', alignItems: 'center', gap: 8 }} title={label}>
-      <svg width="40" height="40" viewBox="0 0 40 40">
-        <circle cx="20" cy="20" r={r} fill="none" stroke="var(--c-21262d)" strokeWidth="5" />
-        <circle cx="20" cy="20" r={r} fill="none" stroke={col} strokeWidth="5" strokeLinecap="round" strokeDasharray={`${c * used} ${c}`} transform="rotate(-90 20 20)" />
-        <text x="20" y="24" textAnchor="middle" fontSize="11.5" fontWeight="800" fill={C.text} fontFamily="JetBrains Mono,monospace">{Math.max(0, days)}d</text>
-      </svg>
-      <div style={{ fontSize: 11.5, lineHeight: 1.35, color: C.grey }}>
-        <div className="mono" style={{ color: col, fontWeight: 700 }}>{row.closeYmd ? fmtYmd(row.closeYmd) : fmtYmd(row.expiry)}</div>
-        {ev.length > 0 && <div style={{ color: C.amber, display: 'flex', alignItems: 'center', gap: 3 }} title={ev.map(e => `${e.label} ${e.date}`).join(' · ')}>
-          <Zap size={11} />{ev.slice(0, 2).map(e => shortEvent(e).split(' ')[0]).join(' ')}</div>}
-      </div>
+    <div data-testid="board-time" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}
+      title={(row.events || []).map(e => `${e.label} ${e.date}`).join(' · ')}>
+      <span className="mono" style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{days <= 0 ? 'expires today' : `${days}d left`}</span>
+      {tl && (
+        <div style={{ position: 'relative', height: 18 }}>
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 8, height: 5, borderRadius: 3, background: 'var(--c-30363d)' }} />
+          <div style={{ position: 'absolute', left: 0, width: `${Math.max(2, tl.now * 100)}%`, top: 8, height: 5, borderRadius: 3, background: col }} />
+          {tl.manage != null && <div title="21 DTE manage line" style={{ position: 'absolute', left: `${tl.manage * 100}%`, top: 3, width: 2, height: 15, marginLeft: -1, background: C.text, opacity: tl.managePassed ? 0.4 : 0.9 }} />}
+          {tl.events.map((e, i) => <div key={i} title={e.label} style={{ position: 'absolute', left: `${e.x * 100}%`, top: 0, width: 7, height: 7, marginLeft: -3.5, background: C.amber, transform: 'rotate(45deg)' }} />)}
+          <div style={{ position: 'absolute', left: `${tl.now * 100}%`, top: 4, width: 12, height: 12, marginLeft: -6, borderRadius: '50%', background: '#ffffff', border: `3px solid ${col}`, boxSizing: 'border-box' }} />
+        </div>
+      )}
+      <span className="mono" style={{ fontSize: 11.5, color: toClose != null && toClose < 0 ? C.amber : C.grey, whiteSpace: 'nowrap' }}>{sub}</span>
     </div>
   );
 }
@@ -283,45 +356,48 @@ function Card0({ row }) {
   );
 }
 
-function BoardRow({ row, on, narrow }) {
+function BoardRow({ row, on, narrow, accounts }) {
   const [open, setOpen] = useState(false);
   const pr = primaryOf(row);
   const accent = TONES[row.tone] || TONES.grey;
-  const pnlCol = row.posPnl == null ? C.grey : row.posPnl >= 0 ? C.green : C.red;
+  const acctCol = accountColor(row.account, accounts);
+  const multi = (accounts || []).length > 1;
+  // Two lines (Nov 2026): what it is, then the contract — strikes, size, expiry.
   const title = (
-    <div style={{ minWidth: 0 }}>
-      <div data-testid="board-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: narrow ? 16.5 : 16, lineHeight: 1.3,
-        display: 'flex', flexWrap: 'wrap', columnGap: 10 }}>
-        <span style={{ whiteSpace: 'nowrap' }}>{row.underlying} {row.strikes.join('/')}</span>
-        <span style={{ whiteSpace: 'nowrap' }}>{row.strategy}</span>
-        <span style={{ whiteSpace: 'nowrap' }}>{row.qtyOpen} ct</span>
-        {row.expiry && <span style={{ whiteSpace: 'nowrap' }}>{fmtYmd(row.expiry)}</span>}
-      </div>
-      <div style={{ fontSize: 12, color: row.headline ? accent : C.grey, marginTop: 2 }}>
-        {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}`
-          : row.quoteErr ? <span data-testid="board-quote-err" style={{ color: C.amber }}>{row.quoteErr}</span>
-          : row.check ? ((row.check.review && row.check.review.headline) || 'no live quote') : (row.is45 || row.is0) ? 'checking…' : 'no live check')}
-        {!row.working && row.resting > 0 && (
-          <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: 'var(--c-bc8cff)', border: '1px solid var(--c-8957e5)' }}>+{row.resting} resting</span>
-        )}
-      </div>
-      {row.mismatch && (
-        <div data-testid="board-mismatch" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 5, fontSize: 12, color: C.amber }}>
-          <span className="mono" style={{ whiteSpace: "nowrap" }}>⚠ TWS {row.mismatch.tws} ≠ ticket {row.mismatch.ticket}</span>
-          <button data-testid="board-fix-strikes" onClick={e => { e.stopPropagation(); on('fix-strikes', row.r, row.mismatch); }}
-            style={{ padding: '2px 8px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, color: C.amber, background: 'transparent', border: `1px solid ${C.amber}` }}>
-            Fix ticket
-          </button>
+    <div style={{ minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+      <span aria-hidden="true" data-testid="board-symbol" style={{ flex: 'none', width: 40, height: 40, borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f1e4d6', color: '#1f1e1c', fontWeight: 700, fontSize: 11.5, boxShadow: `0 0 0 3px ${acctCol}`, marginTop: 2 }}>{String(row.underlying || '').slice(0, 4)}</span>
+      <div style={{ minWidth: 0 }}>
+        <div data-testid="board-title" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 8, lineHeight: 1.25 }}>
+          <span style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: narrow ? 17 : 17.5 }}>{row.underlying}</span>
+          <span style={{ color: C.text, fontWeight: 500, fontSize: 14.5 }}>{row.strategy}</span>
         </div>
-      )}
-    </div>
-  );
-  const pnl = (
-    <div data-testid="board-pnl" style={{ textAlign: narrow ? 'left' : 'right' }}>
-      <div className="mono" data-testid="board-pnl-value" data-source={row.pnlSource || ''} title={row.pnlSource === 'stream' ? 'Marked live from the TWS stream' : row.pnlSource === 'check-up' ? 'From the last check-up' : ''}
-        style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, color: pnlCol }}>{row.posPnl != null ? money(row.posPnl) : '—'}</div>
-      <div className="mono" style={{ fontSize: 11, color: C.grey, marginTop: 3, whiteSpace: 'nowrap' }}>
-        {row.chain ? <>banked <span style={{ color: row.banked >= 0 ? C.green : C.red }}>{money(row.banked)}</span></> : `risk $${Math.round(row.risk).toLocaleString()}`}
+        <div data-testid="board-spec" className="mono" style={{ fontSize: 13, color: 'var(--c-c9d1d9)', marginTop: 2 }}>
+          {row.strikes.join(' / ')} · {row.qtyOpen} ct{row.expiry ? ` · ${fmtYmd(row.expiry)}` : ''}
+          {row.chain && <span data-testid="board-banked"> · banked <span style={{ color: row.banked >= 0 ? C.green : C.red }}>{money(row.banked)}</span></span>}
+        </div>
+        {multi && row.account && (
+          <div data-testid="board-account" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: acctCol, marginTop: 3 }}>
+            <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 4, background: acctCol }} />{accountName(row.account, accounts)}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: row.headline ? accent : C.grey, marginTop: 3 }}>
+          {row.headline || (row.working ? `order resting${row.entry ? ` · lmt ${row.entry.price.toFixed(2)}` : ''}`
+            : row.quoteErr ? <span data-testid="board-quote-err" style={{ color: C.amber }}>{row.quoteErr}</span>
+            : row.check ? ((row.check.review && row.check.review.headline) || 'no live quote') : (row.is45 || row.is0) ? 'checking…' : 'no live check')}
+          {!row.working && row.resting > 0 && (
+            <span data-testid="board-resting" style={{ marginLeft: 8, padding: '1px 7px', whiteSpace: 'nowrap', display: 'inline-block', borderRadius: 5, fontSize: 11, fontWeight: 700, color: 'var(--c-bc8cff)', border: '1px solid var(--c-8957e5)' }}>+{row.resting} resting</span>
+          )}
+        </div>
+        {row.mismatch && (
+          <div data-testid="board-mismatch" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 5, fontSize: 12, color: C.amber }}>
+            <span className="mono" style={{ whiteSpace: "nowrap" }}>⚠ TWS {row.mismatch.tws} ≠ ticket {row.mismatch.ticket}</span>
+            <button data-testid="board-fix-strikes" onClick={e => { e.stopPropagation(); on('fix-strikes', row.r, row.mismatch); }}
+              style={{ padding: '2px 8px', borderRadius: 6, fontSize: 11.5, fontWeight: 700, color: C.amber, background: 'transparent', border: `1px solid ${C.amber}` }}>
+              Fix ticket
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -336,23 +412,62 @@ function BoardRow({ row, on, narrow }) {
     <div data-testid="board-row" data-action={row.action} style={{ minWidth: 0, borderRadius: 10, background: C.bg, borderTop: `1px solid ${C.line}`, borderRight: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}`, borderLeft: `4px solid ${accent}` }}>
       <div onClick={() => row.check && setOpen(o => !o)} style={{ cursor: row.check ? 'pointer' : 'default', padding: narrow ? 12 : '12px 14px',
         display: 'grid', alignItems: 'center', gap: narrow ? 10 : 16,
-        gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : '128px minmax(220px, 1.6fr) 104px minmax(150px, 1fr) minmax(150px, 1fr) 104px auto' }}>
+        gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : '120px minmax(230px, 1.5fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(140px, 0.8fr) auto' }}>
         {narrow ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Badge row={row} /><span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{button}<Menu row={row} on={on} /></span></div>
             {title}
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: 14, alignItems: 'center' }}>{pnl}<MiniMeter row={row} /></div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 12, alignItems: 'center' }}><MiniStrip row={row} /><TimeRing row={row} /></div>
+            <ExitMeter row={row} narrow />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14, alignItems: 'center' }}><MiniStrip row={row} /><TimeRing row={row} /></div>
           </>
         ) : (
           <>
-            <Badge row={row} />{title}{pnl}<MiniMeter row={row} /><MiniStrip row={row} /><TimeRing row={row} />
+            <Badge row={row} />{title}<ExitMeter row={row} /><MiniStrip row={row} /><TimeRing row={row} />
             <span style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>{button}<Menu row={row} on={on} /></span>
           </>
         )}
       </div>
       {open && row.check && (
         <div data-testid="board-checkup" style={{ padding: '0 10px 10px' }}>{row.is0 ? <Card0 row={row} /> : <CheckupCard row={row.check} />}</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rows by account, in the Settings order, each group keeping its urgency order (Nov
+ * 2026). One account (or none tagged) → a single untitled group.
+ */
+export function groupByAccount(rows, accounts = []) {
+  const ids = [...new Set(rows.map(r => r.account || ''))];
+  if (ids.length <= 1) return [{ id: null, rows }];
+  const order = id => { const i = accounts.findIndex(a => a.id === id); return i < 0 ? 999 : i; };
+  return ids.sort((a, b) => order(a) - order(b)).map(id => {
+    const rs = rows.filter(r => (r.account || '') === id);
+    const live = rs.filter(r => r.posPnl != null);
+    return { id, rows: rs, pnl: live.length ? live.reduce((t, r) => t + r.posPnl, 0) : null, priced: live.length,
+      risk: rs.reduce((t, r) => t + r.risk, 0) };
+  });
+}
+function GroupHead({ g, accounts }) {
+  const a = accounts.find(x => x.id === g.id);
+  const col = accountColor(g.id, accounts);
+  const bank = a ? Number(a.bankroll) || 0 : 0;
+  const cap = a ? Number(a.maxOpenRisk) || 0 : 0;
+  return (
+    <div data-testid="board-group-head" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 18px', padding: '2px 4px' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: C.text }}>
+        <span aria-hidden="true" style={{ width: 11, height: 11, borderRadius: 6, background: col }} />{g.id ? accountName(g.id, accounts) : 'No account'}
+        <span style={{ fontWeight: 400, color: C.grey }}>· {g.rows.length} open</span>
+      </span>
+      <span className="mono" style={{ fontSize: 14, fontWeight: 800, color: g.pnl == null ? C.grey : g.pnl >= 0 ? C.green : C.red }}>{g.pnl == null ? '—' : money(g.pnl)}</span>
+      <span className="mono" style={{ fontSize: 12.5, color: C.grey }}>
+        risk ${Math.round(g.risk).toLocaleString()}{cap ? ` of $${Math.round(cap).toLocaleString()} cap` : ''}{bank ? ` · ${(g.risk / bank * 100).toFixed(0)}% of bank` : ''}
+      </span>
+      {cap > 0 && (
+        <span aria-hidden="true" style={{ position: 'relative', flex: '1 1 120px', maxWidth: 220, height: 5, borderRadius: 3, background: 'var(--c-30363d)' }}>
+          <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.min(100, g.risk / cap * 100)}%`, borderRadius: 3, background: g.risk > cap ? C.red : col }} />
+        </span>
       )}
     </div>
   );
@@ -372,6 +487,10 @@ export default function PositionBoard({ rows, on, cap = null, checkedAt = null, 
     return () => ro.disconnect();
   }, []);
   const narrow = w < 900;
+  const accounts = useAccountsList();
+  // Keep today's position P&L per ticket, for the Dashboard tile's day-by-day colours.
+  const markSig = rows.map(r => `${r.key}:${r.posPnl == null ? '' : Math.round(r.posPnl)}`).join('|');
+  useEffect(() => { recordMarks(rows, tradingSession().yyyymmdd); }, [markSig]);   // eslint-disable-line react-hooks/exhaustive-deps
   const sorted = [...rows].sort((a, b) => (URGENCY[a.action] ?? 9) - (URGENCY[b.action] ?? 9) || (a.daysToClose ?? a.dte ?? 99) - (b.daysToClose ?? b.dte ?? 99));
   const live = rows.filter(r => r.posPnl != null);
   const pnl = live.reduce((a, r) => a + r.posPnl, 0);
@@ -404,9 +523,12 @@ export default function PositionBoard({ rows, on, cap = null, checkedAt = null, 
             <RefreshCw size={14} className={checking ? 'animate-spin' : ''} /></button>}
         </span>
       </div>
-      <div style={{ display: 'grid', gap: 8 }}>
-        {sorted.map(row => <BoardRow key={row.key} row={row} on={on} narrow={narrow} />)}
-      </div>
+      {groupByAccount(sorted, accounts).map(g => (
+        <div key={g.id || 'one'} data-testid={g.id != null ? 'board-group' : undefined} style={{ display: 'grid', gap: 8, marginTop: g.id != null ? 14 : 0 }}>
+          {g.id != null && <GroupHead g={g} accounts={accounts} narrow={narrow} />}
+          {g.rows.map(row => <BoardRow key={row.key} row={row} on={on} narrow={narrow} accounts={accounts} />)}
+        </div>
+      ))}
     </div>
   );
 }

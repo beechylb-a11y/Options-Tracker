@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Target, Layers, Activity, X, ArrowUp, ArrowDown, Plus } from 'lucide-react';
+import { Target, Layers, Activity, X, ArrowUp, ArrowDown, Plus, Pencil } from 'lucide-react';
 import { api } from '../utils/api';
 import { fmt$ } from '../utils/format';
 import { nyISODate } from '../utils/stats';
-import { closedPnlEvents, journalSummary } from '../utils/benchmark';
+import { closedPnlEvents, journalSummary, benchmarkOf } from '../utils/benchmark';
+import { accountColor } from '../utils/accountColors';
+import { boardRow, exitProgress } from './PositionBoard';
+import { runCheckup, bridgeUrlOf } from './Checkup45';
+import { marksFor, recordMarks } from '../live/markLog';
 import { DEFAULT_WATCHLIST, loadWatchlist } from '../utils/watchlist';
 import { useLiveQuote, useLiveConnection, useFreshness } from '../live/useLive';
 import { liveRiskTotal } from '../utils/positionLines';
@@ -92,55 +96,168 @@ function WatchingCard({ onOpenEngine }) {
   );
 }
 
-// ── Monthly target ring ──
-function TargetRing({ frac, size = 230, children }) {
-  const r = size / 2 - 22, c = 2 * Math.PI * r, cx = size / 2;
-  const ticks = Array.from({ length: 60 }, (_, i) => i);
-  const a = -Math.PI / 2 + 2 * Math.PI * Math.min(1, Math.max(0, frac));
+// ── Monthly target (Nov 2026) ──
+// One account: a compact row — ring, $ of target, pace — about a quarter of the old
+// tile. All accounts with more than one: a ring per account in its colour, the
+// combined share in the middle, a line per account beside it. The pencil edits the
+// account's target (the same number as the Journal benchmark).
+function Rings({ items, size, stroke = 9, gap = 14, children }) {
+  const c = size / 2;
   return (
-    <div className="vd-ring">
-      <svg viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-        <defs><linearGradient id="vd-ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#a9cdff" /><stop offset="1" stopColor="#3d82f0" /></linearGradient></defs>
-        <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="10" />
-        {frac > 0 && <circle cx={cx} cy={cx} r={r} fill="none" stroke="url(#vd-ring)" strokeWidth="10" strokeLinecap="round"
-          strokeDasharray={`${c * Math.min(1, frac)} ${c}`} transform={`rotate(-90 ${cx} ${cx})`} style={{ filter: 'drop-shadow(0 0 8px rgba(106,168,255,0.6))' }} />}
-        {ticks.map(i => {
-          const t = -Math.PI / 2 + i / 60 * 2 * Math.PI, r1 = r - 20, r2 = r - (i % 5 ? 26 : 30);
-          return <line key={i} x1={cx + r1 * Math.cos(t)} y1={cx + r1 * Math.sin(t)} x2={cx + r2 * Math.cos(t)} y2={cx + r2 * Math.sin(t)} stroke="rgba(255,255,255,0.45)" strokeWidth="1.5" />;
+    <div style={{ position: 'relative', width: size, height: size, flex: 'none' }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        {items.map((it, i) => {
+          const r = c - stroke / 2 - 2 - i * gap, C = 2 * Math.PI * r, f = Math.max(0, Math.min(1, it.frac || 0));
+          return (
+            <g key={i}>
+              <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth={stroke} />
+              {f > 0 && <circle cx={c} cy={c} r={r} fill="none" stroke={it.color} strokeWidth={stroke} strokeLinecap="round"
+                strokeDasharray={`${C * f} ${C}`} transform={`rotate(-90 ${c} ${c})`} />}
+            </g>
+          );
         })}
-        {frac > 0 && <circle cx={cx + r * Math.cos(a)} cy={cx + r * Math.sin(a)} r="11" fill="#fff" stroke="#3d82f0" strokeWidth="5" />}
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{children}</div>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>{children}</div>
     </div>
   );
 }
-function MonthlyTargetCard({ account, accounts, tracker, decisions }) {
+function PencilBtn({ label, onClick, testid }) {
+  return (
+    <button type="button" className="vd-round" data-testid={testid} aria-label={label} title={label} onClick={onClick}
+      style={{ width: 40, height: 40, flex: 'none' }}><Pencil size={16} /></button>
+  );
+}
+const pctOf = m => (m.targetAmt > 0 ? Math.max(0, m.pnl / m.targetAmt) : 0);
+function PaceLine({ m, back, todayISO }) {
+  const pace = back === 0 ? paceForMonth(m.pnl, m.start, todayISO) : (m.start > 0 ? Math.round(m.pnl / m.start * 1000) / 10 : null);
+  if (pace == null) return null;
+  const ahead = pace >= Number(m.targetPct);
+  return <span data-testid="vd-target-pace" style={{ fontSize: 13, color: ahead ? '#7ee2a0' : '#ffd479' }}>
+    {back === 0 ? `on pace for ${pace}% · ${ahead ? 'ahead' : 'behind'}` : `made ${pace}% · ${ahead ? 'hit' : 'missed'}`}</span>;
+}
+export function TargetEditor({ acct, start, accounts, onSaved, onCancel }) {
+  const [mode, setMode] = useState('pct');
+  const cur = benchmarkOf(acct).targetPct;
+  const [val, setVal] = useState(String(+Number(cur).toFixed(2)));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const v = parseFloat(val);
+  const pct = !isFinite(v) || v < 0 ? null : mode === 'pct' ? v : start > 0 ? v / start * 100 : null;
+  const amt = pct != null && start > 0 ? start * pct / 100 : null;
+  const switchMode = m => {
+    if (m === mode) return;
+    if (m === 'usd' && pct != null && start > 0) setVal(String(Math.round(start * pct / 100)));
+    if (m === 'pct' && isFinite(v) && start > 0) setVal(String(+(v / start * 100).toFixed(2)));
+    setMode(m);
+  };
+  async function save() {
+    if (pct == null) { setErr('Enter a number'); return; }
+    setBusy(true); setErr('');
+    const updated = (accounts || []).map(a => (a.id === acct.id ? { ...a, journalTargetPct: Math.round(pct * 100) / 100 } : a));
+    try { await api.saveAccounts(updated); onSaved(updated); }
+    catch (e) { setErr('Could not save' + (e.message ? `: ${e.message}` : '')); setBusy(false); }
+  }
+  const seg = on => ({ border: 'none', borderRadius: 999, padding: '7px 14px', font: 'inherit', fontSize: 13.5, cursor: 'pointer',
+    background: on ? 'rgba(255,255,255,0.26)' : 'transparent', color: on ? '#fff' : 'rgba(255,255,255,0.84)' });
+  return (
+    <div data-testid="vd-target-editor" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 500 }}>
+        <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 5, background: accountColor(acct.id, accounts) }} />{acct.name} · monthly target
+      </div>
+      <div role="group" aria-label="Target as" style={{ display: 'inline-flex', alignSelf: 'flex-start', gap: 2, padding: 4, borderRadius: 999, background: 'rgba(0,0,0,0.16)' }}>
+        <button type="button" aria-pressed={mode === 'pct'} style={seg(mode === 'pct')} onClick={() => switchMode('pct')}>% of bank</button>
+        <button type="button" aria-pressed={mode === 'usd'} style={seg(mode === 'usd')} onClick={() => switchMode('usd')} disabled={!(start > 0)}>$ a month</button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <label htmlFor={`tg-${acct.id}`} style={{ fontSize: 14, color: 'rgba(255,255,255,0.86)' }}>Target</label>
+        {mode === 'usd' && <span style={{ fontSize: 18 }}>$</span>}
+        <input id={`tg-${acct.id}`} data-testid="vd-target-input" inputMode="decimal" value={val} onChange={e => setVal(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel(); }}
+          style={{ width: mode === 'usd' ? 110 : 80, fontSize: 18, fontWeight: 600 }} className="num" />
+        {mode === 'pct' && <span style={{ fontSize: 18 }}>%</span>}
+        <span className="num" style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>
+          {mode === 'pct' ? (amt != null ? `= ${fmt$(amt)} a month on ${fmt$(start)}` : '') : (pct != null ? `= ${+pct.toFixed(2)}% of ${fmt$(start)}` : '')}
+        </span>
+      </div>
+      <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.8)' }}>The Journal benchmark uses the same number.</span>
+      {err && <span style={{ fontSize: 13, color: '#ffa39a' }}>{err}</span>}
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onCancel} style={{ height: 40, padding: '0 18px', borderRadius: 20, border: 'none', font: 'inherit', fontSize: 14, color: '#fff', background: 'transparent', cursor: 'pointer' }}>Cancel</button>
+        <button type="button" data-testid="vd-target-save" onClick={save} disabled={busy}
+          style={{ height: 40, padding: '0 20px', borderRadius: 20, border: 'none', font: 'inherit', fontSize: 14, fontWeight: 600, color: '#24221f', background: '#fff', cursor: 'pointer' }}>{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+    </div>
+  );
+}
+export function MonthlyTargetCard({ account, accounts, tracker, decisions, onAccountsChange }) {
   const [back, setBack] = useState(0);
+  const [editing, setEditing] = useState(null);   // account id
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
-  const s = useMemo(() => journalSummary(account, accounts, closedPnlEvents(tracker, decisions), d.getFullYear(), d.getMonth()),
-    [account, accounts, tracker, decisions, back]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const Y = d.getFullYear(), M = d.getMonth();
+  const events = useMemo(() => closedPnlEvents(tracker, decisions), [tracker, decisions]);
+  const s = useMemo(() => journalSummary(account, accounts, events, Y, M), [account, accounts, events, Y, M]);
+  const members = s.members || [];
+  const per = useMemo(() => (account === 'all' && members.length > 1
+    ? members.map(a => ({ a, m: journalSummary(a.id, accounts, events, Y, M).month })) : null), [account, accounts, events, Y, M, members]);
   const m = s.month;
-  const frac = m.targetAmt > 0 ? Math.max(0, m.pnl / m.targetAmt) : 0;
+  const frac = pctOf(m);
   const todayISO = nyISODate();
-  const pace = back === 0 ? paceForMonth(m.pnl, m.start, todayISO) : (m.start > 0 ? Math.round(m.pnl / m.start * 1000) / 10 : null);
-  const acctLabel = account === 'all' ? 'all accounts' : (accounts.find(a => a.id === account)?.name || account);
+  const monthLbl = d.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
+  const single = !per ? (members[0] || accounts.find(a => a.id === account) || null) : null;
+  const arrows = (
+    <span style={{ display: 'inline-flex', gap: 6 }}>
+      <button type="button" className="vd-round" style={{ width: 34, height: 34 }} onClick={() => setBack(b => b + 1)} aria-label="Previous month"><ArrowDown size={15} /></button>
+      <button type="button" className="vd-round" style={{ width: 34, height: 34 }} onClick={() => setBack(b => Math.max(0, b - 1))} disabled={back === 0} aria-label="Next month"><ArrowUp size={15} /></button>
+    </span>
+  );
+  const saved = updated => { setEditing(null); onAccountsChange && onAccountsChange(updated); };
+  const editAcct = editing ? accounts.find(a => a.id === editing) : null;
+  const editStart = editAcct ? (per ? (per.find(x => x.a.id === editing) || {}).m?.start : m.start) || 0 : 0;
+
   return (
-    <section className="card vd-card vd-target" data-testid="vd-target">
-      <h3 className="vd-h">Monthly target</h3>
-      <div style={lab}>{d.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })} · {acctLabel} · {+Number(m.targetPct).toFixed(1)}% of bank</div>
-      <div className="flex justify-center my-5">
-        <TargetRing frac={frac}>
-          <span className="num vd-ring-pct" data-testid="vd-target-pct" style={{ fontSize: 52, fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1 }}>{m.targetAmt > 0 ? Math.round(frac * 100) : '—'}%</span>
-          <span style={{ fontSize: 16, marginTop: 4 }}>{frac >= 1 ? 'Achieved' : 'of target'}</span>
-          {pace != null && <span style={{ fontSize: 12.5, color: '#a9cdff', marginTop: 2 }}>{back === 0 ? `on pace for ${pace}%` : `made ${pace}%`}</span>}
-        </TargetRing>
+    <section className="card vd-card vd-target" data-testid="vd-target" data-layout={per ? 'rings' : 'compact'} style={{ padding: '18px 22px' }}>
+      <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+        <div className="flex-1 min-w-0">
+          <h3 className="vd-h" style={{ fontSize: 19 }}>Monthly target</h3>
+          <div style={{ ...lab, fontSize: 13 }}>{monthLbl}{per ? ` · ${fmt$(m.pnl)} of ${fmt$(m.targetAmt)}` : ''}</div>
+        </div>
+        {arrows}
       </div>
-      <div className="flex items-center justify-between">
-        <button type="button" className="vd-round" onClick={() => setBack(b => b + 1)} aria-label="Previous month"><ArrowDown size={20} /></button>
-        <span style={{ fontSize: 17 }}><b className="num">{fmt$(m.pnl)}</b> <span style={{ color: 'rgba(255,255,255,0.72)' }}>of {fmt$(m.targetAmt)}</span></span>
-        <button type="button" className="vd-round" onClick={() => setBack(b => Math.max(0, b - 1))} disabled={back === 0} aria-label="Next month"><ArrowUp size={20} /></button>
-      </div>
+      {editAcct ? (
+        <TargetEditor acct={editAcct} start={editStart} accounts={accounts} onSaved={saved} onCancel={() => setEditing(null)} />
+      ) : per ? (
+        <div className="flex items-center gap-4">
+          <Rings size={150} items={per.slice(0, 4).map(x => ({ color: accountColor(x.a.id, accounts), frac: pctOf(x.m) }))}>
+            <span className="num" data-testid="vd-target-pct" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{m.targetAmt > 0 ? Math.round(frac * 100) : '—'}%</span>
+            <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.86)', marginTop: 3 }}>all accounts</span>
+          </Rings>
+          <div className="flex-1 min-w-0" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {per.map(({ a, m: am }) => (
+              <div key={a.id} data-testid="vd-target-acct" className="flex items-center gap-2">
+                <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 5, background: accountColor(a.id, accounts), flex: 'none' }} />
+                <div className="flex-1 min-w-0" style={{ lineHeight: 1.3 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{a.name} <span style={{ fontWeight: 500, color: 'rgba(255,255,255,0.86)' }}>{am.targetAmt > 0 ? `${Math.round(pctOf(am) * 100)}%` : '—'}</span></div>
+                  <div className="num" title={`${+Number(am.targetPct).toFixed(1)}% of bank`} style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.86)' }}>{fmt$(am.pnl)} of {fmt$(am.targetAmt)}</div>
+                </div>
+                <PencilBtn label={`Edit ${a.name}'s target`} testid="vd-target-edit" onClick={() => setEditing(a.id)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-4">
+          <Rings size={104} items={[{ color: single ? accountColor(single.id, accounts) : '#6aa8ff', frac }]}>
+            <span className="num" data-testid="vd-target-pct" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1 }}>{m.targetAmt > 0 ? Math.round(frac * 100) : '—'}%</span>
+          </Rings>
+          <div className="flex-1 min-w-0" style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <span className="num" style={{ fontSize: 15 }}><b style={{ fontWeight: 600 }}>{fmt$(m.pnl)}</b> <span style={{ color: 'rgba(255,255,255,0.8)' }}>of {fmt$(m.targetAmt)}</span></span>
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{+Number(m.targetPct).toFixed(1)}% of bank{single ? ` · ${single.name}` : ''}</span>
+            <PaceLine m={m} back={back} todayISO={todayISO} />
+          </div>
+          {single && <PencilBtn label="Edit target" testid="vd-target-edit" onClick={() => setEditing(single.id)} />}
+        </div>
+      )}
     </section>
   );
 }
@@ -375,51 +492,97 @@ function RiskTile({ risk, cap }) {
 }
 
 // ── An open position, as the design's "player" card ──
-function PositionCard({ r, expiry, accountName }) {
-  const is0 = /0dte/i.test(r.engine || '');
-  const entry = Number(r.avgEntry) || Number(r.entryPrice);
-  const now = new Date();
-  let frac = 0, left = '', mid = '', right = '';
-  if (is0) {
-    const m = nyMinutes(now), e = /^(\d{1,2}):(\d{2})/.exec(r.entryTime || '');
-    const start = e ? +e[1] * 60 + +e[2] : 570, end = 15 * 60;
-    frac = Math.max(0, Math.min(1, (m - start) / Math.max(1, end - start)));
-    left = `${r.entryTime || '09:30'} open`; mid = m < end ? 'On plan · hold' : 'Past the exit time'; right = '15:00 exit';
-  } else if (expiry) {
-    const ymd = s => new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
-    const t0 = new Date(String(r.entryDate).slice(0, 10) + 'T00:00:00Z'), t1 = ymd(expiry);
-    frac = Math.max(0, Math.min(1, (now - t0) / Math.max(1, t1 - t0)));
-    const dte = Math.round((t1 - now) / 864e5);
-    left = `${Number(String(r.entryDate).slice(8, 10))} ${t0.toLocaleDateString('en-AU', { month: 'short', timeZone: 'UTC' })} open`;
-    mid = dte <= 21 ? `${dte} DTE · roll or close` : `${dte} DTE · hold`; right = `${Number(expiry.slice(6))} ${t1.toLocaleDateString('en-AU', { month: 'short', timeZone: 'UTC' })} expiry`;
+// Nov 2026: the bars say how the trade is tracking, not just where in time it is.
+// 45DTE: one bar per trading day, open → expiry. A day this browser saw a mark for is
+// green (up) or red (under water), as tall as the P&L against the exit lines; a day
+// without one is drawn in the status colour; days to come are faint. The white bar is
+// the 21 DTE manage day, a diamond an event inside the trade. 0DTE: bars across the
+// session to the exit, lit in the status colour.
+const VTONE = { green: '#7ee2a0', amber: '#ffd479', red: '#ffa39a', grey: 'rgba(255,255,255,0.55)', purple: '#d4b0ff', blue: '#8fc0ff' };
+export function tradingDays(startYmd, endYmd) {
+  const out = [];
+  if (!startYmd || !endYmd) return out;
+  const p = y => Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, +y.slice(6, 8));
+  for (let t = p(startYmd); t <= p(endYmd) && out.length < 400; t += 864e5) {
+    const d = new Date(t), dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) out.push(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`);
   }
-  const N = 46;
+  return out;
+}
+export function dayBars(row, marks, todayYmd) {
+  const days = tradingDays(row.startYmd, row.expiry);
+  const scale = Math.max(1, Math.abs(row.stop || 0), Math.abs(row.target || 0));
+  const status = VTONE[row.tone] || VTONE.grey;
+  const evDays = new Set((row.events || []).map(e => String(e.date || '').slice(0, 10).replace(/-/g, '')));
+  return days.map(y => {
+    const past = y <= todayYmd;
+    const mark = y === todayYmd && row.posPnl != null ? row.posPnl : marks[y];
+    if (row.closeYmd && y === row.closeYmd && !past) return { y, h: 44, color: '#ffffff', manage: true, event: evDays.has(y) };
+    if (!past) return { y, h: 14, color: 'rgba(255,255,255,0.30)', event: evDays.has(y), manage: y === row.closeYmd };
+    if (mark == null) return { y, h: 16, color: status, dim: true, event: evDays.has(y), manage: y === row.closeYmd };
+    return { y, h: 12 + Math.min(1, Math.abs(mark) / scale) * 32, color: mark >= 0 ? VTONE.green : VTONE.red, mark, event: evDays.has(y), manage: y === row.closeYmd };
+  });
+}
+export function PositionCard({ row, accounts }) {
+  const r = row.r;
+  const is0 = row.is0;
+  const entry = Number(r.avgEntry) || Number(r.entryPrice);
+  const todayYmd = tradingSession().yyyymmdd;
+  const stCol = VTONE[row.tone] || VTONE.grey;
+  const acctCol = accountColor(row.account, accounts);
+  const acctName = (accounts || []).find(a => a.id === row.account)?.name || '';
+  const fmtD = y => `${Number(y.slice(6, 8))} ${new Date(Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, 1)).toLocaleDateString('en-AU', { month: 'short', timeZone: 'UTC' })}`;
+  let bars = [], nowFrac = 0, left = '', mid = '', right = '';
+  if (is0) {
+    const mm = nyMinutes(new Date()), e = /^(\d{1,2}):(\d{2})/.exec(r.entryTime || '');
+    const start = e ? +e[1] * 60 + +e[2] : 570, end = 15 * 60;
+    nowFrac = Math.max(0, Math.min(1, (mm - start) / Math.max(1, end - start)));
+    const N = 46;
+    bars = Array.from({ length: N }, (_, i) => (i / N <= nowFrac ? { h: 18 + (i % 3) * 6, color: stCol } : { h: 14, color: 'rgba(255,255,255,0.30)' }));
+    left = `${r.entryTime || '09:30'} open`; mid = mm < end ? `${row.label} · to 15:00` : 'Past the exit time'; right = '15:00 exit';
+  } else if (row.expiry && row.startYmd) {
+    bars = dayBars(row, marksFor(row.key), todayYmd);
+    const done = bars.filter(b => b.y <= todayYmd).length;
+    nowFrac = bars.length ? done / bars.length : 0;
+    left = `${fmtD(row.startYmd)} open`;
+    mid = `${row.dte} DTE · ${row.label.toLowerCase()}`;
+    right = `${fmtD(row.expiry)} expiry`;
+  }
+  const pg = exitProgress(row.posPnl, row.stop, row.target);
   return (
-    <section className="card vd-card vd-player" data-testid="vd-position">
+    <section className="card vd-card vd-player" data-testid="vd-position" data-tone={row.tone}>
       <div className="flex items-start gap-4">
-        <div className="vd-bubble vd-bubble-lg" style={{ background: BUBBLE[0], cursor: 'default' }}>{String(r.underlying || '').slice(0, 4)}</div>
+        <div className="vd-bubble vd-bubble-lg" style={{ background: BUBBLE[0], cursor: 'default', boxShadow: `0 0 0 3px ${acctCol}` }}>{String(row.underlying || '').slice(0, 4)}</div>
         <div className="flex-1 min-w-0">
-          <div className="vd-h" style={{ fontSize: 20, lineHeight: 1.2 }}>{r.legs ? `${r.legs} ` : ''}{bareStrategy(r.strategy).toLowerCase()}</div>
-          <div style={{ ...lab, fontSize: 13.5, marginTop: 4 }}>{r.engine} · {entry > 0 ? `credit ${entry.toFixed(2)}` : entry < 0 ? `debit ${Math.abs(entry).toFixed(2)}` : 'entry —'} · {r.qtyOpen} ct{accountName ? ` · ${accountName}` : ''}</div>
-          <span className="vd-delta mt-2" style={{ background: 'rgba(255,255,255,0.12)' }}>risk {fmt$(Number(r.maxRisk) || 0)}</span>
+          <div className="vd-h" style={{ fontSize: 19, lineHeight: 1.2 }}>{row.strategy}</div>
+          <div className="num" style={{ ...lab, fontSize: 13.5, marginTop: 4, color: 'rgba(255,255,255,0.86)' }}>
+            {row.strikes.join(' / ')} · {row.qtyOpen} ct · {entry > 0 ? `credit ${entry.toFixed(2)}` : entry < 0 ? `debit ${Math.abs(entry).toFixed(2)}` : 'entry —'}</div>
+          {acctName && <div data-testid="vd-position-account" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: acctCol, marginTop: 4 }}>
+            <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 4, background: acctCol }} />{acctName}</div>}
         </div>
+        <span data-testid="vd-position-status" style={{ padding: '4px 11px', borderRadius: 999, background: stCol, color: '#24221f', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{row.label}</span>
       </div>
-      <div className="vd-wave mt-5" aria-hidden="true">
-        {Array.from({ length: N }, (_, i) => {
-          const h = 14 + Math.abs(Math.sin(i * 1.7 + (Number(r.ticketRef) || 1))) * 30;
-          const past = i / N <= frac;
-          return <span key={i} style={{ height: h, background: past ? '#6aa8ff' : 'rgba(255,255,255,0.45)' }} />;
-        })}
-        <span className="vd-wave-now" style={{ left: `${frac * 100}%` }} />
+      <div className="flex items-baseline gap-3 mt-3">
+        <span className="num" data-testid="vd-position-pnl" style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: row.posPnl == null ? '#fff' : row.posPnl >= 0 ? '#7ee2a0' : '#ffa39a' }}>{row.posPnl == null ? '—' : fmtSigned(row.posPnl)}</span>
+        <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>{pg ? `${Math.round(pg.frac * 100)}% to ${pg.side} ${fmtSigned(pg.side === 'target' ? row.target : row.stop)}` : row.posPnl == null ? 'no live price' : `risk ${fmt$(row.risk)}`}</span>
+      </div>
+      <div className="vd-wave mt-4" aria-hidden="true" style={{ height: 60 }}>
+        {bars.map((b, i) => (
+          <span key={i} style={{ position: 'relative', height: b.h, background: b.color, opacity: b.dim ? 0.55 : 1, width: bars.length > 50 ? 3 : 4 }}>
+            {b.event && <i style={{ position: 'absolute', left: '50%', top: -14, width: 7, height: 7, marginLeft: -3.5, background: '#ffd479', transform: 'rotate(45deg)' }} />}
+          </span>
+        ))}
+        <span className="vd-wave-now" style={{ left: `${nowFrac * 100}%` }} />
       </div>
       <div className="flex justify-between gap-2 mt-3" style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)', whiteSpace: 'nowrap' }}>
-        <span>{left}</span><span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: '#ffd479', marginRight: 6 }} />{mid}</span><span>{right}</span>
+        <span>{left}</span><span style={{ color: '#fff' }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: stCol, marginRight: 6 }} />{mid}</span><span>{right}</span>
       </div>
     </section>
   );
 }
+const fmtSigned = v => (v >= 0 ? '+' : '−') + fmt$(Math.abs(v)).replace('-', '');
 
-export default function VisionDashboard({ authenticated, account, accounts, closedTrades, tracker, decisions, config, onTab, onOpenEngine }) {
+export default function VisionDashboard({ authenticated, account, accounts, onAccountsChange, closedTrades, tracker, decisions, config, onTab, onOpenEngine }) {
   const [rows, setRows] = useState([]);
   const [expiries, setExpiries] = useState({});
   useEffect(() => {
@@ -439,17 +602,35 @@ export default function VisionDashboard({ authenticated, account, accounts, clos
     }).catch(() => {});
     return () => { live = false; };
   }, [authenticated, account, decisions]);
+  // The same shared check-up the Open tab runs (cached a minute), for status and P&L.
+  const [checks, setChecks] = useState({});
+  useEffect(() => {
+    if (!authenticated || !rows.length || !Array.isArray(decisions) || !bridgeUrlOf()) return undefined;
+    const live0 = rows.filter(r => Number(r.qtyOpen) > 0 && /45|0DTE/i.test(r.engine || ''));
+    const tickets = live0.map(r => decisions.find(x => (r.timestamp && x.Timestamp === r.timestamp) || Number(x._rowIndex) === Number(r.ticketRef))).filter(Boolean);
+    if (!tickets.length) return undefined;
+    let alive = true;
+    runCheckup({ tickets, openPositions: rows }).then(res => {
+      if (!alive) return;
+      const by = {};
+      (res.list || []).forEach((x, i) => { if (tickets[i]) by[Number(tickets[i]._rowIndex)] = x; });
+      setChecks(by);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [authenticated, rows, decisions]);
   const open = rows.filter(r => Number(r.qtyOpen) > 0);
+  const board = open.map(r => boardRow(r, { expiry: expiries[r.ticketRef] || null, check: checks[Number(r.ticketRef)] || null }));
+  const markSig = board.map(b => `${b.key}:${b.posPnl == null ? '' : Math.round(b.posPnl)}`).join('|');
+  useEffect(() => { recordMarks(board, tradingSession().yyyymmdd); }, [markSig]);   // eslint-disable-line react-hooks/exhaustive-deps
   const risk = liveRiskTotal(rows);
   const cap = Number(config?.maxOpenRisk) || 0;
   const bank = Number(config?.currentBankroll) || 0;
-  const acctName = id => (accounts || []).find(a => a.id === id)?.name || '';
 
   return (
     <div className="vd-grid" data-testid="vision-dashboard">
       <div className="vd-col">
         <WatchingCard onOpenEngine={onOpenEngine} />
-        <MonthlyTargetCard account={account} accounts={accounts} tracker={tracker} decisions={decisions} />
+        <MonthlyTargetCard account={account} accounts={accounts || []} tracker={tracker} decisions={decisions} onAccountsChange={onAccountsChange} />
       </div>
       <div className="vd-col">
         <PnlCard trades={closedTrades} config={config} bank={bank} />
@@ -466,7 +647,7 @@ export default function VisionDashboard({ authenticated, account, accounts, clos
           <SpxTile />
           <RiskTile risk={risk} cap={cap} />
         </section>
-        {open.slice(0, 2).map(r => <PositionCard key={r.ticketRef} r={r} expiry={expiries[r.ticketRef] && expiries[r.ticketRef].expiry} accountName={acctName(r.account)} />)}
+        {board.slice(0, 2).map(b => <PositionCard key={b.key} row={b} accounts={accounts || []} />)}
         {!open.length && (
           <section className="card vd-card" data-testid="vd-position-none">
             <h3 className="vd-h">No open positions</h3>

@@ -5,6 +5,7 @@ import { fmt$ } from '../utils/format';
 import { rateFromFills, DEFAULT_COMMISSION } from '../utils/commission';
 import { invalidateCommissionRates } from '../utils/useCommissionRate';
 import { ThemeChoice, GlassChoice } from '../components/ThemeToggle';
+import { accountColor, ACCOUNT_PALETTE } from '../utils/accountColors';
 
 export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
   const [config, setConfig] = useState({});
@@ -104,7 +105,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         bankrollSince: accountForm.bankrollSince ?? a.bankrollSince ?? '',
         maxDailyLossPct: pctNum(accountForm.maxDailyLossPct, a.maxDailyLossPct || 20),
         maxOpenRiskPct: pctNum(accountForm.maxOpenRiskPct, a.maxOpenRiskPct || 40),
-        commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION)
+        commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION),
+        ...(accountForm.color ? { color: accountForm.color } : {})
       } : a);
       await api.saveAccounts(updated);
       invalidateCommissionRates();
@@ -220,6 +222,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       </div>
                       <CommissionField value={accountForm.commissionPerContract} calib={calib}
                         onChange={v => setAccountForm(f => ({ ...f, commissionPerContract: v }))} onCalibrate={calibrateFromFills} />
+                      <ColourField value={accountForm.color || accountColor(a.id, accounts)} onChange={v => setAccountForm(f => ({ ...f, color: v }))} />
                     </div>
                     <div className="flex gap-2">
                       <button onClick={handleUpdateAccount} disabled={savingAccounts}
@@ -233,6 +236,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                   <>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
+                        <span aria-hidden="true" data-testid="account-colour" style={{ width: 10, height: 10, borderRadius: 5, background: accountColor(a.id, accounts), flex: 'none' }} />
                         <span className="text-sm font-medium text-text">{a.name}</span>
                         <span className="text-[12px] text-text-faint">{a.id}</span>
                       </div>
@@ -246,7 +250,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span>Commission: <span className="mono text-text">${Number(a.commissionPerContract ?? DEFAULT_COMMISSION).toFixed(2)}</span>/contract</span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION) }); setCalib(null); setShowAddAccount(false); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION), color: a.color || '' }); setCalib(null); setShowAddAccount(false); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);
@@ -422,6 +426,22 @@ function CommissionField({ value, onChange, onCalibrate, calib }) {
         </button>
         {calib && calib.text && <span className="text-[12px] text-green">{calib.text}</span>}
         {calib && calib.err && <span className="text-[12px] text-amber">{calib.err}</span>}
+      </div>
+    </div>
+  );
+}
+
+// The account's colour on every board that shows more than one account (Nov 2026).
+function ColourField({ value, onChange }) {
+  return (
+    <div>
+      <span className="text-[12px] text-text-muted block mb-0.5">Colour on the boards</span>
+      <div role="radiogroup" aria-label="Account colour" className="flex gap-1.5 py-1">
+        {ACCOUNT_PALETTE.map(c => (
+          <button key={c} type="button" role="radio" aria-checked={value === c} aria-label={c} data-testid="account-colour-option" onClick={() => onChange(c)}
+            style={{ width: 24, height: 24, borderRadius: 12, background: c, border: 'none', cursor: 'pointer',
+              boxShadow: value === c ? '0 0 0 2px var(--c-0d1117), 0 0 0 4px #ffffff' : 'none' }} />
+        ))}
       </div>
     </div>
   );

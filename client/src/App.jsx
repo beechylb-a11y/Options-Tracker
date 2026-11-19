@@ -19,6 +19,7 @@ import PageBoundary from './components/PageBoundary';
 import Knowledgebase from './pages/Knowledgebase';
 import Documents from './pages/Documents';
 import SettingsPage from './pages/Settings';
+import { setAccountsList } from './utils/accountColors';
 
 // Nav grouped by workflow. `key` is the keyboard shortcut (guarded against
 // typing in inputs). Tab + account selections persist across reloads.
@@ -133,6 +134,8 @@ export default function App() {
       }).catch(() => {});
     }
   }, [authenticated]);
+  // The boards name and colour accounts from this shared copy.
+  useEffect(() => { setAccountsList(accounts); }, [accounts]);
 
   // Keyboard shortcuts: 1–9, 0 switch tabs (ignored while typing)
   useEffect(() => {
@@ -175,7 +178,7 @@ export default function App() {
           next navigation). */}
       <div className={visionOn ? 'max-w-[1400px] mx-auto px-1 pb-6' : 'max-w-[1400px] mx-auto p-6'} key={tab === 'decision' ? 'decision' : refreshTick}>
         <PageBoundary key={tab} name={PAGE_NAMES[tab]}>
-        {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} onNavigate={setTab} />}
+        {tab === 'dashboard' && <Dashboard authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} onNavigate={setTab} />}
         {tab === 'trades' && <Trades authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
         {tab === 'decision' && <DecisionEngine authenticated={authenticated} account={selectedAccount} accounts={accounts} />}
         {tab === 'journal' && <Journal authenticated={authenticated} account={selectedAccount} accounts={accounts} onAccountsChange={setAccounts} />}

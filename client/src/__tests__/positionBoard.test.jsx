@@ -63,14 +63,21 @@ describe('open-positions board', () => {
     const rows = screen.getAllByTestId('board-row');
     expect(rows.map(r => r.getAttribute('data-action'))).toEqual(['watch', 'hold']);   // QQQ needs a look → first
     const titles = screen.getAllByTestId('board-title').map(e => e.textContent);
-    expect(titles[0]).toBe('QQQ 699/709/735/745Iron Condor5 ct20 Nov');
+    expect(titles[0]).toBe('QQQIron Condor');
+    // Second line (Nov 2026): strikes, size, expiry; a rolled ticket adds what the rolls banked
+    expect(screen.getAllByTestId('board-spec')[0].textContent).toBe('699 / 709 / 735 / 745 · 5 ct · 20 Nov · banked +$1,081');
+    expect(screen.getAllByTestId('board-spec')[1].textContent).toBe('380 / 390 / 480 / 490 · 1 ct · 27 Nov');
     // QQQ: (3.99 fill − 6.40 to close) × 500 = −$1,205 on the ticket, + $1,080.50 banked
     const pnl = screen.getAllByTestId('board-pnl').map(e => e.textContent);
-    expect(pnl[0]).toMatch(/^−\$124banked \+\$1,081/);
-    expect(pnl[1]).toMatch(/^\+\$50risk \$780/);
+    // Zero in the middle: share of the way to the stop or the target beside the number
+    expect(pnl[0]).toMatch(/^−\$12414% to stop/);
+    expect(pnl[1]).toMatch(/^\+\$5045% to target/);
     // stop: 100% of the 3.99 credit on 5 lots = −$1,995, + banked; target off the fill-restated max profit
-    expect(screen.getAllByTestId('board-meter')[0].textContent).toBe('−$914+$2,079');
-    expect(screen.getAllByTestId('board-time')[0].textContent).toMatch(/^3d30 Oct/);
+    expect(screen.getAllByTestId('board-meter')[0].textContent).toBe('stop −$914target +$2,079');
+    // Time as a line: days left, then the 21 DTE manage date
+    expect(screen.getAllByTestId('board-time')[0].textContent).toBe('24d leftmanage 30 Oct');
+    // Cushion: a credit position measures to its nearest short (QQQ 714.50 vs the 709 put)
+    expect(screen.getAllByTestId('board-cushion').map(e => e.textContent)).toEqual(['5.50 above the 709P · 0.8%', '41.80 below the 480C · 9.5%']);
     expect(screen.getByTestId('board-total-risk').textContent).toMatch(/\$3,785 of \$12,313 · 31%/);
     expect(screen.getByTestId('board-attention').textContent).toMatch(/1 needs a look/);
   });

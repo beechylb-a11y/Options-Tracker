@@ -23,7 +23,7 @@ const shortDate = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '
 const DASH_TABS = [['overview', 'Overview'], ['open', 'Open'], ['expiring', 'Expiring'], ['activity', 'Activity']];
 const DASH_TAB_KEY = 'ot_dash_tab';
 
-export default function Dashboard({ authenticated, account, accounts = [], onNavigate }) {
+export default function Dashboard({ authenticated, account, accounts = [], onAccountsChange, onNavigate }) {
   const visionOn = useVisionOn();
   // Vision (Nov 2026): the Dashboard's views as text tabs in the top row, as in the
   // design — Overview (the cards), Open (positions), Expiring (expiries and the macro
@@ -279,7 +279,7 @@ export default function Dashboard({ authenticated, account, accounts = [], onNav
 
       {/* Vision: the three headline cards first (today, month vs target, watching). */}
       {visionOn && dashTab === 'overview' && (
-        <VisionDashboard authenticated={authenticated} account={account} accounts={accounts} closedTrades={closedTrades}
+        <VisionDashboard authenticated={authenticated} account={account} accounts={accounts} onAccountsChange={onAccountsChange} closedTrades={closedTrades}
           tracker={tracker} decisions={decisions} config={config} onTab={setDashTab} onOpenEngine={onNavigate ? () => onNavigate('decision') : null} />
       )}
 
