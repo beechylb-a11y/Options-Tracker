@@ -532,7 +532,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
   );
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, captureStats, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, captureStats, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt, book45 }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -972,6 +972,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['45'] || null,
           ratioSpec,
+          book45: book45 || null,   // open 45DTE book greeks + bankroll → limit warnings
           ...(over || {})
   });
 
@@ -999,7 +1000,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec, earningsCal]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec, earningsCal, book45]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;

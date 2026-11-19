@@ -17,6 +17,7 @@ import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
+import { useBook45 } from '../live/useBook45';
 const TONE_HEX = { green: 'var(--c-3fb950)', amber: 'var(--c-e3b341)', red: 'var(--c-f85149)', blue: 'var(--c-58a6ff)', grey: 'var(--c-8b949e)' };
 
 // ── Trade tabs (Aug 2026) ──
@@ -131,6 +132,11 @@ function loadScanLists() {
 }
 
 export default function DecisionEngine({ authenticated, account, accounts }) {
+  // The open 45DTE book against the greek limits, for the tickets' warnings. Rounded
+  // so the ticket only re-scores when the book really moves, not on every tick.
+  const book45Raw = useBook45(account, { enabled: !!authenticated });
+  const book45Key = book45Raw ? [Math.round(book45Raw.theta), Math.round(book45Raw.spxDelta1 / 5), book45Raw.netLiq, Math.round(book45Raw.spyPrice || 0)].join('|') : '';
+  const book45 = React.useMemo(() => book45Raw, [book45Key]); // eslint-disable-line react-hooks/exhaustive-deps
   const restored = React.useMemo(() => loadTabs(), []);
   // No blank ticket by default (Oct 2026): a group starts empty until a scan opens a
   // ticket or + Trade adds one.
@@ -1304,7 +1310,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               </span>
             )}
           </div>
-          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt}
+          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt} book45={book45}
             accountConfig={accounts?.find(a => a.id === account) || {}}
             strategyHistory={strategyHistory} captureStats={captureStats}
             seed={t.seed} initialState={t.state}

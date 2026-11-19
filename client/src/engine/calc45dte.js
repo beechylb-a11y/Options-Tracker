@@ -10,6 +10,8 @@ import { unitsFromLegs, roundTripCommission, DEFAULT_COMMISSION } from '../utils
 import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from './deltaStrikes.js';
 import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStrikes.js';
 import { buildRatioLegs, reprotect, isProtected, ratioChoice, ratioShape, ratioTailLoss } from './ratioSpread.js';
+import { tradeLimitWarnings } from './greekLimits.js';
+import { betaOf } from './portfolio.js';
 
 // ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
 // front/back is the same ratio as VIX/VIX3M: calm markets sit near 0.85-0.92, above 1
@@ -641,6 +643,13 @@ export function calc45DTE(inputs) {
     }
   }
   if (vix > 25) warnings.push('VIX >25 — reduce size');
+  // Book greek limits (Nov 2026): what the open 45DTE book would look like with this
+  // trade on, against theta 0.3 % / 0.5 % and delta ±0.1 % of the bankroll. Warnings
+  // only — the engine never blocks on them.
+  if (inputs.book45 && contracts > 0) {
+    tradeLimitWarnings(inputs.book45, { theta, delta, vega, contracts, price, beta: betaOf(underlying) })
+      .forEach(w => warnings.push(w));
+  }
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');

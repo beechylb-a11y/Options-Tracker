@@ -262,7 +262,8 @@ export function totals(risks) {
 
 // ── 3. Stress grid ────────────────────────────────────────────────────────
 export const STRESS_MOVES = [-3, -2, -1, -0.5, 0, 0.5, 1, 2, 3];
-export const STRESS_IV = [-5, 0, 5];
+// +10 (Nov 2026): a VIX-spike column; the book limits hold its loss under 3–5 % of the bankroll.
+export const STRESS_IV = [-5, 0, 5, 10];
 
 /**
  * P&L of the open book for each SPX move (%) × IV change (vol points), every

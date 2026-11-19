@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { streamQuotesFor, streamPrice, useLiveQuotesEvery } from '../live/streamQuotes';
-import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare } from 'lucide-react';
+import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare, Gauge } from 'lucide-react';
 import { api } from '../utils/api';
 import OrderTicket from '../components/OrderTicket';
 import OpenPositions from '../components/OpenPositions';
@@ -8,6 +8,8 @@ import FillReconcile from '../components/FillReconcile';
 import { loadPlan } from '../utils/ticketMath';
 import { tradingSession } from '../engine/session';
 import { reviewOpen45 } from '../engine/review45';
+import { bookGreeks, bookLimits, spyPriceFrom, VEGA_SHOCK } from '../engine/greekLimits';
+import RiskGauges from '../components/RiskGauges';
 import {
   buildBook, reconcile, positionRisk, totals, stressGrid, riskBudget, eventsAhead, attention,
   spxDailySd, isoOfYmd, betaOf, stopFor, targetFor,
@@ -90,7 +92,8 @@ export default function PortfolioRisk({ authenticated, account }) {
     ]).then(([open, decisions, stats, closes]) => {
       if (dead) return;
       setBase({ open: Array.isArray(open) ? open : [], decisions: Array.isArray(decisions) ? decisions : [],
-        cap: Number(stats?.config?.maxOpenRisk) || null, closes: Array.isArray(closes) ? closes : [] });
+        cap: Number(stats?.config?.maxOpenRisk) || null, closes: Array.isArray(closes) ? closes : [],
+        netLiq: Number(stats?.config?.currentBankroll) || null });
       setErr(null);
     }).catch(e => { if (!dead) setErr(e.message); })
       .finally(() => { if (!dead) setLoading(false); });
@@ -152,7 +155,17 @@ export default function PortfolioRisk({ authenticated, account }) {
       }
     }
     const riskList = Object.values(risks);
+    // Greek limits (Nov 2026): the 45DTE book against bands set as a share of the
+    // bankroll; the 0DTE book is reported beside them, not held to them.
+    const is45 = r => r.p.engine === '45DTE';
+    const risks45 = riskList.filter(is45);
+    const g45 = bookGreeks(risks45);
+    const shock = risks45.length ? stressGrid(risks45, { moves: [0], ivShifts: [VEGA_SHOCK], now }) : null;
+    const spx = streamPrice('SPX', stream) || (riskList.find(r => r.p.underlying === 'SPX') || {}).spot;
+    const lim = bookLimits({ ...g45, vega10: shock && shock.n ? shock.cells[0][0].pnl : null },
+      { netLiq: base.netLiq, spyPrice: spyPriceFrom({ spy: streamPrice('SPY', stream), spx, xsp: streamPrice('XSP', stream) }) });
     return {
+      lim, zero: bookGreeks(riskList, r => !is45(r)),
       book, risks, reviews,
       rec: reconcile(book, live.raw, todayYmd),
       tot: totals(riskList),
@@ -179,7 +192,7 @@ export default function PortfolioRisk({ authenticated, account }) {
   }
   if (loading && !base) return <div className="text-text-muted text-sm">Loading open positions…</div>;
   if (err) return <div className="card"><div className="text-red text-sm">Open positions: {err}</div></div>;
-  const { book, risks, rec, tot, grid, budget, events, items } = view;
+  const { book, risks, rec, tot, grid, budget, events, items, lim, zero } = view;
   const openN = book.filter(p => p.live > 0).length, workN = book.filter(p => p.working).length;
   const legless = book.filter(p => p.live > 0 && !p.legs);
   const sd = spxDailySd(live.vix);
@@ -211,6 +224,11 @@ export default function PortfolioRisk({ authenticated, account }) {
         <div className="card py-12 text-center text-text-faint">Nothing open. Positions appear here once a trade is logged from the Decision Engine.</div>
       ) : (<>
         <Tiles tot={tot} budget={budget} anyModel={anyModel} />
+
+        <Section icon={<Gauge size={15} color={C.blue} />} title="Book limits" testid="risk-limits"
+          sub="The 45DTE book against limits that scale with the bankroll: theta 0.1–0.3% a day, delta within ±0.1% in SPY deltas, and no more than a 3–5% loss if IV jumps 10 points.">
+          <RiskGauges lim={lim} zero={zero} />
+        </Section>
 
         <Section icon={<AlertTriangle size={15} color={C.amber} />} title="Needs attention" testid="risk-attention"
           sub="Stops, targets, time exits and anything the log and TWS disagree on — most urgent first.">

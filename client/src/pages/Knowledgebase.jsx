@@ -183,7 +183,9 @@ const RULES = [
   { category: 'Portfolio rules', rules: [
     'Maximum 3 positions in the same underlying',
     'Maximum 3 positions in the same sector',
-    'Keep portfolio delta within ±50',
+    'Keep 45DTE portfolio delta within ±0.1% of bankroll in SPY deltas (±50 on $50k)',
+    'Keep 45DTE daily theta at 0.1–0.3% of bankroll; past 0.5% is too much',
+    'An IV jump of 10 points should cost the book no more than 3–5% of bankroll',
     'Daily stop: close all positions if daily P&L hits max daily loss',
     'No new trades after 3 consecutive losses (wait for next session)',
     'Review every trade in the journal before the next trading session',

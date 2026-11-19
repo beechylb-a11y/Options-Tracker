@@ -107,7 +107,7 @@ describe('stress grid', () => {
     expect(Math.abs(mid.pnl)).toBeLessThan(1e-6);
     expect(g.cells[0][1].pnl).toBeLessThan(0);              // QQQ −3.6% is through the short put
     expect(g.worst.pnl).toBeLessThan(0);
-    expect(g.worst.iv).toBe(5);                              // short vega: worst with IV up
+    expect(g.worst.iv).toBe(10);                             // short vega: worst with IV up most (+10 column, Nov 2026)
     expect(g.top.key).toBe(condor.key);
   });
   it('one day later the unmoved book has earned its theta', () => {
