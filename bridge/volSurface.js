@@ -225,3 +225,15 @@ export function resolveSpot({ caller, snap, daily, dailySource, underlying, secT
       + 'data-farm indicator in TWS; restarting the bridge will not fix that end.' };
   return { ...none, note: `No price for ${underlying} from any source.` };
 }
+
+// How long a vol-history pull (IV series, HV, closes, daily bars) stays cached.
+// IV rank and HV move slowly, so a full pull is good for 30 min. A pull that came back
+// WITHOUT the IV series (TWS slow, pacing, a timeout mid-scan) is kept for only 2 min
+// so the next request asks for the IV history again; caching it for the full 30 min
+// left a name with no IV rank for half an hour after one slow answer (NVDA and AAPL,
+// 20 Nov 2026, while PLTR/AMD/GOOGL had theirs).
+export const HIST_TTL_MS = 30 * 60 * 1000;
+export const HIST_RETRY_MS = 2 * 60 * 1000;
+export function histTtl(entry) {
+  return entry && Array.isArray(entry.iv) && entry.iv.length ? HIST_TTL_MS : HIST_RETRY_MS;
+}

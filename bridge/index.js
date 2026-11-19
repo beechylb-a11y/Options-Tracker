@@ -12,7 +12,7 @@ import net from 'net';
 import { computeOvernight } from './esOvernight.js';
 import { parseLegs, composeCombo, summarise, geometry, legKey, spreadProfile } from './replay.js';
 import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike, strikeForDelta,
-  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot, nearestMonthly, nearestListed } from './volSurface.js';
+  interpAtDelta, termBiasFromIV, ivRankStats, realisedVol, avgIV, resolveSpot, nearestMonthly, nearestListed, histTtl, HIST_TTL_MS } from './volSurface.js';
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
@@ -1619,7 +1619,8 @@ app.get('/api/atm-straddle', async (req, res) => {
 // ================================================================
 const vsCache = { chain: {}, hist: {} };
 let lastConIdFail = null;   // why the last contract lookup failed, for the error text
-const HIST_TTL_MS = 30 * 60 * 1000;   // IVR/HV move slowly; 30 min keeps the pull cheap
+// How long a history pull stays cached: see histTtl in volSurface.js (30 min when the
+// IV series came back, 2 min when it didn't, so IV rank is retried soon).
 
 function getConId(contract) {
   return new Promise((resolve) => {
@@ -1688,7 +1689,7 @@ async function getOptionChain(underlying) {
 // IB's own daily vol series for the underlying, as % (it sends decimals).
 async function getVolHistory(underlying) {
   const hit = vsCache.hist[underlying];
-  if (hit && Date.now() - hit.at < HIST_TTL_MS) return hit;
+  if (hit && Date.now() - hit.at < histTtl(hit)) return hit;
   const c = contractOf(underlying);
   const pct = bars => bars.map(b => barClose(b)).filter(x => x > 0).map(x => x * 100);
   let iv = [], hv = [], closes = [], daily = [];
