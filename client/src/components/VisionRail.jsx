@@ -1,6 +1,7 @@
 import React from 'react';
 import { LogOut } from 'lucide-react';
 import mark from '../assets/shadowbook-mark.png';
+import { useScanBadge } from './ScanProgress';
 
 // Vision icon rail (Nov 2026). Each icon shows its name in a glass label as soon as
 // the pointer is on it (or it has keyboard focus), with the 1–0 shortcut beside it.
@@ -15,6 +16,7 @@ function RailLabel({ text, hint }) {
 }
 
 export default function VisionRail({ groups, tab, onTab, onSignOut, userEmail }) {
+  const scanBadge = useScanBadge();
   const btn = t => {
     const Icon = t.icon;
     const active = tab === t.id;
@@ -22,7 +24,11 @@ export default function VisionRail({ groups, tab, onTab, onSignOut, userEmail })
       <button key={t.id} type="button" onClick={() => onTab(t.id)} className="vis-rail-btn" data-testid={`rail-${t.id}`}
         aria-current={active ? 'page' : undefined} aria-label={t.label}>
         <Icon size={20} strokeWidth={1.8} />
-        <RailLabel text={t.label} hint={t.key} />
+        {t.id === 'decision' && scanBadge && <>
+          <span className="vis-rail-spin" aria-hidden="true" />
+          <span className="vis-rail-badge" data-testid="rail-scan-badge">{scanBadge}</span>
+        </>}
+        <RailLabel text={t.id === 'decision' && scanBadge ? `${t.label} · scanning ${scanBadge}` : t.label} hint={t.key} />
       </button>
     );
   };

@@ -10,6 +10,7 @@ import ThemeToggle from './ThemeToggle';
 import FreshDot from './FreshDot';
 import { useLiveQuote, useLiveConnection, useFreshness } from '../live/useLive';
 import { reconnectLiveFeed } from '../live/liveFeed';
+import { ScanChip } from './ScanProgress';
 
 // Persistent context strip: account switcher, today P&L, daily-loss gauge,
 // open-position count, data freshness + global refresh, Sheets/bridge status.
@@ -137,6 +138,36 @@ export function LivePrice({ symbol = 'SPX', stacked = false }) {
   );
 }
 
+// Vision chips (Nov 2026): one line each, white ink, colour only in the small pill.
+function VisClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
+  const c = marketClock(now);
+  const local = now.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  return (
+    <span className="vis-chip" data-testid="ny-clock" title={`New York ${c.date} ${c.time} · your time ${local}${c.detail ? ' · ' + c.detail : ''}`}>
+      <span className="vis-chip-label">NY</span>
+      <span className="vis-chip-value">{c.time}</span>
+      <span data-testid="ny-status" className={`vis-delta ${c.tone === 'green' ? 'up' : c.tone === 'amber' ? 'warn' : ''}`}>{c.status}</span>
+    </span>
+  );
+}
+function VisPrice({ symbol }) {
+  const q = useLiveQuote(symbol);
+  const fresh = useFreshness(q);
+  const px = q && (q.mark ?? q.last);
+  if (!(px > 0)) return null;
+  const chg = q.close > 0 ? (px - q.close) / q.close * 100 : null;
+  return (
+    <span className="vis-chip" data-testid="live-price">
+      <span className="vis-chip-label">{symbol}</span>
+      <span className="vis-chip-value">{px.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      {chg != null && <span className={`vis-delta ${chg >= 0 ? 'up' : 'down'}`}>{chg >= 0 ? '+' : '−'}{Math.abs(chg).toFixed(2)}%</span>}
+      <FreshDot state={fresh} ts={q.ts} />
+    </span>
+  );
+}
+
 // What the live stream says, for the bridge menu and its dot.
 export function liveSummary(live) {
   if (live.connection === 'off') return '';
@@ -173,7 +204,7 @@ function HeaderWrap({ vision, glassOn, children }) {
   );
 }
 
-export default function HeaderStrip({ authenticated, account, accounts, onAccountChange, onGlobalRefresh, onLogin, title }) {
+export default function HeaderStrip({ authenticated, account, accounts, onAccountChange, onGlobalRefresh, onLogin, title, onOpenEngine }) {
   const visionOn = useVisionOn();
   const glassOn = useGlassOn();
   const [tracker, setTracker] = useState([]);
@@ -185,6 +216,7 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const [refreshing, setRefreshing] = useState(false);
   const [sheetsState, setSheetsState] = useState(authenticated ? 'ok' : 'off');
   const [bridgeState, setBridgeState] = useState('off');
+  const bridgeStateRaw = bridgeState;
   const [bridgeBusy, setBridgeBusy] = useState('');
   const [bridgeMode, setBridgeMode] = useState('');
   const [bridgeNote, setBridgeNote] = useState('');
@@ -300,6 +332,67 @@ export default function HeaderStrip({ authenticated, account, accounts, onAccoun
   const lossUsedPct = maxDailyLoss > 0 && todayPnl < 0
     ? Math.min(100, Math.abs(todayPnl) / maxDailyLoss * 100) : 0;
   const gaugeColor = lossUsedPct >= 80 ? 'bg-red' : lossUsedPct >= 50 ? 'bg-amber' : 'bg-green';
+
+  // Vision (Nov 2026, second pass): the six wells were the busiest thing on screen and
+  // not in the design. One slim row instead — the page title as a text tab, then a
+  // single glass pill of inline stats, then the account, sync, feeds and theme. Same
+  // data, same controls, a third of the height. The row has a frosted backing so the
+  // page no longer shows through it when you scroll.
+  if (visionOn) {
+    const bridgeState = live.connection === 'open' ? (live.status.connected ? 'ok' : 'warn') : bridgeStateRaw;
+    return (
+      <div data-testid="header-strip" className="vis-top vis-top--compact hdr-glass">
+        {title && <div className="vis-title" data-testid="vision-title">{title}</div>}
+        <div className="vis-chips" data-testid="header-row">
+          <VisClock />
+          <VisPrice symbol="SPX" />
+          {authenticated && <>
+            <span className="vis-chip" data-testid="hdr-pnl" title="Realised P&L today">
+              <span className="vis-chip-label">Today</span>
+              {todayPnl ? <span className={`vis-delta ${todayPnl > 0 ? 'up' : 'down'}`}>{fmt$(todayPnl)}</span> : <span className="vis-chip-value">{fmt$(0)}</span>}
+            </span>
+            {maxDailyLoss > 0 && (
+              <span className="vis-chip" data-testid="hdr-losscap" title={`Daily loss used: ${fmt$(todayPnl < 0 ? Math.abs(todayPnl) : 0)} of ${fmt$(maxDailyLoss)} cap`}>
+                <span className="vis-chip-label">Loss cap</span>
+                <span className="vis-meter"><span style={{ width: `${Math.max(lossUsedPct, 3)}%`, background: lossUsedPct >= 80 ? '#ffa39a' : lossUsedPct >= 50 ? '#ffd479' : '#fff' }} /></span>
+                <span className="vis-chip-value">{Math.round(lossUsedPct)}%</span>
+              </span>
+            )}
+            <span className="vis-chip" data-testid="hdr-open">
+              <span className="vis-chip-label">Open</span><span className="vis-chip-value">{openCount}</span>
+              {engineWorking > 0 && <span className="vis-chip-label">· {engineWorking} working</span>}
+            </span>
+          </>}
+          <ScanChip onOpen={onOpenEngine} />
+        </div>
+        <div className="flex-1" />
+        <div className="vis-chips vis-chips--tools" data-testid="hdr-system">
+          {authenticated && accounts.length > 0 ? (
+            <select value={account} onChange={e => onAccountChange(e.target.value)} className="hdr-select vis-select" aria-label="Account">
+              <option value="all">All accounts</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          ) : !authenticated ? (
+            <button onClick={onLogin} className="px-3 py-1 bg-accent text-white text-xs font-medium rounded-full">Sign in</button>
+          ) : null}
+          <button onClick={handleRefresh} className="vis-chip vis-chip-btn" aria-label="Refresh all data"
+            title={`Refresh all data${lastSynced ? ' · last synced ' + clockFmt(lastSynced) : ''}`}>
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+            <span className="vis-chip-value">{lastSynced ? clockFmt(lastSynced) : '—'}</span>
+          </button>
+          <span className="vis-chip">
+            <StatusDot state={sheetsState} label="DB" title={sheetsState === 'ok' ? 'Database reachable' : sheetsState === 'off' ? 'Not signed in' : 'Database fetch failed'} />
+            <BridgeControl state={bridgeState}
+              title={live.connection === 'open' && !live.status.connected ? 'Bridge up, TWS not connected — retrying automatically' : bridgeTitle}
+              onAction={bridgeAction} busy={bridgeBusy} note={bridgeNote}
+              mode={live.connection === 'open' ? (live.status.mode || bridgeMode) : bridgeMode}
+              liveLine={liveSummary(live)} />
+          </span>
+          <ThemeToggle />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <HeaderWrap vision={visionOn} glassOn={glassOn}>

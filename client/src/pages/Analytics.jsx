@@ -15,21 +15,26 @@ import { suggestions as suggestFrom, SUGGEST_N } from '../engine/suggest';
 import { gridTable, exitTable, REGIMES, EXIT_LABEL, EXITS } from '../engine/learn';
 import { settleShadows } from '../utils/shadowSettle';
 import { fillQualitySummary } from '../engine/fills';
+import { storyTrades, normStrategy } from '../utils/tradeStory';
+import { StoryCard, EdgeBars, CalibrationBars, RHistogram, StructureGrid } from '../components/StoryViews';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [section, setSection] = useState('strategy');
+  const [section, setSection] = useState('edge');
+  const [tradeLog, setTradeLog] = useState([]);
 
   function loadData() {
     setError(null);
     Promise.all([
       api.getTracker(),
-      api.getDecisions().catch(() => [])
-    ]).then(([t, d]) => {
+      api.getDecisions().catch(() => []),
+      Promise.resolve().then(() => api.getTradeLog()).catch(() => [])
+    ]).then(([t, d, tl]) => {
       setTracker(t);
+      setTradeLog(Array.isArray(tl) ? tl : []);
       // Decisions arrive as objects (with _rowIndex) from the API; legacy
       // header-array form is still handled. Same normalization as Dashboard.
       if (Array.isArray(d) && d.length > 0 && d[0]._rowIndex !== undefined) {
@@ -67,7 +72,8 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
         pnl: parseFloat(t['Total P&L ($)']) || 0,
         entryDate: t['Entry Date'] ? new Date(t['Entry Date']) : null,
         closeDate: t['Close Date'] ? new Date(t['Close Date']) : null,
-        strategy: t['Strategy (OIC)'] || 'Unknown',
+        // "Bull put spread" and "Bull Put Spread" were two rows (Nov 2026).
+        strategy: normStrategy(t['Strategy (OIC)']),
         underlying: t.Underlying || '',
         wl: rowWl(t),
         dte: t['Expiry Date'] && t['Entry Date']
@@ -88,6 +94,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
   if (loading) return <div className="text-text-muted text-sm">Loading analytics...</div>;
 
   const SECTIONS = [
+    { id: 'edge', label: 'Edge', icon: TrendingUp },
     { id: 'strategy', label: 'Strategy', icon: TrendingUp },
     { id: 'time', label: 'Time patterns', icon: Clock },
     { id: 'regime', label: 'Regime performance', icon: Layers },
@@ -116,6 +123,7 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
         </div>
       </div>
 
+      {section === 'edge' && <EdgeView trades={storyTrades(tradeLog, account, accounts)} />}
       {section === 'strategy' && <StrategyBreakdown closed={closed} accounts={accounts} />}
       {section === 'time' && <TimePatterns closed={closed} />}
       {section === 'regime' && <RegimePerformance closed={closed} decisions={decisions} />}
@@ -124,6 +132,37 @@ export default function Analytics({ authenticated, account, accounts = [] }) {
       {section === 'capture' && <CaptureTracker account={account} />}
       {section === 'verdicts' && <ShadowVerdicts account={account} />}
       {section === 'fills' && <FillQuality account={account} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+//  EDGE (Nov 2026) — one question per card, the answer as a picture, from the trade
+//  log (engine tickets, every tranche summed). The tables are in the other sections.
+// ═══════════════════════════════════════════
+function EdgeView({ trades }) {
+  if (!trades.length) return <div className="card py-8 text-center text-text-faint text-sm">No closed engine tickets yet</div>;
+  return (
+    <div className="space-y-4" data-testid="analytics-edge">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <StoryCard eyebrow="Where the edge is" title="Average win vs average loss, per structure"
+          sub="Left: what a typical trade loses, spread over every trade. Right: what it wins. The number is expectancy per trade.">
+          <EdgeBars trades={trades} />
+        </StoryCard>
+        <StoryCard eyebrow="Is the engine calibrated?" title="Win rate and R by confidence band"
+          sub="Bar height is the win rate. If the score works, the R numbers climb left to right.">
+          <CalibrationBars trades={trades} />
+        </StoryCard>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <StoryCard eyebrow="What a trade looks like" title="Results in R" sub="Every closed ticket by its result as a multiple of the risk it carried.">
+          <RHistogram trades={trades} />
+        </StoryCard>
+        <StoryCard eyebrow="Structure × underlying" title="Where each structure works" sub="Total P&L and trade count per cell; blank: never traded.">
+          <StructureGrid trades={trades} />
+        </StoryCard>
+      </div>
+      <p className="text-[12.5px] text-text-faint">{trades.length} closed engine tickets from the trade log.</p>
     </div>
   );
 }

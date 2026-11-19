@@ -14,6 +14,11 @@ import OrderTicket from '../components/OrderTicket';
 // so they keep the plain close form where P&L is typed by hand.
 const hasEntry = d => { const v = parseFloat(d?.['Net Debit/Credit']); return isFinite(v) && v !== 0; };
 import ErrorBanner from '../components/ErrorBanner';
+import { storyTrades } from '../utils/tradeStory';
+import { ViewTabs, StoryCard, YearHeatmap, MonthPace, WeekCards } from '../components/StoryViews';
+
+const JVIEW_KEY = 'ot_journal_view';
+const loadJView = () => { try { return localStorage.getItem(JVIEW_KEY) === 'month' ? 'month' : 'year'; } catch (e) { return 'year'; } };
 
 export default function Journal({ authenticated, account, accounts = [], onAccountsChange }) {
   const [journal, setJournal] = useState([]);
@@ -57,6 +62,9 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
       setReplayState(p => ({ ...p, [key]: e.message }));
     }
   }
+  const [view, setViewState] = useState(loadJView);
+  const setView = v => { setViewState(v); try { localStorage.setItem(JVIEW_KEY, v); } catch (e) { /* ignore */ } };
+  const [tradeLog, setTradeLog] = useState([]);
   const [savingReview, setSavingReview] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
@@ -65,9 +73,11 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
       api.getJournal().catch(() => []),
       api.getTracker().catch(() => []),
       api.getDecisions().catch(() => []),
-      api.getCloses().catch(() => [])
-    ]).then(([j, t, d, c]) => {
+      api.getCloses().catch(() => []),
+      Promise.resolve().then(() => api.getTradeLog()).catch(() => [])
+    ]).then(([j, t, d, c, tl]) => {
       setJournal(j);
+      setTradeLog(Array.isArray(tl) ? tl : []);
       setTracker(t);
       setCloses(Array.isArray(c) ? c : []);
       if (Array.isArray(d) && d.length > 0) {
@@ -273,6 +283,40 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
   const selDayWins = allClosedOnDay.filter(t => (t['W / L'] === 'Win') || (parseFloat(t['Actual P&L']) >= 0 && t['Actual P&L'])).length;
   const selDayLosses = allClosedOnDay.filter(t => (t['W / L'] === 'Loss') || (parseFloat(t['Actual P&L']) < 0)).length;
 
+  const tabs = <ViewTabs value={view} onChange={setView} options={[['year', 'Year'], ['month', 'Month']]} testid="journal-view" />;
+  if (view === 'year') {
+    const story = storyTrades(tradeLog, account, accounts);
+    const todayISO = localISODate(today);
+    const nowSummary = journalSummary(account, accounts, closedPnlEvents(tracker, decisions), today.getFullYear(), today.getMonth());
+    const fromISO = story.length ? story[0].closeDate.slice(0, 8) + '01' : todayISO.slice(0, 8) + '01';
+    return (
+      <div className="fade-in">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="page-title font-display text-2xl font-bold">Journal</h2>
+        </div>
+        {tabs}
+        {loading ? <div className="text-text-muted text-sm py-8 text-center">Loading journal...</div> : (
+          <div className="space-y-4" data-testid="journal-year">
+            <StoryCard eyebrow="The year at a glance" title={`Every trading day since ${new Date(fromISO + 'T12:00:00').toLocaleString('en-AU', { month: 'long' })}`}
+              sub="Green made money, red lost it; the darker, the bigger the day. Grey: nothing closed." >
+              <YearHeatmap trades={story} fromISO={fromISO} toISO={todayISO} />
+            </StoryCard>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <StoryCard eyebrow="Pace to the month's target">
+                <MonthPace trades={story} monthISO={todayISO.slice(0, 7)} target={Math.round(nowSummary.month.targetAmt)} todayISO={todayISO} />
+              </StoryCard>
+              <StoryCard eyebrow="Weeks as stories" title="Each week and the rules you kept"
+                sub="Every trade in the week by size, and the 0DTE entry-by-12:00 rule read from the ticket times (New York).">
+                <WeekCards trades={story} />
+              </StoryCard>
+            </div>
+            <p className="text-[12.5px] text-text-faint">Engine tickets from the trade log. The Month tab has the calendar, notes and per-day detail.</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (<>
     <div className="fade-in">
       <div className="flex items-center justify-between mb-6">
@@ -282,6 +326,7 @@ export default function Journal({ authenticated, account, accounts = [], onAccou
           <Plus size={14} /> Add note
         </button>
       </div>
+      {tabs}
 
       {saveError && <ErrorBanner message={saveError} />}
 

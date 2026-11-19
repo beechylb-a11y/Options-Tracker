@@ -5,6 +5,11 @@ import OpenPositions from '../components/OpenPositions';
 import CloseTradeModal from '../components/CloseTradeModal';
 import ErrorBanner from '../components/ErrorBanner';
 import { fmt$, fmtDate, pnlColor, filterByAccount } from '../utils/format';
+import { storyTrades, fillTicketRows } from '../utils/tradeStory';
+import { EquityRiver, ConfidenceScatter, TradeCards, StoryCard, ViewTabs } from '../components/StoryViews';
+
+const VIEW_KEY = 'ot_trades_view';
+const loadView = () => { try { return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'story'; } catch { return 'story'; } };
 
 // Stable identity for a tracker row — survives filter changes (array indexes
 // don't). Sheet _rowIndex is unique per row; fall back to a composite string.
@@ -99,6 +104,11 @@ export default function Trades({ authenticated, account, accounts }) {
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadAccount, setUploadAccount] = useState(account || '');
+  const [view, setViewState] = useState(loadView);
+  const setView = v => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ } };
+  const [tradeLog, setTradeLog] = useState([]);
+  const [decisions, setDecisions] = useState([]);
+  const [closes, setCloses] = useState([]);
 
   // Sync upload account with sidebar selection
   useEffect(() => {
@@ -164,11 +174,21 @@ export default function Trades({ authenticated, account, accounts }) {
     setLoading(true);
     setError(null);
     try {
-      const [t, r, u] = await Promise.all([
+      let [t, r, u, tl, d, cl] = await Promise.all([
         api.getTracker(),
         api.getTrades().catch(() => []),
-        api.getUncategorised().catch(() => [])
+        api.getUncategorised().catch(() => []),
+        Promise.resolve().then(() => api.getTradeLog()).catch(() => []),
+        Promise.resolve().then(() => api.getDecisions()).catch(() => []),
+        Promise.resolve().then(() => api.getCloses()).catch(() => []),
       ]);
+      const log = Array.isArray(tl) ? tl : [];
+      setTradeLog(log);
+      setDecisions(Array.isArray(d) && d.length && d[0]._rowIndex !== undefined ? d : []);
+      setCloses(Array.isArray(cl) ? cl : []);
+      // Engine closes land here as TICKET-<n> rows with no credit or expiry: fill both
+      // from the ticket so Credit, ROC and DTE read.
+      t = fillTicketRows(t, log);
       setTracker(t);
       setRawTrades(r);
       setUncategorised(u);
@@ -195,6 +215,8 @@ export default function Trades({ authenticated, account, accounts }) {
     if (fileRef.current) fileRef.current.value = '';
   }
 
+  const story = storyTrades(tradeLog, account, accounts);
+  const storyTotal = story.reduce((a, t) => a + t.pnl, 0);
   const filters = ['All', 'Open', 'Closed', 'Expired', 'Assigned', 'Cash Settled'];
   const accountFiltered = filterByAccount(tracker, account);
   const strategies = [...new Set(accountFiltered.map(t => t['Strategy (OIC)']).filter(Boolean))].sort();
@@ -257,12 +279,11 @@ export default function Trades({ authenticated, account, accounts }) {
     );
   }
 
-  return (
-    <div className="fade-in">
+  const header = (
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="page-title font-display text-2xl font-bold">Trades</h2>
-          <p className="text-text-muted text-sm mt-0.5">{filtered.length} positions tracked</p>
+          <p className="text-text-muted text-sm mt-0.5">{view === 'story' ? `${story.length} closed engine tickets` : `${filtered.length} positions tracked`}</p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={loadData} className="flex items-center gap-2 px-3 py-2 text-sm border border-bg-border rounded-lg hover:bg-bg-hover transition-colors">
@@ -298,6 +319,42 @@ export default function Trades({ authenticated, account, accounts }) {
           </label>
         </div>
       </div>
+  );
+  const tabs = <ViewTabs value={view} onChange={setView} options={[['story', 'Story'], ['table', 'Table']]} testid="trades-view" />;
+
+  if (view === 'story') {
+    return (
+      <div className="fade-in">
+        {header}
+        {tabs}
+        {error && <ErrorBanner message={error} onRetry={loadData} />}
+        {loading ? <div className="text-text-muted text-sm py-8 text-center">Loading trades...</div> : (
+          <div className="space-y-4" data-testid="trades-story">
+            <StoryCard eyebrow="The equity line" title="Every trade on one line"
+              sub="Running P&L. Each dot is a trade, sized by the risk it carried; red is a loss. Hover for the ticket."
+              right={<div className="text-right shrink-0"><div className="story-big num">{story.length ? (storyTotal >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(storyTotal)).toLocaleString('en-US') : '—'}</div><div className="text-[12.5px] text-text-muted">{story.length ? `${story.length} tickets since ${fmtDate(story[0].closeDate)}` : ''}</div></div>}>
+              <EquityRiver trades={story} />
+            </StoryCard>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <StoryCard eyebrow="Process vs outcome" title="Did good tickets make money?"
+                sub="Engine confidence at entry against the result in R (P&L ÷ max risk).">
+                <ConfidenceScatter trades={story} />
+              </StoryCard>
+              <StoryCard eyebrow="Trade cards" title="Recent trades"
+                sub="Shape, result, R, the engine's score at entry, and the roll story where there is one.">
+                <TradeCards trades={story} decisions={decisions} closes={closes} limit={6} />
+              </StoryCard>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fade-in">
+      {header}
+      {tabs}
 
       {/* What is still at risk, and where a part-closed position stands. The
           tracker table below is positions as BOOKED; this is positions as they

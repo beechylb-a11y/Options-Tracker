@@ -13,6 +13,8 @@ import Checkup45 from '../components/Checkup45';
 import { trendLabel } from '../engine/trend';
 import { SCAN_FIELDS, VOL_SCAN_KEYS, fetchScanData, computeScan, newScanCache } from '../utils/multiScan';
 import { loadScans, saveScans } from '../utils/scanStore';
+import { scanStore, initProgress, applyEvent, setScanStopper, useScanStatus } from '../utils/scanStatus';
+import { ScanPill, ScanBubbles } from '../components/ScanProgress';
 import { tradingSession, sessionDateOf, sessionLabelOf, lastSessionDate } from '../engine/session';
 import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
@@ -387,36 +389,79 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const scanLists = Object.fromEntries(GROUPS.map(([m, c]) => [groupKey(m, c), groupList(m === '0dte' ? rank0 : rank45, c)]));
   const [scanBusy, setScanBusy] = useState({});
   const [master, setMaster] = useState(null);       // { i, n, label } while Scan everything runs
+  // A scan keeps running when you leave the page; coming back, the store still knows.
+  const scanState = useScanStatus();
+  const scanRunning = !!(scanState && scanState.running);
   const [scanNow, setScanNow] = useState(() => Date.now());
   useEffect(() => { const h = setInterval(() => setScanNow(Date.now()), 15000); return () => clearInterval(h); }, []);
-  async function runGroupScan(g, cache, typed) {
+  // Progress (Nov 2026): every name's stages go to the shared scan store, which the
+  // pill, the bubbles, the rail badge, the header chip and the top line all read.
+  // Stop aborts between names; a name already asking TWS finishes its call.
+  const scanAbort = useRef(null);
+  const groupLabelOf = g => { const [m, c] = g.split('|'); return `${CLASS_LABEL[c] || c} · ${modeUi(m).short}`; };
+  function finishProgress({ stopped = false, results = [], names = 0, final = true } = {}) {
+    scanStore.update(p => {
+      if (!p) return p;
+      const secs = Math.max(1, Math.round((Date.now() - (p.firstStartedAt || p.startedAt)) / 1000));
+      const best = results.find(r => r && r.result);
+      const errs = results.filter(r => r && r.error && !r.noExpiryToday);
+      return final ? {
+        ...p, running: false, finishedAt: Date.now(), stopped,
+        summary: { stopped, names: names || p.order.length, secs,
+          best: best ? `${best.underlying} ${best.result.setupScore}/100` : null,
+          needs: errs.length ? `${errs.length} with no data (${errs.slice(0, 2).map(r => r.underlying).join(', ')})` : '' },
+      } : p;
+    });
+  }
+  async function runGroupScan(g, cache, typed, opts = {}) {
     const [m] = g.split('|');
     let bridgeUrl = '';
     try { bridgeUrl = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    const own = !opts.signal;                       // a single-group scan owns its stop control
+    const ctl = own ? new AbortController() : null;
+    if (own) { scanAbort.current = ctl; setScanStopper(() => ctl.abort()); }
+    const signal = opts.signal || ctl.signal;
     setScanBusy(b => ({ ...b, [g]: true }));
+    let out = { results: [], names: 0 };
     try {
       const list = scanLists[g] || [];
       if (!list.length) {
         setScans(prev => ({ ...prev, [g]: { results: [], meta: {}, scannedAt: new Date().toISOString(), manualData: {}, empty: true, list: [] } }));
-        return;
+        return out;
       }
-      const { mergedData, meta, pulledAt } = await fetchScanData({ mode: m, underlyings: list, manualData: typed || {}, bridgeUrl, cache });
+      const prev = scanStore.get();
+      scanStore.set({ ...initProgress({ mode: m, list, label: groupLabelOf(g), master: opts.master || null }),
+        firstStartedAt: opts.master && prev && prev.running ? (prev.firstStartedAt || prev.startedAt) : Date.now() });
+      const { mergedData, meta, pulledAt } = await fetchScanData({ mode: m, underlyings: list, manualData: typed || {}, bridgeUrl, cache,
+        signal, onProgress: ev => scanStore.update(p => applyEvent(p, ev)) });
       const results = computeScan(m, list, mergedData);
-      setScans(prev => ({ ...prev, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData, list } }));
+      setScans(prev2 => ({ ...prev2, [g]: { results, meta, scannedAt: pulledAt, manualData: mergedData, list } }));
+      out = { results, names: list.length };
+      if (own) finishProgress({ results, names: list.length });
     } catch (e) {
-      showToast('Scan failed: ' + e.message, 'error');
+      if (e && e.name === 'AbortError') { if (own) finishProgress({ stopped: true }); out.stopped = true; }
+      else { showToast('Scan failed: ' + e.message, 'error'); if (own) scanStore.update(p => (p ? { ...p, running: false } : p)); }
     }
     setScanBusy(b => { const o = { ...b }; delete o[g]; return o; });
+    if (own) setScanStopper(null);
+    return out;
   }
   async function runAllScans() {
     const cache = newScanCache();
+    const ctl = new AbortController();
+    scanAbort.current = ctl; setScanStopper(() => ctl.abort());
+    const all = []; let names = 0, stopped = false;
     for (let i = 0; i < GROUPS.length; i++) {
       const [m, c] = GROUPS[i];
       setMaster({ i: i + 1, n: GROUPS.length, label: `${modeUi(m).short} · ${CLASS_LABEL[c]}` });
-      await runGroupScan(groupKey(m, c), cache);
+      const r = await runGroupScan(groupKey(m, c), cache, null, { signal: ctl.signal, master: { i: i + 1, n: GROUPS.length } });
+      all.push(...(r.results || [])); names += r.names || 0;
+      if (r.stopped || ctl.signal.aborted) { stopped = true; break; }
     }
     setMaster(null);
-    showToast('All six scans done — each group has its results', 'success');
+    setScanStopper(null);
+    all.sort((a, b) => (b.result?.setupScore || 0) - (a.result?.setupScore || 0));
+    finishProgress({ stopped, results: all, names });
   }
   function recalcGroup(g, manualData) {
     const [m] = g.split('|');
@@ -637,7 +682,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   function scanThisGroup() {
     if (panel === 'multiscan' && !hasBridge()) { setPanel(null); return; }
     setPanel('multiscan');
-    if (hasBridge() && !scanBusy[activeGroup] && !master) runGroupScan(activeGroup);
+    if (hasBridge() && !scanBusy[activeGroup] && !master && !scanRunning) runGroupScan(activeGroup);
   }
   const stratOf = d => { const p = (d.Strategy || '').split(' - '); return p.length > 1 ? p.slice(1, -1).join(' - ') : (d.Strategy || ''); };
 
@@ -702,7 +747,8 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
         </div>
         <div className="flex-1" />
         {/* Scan: this group, or all six from the caret. */}
-        <div className="relative flex" data-testid="scan-split">
+        {(scanRunning || master || Object.keys(scanBusy).length > 0) && <ScanPill />}
+        <div className="relative flex" data-testid="scan-split" style={(scanRunning || master || Object.keys(scanBusy).length > 0) ? { display: 'none' } : undefined}>
           <button onClick={scanThisGroup} data-testid="multiscan-toggle" disabled={!!master}
             title={`Scan ${modeUi(mode).short} · ${CLASS_LABEL[groupClass]} — ${(scanLists[activeGroup] || []).join(', ') || 'no names'}`}
             className="flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-l-lg text-white disabled:opacity-60"
@@ -1424,6 +1470,8 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
   onScan, onScanAll, onRecalc, otherScans, onOpenGroup, onSelect }) {
   const scanMode = mode === '0dte' ? '0dte' : '45dte';
   const ui = modeUi(scanMode);
+  const scanSt = useScanStatus();
+  const anyRunning = !!(scanSt && scanSt.running);
   // Only what you TYPE is kept here; everything else comes fresh from each scan. (A
   // rescan used to keep the previous scan's numbers, because fetched values were
   // stored as if typed and typed values win.)
@@ -1446,6 +1494,8 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
   const openMeta = r => scanMeta[r.underlying] || (scannedAt ? { isLive: false, label: 'Multi-scan', asOf: null, pulledAt: scannedAt } : null);
 
   return (
+    <>
+    <ScanBubbles />
     <div className="card mb-4 fade-in" data-testid="multiscan" data-mode={scanMode} data-cls={cls}
       style={{ borderColor: ui.border, borderTop: `4px solid ${ui.solid}` }}>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -1474,14 +1524,14 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
             className="px-3 py-2 text-xs border border-[var(--c-30363d)] rounded-lg text-[var(--c-a8b2be)] hover:bg-[var(--c-161b22)] disabled:opacity-30">
             Recalculate
           </button>
-          <button onClick={() => onScan(typed)} disabled={busy || !!master} data-testid="scan-all"
+          <button onClick={() => onScan(typed)} disabled={busy || !!master || anyRunning} data-testid="scan-all"
             title={`Scan ${underlyings.join(', ')} for a ${ui.short} trade`}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-50"
             style={{ background: ui.solid, color: 'var(--c-on-accent)' }}>
             <ui.Icon size={14} className={busy ? 'animate-spin' : ''} />
             {busy ? `Scanning ${classLabel}…` : `Scan ${classLabel} · ${ui.short}`}
           </button>
-          <button onClick={onScanAll} disabled={!!master} data-testid="scan-everything-panel"
+          <button onClick={onScanAll} disabled={!!master || anyRunning} data-testid="scan-everything-panel"
             title="All six groups: 0DTE and 45DTE × indices, ETFs, stocks"
             className="px-3 py-2 text-xs border border-[var(--c-30363d)] rounded-lg text-[var(--c-c9d1d9)] hover:bg-[var(--c-161b22)] disabled:opacity-50">
             Scan everything
@@ -1620,6 +1670,7 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
         </div>
       )}
     </div>
+    </>
   );
 }
 

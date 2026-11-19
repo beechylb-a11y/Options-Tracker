@@ -430,6 +430,10 @@ export default function Dashboard({ authenticated, account, accounts = [] }) {
 // a banner that only appears on event days is a banner you cannot trust on the
 // quiet ones, because its absence could equally mean the calendar is broken.
 // Coverage gaps are stated in the same box for the same reason.
+export const plainNotice = n => String(n || '')
+  .replace(/\s*[—–-]?\s*(refresh soon|run|fix):\s*node tools\/refresh-calendar\.mjs\.?/i, ' — the event calendar needs refreshing')
+  .replace(/\s+/g, ' ').trim();
+
 function EventBanner() {
   const { dateISO, minutes } = nowET();
   const o = useMemo(() => eventOutlook(dateISO, minutes, 21), [dateISO, minutes]);
@@ -482,8 +486,10 @@ function EventBanner() {
         </div>
       )}
 
+      {/* The engine's notices name the refresh command for the ticket's own record; on the
+          dashboard say it in words (Nov 2026: "refresh soon: node tools/…" read as debug text). */}
       {o.notices.map((n, i) => (
-        <div key={'n' + i} className="text-xs mt-2" style={{ color: 'var(--c-9aa4b0)' }}>{n}</div>
+        <div key={'n' + i} className="text-xs mt-2" style={{ color: 'var(--c-9aa4b0)' }}>{plainNotice(n)}</div>
       ))}
     </div>
   );

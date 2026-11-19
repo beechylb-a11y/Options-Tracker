@@ -80,17 +80,31 @@ function getJson(url, ms) {
 
 // Run `fn` over `items` with at most `n` in flight. The bridge has one TWS connection;
 // a whole group at once (seven tickers × five history requests) is what made it slow.
-async function pool(items, n, fn) {
+async function pool(items, n, fn, signal) {
   const out = new Array(items.length);
   let i = 0;
-  const worker = async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } };
+  const worker = async () => { while (i < items.length && !(signal && signal.aborted)) { const k = i++; out[k] = await fn(items[k], k); } };
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  if (signal && signal.aborted) { const e = new Error('Scan stopped'); e.name = 'AbortError'; throw e; }
   return out;
+}
+
+// One stage of the scan for one name, reported to onProgress (Nov 2026): start, then
+// done — or error when the bridge answered with one or not at all.
+function staged(onProgress, stage, u, run, isErr = r => !r) {
+  if (onProgress) onProgress({ u, stage, state: 'start' });
+  return run().then(r => {
+    if (onProgress) {
+      const bad = isErr(r);
+      onProgress(bad ? { u, stage, state: 'error', error: bad === true ? 'no answer from the bridge' : String(bad) } : { u, stage, state: 'done' });
+    }
+    return r;
+  });
 }
 const SCAN_CONCURRENCY = 2;
 
 /** Pull the bridge's data for `underlyings` into a copy of `manualData` (typed values win). */
-export async function fetchScanData({ mode, underlyings, manualData = {}, bridgeUrl, cache }) {
+export async function fetchScanData({ mode, underlyings, manualData = {}, bridgeUrl, cache, onProgress, signal }) {
   const is0 = mode === '0dte';
   const pulledAt = new Date().toISOString();
   const meta = {};
@@ -100,7 +114,10 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
   if (!bridgeUrl) return { mergedData, meta, pulledAt };
 
   const market = await pool(list, SCAN_CONCURRENCY, u =>
-    cached(cache, 'md:' + u, () => getJson(bridgeUrl + '/api/market-data?underlying=' + u, 60000)).then(data => ({ u, data })));
+    staged(onProgress, 0, u, () => cached(cache, 'md:' + u, () => getJson(bridgeUrl + '/api/market-data?underlying=' + u, 60000)),
+      d => (!d ? true : d.error ? d.error : false)).then(data => ({ u, data })), signal);
+  // A name with no market data stops here; the later stages skip it.
+  const okList = list.filter(u => { const r = market.find(x => x.u === u); return r && r.data && !r.data.error; });
   market.forEach(({ u, data }) => {
     if (!data || data.error) {
       // Say why on the row instead of leaving it blank.
@@ -142,8 +159,9 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
     const today = tradingSession().yyyymmdd;
     // Does anything expire today? (Oct 2026.) Most single stocks list weeklies, not
     // dailies, and a 0DTE scan used to rank a TSLA setup on a day TSLA had no expiry.
-    const oc = await pool(list, SCAN_CONCURRENCY, u =>
-      cached(cache, 'oc:' + u, () => getJson(bridgeUrl + '/api/option-chain?underlying=' + u, 20000)).then(d => ({ u, d })));
+    const oc = await pool(okList, SCAN_CONCURRENCY, u =>
+      staged(onProgress, 1, u, () => cached(cache, 'oc:' + u, () => getJson(bridgeUrl + '/api/option-chain?underlying=' + u, 20000)),
+        () => false).then(d => ({ u, d })), signal);
     oc.forEach(({ u, d }) => {
       if (!d || d.error || !mergedData[u]) return;
       const all = Array.isArray(d.expirationsAll) ? d.expirationsAll : null;
@@ -154,11 +172,13 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
         mergedData[u] = { ...mergedData[u], _noExpiryToday: true, _nextExpiry: list0.find(e => e > today) || '' };
       }
     });
-    const st = await pool(list, SCAN_CONCURRENCY, u => {
+    const st = await pool(okList, SCAN_CONCURRENCY, u => {
       const spot = parseFloat(mergedData[u]?.price) || 0;
-      return cached(cache, 'st:' + u, () => getJson(bridgeUrl + '/api/atm-straddle?underlying=' + u + '&expiry=' + today
-        + '&haircut=0.85' + (spot > 0 ? '&spot=' + spot : ''), 30000)).then(sd => ({ u, sd }));
-    });
+      // No expiry today: nothing to price, the name is done.
+      if (mergedData[u] && mergedData[u]._noExpiryToday) { if (onProgress) onProgress({ u, stage: 2, state: 'done' }); return Promise.resolve({ u, sd: null }); }
+      return staged(onProgress, 2, u, () => cached(cache, 'st:' + u, () => getJson(bridgeUrl + '/api/atm-straddle?underlying=' + u + '&expiry=' + today
+        + '&haircut=0.85' + (spot > 0 ? '&spot=' + spot : ''), 30000)), () => false).then(sd => ({ u, sd }));
+    }, signal);
     st.forEach(({ u, sd }) => {
       if (sd && sd.source === 'straddle' && sd.expectedMove > 0 && mergedData[u]) {
         mergedData[u] = { ...mergedData[u], em: String(sd.expectedMove), emSource: 'straddle',
@@ -167,11 +187,11 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
     });
   } else {
     // The vol surface — ATM IV, IV rank, HV, term, skew, daily bars, VIX/VIX3M.
-    const vs = await pool(list, SCAN_CONCURRENCY, u => {
+    const vs = await pool(okList, SCAN_CONCURRENCY, u => {
       const spot = parseFloat(mergedData[u]?.price) || 0;
-      return cached(cache, 'vs:' + u, () => getJson(bridgeUrl + '/api/vol-surface?underlying=' + u
-        + (spot > 0 ? '&spot=' + spot : ''), 90000)).then(v => ({ u, v }));
-    });
+      return staged(onProgress, 1, u, () => cached(cache, 'vs:' + u, () => getJson(bridgeUrl + '/api/vol-surface?underlying=' + u
+        + (spot > 0 ? '&spot=' + spot : ''), 90000)), v => (!v ? true : v.error ? v.error : false)).then(v => ({ u, v }));
+    }, signal);
     vs.forEach(({ u, v }) => {
       if (!mergedData[u]) return;
       if (!v || v.error) { mergedData[u] = { ...mergedData[u], _volError: (v && v.error) || 'no answer from the bridge' }; return; }

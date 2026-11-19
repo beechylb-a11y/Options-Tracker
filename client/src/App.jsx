@@ -6,6 +6,7 @@ import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import GlassSurface from './components/GlassSurface';
 import VisionRail from './components/VisionRail';
+import { ScanHairline, ScanDoneToast, useScanBadge } from './components/ScanProgress';
 import { useGlassOn, useVisionOn } from './components/ThemeToggle';
 import Dashboard from './pages/Dashboard';
 import Trades from './pages/Trades';
@@ -73,6 +74,7 @@ export default function App() {
   const [refreshTick, setRefreshTick] = useState(0);
   const glassOn = useGlassOn();
   const visionOn = useVisionOn();
+  const scanBadge = useScanBadge();
 
   const [userEmail, setUserEmail] = useState('');
   const [authNotice, setAuthNotice] = useState('');
@@ -193,6 +195,8 @@ export default function App() {
   if (visionOn) {
     return (
       <div className="liquid-glass-backdrop vis-room">
+        <ScanHairline />
+        <ScanDoneToast onOpen={() => setTab('decision')} />
         <div className="vis-shell" data-testid="vision-shell">
           <VisionRail groups={NAV_GROUPS} tab={tab} onTab={setTab} onSignOut={handleLogout} userEmail={userEmail} />
           <main className="vis-main">
@@ -204,6 +208,7 @@ export default function App() {
               onGlobalRefresh={() => setRefreshTick(t => t + 1)}
               onLogin={handleLogout}
               title={PAGE_NAMES[tab]}
+              onOpenEngine={() => setTab('decision')}
             />
             {pages}
           </main>
@@ -214,6 +219,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex liquid-glass-backdrop">
+      <ScanHairline />
+      <ScanDoneToast onOpen={() => setTab('decision')} />
       {/* Sidebar — with Settings › Glass on it floats, 12 px in, as a glass panel. */}
       <GlassSurface as="aside" data-testid="sidebar"
         className={glassOn ? 'w-[220px] flex flex-col z-10' : 'w-[220px] bg-bg-card border-r border-bg-border flex flex-col fixed h-full z-10'}
@@ -242,6 +249,7 @@ export default function App() {
                   >
                     <Icon size={16} />
                     <span className="flex-1 text-left">{t.label}</span>
+                    {t.id === 'decision' && scanBadge && <span data-testid="sidebar-scan-badge" className="text-[11px] font-bold px-1.5 rounded-full text-white" style={{ background: '#3d82f0' }}>{scanBadge}</span>}
                     {t.key && <span className="text-[12px] text-text-faint mono">{t.key}</span>}
                   </button>
                 );
@@ -270,6 +278,7 @@ export default function App() {
           onAccountChange={setSelectedAccount}
           onGlobalRefresh={() => setRefreshTick(t => t + 1)}
           onLogin={handleLogout}
+          onOpenEngine={() => setTab('decision')}
         />
         {pages}
       </main>
