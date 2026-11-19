@@ -554,7 +554,9 @@ export function calc45DTE(inputs) {
   // it produces a contract count with the authority of arithmetic and the content of
   // nothing. So the engine declines to produce one, and the ticket says why. The
   // user types a size or there is no size. (Oct 2026.)
-  const kellyContracts = riskUndefined ? null : (setup === 'B Setup' ? halfC : fullC);
+  // Half Kelly for a B setup, and for any trade the backwardation rule lets through
+  // (playbook: "Backwardation — defined risk credit spreads only … reduce size").
+  const kellyContracts = riskUndefined ? null : (setup === 'B Setup' || termBiasEff === 'backwardation' ? halfC : fullC);
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
   const contracts = contractsOverride || kellyContracts || (riskUndefined ? 0 : 1);
@@ -625,7 +627,19 @@ export function calc45DTE(inputs) {
   const missingSize = win<=0||risk<=0||popFrac<=0;
   let hardBlocker = '';
   if (!hasVol) hardBlocker = 'Enter IV, IVR and HV';
-  else if (termBiasEff === 'backwardation') hardBlocker = 'Backwardation — avoid naked short premium';
+  else if (termBiasEff === 'backwardation') {
+    // Backwardation (20 Nov 2026): near-term IV above far — the front month is the
+    // expensive one and the curve says the market expects trouble soon. The playbook
+    // (Knowledgebase regime table) reads "Defined risk credit spreads only — avoid
+    // calendars, reduce size". This used to block EVERY 45DTE trade, an iron condor
+    // included, under a message that only named naked premium.
+    //   naked short premium (strangle, short put, unprotected ratio, jade lizard's put) → block
+    //   calendars / diagonals (long the cheap back month, short the rich front)          → block
+    //   everything defined-risk                                                          → trade, half Kelly, warned
+    if (riskUndefined || legStrat === 'Jade lizard') hardBlocker = 'Backwardation — no naked short premium; use a defined-risk structure';
+    else if (legStrat === 'Calendar spread' || legStrat === 'Diagonal spread') hardBlocker = 'Backwardation — no calendars or diagonals while the front month is the rich one';
+    else warnings.push('Backwardation — near-term IV above far: defined risk only, sized at half Kelly');
+  }
 
   if (hasGreeks && tEff > 0 && tEff < 0.005) blockers.push('Theta efficiency too low');
   if (riskUndefined) {

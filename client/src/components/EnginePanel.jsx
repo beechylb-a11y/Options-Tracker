@@ -1772,7 +1772,19 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const priceAct = { label: '⚡ Price from TWS', onClick: () => handleFetchGreeks(), busy: fetchingGreeks, busyLabel: 'Pricing…', primary: true, testid: 'need-price' };
   const canPrice = !!(r && r.legs && r.legs.length);
   const needs = [];
-  if (hasBlocker) needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker, actions: [autoFillAct, openInputsAct] });
+  // A market-condition blocker (backwardation) can't be pulled away: say so, and offer
+  // the defined-risk structures the engine rates instead of "Pull from TWS" (20 Nov 2026).
+  const isBackw = hasBlocker && /^Backwardation/.test(r.hardBlocker);
+  const BACKW_NO = ['Calendar spread', 'Diagonal spread', 'Short strangle', 'Short put', 'Jade lizard', 'Ratio spread'];
+  const backwActs = () => (r.ratings || [])
+    .filter(x => !BACKW_NO.includes(x.name) && x.rating !== 'POOR' && x.name !== effectiveStrat)
+    .slice(0, 2).map(x => ({ label: `Switch to ${x.name}`, onClick: () => switchStructure(x.name), primary: true }));
+  if (isBackw) {
+    const [bt] = splitMsg(r.hardBlocker);
+    needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker,
+      detail: `${bt} is a market reading — the front month's IV is above the back month's — so pulling again won't clear it. Defined-risk spreads still trade, at half Kelly; naked premium and calendars wait for the curve to normalise.`,
+      actions: backwActs() });
+  } else if (hasBlocker) needs.push({ key: 'hard', tone: 'bad', title: r.hardBlocker, actions: [autoFillAct, openInputsAct] });
   // Short gamma costing more than the decay pays (Oct 2026): say what it means, what
   // does and does not help, and offer the long-gamma structures the engine rates.
   const gf = is0 ? r.gammaFix : null;
