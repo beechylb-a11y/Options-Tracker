@@ -106,7 +106,9 @@ export function movedLegs(cl, net, from, right, to, spot) {
 export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo, hi, sigmaNear, nearDte, closeDay,
   todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, targets, stop,
   closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '', scopeNote = '',
-  onStrikeChange, strikeSnap, ghost }) {
+  onStrikeChange, strikeSnap, ghost, hero = false }) {
+  // hero (Vision ticket, Nov 2026): the P&L at the moment shown leads, big, with Now /
+  // close / Expiry as one segmented pill, and four large facts under the chart.
   // onStrikeChange(legIdx, strike): strike blocks drag (snapping to strikeSnap: { P, C, step })
   //   and arrow keys step them; the curves preview while dragging, the engine re-runs on drop.
   // ghost: { cl, net, label } — another structure drawn dashed for comparison.
@@ -251,13 +253,36 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
     : nearDte > closeDte ? `${closeDte}-DTE close · ${fmtExpiry(addDaysYmd(todayYmd, closeDay))}` : `Close now (inside ${closeDte} DTE)`;
   const sliderStep = intraday ? INTRADAY_DAYS_PER_HOUR / 12 : 1;   // 5 minutes / 1 day
 
+  const heroWhen = intraday
+    ? (d === 0 ? 'now' : d >= nearDte ? 'expiry' : isClose ? `the ${closeEt || 'exit'} close` : `${etAt(d, nearDte)} ET`)
+    : (d === 0 ? 'today' : d >= nearDte ? (isTimeSpread ? 'near expiry' : 'expiry') : isClose ? `the ${closeDte}-DTE close` : fmtExpiry(dateYmd));
+  const seg = on => ({ border: 'none', borderRadius: 999, padding: '8px 16px', font: 'inherit', fontSize: 14, fontWeight: 500, cursor: 'pointer',
+    background: on ? 'rgba(255,255,255,0.26)' : 'transparent', color: on ? '#fff' : 'rgba(255,255,255,0.84)', boxShadow: on ? 'inset 0 1px 0 rgba(255,255,255,0.35)' : 'none' });
   return (
     <div data-testid="payoff-time-chart" data-chart="payoff">
+      {hero && (
+        <div data-testid="payoff-hero" style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
+          <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 500, color: 'rgba(255,255,255,0.8)' }}>P&amp;L at {heroWhen}</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginTop: 2 }}>
+              <span data-testid="payoff-hero-pnl" className="num" style={{ fontSize: 54, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: atPx >= 0 ? '#ffffff' : '#ffa39a' }}>{signed(atPx)}</span>
+              <span className="num" style={{ fontSize: 15, color: 'rgba(255,255,255,0.86)' }}>at {livePx ? 'live' : 'spot'} {px2(px)} · max {signed(sel.maxProfit)}</span>
+            </div>
+          </div>
+          <div role="group" aria-label="When" style={{ display: 'inline-flex', gap: 2, padding: 4, borderRadius: 999, background: 'rgba(0,0,0,0.16)', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.18)' }}>
+            <button type="button" aria-pressed={d === 0} style={seg(d === 0)} onClick={() => setDay(0)}>{intraday ? 'Now' : 'Today'}</button>
+            <button type="button" aria-pressed={isClose} style={seg(isClose)} onClick={() => setDay(closeDay)}>{intraday ? (closeEt || 'Exit') : `${closeDte} DTE`}</button>
+            <button type="button" aria-pressed={d >= nearDte} style={seg(d >= nearDte)} onClick={() => setDay(nearDte)}>Expiry</button>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+        {!hero && <>
         <button type="button" style={btn(d === 0)} onClick={() => setDay(0)}>{intraday ? 'Now' : 'Today'}</button>
         <button type="button" style={btn(isClose)} onClick={() => setDay(closeDay)}>{closeLabel}</button>
         <button type="button" style={btn(d >= nearDte)} onClick={() => setDay(nearDte)}>
           {intraday ? 'Expiry 16:00' : `${isTimeSpread ? 'Near expiry' : 'Expiry'} · ${fmtExpiry(addDaysYmd(todayYmd, nearDte))}`}</button>
+        </>}
         {Array.isArray(closeOptions) && onCloseDte && (
           <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 12, color: C.soft }} data-testid="close-dte-toggle">
             Close at
@@ -437,6 +462,21 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
         {onStrikeChange && !drag && <span style={{ color: C.dim }}>drag a strike to move it</span>}
       </div>
 
+      {hero ? (
+        <div data-testid="payoff-facts" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', textAlign: 'center', gap: 8, margin: '6px 0 12px' }}>
+          {[
+            [bes.length ? (bes.length > 1 ? bes.map(b => Math.round(b).toLocaleString()).join(' · ') : px2(bes[0])) : 'none', bes.length > 1 ? 'Break-evens' : 'Break-even', '#ffffff'],
+            [sigPts > 0 ? `±${Math.round(sigPts)} pts` : '—', `1σ to ${intraday ? (d > 0 ? etAt(d, nearDte) : 'now') : (d > 0 ? fmtExpiry(dateYmd) : 'today')}`, '#ffffff'],
+            [pop == null ? '—' : Math.round(pop * 100) + '%', 'Win chance', '#7ee2a0'],
+            [money(sel.maxLoss), 'Max loss', '#ffa39a'],
+          ].map(([v, k, col]) => (
+            <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+              <span className="num" style={{ fontSize: bes.length > 1 && k.startsWith('Break') ? 17 : 22, fontWeight: 600, color: col, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v}</span>
+              <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{k}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div data-testid="payoff-facts" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', borderTop: `1px solid ${C.line2}`, borderBottom: `1px solid ${C.line2}`, marginBottom: 10 }}>
         <Fact k={`P&L ${intraday ? 'at ' + label : 'on ' + label}`} v={signed(atPx)} c={atPx >= 0 ? C.green : C.red} sub={`at ${livePx ? 'live' : 'spot'} ${px2(px)}`} />
         {d > 0 && <Fact k={intraday ? 'P&L now' : 'P&L today'} v={signed(nowPx)} c={nowPx >= 0 ? C.green : C.red} sub="mark-to-model" />}
@@ -445,6 +485,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
         <Fact k="Max profit" v={money(sel.maxProfit)} c={C.green} sub="in this window" />
         <Fact k="Max loss" v={money(sel.maxLoss)} c={C.red} sub="in this window" />
       </div>
+      )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1" style={{ fontSize: 13 }}>
         <Row k={`${label} · ${fmtExpiry(dateYmd)}`} v={intraday ? (d >= nearDte ? 'expiry' : `${Math.max(0, hoursOf(left)).toFixed(1)} h to the bell`) : (d >= nearDte ? 'expiry' : `${Math.round(left)} DTE left`)} />

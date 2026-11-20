@@ -23,6 +23,8 @@ import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffChart, { INTRADAY_DAYS_PER_HOUR } from './PayoffChart';
 import GlassSurface from './GlassSurface';
 import MarketCard from './MarketCard';
+import { VCard, VisionChoices, LegTiles, ComboCard, WhatIfCard, NeedsCard } from './VisionTicket';
+import { useVisionOn } from './ThemeToggle';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
 import { livePrice, yearsToExpiry } from '../engine/livePrice.js';
@@ -634,6 +636,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     return () => clearInterval(t);
   }, []);
   const [showWhatIf, setShowWhatIf] = useState(false);
+  const visionOn = useVisionOn();
   const [showRiskBudget, setShowRiskBudget] = useState(false);
   // Exit plan from the BUY ticket's profit-taker ladder; written into the notes and
   // saved under the log timestamp so the Sell ticket opens with it.
@@ -3426,41 +3429,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const esPriorCloseLabel = esBars && esMeta.prior ? `ES ${esMeta.prior}` : `ES ${_fmtDM(_esPriorDate)} 16:00`;
   const esPreOpenLabel = esBars && esMeta.pre ? `ES ${esMeta.pre}` : `ES ${_fmtDM(_esPreDate)} 08:45`;
 
-  return (
-    <div className="space-y-4" ref={panelRef}>
-      {/* Condensed ticket — only while the full block is scrolled past. display:none
-          when idle so it takes no space and creates no gap in the space-y stack. */}
-      <div style={{position:'sticky',top:48,zIndex:10,display:ticketStuck?'block':'none',
-        margin:'0 -4px',padding:'8px 12px',borderRadius:10,
-        background:'color-mix(in srgb, var(--c-0d1117) 94%, transparent)',backdropFilter:'blur(8px)',
-        border:`1px solid ${dcBorder}`,boxShadow:'0 6px 18px rgba(0,0,0,0.45)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'nowrap',
-          overflowX:'auto',fontSize:13,whiteSpace:'nowrap'}}>
-          <span style={{fontWeight:700,color:dcColor}}>
-            {secBag.underlying} · {effectiveStrat} · {r.contracts}x
-          </span>
-          <span className="mono" style={{color:'var(--c-a8b2be)'}}>
-            {r.legs?.map(l => l.strike).join(' / ')}
-          </span>
-          <span style={{marginLeft:'auto',display:'flex',gap:14,alignItems:'baseline'}}>
-            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>EDGE </span>
-              <span style={{color:dcColor,fontWeight:700}}>{compositeScore}</span></span>
-            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>EV </span>
-              <span style={{color:r.ev>0?'var(--c-3fb950)':'var(--c-f85149)',fontWeight:700}}>
-                ${Math.round(r.ev||0)}</span></span>
-            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>KELLY </span>
-              <span style={{fontWeight:700}}>${Math.round(r.kellyDollar||0)}</span></span>
-            {r.tradeConfidence != null && (
-              <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>CONF </span>
-                <span style={{color:dcColor,fontWeight:700}}>{r.tradeConfidence}</span></span>
-            )}
-          </span>
-        </div>
-      </div>
-      {/* ── 1 · VERDICT BAND (Oct 2026 redesign) ──
-          One verdict, one score, one sentence of why. Everything that used to sit
-          here as tiles now lives on the trade-choice cards or in the evidence
-          drawer below, so the band only ever answers "do I trade this?". */}
+  // ── Vision board (Nov 2026) ── the top of the ticket as three columns; see VisionTicket.jsx.
+  const vGrid = visionOn && !r.hardBlocker && Array.isArray(r.legs) && r.legs.length > 0;
+  // ── 1 · VERDICT BAND (Oct 2026 redesign) ── one verdict, one score, one sentence of why.
+  // Everything that used to sit here as tiles lives on the trade-choice cards or in the
+  // evidence drawer below, so the band only ever answers "do I trade this?".
+  const verdictBand = (
       <GlassSurface ref={decisionRef} data-testid="verdict-band"
         style={{background:vTone.bg,border:`1px solid ${vTone.border}`,borderRadius:14,padding:'20px 24px'}}
         glassStyle={{background:`linear-gradient(180deg, color-mix(in srgb, ${vTone.bg} 55%, transparent), color-mix(in srgb, ${vTone.bg} 35%, transparent))`,borderRadius:22}}>
@@ -3603,11 +3577,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           </div>
         )}
 
-            {!mapPay && renderSideStack()}
+            {(!mapPay || vGrid) && renderSideStack()}
           </div>
 
           {/* Right: price map — where price can go, against this structure */}
-          {mapPay && (
+          {mapPay && !vGrid && (
             <div style={{flex:'1.25 1 460px',minWidth:300,display:'flex',flexDirection:'column',gap:4}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8,flexWrap:'wrap'}}>
                 <span style={EX_LBL}>Where price can go</span>
@@ -3628,22 +3602,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           )}
         </div>
       </GlassSurface>
-
-      {/* ── 2 · NEEDS YOU ── only what a person has to do, each with its own control.
-          Nothing renders here when the Bridge has everything covered. */}
-      {(needs.length > 0 || showLiveTop) && (
-        <section data-testid="needs-you" style={{display:'flex',flexDirection:'column',gap:8}}>
-          <div style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:needs.length ? 'var(--c-d29922)' : 'var(--c-58a6ff)'}}>
-            {needs.length ? `Needs you · ${needs.length}` : 'Live price'}
-          </div>
-          {/* Live price (Nov 2026): the numbers and the button up here, not in Inputs. */}
-          {showLiveTop && (
-            <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={liveStale}
-              vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
-              fetching={fetchingGreeks} canFetch={canPrice} onFetch={() => handleFetchGreeks()}
-              onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
-          )}
-          {needs.map((n, idx) => (
+  );
+  function renderNeedsList() {
+    return (needs.map((n, idx) => (
             <div key={n.key} data-testid={'need-' + n.key} data-resolved={n.resolved ? '1' : '0'}
               onFocus={() => setNeedsFocus(n.key)}
               onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setNeedsFocus(k => (k === n.key ? null : k)); }}
@@ -3693,26 +3654,148 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     color:a.primary?'var(--c-58a6ff)':'var(--c-e6edf3)',opacity:a.busy?0.6:1}}>{a.busy ? (a.busyLabel || 'Working…') : a.label}</button>
               ))}
             </div>
-          ))}
+          )));
+  }
+  function payProps45() {
+    return { cl: payCurve.cl, net: payCurve.net, netSource: payCurve.netSource, spot: payCurve.spot,
+      lo: payCurve.lo, hi: payCurve.hi, sigmaNear: payCurve.sigmaNear, nearDte: payCurve.nearDte,
+      closeDay: payCurve.closeDay, todayYmd, isTimeSpread, underlying: i45.underlying, divYield: payCurve.divYield,
+      closeDte: payCurve.closeDte, target: payCurve.target, closeOptions: payCurve.closeOptions, closeLeg: payCurve.closeLeg,
+      onCloseDte: setTsClose, exitSim, onStrikeChange: (i, k) => commitStrike(i, k), strikeSnap, ghost: ghostCurve };
+  }
+  function payProps0() {
+    return { intraday: true, cl: payCurve0.cl, net: payCurve0.net, netSource: payCurve0.netSource, spot: payCurve0.spot,
+      lo: payCurve0.lo, hi: payCurve0.hi, sigmaNear: payCurve0.sigmaNear, nearDte: payCurve0.nearDte,
+      closeDay: payCurve0.closeDay, closeEt: payCurve0.closeEt, todayYmd, underlying: i0.underlying,
+      divYield: payCurve0.divYield, targets: flyTargets, onStrikeChange: (i, k) => commitStrike(i, k), strikeSnap, ghost: ghostCurve };
+  }
+  function renderVisionGrid() {
+    const goToOrder = () => { const el = document.querySelector('[data-testid="execution"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const entry = Math.abs(signedNet(ticketNet, cashType));
+    const isCredit = cashType === 'credit' || (cashType !== 'debit' && signedNet(ticketNet, cashType) > 0);
+    const firstNeed = needs.find(n => !n.resolved) || needs[0];
+    return (
+      <div className="vis-eng-grid" data-testid="vis-eng-grid">
+        <div className="vis-eng-col vis-eng-left">{verdictBand}</div>
+        <div className="vis-eng-col">
+          <VCard testid="vis-payoff">
+            {is0 && flyTastyOk && (
+              <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)} aria-pressed={tastyFly}
+                title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                style={{ alignSelf: 'flex-start', padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: 'none',
+                  background: tastyFly ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.12)', color: '#fff' }}>
+                {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
+              </button>
+            )}
+            {is0 ? (payCurve0 ? <PayoffChart hero {...payProps0()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>The payoff needs the underlying price and VIX1D.</span>)
+              : (payCurve ? <PayoffChart hero {...payProps45()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.</span>)}
+          </VCard>
+          <div className="vis-eng-pair">
+            <ComboCard underlying={secBag.underlying} legs={stageInfo.legs || null} whyNot={stageInfo.why} entry={entry} isCredit={isCredit} onGoToOrder={goToOrder} />
+            <WhatIfCard underlying={secBag.underlying} legs={stageInfo.legs || null} lots={r.contracts} entry={entry} isCredit={isCredit} />
+          </div>
+          {mapPay && (
+            <VCard testid="vis-price-map">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)' }}>Where price can go</span>
+                {cushion && <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.86)' }}>
+                  Cushion{cushion.below != null ? ` below ${cushion.below.toFixed(2)} EM` : ''}{cushion.below != null && cushion.above != null ? ' ·' : ''}{cushion.above != null ? ` above ${cushion.above.toFixed(2)} EM` : ''}</span>}
+              </div>
+              <PriceMap pay={mapPay} legs={r.legs} price={fv(secBag, 'price')} em={mapEM}
+                emLabel={is0 ? 'Expected move left' : '1 SD to expiry'}
+                high={is0 ? fv(i0, 'high') : 0} low={is0 ? fv(i0, 'low') : 0}
+                vwap={is0 ? scaleVWAP(i0.vwap5) : 0} underlying={secBag.underlying} />
+            </VCard>
+          )}
+        </div>
+        <div className="vis-eng-col">
+          {choiceList.length > 0 && (
+            <VisionChoices choices={choiceList} total={(r.ratings || []).length}
+              onHover={setGhostHover} onAll={() => setDrawerTab('structures')}
+              onSwitch={name => { setGhostPin(null); setGhostHover(null); switchStructure(name); }} />
+          )}
+          {stageInfo.legs && stageInfo.legs.length > 0 && <LegTiles underlying={secBag.underlying} legs={stageInfo.legs} />}
+          {(needs.length > 0 || showLiveTop) && (
+            <NeedsCard count={needs.filter(n => !n.resolved).length} first={firstNeed ? firstNeed.title : 'Fill the net, win, risk and POP from live TWS quotes.'}
+              tone={firstNeed ? firstNeed.tone : null} defaultOpen={needs.some(n => n.sizing || n.net)}>
+              <div data-testid="needs-you" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {showLiveTop && (
+                  <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={liveStale}
+                    vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
+                    fetching={fetchingGreeks} canFetch={canPrice} onFetch={() => handleFetchGreeks()}
+                    onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
+                )}
+                {renderNeedsList()}
+              </div>
+            </NeedsCard>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" ref={panelRef}>
+      {/* Condensed ticket — only while the full block is scrolled past. display:none
+          when idle so it takes no space and creates no gap in the space-y stack. */}
+      <div style={{position:'sticky',top:48,zIndex:10,display:ticketStuck?'block':'none',
+        margin:'0 -4px',padding:'8px 12px',borderRadius:10,
+        background:'color-mix(in srgb, var(--c-0d1117) 94%, transparent)',backdropFilter:'blur(8px)',
+        border:`1px solid ${dcBorder}`,boxShadow:'0 6px 18px rgba(0,0,0,0.45)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'nowrap',
+          overflowX:'auto',fontSize:13,whiteSpace:'nowrap'}}>
+          <span style={{fontWeight:700,color:dcColor}}>
+            {secBag.underlying} · {effectiveStrat} · {r.contracts}x
+          </span>
+          <span className="mono" style={{color:'var(--c-a8b2be)'}}>
+            {r.legs?.map(l => l.strike).join(' / ')}
+          </span>
+          <span style={{marginLeft:'auto',display:'flex',gap:14,alignItems:'baseline'}}>
+            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>EDGE </span>
+              <span style={{color:dcColor,fontWeight:700}}>{compositeScore}</span></span>
+            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>EV </span>
+              <span style={{color:r.ev>0?'var(--c-3fb950)':'var(--c-f85149)',fontWeight:700}}>
+                ${Math.round(r.ev||0)}</span></span>
+            <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>KELLY </span>
+              <span style={{fontWeight:700}}>${Math.round(r.kellyDollar||0)}</span></span>
+            {r.tradeConfidence != null && (
+              <span className="mono"><span style={{color:'var(--c-a8b2be)',fontSize:11}}>CONF </span>
+                <span style={{color:dcColor,fontWeight:700}}>{r.tradeConfidence}</span></span>
+            )}
+          </span>
+        </div>
+      </div>
+      {vGrid ? renderVisionGrid() : verdictBand}
+
+      {/* ── 2 · NEEDS YOU ── only what a person has to do, each with its own control.
+          Nothing renders here when the Bridge has everything covered. */}
+      {!vGrid && (needs.length > 0 || showLiveTop) && (
+        <section data-testid="needs-you" style={{display:'flex',flexDirection:'column',gap:8}}>
+          <div style={{fontSize:12,fontWeight:600,letterSpacing:'0.08em',textTransform:'uppercase',color:needs.length ? 'var(--c-d29922)' : 'var(--c-58a6ff)'}}>
+            {needs.length ? `Needs you · ${needs.length}` : 'Live price'}
+          </div>
+          {/* Live price (Nov 2026): the numbers and the button up here, not in Inputs. */}
+          {showLiveTop && (
+            <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={liveStale}
+              vals={{ netCreditDebit: secBag.netCreditDebit, win: secBag.win, risk: secBag.risk, pop: secBag.pop }}
+              fetching={fetchingGreeks} canFetch={canPrice} onFetch={() => handleFetchGreeks()}
+              onNet={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
+          )}
+          {renderNeedsList()}
         </section>
       )}
 
       {/* ── 1b · PAYOFF + MARKET (Nov 2026 cockpit) ── the payoff and the trade's live
           TWS market side by side, right under the verdict, so the decision, the picture
           and the price are on one screen. Detail stays in the tabs below. */}
-      {!r.hardBlocker && Array.isArray(r.legs) && r.legs.length > 0 && (
+      {!vGrid && !r.hardBlocker && Array.isArray(r.legs) && r.legs.length > 0 && (
         <section data-testid="cockpit" style={{display:'flex',flexWrap:'wrap',gap:16,alignItems:'flex-start'}}>
           <div style={{flex:'999 1 560px',minWidth:0}}>
             {/* Payoff over time — 45DTE: today / 21-DTE close / expiry, calendars included */}
             {!is0 && payCurve && (
               <div className="card">
                 <SectionLabel white info="Position P&L on any date up to expiry, TWS performance-graph style. Opens on the 21-DTE hard close: that is the curve a 45DTE trade realises, since it never reaches expiry. Solid = chosen date, with a band for IV moving ±N vol points. Dotted = today. Dashed = expiry (near expiry for a calendar or diagonal). Each leg is priced with Black-Scholes at its own expiry and IV — Fetch Greeks first for the exact leg IVs. Drag the slider or hover the chart for P&L at a price.">Payoff over time</SectionLabel>
-                <PayoffChart cl={payCurve.cl} net={payCurve.net} netSource={payCurve.netSource} spot={payCurve.spot}
-                  lo={payCurve.lo} hi={payCurve.hi} sigmaNear={payCurve.sigmaNear} nearDte={payCurve.nearDte}
-                  closeDay={payCurve.closeDay} todayYmd={todayYmd} isTimeSpread={isTimeSpread}
-                  underlying={i45.underlying} divYield={payCurve.divYield} closeDte={payCurve.closeDte} target={payCurve.target}
-                  closeOptions={payCurve.closeOptions} closeLeg={payCurve.closeLeg} onCloseDte={setTsClose} exitSim={exitSim}
-                  onStrikeChange={(i, k) => commitStrike(i, k)} strikeSnap={strikeSnap} ghost={ghostCurve} />
+                <PayoffChart {...payProps45()} />
               </div>
             )}
             {!is0 && !payCurve && Array.isArray(r.legs) && r.legs.length > 0 && (
@@ -3734,11 +3817,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                     </button>
                   </div>
                 )}
-                <PayoffChart intraday cl={payCurve0.cl} net={payCurve0.net} netSource={payCurve0.netSource} spot={payCurve0.spot}
-                  lo={payCurve0.lo} hi={payCurve0.hi} sigmaNear={payCurve0.sigmaNear} nearDte={payCurve0.nearDte}
-                  closeDay={payCurve0.closeDay} closeEt={payCurve0.closeEt} todayYmd={todayYmd} underlying={i0.underlying}
-                  divYield={payCurve0.divYield} targets={flyTargets}
-                  onStrikeChange={(i, k) => commitStrike(i, k)} strikeSnap={strikeSnap} ghost={ghostCurve} />
+                <PayoffChart {...payProps0()} />
                 <div className="grid grid-cols-2 gap-1.5 mt-3">
                   <KV label="Max profit at expiry" value={'$' + (r.payoff.maxProfit?.toFixed(0)||0)} cls="text-green"/>
                   <KV label="Max loss at expiry" value={'$' + (r.payoff.maxLoss?.toFixed(0)||0)} cls="text-red"/>
@@ -3769,7 +3848,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           model's fair value (not this ticket's fill), so their payoff and range
           describe THEIR strikes; EV and size appear once a structure is selected
           and sized, because they depend on your broker's POP and fill. */}
-      {choiceList.length > 0 && (
+      {!vGrid && choiceList.length > 0 && (
         <section data-testid="choices" style={{display:'flex',flexDirection:'column',gap:10}}>
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
             <span style={{fontSize:17,fontWeight:600,color:'var(--c-ffffff)'}}>Your choices

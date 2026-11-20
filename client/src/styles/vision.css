@@ -783,3 +783,32 @@
 :root[data-vision="on"]:not(#_) .vd-target { display: flex; flex-direction: column; }
 :root[data-vision="on"]:not(#_) .vd-pair .vd-h { font-size: 20px; }
 :root[data-vision="on"]:not(#_) .vd-pill-btn { white-space: nowrap; }
+
+/* ── Decision Engine ticket as one board (Nov 2026) ── verdict | payoff + market | choices,
+   legs, needs. Rendered only in Vision (EnginePanel's vGrid), so these rules are too. */
+:root[data-vision="on"]:not(#_) .vis-eng-grid { display: grid; grid-template-columns: minmax(340px, 0.95fr) minmax(0, 1.55fr) minmax(300px, 1fr); gap: 22px; align-items: start; }
+:root[data-vision="on"]:not(#_) .vis-eng-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+:root[data-vision="on"]:not(#_) .vis-eng-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+:root[data-vision="on"]:not(#_) .vis-eng-card { padding: 22px 24px; border-radius: 30px; color: #fff; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-band"] { padding: 22px 22px !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-band"] > div { flex-direction: column; flex-wrap: nowrap !important; align-items: stretch !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-band"] > div > div { flex: 1 1 auto !important; min-width: 0 !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="strike-line"] { flex-wrap: wrap !important; }
+/* In the narrow left column: title first, then the edge ring, large and centred, as the board draws it. */
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-band"] > div > div > div:first-child { flex-direction: column-reverse; align-items: stretch !important; gap: 14px !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="edge-ring"] { align-self: center; width: 176px !important; height: 176px !important; margin: 6px 0 4px; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="edge-ring"] svg { width: 176px; height: 176px; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="edge-ring"] .mono { font-size: 50px !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-title"] { font-family: inherit !important; font-size: 26px !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="verdict-title"] > span { white-space: normal !important; }
+@media (max-width: 1279px) {
+  :root[data-vision="on"]:not(#_) .vis-eng-grid { grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr); }
+  :root[data-vision="on"]:not(#_) .vis-eng-grid > .vis-eng-col:last-child { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+}
+@media (max-width: 899px) {
+  :root[data-vision="on"]:not(#_) .vis-eng-grid { grid-template-columns: minmax(0, 1fr); }
+  :root[data-vision="on"]:not(#_) .vis-eng-pair { grid-template-columns: minmax(0, 1fr); }
+}
+:root[data-vision="on"]:not(#_) [data-testid="vis-combo"] [data-testid="live-combo"] > div:first-child span { white-space: nowrap; }
+:root[data-vision="on"]:not(#_) [data-testid="vis-combo"] [data-testid="live-combo"] > div:first-child span:last-child { font-size: 14.5px !important; }
+:root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="strike-line"] > :not([aria-label^="Strike placement"]) { min-width: 120px; }
