@@ -60,6 +60,9 @@ import RollOrderPanel from '../components/RollOrderPanel';
 
 describe('roll order panel', () => {
   beforeEach(() => {
+    // The legs expire 20 Nov 2026; pin the clock before that, or the panel (rightly)
+    // stops treating them as open once the date passes.
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-17T16:00:00Z'));
     localStorage.setItem('bridgeUrl', 'http://bridge');
     const MID = { '805C': [0.30, 0.34], '815C': [0.10, 0.14], '755C': [2.60, 2.70], '765C': [0.45, 0.51] };
     global.fetch = vi.fn(url => {
@@ -73,7 +76,7 @@ describe('roll order panel', () => {
       return Promise.resolve({ ok: true, text: () => Promise.resolve(JSON.stringify(body)) });
     });
   });
-  afterEach(() => { cleanup(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); vi.useRealTimers(); });
 
   it('finds the legs in TWS, prices the roll and fills the record fields', async () => {
     const onUse = vi.fn();

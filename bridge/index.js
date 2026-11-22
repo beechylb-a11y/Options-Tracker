@@ -16,6 +16,7 @@ import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
+import { execRecord, mergeJournal, withCommission, pruneJournal, journalFills } from './execJournal.js';
 import { greeksFromQuote, parityspot, nyRth, DAILY_GRID } from './bsModel.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
 import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, markOf, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
@@ -167,11 +168,16 @@ function connectTWS() {
         ib.reqMarketDataType(2); // 1=live 2=frozen 3=delayed 4=delayed-frozen
         resolve();
         liveOnConnect();
+        setTimeout(() => { sweepExecutions().catch(() => {}); }, 8000);
       });
 
       // Live fills of this client's orders (the staged ones) — quote the market the
       // moment TWS reports them. reqId −1 marks an unsolicited report.
       ib.on(EventName.execDetails, onLiveExec);
+      ib.on(EventName.commissionReport, r => {
+        if (!r || !r.execId || !execJournal[r.execId]) return;
+        execJournal = withCommission(execJournal, r); writeJson(EXEC_FILE, execJournal);
+      });
 
       ib.on(EventName.disconnected, () => {
         console.log('[BRIDGE] Disconnected from IBKR');
@@ -2021,6 +2027,45 @@ const writeJson = (f, o) => { try { fs.writeFileSync(f, JSON.stringify(o, null, 
 let stagedReg = prune(readJson(STAGED_FILE), Date.now(), 10, 'stagedAt');
 let fillQuotes = prune(readJson(QUOTES_FILE), Date.now(), 30, 'at');
 
+// Every execution the bridge sees, kept 120 days (see execJournal.js): TWS forgets
+// yesterday's fills, the close ticket still needs them.
+const EXEC_FILE = path.join(HERE, '.executions.json');
+let execJournal = pruneJournal(readJson(EXEC_FILE), Date.now());
+function journalAdd(execs, comms = {}) {
+  const { journal, added } = mergeJournal(execJournal, execs, comms);
+  execJournal = journal;
+  if (added || execs.length) writeJson(EXEC_FILE, execJournal);
+  return added;
+}
+// Whatever TWS holds right now (today, or up to 7 days with its Trade Log set so),
+// into the journal. On connect and every 15 minutes while connected.
+let sweepBusy = false;
+function sweepExecutions() {
+  if (sweepBusy || !connected || !ib) return Promise.resolve(0);
+  sweepBusy = true;
+  const reqId = nextReqId++;
+  const got = [], comms = {};
+  return new Promise(resolve => {
+    const done = () => {
+      ib.removeListener(EventName.execDetails, onExec); ib.removeListener(EventName.execDetailsEnd, onEnd);
+      setTimeout(() => {
+        ib.removeListener(EventName.commissionReport, onComm);
+        const added = journalAdd(got, comms);
+        if (added) console.log(`[BRIDGE] execution journal: +${added} (${Object.keys(execJournal).length} kept)`);
+        sweepBusy = false; resolve(added);
+      }, 1000);
+    };
+    const t = setTimeout(done, 10000);
+    function onExec(rId, contract, execution) { if (rId === reqId) got.push(execRecord(contract, execution)); }
+    function onComm(r) { if (r && r.execId) comms[r.execId] = { commission: r.commission, realizedPnl: r.realizedPNL }; }
+    function onEnd(rId) { if (rId === reqId) { clearTimeout(t); done(); } }
+    ib.on(EventName.execDetails, onExec); ib.on(EventName.execDetailsEnd, onEnd); ib.on(EventName.commissionReport, onComm);
+    try { ib.reqExecutions(reqId, { clientId: 0, acctCode: '', time: '', symbol: '', secType: '', exchange: '', side: '' }); }
+    catch (e) { clearTimeout(t); done(); }
+  });
+}
+setInterval(() => { sweepExecutions().catch(() => {}); }, 15 * 60 * 1000);
+
 // Leg quotes by conId → comboMidOf. bid 0 is a real quote on a far wing (getSnapshot
 // drops zero ticks), so a leg with an ask and no bid reads bid 0.
 async function quoteLegs(legs, lots) {
@@ -2037,6 +2082,7 @@ async function quoteLegs(legs, lots) {
 const pendingFills = {};
 function onLiveExec(reqId, contract, execution) {
   try {
+    if (reqId === -1 && contract && execution && execution.execId) journalAdd([execRecord(contract, execution)]);
     if (reqId !== -1 || !contract || contract.secType !== 'OPT' || !execution) return;
     const stem = execStem(execution.execId);
     if (fillQuotes[stem]) return;
@@ -2299,29 +2345,7 @@ app.get('/api/executions', async (req, res) => {
 
       function onExec(rId, contract, execution) {
         if (rId !== reqId) return;
-        executions.push({
-          execId: execution.execId,
-          time: execution.time,
-          account: execution.acctNumber,
-          symbol: contract.symbol,
-          secType: contract.secType,
-          exchange: contract.exchange,
-          side: execution.side, // BOT or SLD
-          qty: execution.shares || execution.filledQuantity,
-          price: execution.price,
-          avgPrice: execution.avgPrice,
-          orderId: execution.orderId,
-          // Same on every leg of one order whoever placed it. orderId is 0 for an
-          // order entered in TWS by hand, so the app groups combo legs on this.
-          permId: execution.permId || 0,
-          orderRef: execution.orderRef || '',
-          // Option details
-          strike: contract.strike || 0,
-          right: contract.right || '', // C or P
-          expiry: contract.lastTradeDateOrContractMonth || '',
-          multiplier: contract.multiplier || '100',
-          realizedPnl: execution.realizedPNL || 0
-        });
+        executions.push(execRecord(contract, execution));
       }
 
       function onComm(report) {
@@ -2367,6 +2391,17 @@ app.get('/api/executions', async (req, res) => {
       ib.reqExecutions(reqId, filter);
     });
 
+    // Keep them (TWS forgets them tomorrow), then add what the journal holds that
+    // TWS no longer does: ?all=1 → the last 120 days, ?days=N → the last N days.
+    journalAdd(executions, commissions);
+    const wantDays = req.query.days ? Math.max(1, Math.min(120, parseInt(req.query.days, 10) || 0)) : req.query.all ? 120 : 0;
+    if (wantDays) {
+      const d = new Date(Date.now() - wantDays * 864e5);
+      const sinceYmd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+      const older = journalFills(execJournal, { sinceYmd, exclude: new Set(executions.map(e => e.execId)) });
+      for (const e of older) { executions.push(e); commissions[e.execId] = { commission: e.commission, realizedPnl: e.realizedPnl }; }
+    }
+
     // Merge commissions with executions
     const merged = executions.map(e => ({
       ...e,
@@ -2394,6 +2429,7 @@ app.get('/api/executions', async (req, res) => {
       fills: merged,
       orders: Object.values(orderGroups),
       count: merged.length,
+      fromJournal: merged.filter(e => e.source === 'journal').length,
       timestamp: new Date().toISOString()
     });
   } catch (err) {

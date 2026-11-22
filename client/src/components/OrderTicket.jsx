@@ -127,6 +127,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   // IWM was charged $41.60 by the estimate and $31.66 by IBKR.
   const [entryFeeLot, setEntryFeeLot] = useState(null);   // $ per lot, from recorded fills
   const [twsClose, setTwsClose] = useState(null);          // closingFills() result
+  const [twsGone, setTwsGone] = useState(false);           // TWS holds none of these legs and no fill was found
   const exitFees = q => {
     const entryPart = entryFeeLot != null ? entryFeeLot * q : oneSideCommission(units, q, commission);
     if (expired) return round2(entryPart);
@@ -161,7 +162,17 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           isCredit: pos.isCredit, entryDate: pos.entryDate || '',
           recordedNotes: (position.closes || []).map(c0 => c0.notes || ''),
         });
-        if (!live || !c) return;
+        if (!live) return;
+        if (!c) {
+          // No closing fill anywhere TWS or the bridge's log reaches. If TWS no longer
+          // holds these legs either, the position was closed before the log began:
+          // say so, so the target is not left showing Working.
+          fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } })
+            .then(r => r.json())
+            .then(pz => { if (live && pz && !pz.error && Array.isArray(pz.raw)) setTwsGone(!heldInTws(pz.raw, pos)); })
+            .catch(() => {});
+          return;
+        }
         setTwsClose(c);
         // Put them on the ticket straight away — the price TWS got, not the target.
         const q = Math.min(c.qty, pos.qtyOpen);
@@ -263,9 +274,11 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
     const bridgeUrl = localStorage.getItem('bridgeUrl') || '';
     if (!bridgeUrl) { setMsg({ err: true, text: 'Set IBKR Bridge URL in Settings first.' }); return; }
     try {
-      const d = await (await fetch(bridgeUrl + '/api/executions', { headers: { 'ngrok-skip-browser-warning': '1' } })).json();
-      const sym = pos.underlying;
-      setFills((d.fills || []).filter(f => (f.symbol || '').toUpperCase() === sym));
+      // Every fill TWS still holds plus the bridge's own log (Nov 2026) — not just today's.
+      const d = await (await fetch(bridgeUrl + '/api/executions?all=1', { headers: { 'ngrok-skip-browser-warning': '1' } })).json();
+      const sym = String(pos.underlying || '').toUpperCase();
+      const since = String(pos.entryDate || '').slice(0, 10).replace(/-/g, '');
+      setFills((d.fills || []).filter(f => (f.symbol || '').toUpperCase() === sym && (!since || String(f.time || '').slice(0, 8) >= since)));
     } catch (e) { setMsg({ err: true, text: 'TWS fetch failed: ' + e.message }); }
   }
 
@@ -543,6 +556,12 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           )}
 
+          {twsGone && !twsNote && (
+            <div data-testid="tws-gone" style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 10, fontSize: 12.5, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-e3b341)' }}>
+              TWS no longer holds this {pos.underlying} position, so it was closed — but its fill is older than TWS and the bridge's log go back.
+              Mark the tranche Filled at the price TWS got (Trades window or the IBKR activity statement).
+            </div>
+          )}
           {twsNote && (() => {
             const off = twsClose && rows.some(r => r.status === 'Filled' && r.fill !== '' && Math.abs(parseFloat(r.fill) - twsClose.avgPrice) > 0.004);
             return (
@@ -645,8 +664,9 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
 
           {fills && (
             <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: 'var(--c-0d1117)', border: '1px solid var(--c-21262d)', fontSize: 12.5 }}>
-              {fills.length === 0 ? <span style={{ color: 'var(--c-a8b2be)' }}>No {pos.underlying} fills today.</span> : fills.map((f, i) => (
+              {fills.length === 0 ? <span data-testid="tws-fills-none" style={{ color: 'var(--c-a8b2be)' }}>No {pos.underlying} fills{pos.entryDate ? ` since ${String(pos.entryDate).slice(0, 10)}` : ''} in TWS or the bridge's log.</span> : fills.map((f, i) => (
                 <div key={i} className="mono" style={{ color: 'var(--c-c9d1d9)' }}>
+                  <span style={{ color: 'var(--c-a8b2be)' }}>{String(f.time || '').slice(4, 6)}/{String(f.time || '').slice(6, 8)}</span>{' '}
                   <span style={{ color: f.side === 'BOT' ? 'var(--c-3fb950)' : 'var(--c-f85149)' }}>{f.side}</span> {f.qty}x {f.strike}{f.right} @{f.price?.toFixed(2)}
                   {f.realizedPnl && f.realizedPnl < 1e300 ? <span style={{ color: pnlColor(f.realizedPnl) }}> {fmt$(f.realizedPnl)}</span> : null}
                 </div>
@@ -822,4 +842,16 @@ function RollAdvice({ check, oldStrikes, onUse }) {
       )}
     </div>
   );
+}
+
+/**
+ * Does TWS still hold any leg of this ticket? raw = /api/positions raw legs
+ * ({ symbol, strike, right, position, ... }). Nov 2026: a target that filled on a day
+ * TWS has forgotten left the ticket showing Working.
+ */
+export function heldInTws(raw, pos) {
+  const sym = String((pos && pos.underlying) || '').toUpperCase();
+  const strikes = new Set(String((pos && pos.legs) || '').split(/[\/|,\s]+/).map(Number).filter(x => x > 0));
+  return (raw || []).some(l => String(l.underlying || l.symbol || '').toUpperCase() === sym && Number(l.qty ?? l.position ?? l.pos ?? 0) !== 0
+    && (!strikes.size || strikes.has(Number(l.strike))));
 }
