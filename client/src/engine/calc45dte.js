@@ -565,7 +565,7 @@ export function calc45DTE(inputs) {
   const cvarEach45 = riskUndefined || noSize45 ? null
     : cvar95({ risk, winP, pMaxLoss, partialFrac: evLossCap * 0.6, commission: commInEV });
   const sizing = riskUndefined || noSize45 ? null : sizeSteps({ kellyFull: fullC, kellyHalf: halfC, useHalf: useHalf45,
-    riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach45, bankroll });
+    riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach45, bankroll, cvarPct: inputs.cvarPct });
   const kellyContracts = riskUndefined ? null : sizing ? sizing.final : (useHalf45 ? halfC : fullC);
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
@@ -675,7 +675,7 @@ export function calc45DTE(inputs) {
       .forEach(w => warnings.push(w));
   }
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
-  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over ${Math.round(sizing.cvar.each / bankroll * 1000) / 10}% of the bankroll — too big for this account at 2%`);
+  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over ${Math.round(sizing.cvar.each / bankroll * 1000) / 10}% of the bankroll — too big for this account at ${sizing.cvar.pct}%`);
   if (sizing && sizing.capsAtZero.includes('bp')) warnings.push(`Buying power cap: ${sizing.bp.room > 0 ? 'less than one contract of room' : 'already over'} the ${sizing.bp.band.hi}% band at this VIX — new trades should wait`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');

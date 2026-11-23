@@ -43,6 +43,12 @@ describe('size steps', () => {
     expect(s.binding).toBe('half');
     expect(s.final).toBe(3);
   });
+  it('the bad-day cap is per account, 2% when not set', () => {
+    const at = pct => sizeSteps({ kellyFull: 9, riskEach: 1890, cvarEach: 1890, bankroll: 12801, cvarPct: pct }).cvar;
+    expect(at(undefined)).toMatchObject({ pct: 2, ct: 0 });
+    expect(at(15)).toMatchObject({ pct: 15, ct: 1 });
+    expect(Math.round(at(15).limit)).toBe(1920);
+  });
   it('a cap at zero keeps one contract and is reported', () => {
     const s = sizeSteps({ kellyFull: 2, riskEach: 1890, capital: { netLiq: 20000, initMargin: 7500, vix: 14 }, cvarEach: 1890, bankroll: 12801 });
     expect(s.final).toBe(1);

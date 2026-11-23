@@ -2313,7 +2313,7 @@ export function calc0DTE(inputs) {
   const cvarEach0 = risk > 0 && winP > 0 && win > 0
     ? cvar95({ risk, winP, pMaxLoss, partialFrac: lossCap * 0.6, commission: commInEV }) : null;
   const sizing = cvarEach0 == null ? null : sizeSteps({ kellyFull: fullC, kellyHalf: setup === 'B Setup' ? halfC : vixOvC,
-    useHalf: setup === 'B Setup' || vixHigh, riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach0, bankroll });
+    useHalf: setup === 'B Setup' || vixHigh, riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach0, bankroll, cvarPct: inputs.cvarPct });
   const kellyContracts = sizing ? sizing.final : (setup === 'B Setup' ? halfC : (vixHigh ? vixOvC : fullC));
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
@@ -2626,7 +2626,7 @@ export function calc0DTE(inputs) {
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
   if (vixHigh) warnings.push('VIX >25 — half-size override');
   if (setup === 'B Setup') warnings.push('B setup — half Kelly');
-  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over 2% of the bankroll — too big for this account`);
+  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over ${sizing.cvar.pct}% of the bankroll — too big for this account`);
   if (sizing && sizing.capsAtZero.includes('bp')) warnings.push(`Buying power cap: ${sizing.bp.room > 0 ? 'less than one contract of room' : 'already over'} the ${sizing.bp.band.hi}% band at this VIX — new trades should wait`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (moveConsumed > 0.90 && isSkewed && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');

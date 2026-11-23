@@ -51,7 +51,9 @@ export function losingRun({ lossEach, capital, pLoss, trades = 100, drawPct = 0.
 //   riskEach: buying power one contract holds (its max loss)
 //   capital: { netLiq, initMargin, vix } from TWS for the ticket's account (optional)
 //   cvarEach: CVaR95 per contract; bankroll: the sizing bankroll
-export function sizeSteps({ kellyFull, kellyHalf, useHalf, riskEach, capital, cvarEach, bankroll, cvarPct = CVAR_TRADE_PCT }) {
+export function sizeSteps({ kellyFull, kellyHalf, useHalf, riskEach, capital, cvarEach, bankroll, cvarPct }) {
+  // Per account in Settings (Nov 2026); 2% when not set.
+  cvarPct = Number(cvarPct) > 0 ? Number(cvarPct) : CVAR_TRADE_PCT;
   const steps = [];
   if (kellyFull > 0) steps.push({ key: 'kelly', label: 'Kelly', ct: kellyFull, why: 'edge, capped by max loss and max open risk' });
   if (useHalf && kellyHalf > 0) steps.push({ key: 'half', label: 'Half Kelly', ct: kellyHalf, why: 'B setup or backwardation' });
@@ -67,7 +69,7 @@ export function sizeSteps({ kellyFull, kellyHalf, useHalf, riskEach, capital, cv
   let cv = null;
   if (cvarEach > 0 && bankroll > 0) {
     const limit = (cvarPct / 100) * bankroll;
-    cv = { limit, each: cvarEach, ct: Math.max(0, Math.floor(limit / cvarEach)) };
+    cv = { limit, pct: cvarPct, each: cvarEach, ct: Math.max(0, Math.floor(limit / cvarEach)) };
     steps.push({ key: 'cvar', label: 'CVaR cap', ct: cv.ct,
       why: `a bad day ≤ ${cvarPct}% of bankroll ($${Math.round(limit).toLocaleString()}); $${Math.round(cvarEach).toLocaleString()} a contract` });
   }

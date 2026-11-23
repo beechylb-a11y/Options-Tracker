@@ -83,7 +83,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         maxOpenRiskPct: pctNum(accountForm.maxOpenRiskPct, 40),
         maxDailyLoss: limit$(accountForm.startingBankroll, pctNum(accountForm.maxDailyLossPct, 20)),
         maxOpenRisk: limit$(accountForm.startingBankroll, pctNum(accountForm.maxOpenRiskPct, 40)),
-        commissionPerContract: commNum(accountForm.commissionPerContract, DEFAULT_COMMISSION)
+        commissionPerContract: commNum(accountForm.commissionPerContract, DEFAULT_COMMISSION),
+        cvarPct: 2
       };
       const updated = [...(accounts || []), newAccount];
       await api.saveAccounts(updated);
@@ -108,6 +109,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION),
         ...(accountForm.color ? { color: accountForm.color } : {}),
         twsAccount: String(accountForm.twsAccount ?? a.twsAccount ?? '').trim().toUpperCase(),
+        cvarPct: pctNum(accountForm.cvarPct, a.cvarPct || 2),
       } : a);
       await api.saveAccounts(updated);
       invalidateCommissionRates();
@@ -230,6 +232,13 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                           onChange={e => setAccountForm(f => ({ ...f, twsAccount: e.target.value }))}
                           className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
                       </div>
+                      <div>
+                        <label className="text-[12px] text-text-muted block mb-0.5" title="CVaR95: the average loss across the worst 5% of a trade's outcomes. The Engine sizes so one trade's bad day stays under this share of the bankroll.">Bad-day cap (CVaR, % of bankroll)</label>
+                        <input type="number" step="0.5" min="0.5" value={accountForm.cvarPct ?? '2'} data-testid="cvar-pct-input"
+                          onChange={e => setAccountForm(f => ({ ...f, cvarPct: e.target.value }))}
+                          className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                        <div className="text-[11px] text-text-faint mt-0.5 mono">= {fmt$(limit$((parseFloat(accountForm.startingBankroll) || 0) + (Number(a.realisedPnl) || 0), accountForm.cvarPct ?? 2))} a trade</div>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button onClick={handleUpdateAccount} disabled={savingAccounts}
@@ -257,7 +266,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span>Commission: <span className="mono text-text">${Number(a.commissionPerContract ?? DEFAULT_COMMISSION).toFixed(2)}</span>/contract</span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION), color: a.color || '', twsAccount: a.twsAccount || '' }); setCalib(null); setShowAddAccount(false); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION), color: a.color || '', twsAccount: a.twsAccount || '', cvarPct: String(a.cvarPct ?? 2) }); setCalib(null); setShowAddAccount(false); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);

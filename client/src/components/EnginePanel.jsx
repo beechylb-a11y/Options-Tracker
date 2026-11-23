@@ -931,6 +931,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['0'] || null,
           capital: capital || null,
+          cvarPct: accountConfig && accountConfig.cvarPct,
           noExpiryToday: expiryToday === false ? { next: nextExpiry0 } : null,
           listedStrikes: listedNow,
           ...(over || {})
@@ -978,6 +979,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           ratioSpec,
           book45: book45 || null,   // open 45DTE book greeks + bankroll → limit warnings
           capital: capital || null, // TWS net liq + margin for the account → buying power cap
+          cvarPct: accountConfig && accountConfig.cvarPct, // bad-day cap, % of bankroll (Settings)
           ...(over || {})
   });
 
