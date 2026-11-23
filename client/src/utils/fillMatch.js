@@ -339,3 +339,36 @@ export function closingFills(tranches, { underlying, strikes = [], isCredit, ent
     keys: mine.map(tr => tr.key),
   };
 }
+
+/**
+ * Last resort for a close whose fills TWS no longer hands out (Nov 2026): a FILLED
+ * completed order (bridge /api/completed-orders, up to 7 days) on the same strikes,
+ * on or after the entry date, in the closing direction. A credit position closes for
+ * a debit: BUY at a positive limit (or SELL at a negative one); a debit position the
+ * other way. The price is the order's LIMIT — what TWS filled it at may have been
+ * better — so the ticket asks for confirmation.
+ */
+export function closingFromCompleted(orders, { underlying, strikes = [], isCredit, entryDate = '' } = {}) {
+  const want = [...new Set((strikes || []).map(Number).filter(x => x > 0))].sort((a, b) => a - b).join('/');
+  const since = String(entryDate || '').slice(0, 10).replace(/-/g, '');
+  const filled = o => /^filled$/i.test(o.status || '') || /^filled/i.test(o.completedStatus || '');
+  const ymd = o => (/^(\d{8})/.exec(String(o.completedTime || '').trim()) || [])[1] || '';
+  const mine = (orders || []).filter(o => {
+    if (!filled(o) || symOf(o.symbol) !== symOf(underlying) || o.lmtPrice == null || !o.resolved) return false;
+    const ks = [...new Set((o.legs || []).map(l => Number(l.strike)).filter(x => x > 0))].sort((a, b) => a - b).join('/');
+    if (ks !== want) return false;
+    if (since && ymd(o) < since) return false;
+    const debit = (o.action === 'BUY' && o.lmtPrice > 0) || (o.action === 'SELL' && o.lmtPrice < 0);
+    return isCredit ? debit : !debit;
+  }).sort((a, b) => String(a.completedTime).localeCompare(String(b.completedTime)));
+  if (!mine.length) return null;
+  const last = mine[mine.length - 1];
+  const qty = mine.reduce((a, o) => a + (Number(o.filledQuantity) || Number(o.totalQuantity) || 0), 0);
+  const avg = mine.reduce((a, o) => a + Math.abs(o.lmtPrice) * (Number(o.filledQuantity) || Number(o.totalQuantity) || 0), 0) / (qty || 1);
+  const t = String(last.completedTime || '').trim();
+  return {
+    qty, avgPrice: +avg.toFixed(4), fromCompleted: true,
+    date: t.slice(0, 4) && `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`, time: (/\d{2}:\d{2}(:\d{2})?/.exec(t) || [''])[0].slice(0, 5),
+    keys: mine.map(o => `co:${o.permId}`), action: last.action,
+  };
+}

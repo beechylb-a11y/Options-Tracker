@@ -16,6 +16,7 @@ import { daysBetween, nyToday, addDays, nearestExpiry, fridayNear, nearestStrike
 import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
+import { completedRecord, isFilled, withLegs } from './completedOrders.js';
 import { execRecord, mergeJournal, withCommission, pruneJournal, journalFills } from './execJournal.js';
 import { greeksFromQuote, parityspot, nyRth, DAILY_GRID } from './bsModel.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
@@ -2435,6 +2436,56 @@ app.get('/api/executions', async (req, res) => {
   } catch (err) {
     console.error('[BRIDGE] Executions error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Completed orders (Nov 2026) — see completedOrders.js ──
+// GET /api/completed-orders?filled=1 → { orders: [...] } — up to the last 7 days TWS
+// holds, combo legs resolved to strike/right/expiry (conId lookups cached).
+const conIdContracts = {};
+function contractOfConId(conId) {
+  if (conIdContracts[conId]) return Promise.resolve(conIdContracts[conId]);
+  return new Promise(resolve => {
+    const reqId = getReqId();
+    let got = null, done = false;
+    const finish = () => { if (done) return; done = true; ib.removeListener(EventName.contractDetails, onDet); ib.removeListener(EventName.contractDetailsEnd, onEnd); if (got) conIdContracts[conId] = got; resolve(got); };
+    const onDet = (id, det) => { if (id === reqId && !got && det && det.contract) got = det.contract; };
+    const onEnd = id => { if (id === reqId) finish(); };
+    ib.on(EventName.contractDetails, onDet); ib.on(EventName.contractDetailsEnd, onEnd);
+    ib.reqContractDetails(reqId, { conId });
+    setTimeout(finish, 6000);
+  });
+}
+let completedBusy = null;
+function fetchCompletedOrders() {
+  if (completedBusy) return completedBusy;
+  completedBusy = new Promise(resolve => {
+    const out = [];
+    let done = false;
+    const finish = () => { if (done) return; done = true; ib.removeListener(EventName.completedOrder, onOrd); ib.removeListener(EventName.completedOrdersEnd, onEnd); resolve(out); };
+    const onOrd = (contract, order, state) => { try { out.push(completedRecord(contract, order, state)); } catch (e) { /* skip a malformed row */ } };
+    const onEnd = () => setTimeout(finish, 300);
+    ib.on(EventName.completedOrder, onOrd); ib.on(EventName.completedOrdersEnd, onEnd);
+    try { ib.reqCompletedOrders(false); } catch (e) { finish(); }
+    setTimeout(finish, 10000);
+  }).finally(() => { completedBusy = null; });
+  return completedBusy;
+}
+app.get('/api/completed-orders', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    let rows = await fetchCompletedOrders();
+    if (req.query.filled) rows = rows.filter(isFilled);
+    if (req.query.symbol) rows = rows.filter(r => r.symbol.toUpperCase() === String(req.query.symbol).toUpperCase());
+    const ids = [...new Set(rows.flatMap(r => r.comboLegs.map(l => l.conId)).filter(Boolean))];
+    const contracts = await Promise.all(ids.map(id => contractOfConId(id).catch(() => null)));
+    const byConId = Object.fromEntries(ids.map((id, i) => [id, contracts[i] || {}]));
+    const orders = rows.map(r => (r.comboLegs.length ? withLegs(r, byConId) : { ...r, legs: r.strike ? [{ strike: r.strike, right: r.right, expiry: r.expiry, ratio: 1, action: r.action }] : [], resolved: !!r.strike }));
+    console.log(`[BRIDGE] completed orders: ${orders.length}${req.query.symbol ? ' ' + req.query.symbol : ''}`);
+    res.json({ orders, count: orders.length, timestamp: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

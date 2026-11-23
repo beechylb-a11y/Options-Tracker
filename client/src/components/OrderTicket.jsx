@@ -18,7 +18,7 @@ import { rollChain } from '../engine/rollChain';
 import { checkupFor } from './Checkup45';
 import { TicketHeader, PnlLadder, RollBeforeAfter } from './TicketVisual';
 import { legsFromNotes } from '../utils/positionMatch';
-import { comboTranches, closingFills } from '../utils/fillMatch';
+import { comboTranches, closingFills, closingFromCompleted } from '../utils/fillMatch';
 import { alpha } from '../utils/theme';
 
 // SELL ticket — modelled on the IBKR order ticket. Two jobs:
@@ -128,6 +128,7 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
   const [entryFeeLot, setEntryFeeLot] = useState(null);   // $ per lot, from recorded fills
   const [twsClose, setTwsClose] = useState(null);          // closingFills() result
   const [twsGone, setTwsGone] = useState(false);           // TWS holds none of these legs and no fill was found
+  const [twsDone, setTwsDone] = useState(null);            // closingFromCompleted(): a filled order, limit price only
   const exitFees = q => {
     const entryPart = entryFeeLot != null ? entryFeeLot * q : oneSideCommission(units, q, commission);
     if (expired) return round2(entryPart);
@@ -170,6 +171,27 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           fetch(bridgeUrl + '/api/positions', { headers: { 'ngrok-skip-browser-warning': '1' } })
             .then(r => r.json())
             .then(pz => { if (live && pz && !pz.error && Array.isArray(pz.raw)) setTwsGone(!heldInTws(pz.raw, pos)); })
+            .catch(() => {});
+          // TWS's completed orders reach back 7 days: a filled closing order there gives
+          // the date and the limit, to be confirmed against the Trades window.
+          fetch(bridgeUrl + '/api/completed-orders?filled=1&symbol=' + encodeURIComponent(pos.underlying || ''), { headers: { 'ngrok-skip-browser-warning': '1' } })
+            .then(r => r.json())
+            .then(co => {
+              const done = closingFromCompleted(co && co.orders, {
+                underlying: pos.underlying, strikes: String(pos.legs || '').split(/[\/|,\s]+/).map(Number).filter(x => x > 0),
+                isCredit: pos.isCredit, entryDate: pos.entryDate || '' });
+              if (!live || !done) return;
+              setTwsDone(done);
+              const q = Math.min(done.qty, pos.qtyOpen);
+              const px = +done.avgPrice.toFixed(2);
+              const tPct = priceToTarget(pos, px);
+              setRows(rs => {
+                const rest = pos.qtyOpen - q;
+                const out = [{ qty: q, pct: tPct != null ? round2(tPct) : '', price: px, status: 'Filled', fill: px, completed: true }];
+                if (rest > 0) out.push(...rs.filter(r => r.status !== 'Filled').slice(0, 1).map(r => ({ ...r, qty: rest })));
+                return out;
+              });
+            })
             .catch(() => {});
           return;
         }
@@ -314,6 +336,8 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
           ? `Expired — settlement value ${isFinite(p) ? p.toFixed(2) : '—'}`
           : r.tws && twsClose
             ? `T${n} TWS fill @ ${p.toFixed(2)} ${side} (plan ${pctTxt}@ ${limTxt}) · ${outcome} — TWS ${twsClose.date} ${twsClose.time} ET, IBKR commission [${twsClose.keys.join(' ')}]`
+            : r.completed && twsDone && atTarget(r)
+              ? `T${n} @ ${p.toFixed(2)} ${side} (plan ${pctTxt}@ ${limTxt}) · ${outcome} — TWS completed order ${twsDone.date} ${twsDone.time} ET, limit price, confirmed [${twsDone.keys.join(' ')}]`
             : atTarget(r)
               ? `T${n} ${pctTxt}target @ ${p.toFixed(2)} ${side} · ${outcome} — manual, confirmed at the target price; no TWS fill matched`
               : `T${n} manual fill @ ${p.toFixed(2)} ${side} (plan ${pctTxt}@ ${limTxt}) · ${outcome}`
@@ -556,7 +580,13 @@ function OrderTicketBody({ position, onClose, onDone, initialTab }) {
             </div>
           )}
 
-          {twsGone && !twsNote && (
+          {twsDone && !twsNote && (
+            <div data-testid="tws-completed" style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 10, fontSize: 12.5, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-e3b341)' }}>
+              ⚡ TWS completed orders: {twsDone.action} {twsDone.qty} @ {twsDone.avgPrice.toFixed(2)} limit, filled {twsDone.date} {twsDone.time} ET — filled in below.
+              TWS no longer hands out the fill itself, so this is the limit price: confirm it matches the Trades window (or type the real fill).
+            </div>
+          )}
+          {twsGone && !twsNote && !twsDone && (
             <div data-testid="tws-gone" style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 10, fontSize: 12.5, background: 'var(--c-1f1a0d)', border: '1px solid var(--c-9e6a03)', color: 'var(--c-e3b341)' }}>
               TWS no longer holds this {pos.underlying} position, so it was closed — but its fill is older than TWS and the bridge's log go back.
               Mark the tranche Filled at the price TWS got (Trades window or the IBKR activity statement).
