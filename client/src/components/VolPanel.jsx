@@ -37,8 +37,8 @@ export default function VolPanel({ market, book, positions, accounts }) {
     <div data-testid="vol-panel">
       <div className="flex gap-5 flex-wrap mb-3 text-[13px]" style={{ color: C.muted }}>
         <span>VIX <b className="mono" style={{ color: C.text }}>{m.vix ? m.vix.toFixed(2) : '—'}</b>{m.pct != null && <span className="mono" style={{ color: m.pct > 0 ? C.amber : C.green }}> {m.pct >= 0 ? '+' : ''}{m.pct.toFixed(1)}%</span>} vs close</span>
-        <span>VIX1D <b className="mono" style={{ color: C.text }}>{m.vix1d ? m.vix1d.toFixed(2) : '—'}</b></span>
-        <span>VIX ÷ VIX3M <b className="mono" style={{ color: m.term >= 1 ? C.red : C.text }}>{m.term ? m.term.toFixed(2) : '—'}</b>{m.term >= 1 ? ' backwardation' : m.term ? ' contango' : ''}</span>
+        <span>VIX1D <b className="mono" style={{ color: C.text }}>{m.vix1d ? m.vix1d.toFixed(2) : '—'}</b>{m.vix1dFromClose ? ' (last close)' : ''}</span>
+        <span>VIX ÷ VIX3M <b className="mono" style={{ color: m.term >= 1 ? C.red : C.text }}>{m.term ? m.term.toFixed(2) : '—'}</b>{m.term >= 1 ? ' backwardation' : m.term ? ' contango' : ''}{m.vix3mFromClose ? ' (VIX3M at last close: no live CBOE index data)' : ''}</span>
         <span>Book vega <b className="mono" style={{ color: C.text }}>{$(book && book.vega)}</b> per IV point</span>
         {book && book.today != null && <span>VIX move today ≈ <b className="mono" style={{ color: book.today < 0 ? C.red : C.green }}>{$(book.today)}</b></span>}
       </div>

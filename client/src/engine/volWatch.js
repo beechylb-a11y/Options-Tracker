@@ -21,20 +21,26 @@ export const VOL_LIMITS = {
 const RANK = { null: 0, amber: 1, red: 2 };
 export const worst = (...t) => t.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), null);
 const px = q => (q ? (q.last ?? q.mark ?? null) : null);
+// VIX3M and VIX1D need a CBOE index subscription; without one TWS sends only the
+// prior close (Nov 2026: notEntitled on the paper login). The close still gives the
+// term-structure read, so use it and say so.
+const pxOrClose = q => (q ? (q.last ?? q.mark ?? (q.close > 0 ? q.close : null)) : null);
+const fromClose = q => !!(q && q.last == null && q.mark == null && q.close > 0);
 const avg = xs => { const v = xs.filter(x => Number.isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 
 export function marketVol({ vix, vix1d, vix3m } = {}) {
   const now = px(vix), close = vix && vix.close;
   const pts = now > 0 && close > 0 ? now - close : null;
   const pct = pts != null ? (pts / close) * 100 : null;
-  const v3 = px(vix3m);
+  const v3 = pxOrClose(vix3m);
   const term = now > 0 && v3 > 0 ? now / v3 : null;
   const reasons = [];
   let tone = null;
   if (pct != null && pct >= VOL_LIMITS.vixPct.red) { tone = 'red'; reasons.push(`VIX up ${pct.toFixed(0)}% since the close`); }
   else if (pct != null && (pct >= VOL_LIMITS.vixPct.amber || pts >= VOL_LIMITS.vixPts.amber)) { tone = 'amber'; reasons.push(`VIX up ${pct.toFixed(0)}% (${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts) since the close`); }
-  if (term != null && term >= VOL_LIMITS.term.red) { tone = 'red'; reasons.push(`VIX above VIX3M (${term.toFixed(2)}): backwardation`); }
-  return { vix: now, vixClose: close || null, pts, pct, vix1d: px(vix1d), vix1dClose: (vix1d && vix1d.close) || null, vix3m: v3, term, tone, reasons };
+  if (term != null && term >= VOL_LIMITS.term.red) { tone = 'red'; reasons.push(`VIX above VIX3M (${term.toFixed(2)}${fromClose(vix3m) ? ', VIX3M at its last close' : ''}): backwardation`); }
+  return { vix: now, vixClose: close || null, pts, pct, vix1d: pxOrClose(vix1d), vix1dClose: (vix1d && vix1d.close) || null, vix1dFromClose: fromClose(vix1d),
+    vix3m: v3, vix3mFromClose: fromClose(vix3m), term, tone, reasons };
 }
 
 const legKey = l => `${+l.strike}${String(l.right || '').toUpperCase()}`;

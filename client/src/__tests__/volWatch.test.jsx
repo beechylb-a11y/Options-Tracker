@@ -27,6 +27,15 @@ describe('market', () => {
     expect(marketVol({ vix: { last: 17.8, close: 17.6 }, vix3m: { last: 19 } }).tone).toBeNull();
     expect(VOL_LIMITS.vixPct).toEqual({ amber: 15, red: 25 });
   });
+  it('without live CBOE index data VIX3M and VIX1D fall back to the last close', () => {
+    // 23 Nov 2026 on the paper login: VIX 35.89, VIX3M close 30.94 (notEntitled, no mark)
+    const m = marketVol({ vix: { last: 35.89, close: 35.89 }, vix3m: { close: 30.94, mark: null, notEntitled: true }, vix1d: { close: 51.34, mark: null } });
+    expect(m.term).toBeCloseTo(1.16, 2);
+    expect(m.vix3mFromClose).toBe(true);
+    expect(m.tone).toBe('red');
+    expect(m.reasons.join()).toMatch(/VIX3M at its last close/);
+    expect(m.vix1d).toBe(51.34);
+  });
 });
 
 describe('position', () => {
