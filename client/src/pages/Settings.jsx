@@ -106,7 +106,8 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         maxDailyLossPct: pctNum(accountForm.maxDailyLossPct, a.maxDailyLossPct || 20),
         maxOpenRiskPct: pctNum(accountForm.maxOpenRiskPct, a.maxOpenRiskPct || 40),
         commissionPerContract: commNum(accountForm.commissionPerContract, a.commissionPerContract ?? DEFAULT_COMMISSION),
-        ...(accountForm.color ? { color: accountForm.color } : {})
+        ...(accountForm.color ? { color: accountForm.color } : {}),
+        twsAccount: String(accountForm.twsAccount ?? a.twsAccount ?? '').trim().toUpperCase(),
       } : a);
       await api.saveAccounts(updated);
       invalidateCommissionRates();
@@ -223,6 +224,12 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                       <CommissionField value={accountForm.commissionPerContract} calib={calib}
                         onChange={v => setAccountForm(f => ({ ...f, commissionPerContract: v }))} onCalibrate={calibrateFromFills} />
                       <ColourField value={accountForm.color || accountColor(a.id, accounts)} onChange={v => setAccountForm(f => ({ ...f, color: v }))} />
+                      <div>
+                        <label className="text-[12px] text-text-muted block mb-0.5" title="The IBKR account number this one trades in, e.g. U1234567 or DU1234567. Links TWS net liq and buying power to it on the Risk page.">TWS account</label>
+                        <input type="text" value={accountForm.twsAccount || ''} placeholder="U1234567" data-testid="tws-account-input"
+                          onChange={e => setAccountForm(f => ({ ...f, twsAccount: e.target.value }))}
+                          className="w-full px-2 py-1.5 bg-bg border border-bg-border rounded text-xs text-text mono outline-none focus:border-accent" />
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button onClick={handleUpdateAccount} disabled={savingAccounts}
@@ -250,7 +257,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
                         <span>Commission: <span className="mono text-text">${Number(a.commissionPerContract ?? DEFAULT_COMMISSION).toFixed(2)}</span>/contract</span>
                       </div>
                     </div>
-                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION), color: a.color || '' }); setCalib(null); setShowAddAccount(false); }}
+                    <button onClick={() => { setEditingAccount(a.id); setAccountForm({ name: a.name, startingBankroll: a.startingBankroll, bankrollSince: a.bankrollSince || '', maxDailyLossPct: String(a.maxDailyLossPct ?? 20), maxOpenRiskPct: String(a.maxOpenRiskPct ?? 40), commissionPerContract: String(a.commissionPerContract ?? DEFAULT_COMMISSION), color: a.color || '', twsAccount: a.twsAccount || '' }); setCalib(null); setShowAddAccount(false); }}
                       className="text-text-faint hover:text-accent p-1"><Edit3 size={14} /></button>
                     <button onClick={async () => {
                       setBackfilling(true); setBackfillResult(null);

@@ -17,6 +17,7 @@ import { groupIntoStructures, legPerShare } from './structures.js';
 import { earningsBetween } from './earnings.js';
 import { buildStage, whatIfSummary, excessAfter } from './stageOrder.js';
 import { completedRecord, isFilled, withLegs } from './completedOrders.js';
+import { SUMMARY_TAGS, foldSummary } from './accountSummary.js';
 import { execRecord, mergeJournal, withCommission, pruneJournal, journalFills } from './execJournal.js';
 import { greeksFromQuote, parityspot, nyRth, DAILY_GRID } from './bsModel.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
@@ -2484,6 +2485,45 @@ app.get('/api/completed-orders', async (req, res) => {
     const orders = rows.map(r => (r.comboLegs.length ? withLegs(r, byConId) : { ...r, legs: r.strike ? [{ strike: r.strike, right: r.right, expiry: r.expiry, ratio: 1, action: r.action }] : [], resolved: !!r.strike }));
     console.log(`[BRIDGE] completed orders: ${orders.length}${req.query.symbol ? ' ' + req.query.symbol : ''}`);
     res.json({ orders, count: orders.length, timestamp: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Account summary: net liq, buying power, margin, cushion (Nov 2026) ──
+// GET /api/account-summary → { accounts: { DU123: { netLiq, buyingPower, … } }, at }
+// One reqAccountSummary at a time (TWS allows two), answered from a 30 s cache.
+let summaryBusy = null, summaryCache = null;
+function fetchAccountSummary() {
+  if (summaryBusy) return summaryBusy;
+  summaryBusy = new Promise(resolve => {
+    const reqId = getReqId(), rows = [];
+    let done = false;
+    const finish = (ok) => {
+      if (done) return; done = true;
+      ib.removeListener(EventName.accountSummary, onRow); ib.removeListener(EventName.accountSummaryEnd, onEnd);
+      try { ib.cancelAccountSummary(reqId); } catch (e) { /* already gone */ }
+      resolve({ rows, ok });
+    };
+    const onRow = (id, account, tag, value, currency) => { if (id === reqId) rows.push({ account, tag, value, currency }); };
+    const onEnd = (id) => { if (id === reqId) finish(true); };
+    ib.on(EventName.accountSummary, onRow); ib.on(EventName.accountSummaryEnd, onEnd);
+    try { ib.reqAccountSummary(reqId, 'All', SUMMARY_TAGS.join(',')); } catch (e) { finish(false); }
+    setTimeout(() => finish(false), 8000);
+  }).finally(() => { summaryBusy = null; });
+  return summaryBusy;
+}
+app.get('/api/account-summary', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    if (!req.query.fresh && summaryCache && Date.now() - summaryCache.ms < 30000) return res.json({ ...summaryCache.body, cached: true });
+    const { rows, ok } = await fetchAccountSummary();
+    const accounts = foldSummary(rows);
+    if (!ok && !Object.keys(accounts).length) return res.status(504).json({ error: 'TWS sent no account summary in 8 s' });
+    const body = { accounts, at: new Date().toISOString(), complete: ok };
+    summaryCache = { ms: Date.now(), body };
+    res.json(body);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

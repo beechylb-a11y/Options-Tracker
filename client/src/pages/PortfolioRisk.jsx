@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { streamQuotesFor, streamPrice, useLiveQuotesEvery } from '../live/streamQuotes';
-import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare, Gauge } from 'lucide-react';
+import { Shield, RefreshCw, AlertTriangle, Activity, CalendarClock, GitCompare, Gauge, Wallet } from 'lucide-react';
 import { api } from '../utils/api';
 import OrderTicket from '../components/OrderTicket';
 import OpenPositions from '../components/OpenPositions';
@@ -10,6 +10,8 @@ import { tradingSession } from '../engine/session';
 import { reviewOpen45 } from '../engine/review45';
 import { bookGreeks, bookLimits, spyPriceFrom, VEGA_SHOCK } from '../engine/greekLimits';
 import RiskGauges from '../components/RiskGauges';
+import CapitalPanel, { useAccountSummary } from '../components/CapitalPanel';
+import { useAccountsList } from '../utils/accountColors';
 import {
   buildBook, reconcile, positionRisk, totals, stressGrid, riskBudget, eventsAhead, attention,
   spxDailySd, isoOfYmd, betaOf, stopFor, targetFor,
@@ -79,6 +81,8 @@ export default function PortfolioRisk({ authenticated, account }) {
   // Prices from the push stream, re-read at most every 2 s: the risk grid re-marks
   // itself as the market moves instead of on the next manual refresh. (Nov 2026.)
   const stream = useLiveQuotesEvery(2000);
+  const summary = useAccountSummary(bridgeUrl);
+  const accountsList = useAccountsList();
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -219,6 +223,14 @@ export default function PortfolioRisk({ authenticated, account }) {
           </button>
         )}
       </div>
+
+      {bridgeUrl && (
+        <Section icon={<Wallet size={15} color={C.blue} />} title="Capital and buying power" testid="risk-capital"
+          sub="From TWS: what each account is worth, how much buying power is tied up against a target that moves with VIX, and the cushion before a margin call.">
+          <CapitalPanel summary={summary} accounts={accountsList} book={book} risks={risks}
+            vix={streamPrice('VIX', stream) || live.vix} account={account} />
+        </Section>
+      )}
 
       {!book.length ? (
         <div className="card py-12 text-center text-text-faint">Nothing open. Positions appear here once a trade is logged from the Decision Engine.</div>
