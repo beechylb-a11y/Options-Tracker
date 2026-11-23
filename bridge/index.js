@@ -2663,6 +2663,7 @@ const liveReq = new Map();       // reqId → key
 const liveReqOf = new Map();     // key → reqId
 const liveSubAt = new Map();     // key → when this connection subscribed it
 const liveContracts = new Map(); // key → TWS's own contract ({ conId, exchange }) when a position told us
+const liveIndexFallback = new Set(); // index keys that got nothing on live (1) this connection
 const streamClients = new Set();
 let livePositionsReady = false;
 for (const u of LIVE_WATCH) book.want(u, 'watch');
@@ -2685,6 +2686,25 @@ function liveSubscribe(key) {
   const isOpt = c.secType === SecType.OPT || /\s[CP]$/.test(key);
   try {
     if (isOpt) ib.reqMktData(reqId, c, '106', false, false);
+    else if (c.secType === SecType.IND && !liveIndexFallback.has(key)) {
+      // Indexes ask for LIVE (1) first (Nov 2026): with CBOE Streaming Market Indexes
+      // on the account, TWS sent nothing at all for VIX / SPX on delayed-frozen (4)
+      // while TWS itself showed VIX live. If live brings no tick (not entitled), fall
+      // back to delayed-frozen once, as before.
+      ib.reqMarketDataType(1);
+      ib.reqMktData(reqId, c, '', false, false);
+      ib.reqMarketDataType(2);
+      setTimeout(() => {
+        const q = (book.snapshot().quotes || {})[key];
+        const got = q && (q.last != null || q.mark != null || q.close != null || q.bid != null);
+        if (liveReqOf.get(key) === reqId && (!got || (q && q.notEntitled))) {
+          console.log(`[BRIDGE] ${key}: nothing on live, falling back to delayed-frozen`);
+          liveIndexFallback.add(key);
+          liveUnsubscribe(key);
+          liveSubscribe(key);
+        }
+      }, 8000);
+    }
     else {
       // Underlyings go out as DELAYED-FROZEN (4), as every cash snapshot here already
       // does: an account without a real-time index / stock subscription (the paper
@@ -2760,7 +2780,7 @@ function livePositionLegs() {
 // whole book re-subscribed. resetIB() strips them with the dead instance.
 function liveOnConnect() {
   if (!ib) return;
-  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear();
+  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear(); liveIndexFallback.clear();
   livePositionsReady = false;
   for (const k of book.keys()) book.setSubscribed(k, false);
   ib.on(EventName.tickPrice, (id, field, value) => { const k = liveReq.get(id); if (k) book.applyTick(k, field, value); });
@@ -2855,6 +2875,30 @@ setInterval(() => {
 
 // GET /api/live → the whole book as JSON (a fallback, and a check by hand).
 app.get('/api/live', (req, res) => res.json(liveOut(book.snapshot())));
+// Diagnostic (Nov 2026): what TWS sends for one symbol on a chosen market data type.
+// GET /api/probe-quote?symbol=VIX&type=1&ms=6000 → { ticks, mdType, errors }
+app.get('/api/probe-quote', async (req, res) => {
+  try {
+    await connectTWS();
+    if (!connected) return res.status(503).json({ error: 'Not connected to TWS' });
+    const sym = String(req.query.symbol || 'VIX').toUpperCase();
+    const type = Math.max(1, Math.min(4, parseInt(req.query.type || '1', 10) || 1));
+    const ms = Math.max(1000, Math.min(15000, parseInt(req.query.ms || '6000', 10) || 6000));
+    const c = contractOf(sym);
+    if (!c) return res.status(400).json({ error: `Unknown symbol ${sym}` });
+    const reqId = getReqId(), ticks = [], errors = []; let mdType = null;
+    const onTick = (id, field, value) => { if (id === reqId) ticks.push({ field, value }); };
+    const onType = (id, t) => { if (id === reqId) mdType = t; };
+    const onErr = (err, code, id) => { if (id === reqId) errors.push({ code, msg: String(err?.message || err).slice(0, 160) }); };
+    ib.on(EventName.tickPrice, onTick); ib.on(EventName.marketDataType, onType); ib.on(EventName.error, onErr);
+    try { ib.reqMarketDataType(type); ib.reqMktData(reqId, c, '', false, false); ib.reqMarketDataType(2); } catch (e) { errors.push({ code: 'throw', msg: e.message }); }
+    await new Promise(r => setTimeout(r, ms));
+    try { ib.cancelMktData(reqId); } catch (e) { /* gone */ }
+    ib.removeListener(EventName.tickPrice, onTick); ib.removeListener(EventName.marketDataType, onType); ib.removeListener(EventName.error, onErr);
+    res.json({ symbol: sym, requestedType: type, mdType, ticks: ticks.slice(0, 40), errors });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 
 // POST /api/live/watch  { legs: [{ underlying, expiry, strike, right }], underlyings: ['SPX'], ttlMs }
 // Legs of an open ticket. They expire after ttlMs (default 2 min) unless the app asks
