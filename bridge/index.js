@@ -2664,6 +2664,7 @@ const liveReqOf = new Map();     // key → reqId
 const liveSubAt = new Map();     // key → when this connection subscribed it
 const liveContracts = new Map(); // key → TWS's own contract ({ conId, exchange }) when a position told us
 const liveIndexFallback = new Set(); // index keys that got nothing on live (1) this connection
+const liveIndexTries = new Map();    // index key → live attempts this connection
 const streamClients = new Set();
 let livePositionsReady = false;
 for (const u of LIVE_WATCH) book.want(u, 'watch');
@@ -2697,12 +2698,18 @@ function liveSubscribe(key) {
       setTimeout(() => {
         const q = (book.snapshot().quotes || {})[key];
         const got = q && (q.last != null || q.mark != null || q.close != null || q.bid != null);
-        if (liveReqOf.get(key) === reqId && (!got || (q && q.notEntitled))) {
+        if (liveReqOf.get(key) !== reqId || got) return;
+        // Nothing yet. Not entitled → delayed-frozen as before. No word at all →
+        // ask live once more (24 Nov: XSP sat blank after one slow start although a
+        // live probe got ticks at once), then fall back.
+        const tries = (liveIndexTries.get(key) || 0) + 1;
+        liveIndexTries.set(key, tries);
+        if ((q && q.notEntitled) || tries >= 2) {
           console.log(`[BRIDGE] ${key}: nothing on live, falling back to delayed-frozen`);
           liveIndexFallback.add(key);
-          liveUnsubscribe(key);
-          liveSubscribe(key);
-        }
+        } else console.log(`[BRIDGE] ${key}: nothing on live yet, asking again`);
+        liveUnsubscribe(key);
+        liveSubscribe(key);
       }, 8000);
     }
     else {
@@ -2780,7 +2787,7 @@ function livePositionLegs() {
 // whole book re-subscribed. resetIB() strips them with the dead instance.
 function liveOnConnect() {
   if (!ib) return;
-  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear(); liveIndexFallback.clear();
+  liveReq.clear(); liveReqOf.clear(); liveSubAt.clear(); liveIndexFallback.clear(); liveIndexTries.clear();
   livePositionsReady = false;
   for (const k of book.keys()) book.setSubscribed(k, false);
   ib.on(EventName.tickPrice, (id, field, value) => { const k = liveReq.get(id); if (k) book.applyTick(k, field, value); });
