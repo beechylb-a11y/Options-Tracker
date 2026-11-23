@@ -12,6 +12,7 @@
 // screens cannot disagree. Click a row to open the full check-up card under it.
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useVolWatch } from '../live/useVolWatch';
 import { MoreHorizontal, ChevronDown, ChevronUp, RefreshCw, Zap, Hourglass, AlertTriangle } from 'lucide-react';
 import { ActionBadge, C, fmtYmd, shortEvent } from './CheckupVisual';
 import { ACTION_LABEL, CheckupCard } from './Checkup45';
@@ -356,7 +357,17 @@ function Card0({ row }) {
   );
 }
 
-function BoardRow({ row, on, narrow, accounts }) {
+// IV moving against a trade (Nov 2026): amber = watch, red = act.
+export function IvChip({ v }) {
+  const col = v.tone === 'red' ? 'var(--c-f85149)' : 'var(--c-e3b341)';
+  const label = v.dIv != null ? `IV ${v.dIv >= 0 ? '+' : '−'}${Math.abs(v.dIv).toFixed(1)}` : v.vix1dPct != null ? `VIX1D +${v.vix1dPct.toFixed(0)}%` : 'vega heavy';
+  return (
+    <span data-testid="iv-chip" data-tone={v.tone} title={v.reasons.join(' · ') + (v.basis ? ` (IV basis: ${v.basis})` : '')}
+      style={{ alignSelf: 'center', padding: '1px 8px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, color: '#24221f', background: col, whiteSpace: 'nowrap' }}>{label}</span>
+  );
+}
+
+function BoardRow({ row, on, narrow, accounts, vol }) {
   const [open, setOpen] = useState(false);
   const pr = primaryOf(row);
   const accent = TONES[row.tone] || TONES.grey;
@@ -371,6 +382,7 @@ function BoardRow({ row, on, narrow, accounts }) {
         <div data-testid="board-title" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 8, lineHeight: 1.25 }}>
           <span style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: narrow ? 17 : 17.5 }}>{row.underlying}</span>
           <span style={{ color: C.text, fontWeight: 500, fontSize: 14.5 }}>{row.strategy}</span>
+          {vol && vol.tone && <IvChip v={vol} />}
         </div>
         <div data-testid="board-spec" className="mono" style={{ fontSize: 13, color: 'var(--c-c9d1d9)', marginTop: 2 }}>
           {row.strikes.join(' / ')} · {row.qtyOpen} ct{row.expiry ? ` · ${fmtYmd(row.expiry)}` : ''}
@@ -488,6 +500,8 @@ export default function PositionBoard({ rows, on, cap = null, checkedAt = null, 
   }, []);
   const narrow = w < 900;
   const accounts = useAccountsList();
+  // IV since entry per trade (Nov 2026): a chip only when the move is big for that trade.
+  const volByKey = useVolWatch(null).byKey || {};
   // Keep today's position P&L per ticket, for the Dashboard tile's day-by-day colours.
   const markSig = rows.map(r => `${r.key}:${r.posPnl == null ? '' : Math.round(r.posPnl)}`).join('|');
   useEffect(() => { recordMarks(rows, tradingSession().yyyymmdd); }, [markSig]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -526,7 +540,7 @@ export default function PositionBoard({ rows, on, cap = null, checkedAt = null, 
       {groupByAccount(sorted, accounts).map(g => (
         <div key={g.id || 'one'} data-testid={g.id != null ? 'board-group' : undefined} style={{ display: 'grid', gap: 8, marginTop: g.id != null ? 14 : 0 }}>
           {g.id != null && <GroupHead g={g} accounts={accounts} narrow={narrow} />}
-          {g.rows.map(row => <BoardRow key={row.key} row={row} on={on} narrow={narrow} accounts={accounts} />)}
+          {g.rows.map(row => <BoardRow key={row.key} row={row} on={on} narrow={narrow} accounts={accounts} vol={volByKey[String(row.key)]} />)}
         </div>
       ))}
     </div>

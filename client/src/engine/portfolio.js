@@ -40,6 +40,17 @@ function entryMarket(d, decisions) {
 }
 
 const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+// "Leg IVs: 670P 38.20 / 695P 41.10" → { '670P': 38.2, '695P': 41.1 }
+export function legIvsFromNotes(notes) {
+  const m = /Leg IVs:\s*([^\n]+)/.exec(String(notes || ''));
+  if (!m) return null;
+  const out = {};
+  for (const part of m[1].split('/')) {
+    const x = /([\d.]+)\s*([PC])\s+([\d.]+)/i.exec(part.trim());
+    if (x) out[`${+x[1]}${x[2].toUpperCase()}`] = +x[3];
+  }
+  return Object.keys(out).length ? out : null;
+}
 const symOf = u => { const s = String(u || '').toUpperCase(); return s === 'SPXW' ? 'SPX' : s; };
 
 // ── Beta to SPX ───────────────────────────────────────────────────────────
@@ -121,7 +132,10 @@ export function buildBook({ open, decisions, raw, todayYmd, closes = [] }) {
       legs, legSource, note,
       expiry, dte: expiry ? daysBetween(todayYmd, expiry) : null,
       pos,                                                  // normalised: ncd, isCredit, basis, maxRisk/ct
-      entry: { ncd: pos.ncd || 0, ...entryMarket(d, decisions), vix1d: num(d.VIX1D), em: num(d.EM), ymd: entryYmd },
+      entry: { ncd: pos.ncd || 0, ...entryMarket(d, decisions), vix1d: num(d.VIX1D), em: num(d.EM), ymd: entryYmd,
+        // Vol at entry, for the volatility watch (Nov 2026): each leg's IV from the
+        // ticket's "Leg IVs:" line, the expiry IV, and VIX.
+        legIvs: legIvsFromNotes(d && d.Notes), ivx: num(d && d['IVx Open']), vix: num(d && d.VIX) },
       maxRisk: num(row.maxRisk),
       // What the tickets this one was rolled from banked (Oct 2026): part of the
       // position's P&L, though not of this ticket's.

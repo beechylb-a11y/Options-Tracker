@@ -2653,7 +2653,7 @@ app.get('/api/open-orders', async (req, res) => {
 //  the app over one Server-Sent Events stream (/api/stream). The REST endpoints stay
 //  for everything that is not a live quote (history, vol surface, chain scans).
 // ================================================================
-const LIVE_WATCH = (process.env.LIVE_WATCH || 'SPX,XSP,SPY,QQQ,IWM,VIX,VIX1D')
+const LIVE_WATCH = (process.env.LIVE_WATCH || 'SPX,XSP,SPY,QQQ,IWM,VIX,VIX1D,VIX3M')
   .split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
 const LIVE_MAX_LINES = parseInt(process.env.LIVE_MAX_LINES || String(DEFAULT_MAX_LINES));
 const LIVE_PUSH_MS = 250;      // at most 4 updates a second to each app

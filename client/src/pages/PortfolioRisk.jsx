@@ -11,6 +11,9 @@ import { reviewOpen45 } from '../engine/review45';
 import { bookGreeks, bookLimits, spyPriceFrom, VEGA_SHOCK } from '../engine/greekLimits';
 import RiskGauges from '../components/RiskGauges';
 import CapitalPanel, { useAccountSummary } from '../components/CapitalPanel';
+import VolPanel from '../components/VolPanel';
+import { marketVol, positionVol, bookVol } from '../engine/volWatch';
+import { useLiveQuote } from '../live/useLive';
 import { useAccountsList } from '../utils/accountColors';
 import {
   buildBook, reconcile, positionRisk, totals, stressGrid, riskBudget, eventsAhead, attention,
@@ -83,6 +86,7 @@ export default function PortfolioRisk({ authenticated, account }) {
   const stream = useLiveQuotesEvery(2000);
   const summary = useAccountSummary(bridgeUrl);
   const accountsList = useAccountsList();
+  const qVix = useLiveQuote('VIX'), qVix1d = useLiveQuote('VIX1D'), qVix3m = useLiveQuote('VIX3M');
 
   useEffect(() => {
     if (!authenticated) { setLoading(false); return; }
@@ -168,7 +172,11 @@ export default function PortfolioRisk({ authenticated, account }) {
     const spx = streamPrice('SPX', stream) || (riskList.find(r => r.p.underlying === 'SPX') || {}).spot;
     const lim = bookLimits({ ...g45, vega10: shock && shock.n ? shock.cells[0][0].pnl : null },
       { netLiq: base.netLiq, spyPrice: spyPriceFrom({ spy: streamPrice('SPY', stream), spx, xsp: streamPrice('XSP', stream) }) });
+    // Volatility watch (Nov 2026) on this page's own marks.
+    const vm = marketVol({ vix: qVix, vix1d: qVix1d, vix3m: qVix3m });
+    const vpos = riskList.map(r => positionVol(r, { market: vm, todayMs: now.getTime() })).filter(Boolean);
     return {
+      vol: { market: vm, positions: vpos, book: bookVol(vpos, vm, base.netLiq) },
       lim, zero: bookGreeks(riskList, r => !is45(r)),
       book, risks, reviews,
       rec: reconcile(book, live.raw, todayYmd),
@@ -178,7 +186,7 @@ export default function PortfolioRisk({ authenticated, account }) {
       events: eventsAhead(book, todayYmd),
       items: attention(book, { risks, reviews, planOf: loadPlan, now, todayYmd }),
     };
-  }, [base, live, horizon, todayYmd, now, stream]);
+  }, [base, live, horizon, todayYmd, now, stream, qVix, qVix1d, qVix3m]);
 
   function act(p, action) {
     if (action === 'fills') setFills(p.row);
@@ -196,7 +204,7 @@ export default function PortfolioRisk({ authenticated, account }) {
   }
   if (loading && !base) return <div className="text-text-muted text-sm">Loading open positions…</div>;
   if (err) return <div className="card"><div className="text-red text-sm">Open positions: {err}</div></div>;
-  const { book, risks, rec, tot, grid, budget, events, items, lim, zero } = view;
+  const { book, risks, rec, tot, grid, budget, events, items, lim, zero, vol } = view;
   const openN = book.filter(p => p.live > 0).length, workN = book.filter(p => p.working).length;
   const legless = book.filter(p => p.live > 0 && !p.legs);
   const sd = spxDailySd(live.vix);
@@ -240,6 +248,11 @@ export default function PortfolioRisk({ authenticated, account }) {
         <Section icon={<Gauge size={15} color={C.blue} />} title="Book limits" testid="risk-limits"
           sub="The 45DTE book against limits that scale with the bankroll: theta 0.1–0.3% a day, delta within ±0.1% in SPY deltas, and no more than a 3–5% loss if IV jumps 10 points.">
           <RiskGauges lim={lim} zero={zero} />
+        </Section>
+
+        <Section icon={<Activity size={15} color={vol.book.tone === 'red' ? C.red : vol.book.tone ? C.amber : C.blue} />} title="Volatility" testid="risk-vol"
+          sub="VIX against the close, each trade's IV against entry, and what moved its P&L. Short premium loses when IV rises even if price sits still.">
+          <VolPanel market={vol.market} book={vol.book} positions={vol.positions} accounts={accountsList} />
         </Section>
 
         <Section icon={<AlertTriangle size={15} color={C.amber} />} title="Needs attention" testid="risk-attention"
