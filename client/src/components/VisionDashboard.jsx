@@ -17,6 +17,8 @@ import { nyMinutes } from '../engine/review0';
 import { watchSymbols } from './VisionDashHero';
 import { periodSeries, weekCounts, realisedBars, winRateWindow, monthActivity, needsYou, paceForMonth } from '../utils/visionDash';
 import { bareStrategy } from '../utils/tradeStory';
+import BattingDial from './BattingDial';
+import { battingByAccount, baZone, BA_COLOURS } from '../utils/batting';
 
 // The Vision Dashboard, laid out as the design (Nov 2026): Watching and the monthly
 // target ring on the left; P&L with its line, this week's trades, what needs you and
@@ -431,11 +433,11 @@ function Spark({ series }) {
     </svg>
   );
 }
-function SpxTile() {
+function SpxTile({ wide = false }) {
   const { q, px, series } = useHistory('SPX');
   const chg = px > 0 && q.close ? (px / q.close - 1) * 100 : null;
   return (
-    <div className="card vd-tile" data-testid="vd-spx">
+    <div className={`card vd-tile${wide ? ' vd-tile-wide' : ''}`} data-testid="vd-spx">
       <div className="flex items-center gap-2"><Activity size={22} /><span className="vd-live-pill">{q && q.ts ? 'LIVE' : 'NO FEED'}</span></div>
       <div className="-mx-4 mt-1"><Spark series={series} /></div>
       <div className="flex items-baseline gap-2 flex-wrap">
@@ -446,17 +448,48 @@ function SpxTile() {
     </div>
   );
 }
-function WinTile({ trades }) {
-  const w = useMemo(() => winRateWindow(trades, nyISODate(), 90), [trades]);
+// Batting average (Nov 2026): a dial with a ring per real-money account and the
+// overall number in the centre, red under 65, amber 65–75, green 75+. Paper is listed
+// but not counted. One account picked → just that account.
+export function BattingTile({ tracker, decisions, accounts = [], account }) {
+  const [days, setDays] = useState(90);
+  const b = useMemo(() => battingByAccount({ tracker, decisions, accounts, todayISO: nyISODate(), days }), [tracker, decisions, accounts, days]);
+  const one = account && account !== 'all' ? b.rows.find(r => r.id === account) : null;
+  const rows = one ? [one] : b.rows;
+  const rings = one ? [one] : b.rows.filter(r => !r.paper && r.total > 0);
+  const overall = one ? { ba: one.ba, total: one.total } : b.overall;
+  const seg = (v, t) => (
+    <button type="button" key={t} onClick={() => setDays(v)} data-testid={`ba-window-${t}`}
+      style={{ padding: '3px 10px', borderRadius: 999, border: 'none', fontSize: 12.5, cursor: 'pointer',
+        background: days === v ? 'rgba(255,255,255,0.9)' : 'transparent', color: days === v ? '#2a2622' : 'rgba(255,255,255,0.85)' }}>{t}</button>
+  );
   return (
-    <div className="card vd-tile" data-testid="vd-win">
-      <Target size={24} />
-      <div className="flex items-baseline gap-2 mt-8 flex-wrap">
-        <span className="num vd-tile-num" style={{ fontSize: 40, fontWeight: 600 }}>{w.rate != null ? Math.round(w.rate) + '%' : '—'}</span>
-        <Delta v={w.change} suffix=" pts" />
+    <div className="card vd-tile vd-tile-wide" data-testid="vd-win">
+      <div className="flex items-center gap-2">
+        <Target size={22} />
+        <span style={{ fontSize: 16 }}>Batting average</span>
+        {!one && <Delta v={b.overall.change} suffix=" pts" />}
+        <span className="ml-auto" style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 999, background: 'rgba(0,0,0,0.18)' }}>{seg(90, '90d')}{seg(null, 'All')}</span>
       </div>
-      <div style={{ fontSize: 16, whiteSpace: 'nowrap' }}>Win rate · 90d</div>
-      <div style={{ ...lab, fontSize: 12.5 }}>{w.n} decided trades</div>
+      <div className="flex items-center gap-4 mt-2" style={{ flexWrap: 'wrap' }}>
+        <div style={{ flex: '0 0 auto', width: 'min(190px, 100%)' }}>
+          <BattingDial rings={rings} overall={overall} size={190} label={one ? one.name : 'all real accounts'} />
+        </div>
+        <div style={{ flex: '1 1 130px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="ba-rows">
+          {rows.map(r => {
+            const z = baZone(r.ba);
+            return (
+              <div key={r.id} className="flex items-center gap-2" style={{ fontSize: 13.5, opacity: r.paper && !one ? 0.6 : 1 }} data-testid={`ba-row-${r.id}`}>
+                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: r.color, flex: '0 0 auto' }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                <span className="ml-auto num" style={{ fontWeight: 600, color: r.paper && !one ? 'rgba(255,255,255,0.75)' : z ? BA_COLOURS[z] : 'rgba(255,255,255,0.6)' }}>{r.ba != null ? Math.round(r.ba) + '%' : '—'}</span>
+                <span className="num" style={{ ...lab, fontSize: 12, minWidth: 40, textAlign: 'right', whiteSpace: 'nowrap' }} title={r.paper && !one ? 'Paper: not counted in the overall' : undefined}>{r.paper && !one ? 'excluded' : `${r.wins}/${r.total}`}</span>
+              </div>
+            );
+          })}
+          {!one && <div style={{ ...lab, fontSize: 12 }}>Red under 65 · amber 65–75 · green 75+</div>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -642,10 +675,10 @@ export default function VisionDashboard({ authenticated, account, accounts, onAc
       </div>
       <div className="vd-col">
         <section className="card vd-tiles" data-testid="vd-tiles">
-          <WinTile trades={closedTrades} />
+          <BattingTile tracker={tracker} decisions={decisions} accounts={accounts || []} account={account} />
           <MonthTile trades={closedTrades} decisions={decisions} />
-          <SpxTile />
           <RiskTile risk={risk} cap={cap} />
+          <SpxTile wide />
         </section>
         {board.slice(0, 2).map(b => <PositionCard key={b.key} row={b} accounts={accounts || []} />)}
         {!open.length && (

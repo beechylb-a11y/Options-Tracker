@@ -543,13 +543,15 @@ app.get('/api/stats', requireAuth, async (req, res) => {
         (a.name || '').toLowerCase() === 'papertrade' ||
         (a.id || '').toLowerCase().startsWith('papertrade');
       const realAccounts = accounts.filter(a => !isPaper(a));
-      if (realAccounts.length > 0) {
-        config.currentBankroll = realAccounts.reduce((s, a) => s + (Number(a.bankroll) || 0), 0);
-        config.startingBankroll = realAccounts.reduce((s, a) => s + (Number(a.startingBankroll) || 0), 0);
-        // Risk limits don't aggregate meaningfully; surface as combined dollar caps.
-        config.maxDailyLoss = realAccounts.reduce((s, a) => s + (Number(a.maxDailyLoss) || 0), 0) || config.maxDailyLoss;
-        config.maxOpenRisk = realAccounts.reduce((s, a) => s + (Number(a.maxOpenRisk) || 0), 0) || config.maxOpenRisk;
-      }
+      // Bankroll and limits come from the accounts only (Nov 2026): the old global
+      // "Default Risk Configuration" is gone from Settings, so with no real-money
+      // account the totals are 0 rather than whatever was last typed there.
+      config.currentBankroll = realAccounts.reduce((s, a) => s + (Number(a.bankroll) || 0), 0);
+      config.startingBankroll = realAccounts.reduce((s, a) => s + (Number(a.startingBankroll) || 0), 0);
+      // Risk limits don't aggregate meaningfully; surface as combined dollar caps.
+      config.maxDailyLoss = realAccounts.reduce((s, a) => s + (Number(a.maxDailyLoss) || 0), 0);
+      config.maxOpenRisk = realAccounts.reduce((s, a) => s + (Number(a.maxOpenRisk) || 0), 0);
+      config.noRealAccounts = realAccounts.length === 0;
       config.aggregated = true;
       config.activeAccount = 'all';
       config.aggregatedAccounts = realAccounts.map(a => a.id);

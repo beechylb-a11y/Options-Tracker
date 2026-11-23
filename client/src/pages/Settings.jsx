@@ -8,10 +8,6 @@ import { ThemeChoice, GlassChoice } from '../components/ThemeToggle';
 import { accountColor, ACCOUNT_PALETTE } from '../utils/accountColors';
 
 export default function SettingsPage({ authenticated, onLogin, accounts, onAccountsChange, userEmail }) {
-  const [config, setConfig] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(true);
   // Account management
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -47,28 +43,6 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
   }
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
-
-  useEffect(() => {
-    if (!authenticated) { setLoading(false); return; }
-    api.getConfig().then(c => { setConfig(c); setLoading(false); }).catch(() => setLoading(false));
-  }, [authenticated]);
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      for (const [key, val] of Object.entries(config)) {
-        if (key === 'accounts') continue;
-        await api.updateConfig(key, val);
-      }
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) { console.error(e); }
-    setSaving(false);
-  }
-
-  function updateField(key, value) {
-    setConfig(prev => ({ ...prev, [key]: value }));
-  }
 
   async function handleAddAccount() {
     setSavingAccounts(true);
@@ -129,14 +103,6 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
     setSavingAccounts(false);
   }
 
-  const fields = [
-    { key: 'currentBankroll', label: 'Current Bankroll ($)', type: 'number' },
-    { key: 'startingBankroll', label: 'Starting Bankroll ($)', type: 'number' },
-    { key: 'maxDailyLoss', label: 'Max Daily Loss ($)', type: 'number' },
-    { key: 'maxOpenRisk', label: 'Max Open Risk ($)', type: 'number' },
-    { key: 'riskPerContract', label: 'Risk Per Contract ($)', type: 'number' },
-    { key: 'winAmount', label: 'Win Amount ($)', type: 'number' }
-  ];
 
   return (
     <div className="fade-in max-w-2xl">
@@ -391,35 +357,6 @@ export default function SettingsPage({ authenticated, onLogin, accounts, onAccou
         </div>
       </div>
 
-      {/* Global Config (defaults) */}
-      <div className="card mb-6">
-        <h3 className="font-display font-semibold mb-4">Default Risk Configuration</h3>
-        <p className="text-xs text-text-muted mb-3">These defaults are used when no account is selected. Per-account settings override these.</p>
-        {loading ? (
-          <div className="text-text-muted text-sm">Loading...</div>
-        ) : (
-          <div className="grid grid-cols-2 gap-4">
-            {fields.map(f => (
-              <div key={f.key}>
-                <label className="text-xs text-text-muted block mb-1">{f.label}</label>
-                <input
-                  type={f.type}
-                  value={config[f.key] || ''}
-                  onChange={e => updateField(f.key, e.target.value)}
-                  className="w-full px-3 py-2 bg-bg border border-bg-border rounded-lg text-sm text-text mono outline-none focus:border-accent transition-colors"
-                />
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex items-center gap-3 mt-4">
-          <button onClick={handleSave} disabled={saving || !authenticated}
-            className="flex items-center gap-2 px-4 py-2 bg-green-dim hover:bg-green text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
-            <Save size={14} /> {saving ? 'Saving...' : 'Save Config'}
-          </button>
-          {saved && <span className="text-green text-sm">Saved</span>}
-        </div>
-      </div>
     </div>
   );
 }

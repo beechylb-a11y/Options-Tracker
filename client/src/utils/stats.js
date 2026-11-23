@@ -19,8 +19,8 @@ export const COL = {
 };
 
 // Batting-average colour thresholds (%)
-export const BA_GREEN = 60;
-export const BA_RED = 40;
+export const BA_GREEN = 75;   // green at 75% and up (Nov 2026; was 60)
+export const BA_RED = 65;     // red under 65%, amber 65–75 (was 40)
 
 // PaperTrade is excluded from the aggregated "All accounts" view so it never
 // distorts real-money P&L / batting average / streaks. The Account column

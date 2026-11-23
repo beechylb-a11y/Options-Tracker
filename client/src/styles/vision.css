@@ -812,3 +812,6 @@
 :root[data-vision="on"]:not(#_) [data-testid="vis-combo"] [data-testid="live-combo"] > div:first-child span { white-space: nowrap; }
 :root[data-vision="on"]:not(#_) [data-testid="vis-combo"] [data-testid="live-combo"] > div:first-child span:last-child { font-size: 14.5px !important; }
 :root[data-vision="on"]:not(#_) .vis-eng-left [data-testid="strike-line"] > :not([aria-label^="Strike placement"]) { min-width: 120px; }
+
+/* Batting dial and SPX tiles span both tile columns (Nov 2026). */
+:root[data-vision="on"]:not(#_) .vd-tiles > .vd-tile.vd-tile-wide { grid-column: 1 / -1; min-height: 0; }
