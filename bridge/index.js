@@ -23,6 +23,7 @@ import { greeksFromQuote, parityspot, nyRth, DAILY_GRID } from './bsModel.js';
 import { execStem, comboMidOf, ticketSign, execSign, cutoffAction, dueCutoffs, prune } from './orderWatch.js';
 import { createLiveBook, liveKey, parseLiveKey, sseFrame, comboQuote, markOf, TICKET_TTL_MS, DEFAULT_MAX_LINES } from './liveBook.js';
 import fs from 'fs';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -1322,9 +1323,18 @@ app.get('/api/earnings', async (req, res) => {
   }
 });
 
+// The code this process loaded, and what is on disk now (Nov 2026): when they differ,
+// a git pull happened and a restart is needed to load it. Settings shows it.
+function gitHead() {
+  try { return execSync('git rev-parse --short HEAD', { cwd: path.dirname(fileURLToPath(import.meta.url)), stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim(); }
+  catch (e) { return null; }
+}
+const STARTED_COMMIT = gitHead();
+let headCache = { at: 0, head: STARTED_COMMIT };
+function headNow() { if (Date.now() - headCache.at > 30000) headCache = { at: Date.now(), head: gitHead() }; return headCache.head; }
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, connected, timestamp: new Date().toISOString(),
-    startedAt: STARTED_AT, lastError: connected ? '' : lastConnectError,
+    startedAt: STARTED_AT, commit: STARTED_COMMIT, headOnDisk: headNow(), lastError: connected ? '' : lastConnectError,
     reconnecting: !!reconnectTimer, canRestart: true,
     app: connected ? session.app : '', mode: connected ? session.mode : '',
     port: connected ? session.port : null, accounts: connected ? session.accounts : [],
