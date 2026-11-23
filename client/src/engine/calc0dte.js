@@ -12,6 +12,7 @@ import { deltaCrossCheck, deltaStrikePlan, strikeGrid, typedStrikeStep } from '.
 import { fitToListed, normListed, unlistedLegs } from './listedStrikes.js';
 import { legQty } from './legQty.js';
 import { rangeLeft } from './creditSide';
+import { cvar95, losingRun, sizeSteps } from './sizing.js';
 
 // Index sets over the first seven entries of STRATS_0DTE (the non-spread block
 // that `base` covers), keyed on profit locus. A 'pin' needs price to stop at the
@@ -2307,7 +2308,13 @@ export function calc0DTE(inputs) {
   const fullC = risk > 0 ? Math.max(1, Math.floor(riskCap / risk)) : 1;
   const halfC = Math.max(1, Math.floor(fullC / 2));
   const vixOvC = vixHigh ? Math.max(1, Math.floor(fullC * 0.5)) : fullC;
-  const kellyContracts = setup === 'B Setup' ? halfC : (vixHigh ? vixOvC : fullC);
+  // Caps beyond Kelly (Nov 2026): buying power under the VIX band and a CVaR cap
+  // (one trade's bad day ≤ 2% of the bankroll); contracts = the smallest.
+  const cvarEach0 = risk > 0 && winP > 0 && win > 0
+    ? cvar95({ risk, winP, pMaxLoss, partialFrac: lossCap * 0.6, commission: commInEV }) : null;
+  const sizing = cvarEach0 == null ? null : sizeSteps({ kellyFull: fullC, kellyHalf: setup === 'B Setup' ? halfC : vixOvC,
+    useHalf: setup === 'B Setup' || vixHigh, riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach0, bankroll });
+  const kellyContracts = sizing ? sizing.final : (setup === 'B Setup' ? halfC : (vixHigh ? vixOvC : fullC));
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
   const contracts = contractsOverride || kellyContracts;
@@ -2619,6 +2626,8 @@ export function calc0DTE(inputs) {
   if (vixGap > 0.25) warnings.push('VIX1D extremely rich — verify no event risk');
   if (vixHigh) warnings.push('VIX >25 — half-size override');
   if (setup === 'B Setup') warnings.push('B setup — half Kelly');
+  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over 2% of the bankroll — too big for this account`);
+  if (sizing && sizing.capsAtZero.includes('bp')) warnings.push(`Buying power cap: ${sizing.bp.room > 0 ? 'less than one contract of room' : 'already over'} the ${sizing.bp.band.hi}% band at this VIX — new trades should wait`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (moveConsumed > 0.90 && isSkewed && !pinLike) warnings.push('Move >90% consumed — avoid chasing directional');
   if (moveConsumed > 0.80 && isCompressing) warnings.push('Vol exhausted + compression — butterfly/BWB territory');
@@ -2917,7 +2926,9 @@ export function calc0DTE(inputs) {
     pMaxLossBasis,
     // Kelly (Sharpe-adjusted)
     frictions,
-    kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, kellyContracts, contractsOverride, sizingModel: "adjusted",
+    kelly, rawKelly, adjustedKelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, kellyContracts, contractsOverride, sizingModel: "adjusted", sizing, cvar95: cvarEach0,
+    evPerCvar: cvarEach0 > 0 && Number.isFinite(ev) ? ev / cvarEach0 : null,
+    losingRun: cvarEach0 == null ? null : losingRun({ lossEach: contracts * risk, capital: bankroll, pLoss: 1 - winP }),
     volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
     fullC, halfC, vixOvC, contracts, maxRisk, vixHigh,
     // EV & Payoff

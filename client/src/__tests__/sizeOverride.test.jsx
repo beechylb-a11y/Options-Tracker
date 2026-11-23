@@ -55,11 +55,11 @@ describe('ticket size box', () => {
       strategyHistory={{}} initialState={{ i0: base }} toast={() => {}} />);
     const box = screen.getByTestId('size-input');
     const kellyC = box.value;
-    expect(screen.getByTestId('size-kelly').textContent).toMatch(new RegExp(`Kelly ${kellyC} ct`));
+    expect(screen.getByTestId('size-kelly').textContent).toMatch(new RegExp(`(Kelly|Suggested) ${kellyC} ct`));
     fireEvent.change(box, { target: { value: String(+kellyC + 2) } });
     fireEvent.blur(box);
     expect(screen.getByTestId('size-input').value).toBe(String(+kellyC + 2));
-    expect(screen.getByTestId('size-kelly').textContent).toMatch(new RegExp(`Kelly ${kellyC} ct`));
+    expect(screen.getByTestId('size-kelly').textContent).toMatch(new RegExp(`(Kelly|Suggested) ${kellyC} ct`));
     fireEvent.click(screen.getByLabelText('One fewer contract'));
     expect(screen.getByTestId('size-input').value).toBe(String(+kellyC + 1));
     fireEvent.click(screen.getByTestId('size-reset'));

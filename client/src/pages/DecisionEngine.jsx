@@ -20,6 +20,9 @@ import { startCloseVolSnapshot } from '../utils/volSnapshot';
 import OrderTicket from '../components/OrderTicket';
 import { commissionRate, unitsFromTicket, roundTripCommission } from '../utils/commission';
 import { useBook45 } from '../live/useBook45';
+import { useAccountSummary } from '../components/CapitalPanel';
+import { matchAccount, bpBand } from '../utils/capital';
+import { streamPrice, useLiveQuotesEvery } from '../live/streamQuotes';
 const TONE_HEX = { green: 'var(--c-3fb950)', amber: 'var(--c-e3b341)', red: 'var(--c-f85149)', blue: 'var(--c-58a6ff)', grey: 'var(--c-8b949e)' };
 
 // ── Trade tabs (Aug 2026) ──
@@ -139,6 +142,21 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
   const book45Raw = useBook45(account, { enabled: !!authenticated });
   const book45Key = book45Raw ? [Math.round(book45Raw.theta), Math.round(book45Raw.spxDelta1 / 5), book45Raw.netLiq, Math.round(book45Raw.spyPrice || 0)].join('|') : '';
   const book45 = React.useMemo(() => book45Raw, [book45Key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // TWS net liq and margin for the ticket's account → the buying power cap in sizing
+  // (Nov 2026). Only when one account is picked and it is linked to a TWS account.
+  let bridgeUrlNow = '';
+  try { bridgeUrlNow = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+  const summary = useAccountSummary(authenticated ? bridgeUrlNow : '', 60000);
+  const vixStream = useLiveQuotesEvery(30000);
+  const vixNow = streamPrice('VIX', vixStream);
+  const capRec = React.useMemo(() => {
+    if (!summary.accounts || !account || account === 'all') return null;
+    const hit = Object.entries(summary.accounts).find(([id]) => { const a = matchAccount(id, accounts || []); return a && a.id === account; });
+    return hit ? hit[1] : null;
+  }, [summary.accounts, account, accounts]);
+  const bandHi = bpBand(vixNow).hi;
+  const capital = React.useMemo(() => (capRec ? { netLiq: capRec.netLiq, initMargin: capRec.initMargin || 0, vix: vixNow || null } : null),
+    [capRec && Math.round(capRec.netLiq / 50), capRec && Math.round((capRec.initMargin || 0) / 50), bandHi]); // eslint-disable-line react-hooks/exhaustive-deps
   const restored = React.useMemo(() => loadTabs(), []);
   // No blank ticket by default (Oct 2026): a group starts empty until a scan opens a
   // ticket or + Trade adds one.
@@ -1377,7 +1395,7 @@ export default function DecisionEngine({ authenticated, account, accounts }) {
               </span>
             )}
           </div>
-          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt} book45={book45}
+          <EnginePanel mode={t.mode} onLogTrade={handleEngineLog} createdAt={t.createdAt} book45={book45} capital={capital}
             accountConfig={accounts?.find(a => a.id === account) || {}}
             strategyHistory={strategyHistory} captureStats={captureStats}
             seed={t.seed} initialState={t.state}

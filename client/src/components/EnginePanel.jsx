@@ -534,7 +534,7 @@ function DeltaStrip({ strat, check, plan, method, onMethod, builtBy, confirmed, 
   );
 }
 
-export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, captureStats, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt, book45 }) {
+export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyHistory, captureStats, seed, initialState, onStateChange, onSummary, toast, onOpenInTab, createdAt, book45, capital }) {
   const is0 = mode === '0dte';
   const acfg = accountConfig || {};
   // Notices go through the parent's toast (top-right, auto-dismiss). Falls back
@@ -930,6 +930,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           straddleHaircut: i0.straddleHaircut !== '' ? parseFloat(i0.straddleHaircut) : 1.2533,
           commissionPerContract: commRateAcct,
           contractsOverride: sizeOv['0'] || null,
+          capital: capital || null,
           noExpiryToday: expiryToday === false ? { next: nextExpiry0 } : null,
           listedStrikes: listedNow,
           ...(over || {})
@@ -976,6 +977,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
           contractsOverride: sizeOv['45'] || null,
           ratioSpec,
           book45: book45 || null,   // open 45DTE book greeks + bankroll → limit warnings
+          capital: capital || null, // TWS net liq + margin for the account → buying power cap
           ...(over || {})
   });
 
@@ -1003,7 +1005,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
         regimeScore:0, regimeGrade:'', ivHvRatio:0,
         vertVariants:null, vertVariant:'engine' };
     }
-  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec, earningsCal, book45]);
+  }, [is0, i0, i45, overrideStrat, overrideStrikes, vertVariant, strategyHistory, captureStats, commRateAcct, legGreeks, tsClose, trendNow, volMeta, curveModel, listedChain, sizeOv, expiryToday, nextExpiry0, ratioSpec, earningsCal, book45, capital]);
 
   // What-if vol: re-run the engine on the other vol estimate and show the delta.
   // Which "other" depends on what is driving EM now. Straddle -> the VIX1D model;
@@ -3895,11 +3897,12 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 const d = cb && exp ? dteBetween(todayYmd, addDaysYmd(exp, -cb.closeDte)) : null;
                 return cb ? { label: `close by ${cb.date || ''} (${cb.closeDte} DTE)`, days: d } : null; })()} />
           </div>
-          <div style={{flex:'1 1 130px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
+          <div style={{flex:'1 1 190px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
             <span style={EX_LBL}>Size</span>
             {missingInputs ? <span style={{fontSize:13,color:'var(--c-8b949e)'}}>after sizing</span> : <SizeInput
               value={r.contracts} kellyC={r.kellyContracts ?? r.contracts} mine={!!r.contractsOverride}
               noEdge={!(r.kellyDollar > 0)} kellyDollar={r.kellyDollar} overRisk={r.kellyOverRisk} riskEach={r.maxRisk && r.contracts ? r.maxRisk / r.contracts : 0}
+              sizing={r.sizing} tail={{ cvar: r.cvar95, evPerCvar: r.evPerCvar, run: r.losingRun }}
               onSet={n => setSizeOv(p => ({ ...p, [bag]: n > 0 ? n : null }))} />}
           </div>
           <div style={{flex:'1 1 170px',display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
@@ -5414,10 +5417,11 @@ const EX_GHOST = { padding: '6px 12px', borderRadius: 8, border: '1px solid var(
 // Near (sold) and far (bought) expiries for a calendar or diagonal. Five choices
 // each, around the current pick; the far row only offers dates after the near.
 // 45DTE single-expiry structures: which listed expiry the ticket trades. (Oct 2026.)
+const SIZE_STEP_LABEL = { kelly: 'Kelly', half: 'Half Kelly', bp: 'Buying power', cvar: 'CVaR' };
 // Contracts on the ticket (Oct 2026). Kelly picks the size; you can type your own,
 // and Kelly's stays beside it with a reset. Logging, commission and max risk all
 // follow what is in the box.
-function SizeInput({ value, kellyC, mine, noEdge, kellyDollar, overRisk, riskEach, onSet }) {
+function SizeInput({ value, kellyC, mine, noEdge, kellyDollar, overRisk, riskEach, sizing, tail, onSet }) {
   const [txt, setTxt] = useState(String(value));
   useEffect(() => { setTxt(String(value)); }, [value]);
   const commit = v => { const n = Math.floor(parseFloat(v)); if (n > 0) onSet(n === kellyC && !mine ? null : n); else setTxt(String(value)); };
@@ -5437,11 +5441,31 @@ function SizeInput({ value, kellyC, mine, noEdge, kellyDollar, overRisk, riskEac
         <span className="mono" style={{fontSize:13,color:'var(--c-8b949e)'}}>ct</span>
       </div>
       <span data-testid="size-kelly" style={{fontSize:12.5,color: noEdge ? 'var(--c-e3833c)' : 'var(--c-a8b2be)'}}>
-        {noEdge ? `Kelly says no edge at this price (${kellyC} ct is a floor)` : `Kelly ${kellyC} ct · $${Math.round(kellyDollar || 0)}`}
+        {noEdge ? `Kelly says no edge at this price (${kellyC} ct is a floor)`
+          : sizing && !['kelly', 'half'].includes(sizing.binding) ? `Suggested ${kellyC} ct · ${SIZE_STEP_LABEL[sizing.binding]} sets it`
+            : `Kelly ${kellyC} ct · $${Math.round(kellyDollar || 0)}`}
         {overRisk ? ' · over risk cap' : ''}
         {mine && <> · <button type="button" data-testid="size-reset" onClick={() => onSet(null)}
-          style={{padding:0,border:'none',background:'transparent',color:'var(--c-58a6ff)',fontSize:12.5,textDecoration:'underline',cursor:'pointer'}}>use Kelly</button></>}
+          style={{padding:0,border:'none',background:'transparent',color:'var(--c-58a6ff)',fontSize:12.5,textDecoration:'underline',cursor:'pointer'}}>{sizing && !['kelly', 'half'].includes(sizing.binding) ? 'use suggested' : 'use Kelly'}</button></>}
       </span>
+      {sizing && sizing.steps.length > 1 && (
+        <span data-testid="size-steps" style={{fontSize:12,color:'var(--c-8b949e)',display:'flex',flexWrap:'wrap',gap:'2px 8px'}}>
+          {sizing.steps.map(st => (
+            <span key={st.key} title={st.why} style={st.key === sizing.binding ? {color:'var(--c-e6edf3)',fontWeight:700} : undefined}>
+              {SIZE_STEP_LABEL[st.key]} <span className="mono">{st.ct}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      {tail && tail.cvar > 0 && (
+        <span data-testid="size-tail" style={{fontSize:12,color:'var(--c-8b949e)',display:'flex',flexDirection:'column'}}
+          title={"CVaR95: the average loss across the worst 5% of outcomes, from the engine's own tail model (the max loss where price runs through the strikes). EV ÷ CVaR: edge per dollar of bad day."
+            + (tail.run ? ` ${tail.run.n} max losses in a row take 10% of the bankroll at this size; a run that long somewhere in 100 trades: ${Math.round(tail.run.prob * 100)}%.` : '')}>
+          <span>Bad day <span className="mono" style={{color:'var(--c-f0a0a0)'}}>−${Math.round(tail.cvar).toLocaleString()}</span>/ct (CVaR95)</span>
+          <span>{tail.evPerCvar != null && <>EV ÷ CVaR <span className="mono">{(tail.evPerCvar < 0 ? "−" : "") + Math.abs(tail.evPerCvar).toFixed(2)}</span></>}
+            {tail.run && <>{tail.evPerCvar != null ? ' · ' : ''}{tail.run.n} losses = −10% <span className="mono">({Math.round(tail.run.prob * 100)}% in 100)</span></>}</span>
+        </span>
+      )}
       {over && riskEach > 0 && <span style={{fontSize:12.5,color:'var(--c-f85149)'}}>
         {value} ct risks ${Math.round(value * riskEach)} — above Kelly's ${Math.round(kellyC * riskEach)}
       </span>}

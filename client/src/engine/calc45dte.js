@@ -12,6 +12,7 @@ import { fitToListed, normListed, unlistedLegs, unequalWings } from './listedStr
 import { buildRatioLegs, reprotect, isProtected, ratioChoice, ratioShape, ratioTailLoss } from './ratioSpread.js';
 import { tradeLimitWarnings } from './greekLimits.js';
 import { betaOf } from './portfolio.js';
+import { cvar95, losingRun, sizeSteps } from './sizing.js';
 
 // ── Term structure from ~30d vs ~90d ATM IV (Oct 2026) ──
 // front/back is the same ratio as VIX/VIX3M: calm markets sit near 0.85-0.92, above 1
@@ -556,7 +557,16 @@ export function calc45DTE(inputs) {
   // user types a size or there is no size. (Oct 2026.)
   // Half Kelly for a B setup, and for any trade the backwardation rule lets through
   // (playbook: "Backwardation — defined risk credit spreads only … reduce size").
-  const kellyContracts = riskUndefined ? null : (setup === 'B Setup' || termBiasEff === 'backwardation' ? halfC : fullC);
+  const useHalf45 = setup === 'B Setup' || termBiasEff === 'backwardation';
+  // Caps beyond Kelly (Nov 2026): buying power left under the VIX band (TWS account
+  // summary, when the ticket's account is linked) and a CVaR cap — one trade's bad
+  // day ≤ 2% of the bankroll. Contracts = the smallest; `sizing.binding` says which.
+  const noSize45 = !(win > 0) || !(risk > 0) || !(popFrac > 0);
+  const cvarEach45 = riskUndefined || noSize45 ? null
+    : cvar95({ risk, winP, pMaxLoss, partialFrac: evLossCap * 0.6, commission: commInEV });
+  const sizing = riskUndefined || noSize45 ? null : sizeSteps({ kellyFull: fullC, kellyHalf: halfC, useHalf: useHalf45,
+    riskEach: risk, capital: inputs.capital || null, cvarEach: cvarEach45, bankroll });
+  const kellyContracts = riskUndefined ? null : sizing ? sizing.final : (useHalf45 ? halfC : fullC);
   // Your size, when typed on the ticket (Oct 2026); Kelly's stays alongside.
   const contractsOverride = inputs.contractsOverride > 0 ? Math.floor(inputs.contractsOverride) : null;
   const contracts = contractsOverride || kellyContracts || (riskUndefined ? 0 : 1);
@@ -665,6 +675,8 @@ export function calc45DTE(inputs) {
       .forEach(w => warnings.push(w));
   }
   if (setup === 'B Setup') warnings.push(`B setup (${setupScore}/100) — half Kelly`);
+  if (sizing && sizing.capsAtZero.includes('cvar')) warnings.push(`CVaR cap: one contract's bad day ($${Math.round(sizing.cvar.each)}) is over ${Math.round(sizing.cvar.each / bankroll * 1000) / 10}% of the bankroll — too big for this account at 2%`);
+  if (sizing && sizing.capsAtZero.includes('bp')) warnings.push(`Buying power cap: ${sizing.bp.room > 0 ? 'less than one contract of room' : 'already over'} the ${sizing.bp.band.hi}% band at this VIX — new trades should wait`);
   if (!missingSize && kelly <= 0) warnings.push('Kelly negative — edge insufficient, minimum 1 contract');
   if (ivr < 20) warnings.push('Low IVR — debit or calendars');
   if (!termBiasEff) warnings.push('Term structure unknown — fetch the vol surface or set term bias (scores 0/15 until then)');
@@ -820,7 +832,9 @@ export function calc45DTE(inputs) {
     setupScore, setup, criteria,
     pMaxLoss, pMaxLossLow, pMaxLossHigh, pMaxLossModel, pMaxLossDelta, pMaxLossSource,
     kelly, kellyDollar, kellyOverRisk, popMargin, bePop, wlRatio, rawKelly, adjustedKelly, sizingModel, volFactor, sharpeFactor, sharpeProxy, stratModifier, stratModReason,
-    kellyContracts, contractsOverride,
+    kellyContracts, contractsOverride, sizing, cvar95: cvarEach45,
+    evPerCvar: cvarEach45 > 0 && Number.isFinite(ev) ? ev / cvarEach45 : null,
+    losingRun: !riskUndefined && !missingSize ? losingRun({ lossEach: contracts * risk, capital: bankroll, pLoss: 1 - winP }) : null,
     ev, evBasis,
     targetCredit, targetLabel,
     fullC, halfC, contracts, maxRisk, tEff,
