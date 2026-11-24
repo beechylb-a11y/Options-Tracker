@@ -572,6 +572,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Market fields you have typed by hand. Auto-fill will not overwrite these;
   // they render amber with the feed's value alongside so the override is visible.
   const [held, setHeld] = useState(init?.held ?? {});
+  // Where each Sizing number came from — { 'bag:key': { kind: 'typed'|'tws'|'target'|'model', v, at } } —
+  // kept with the tab, so a reload still knows a TWS price from one you typed (Nov 2026).
+  const [sizeSrc, setSizeSrc] = useState(init?.sizeSrc ?? {});
+  const sizeSrcRef = useRef(sizeSrc); sizeSrcRef.current = sizeSrc;
+  const noteSrc = (b, k, kind, v, at) => setSizeSrc(s => {
+    const cur = s[b + ':' + k], val = String(v);
+    if (cur && cur.kind === kind && cur.v === val && (cur.at || null) === (at || null)) return s;
+    return { ...s, [b + ':' + k]: { kind, v: val, ...(at ? { at } : {}) } };
+  });
   // Per-leg strike overrides, keyed by engine bag ('0' | '45') and TAGGED with the
   // structure they were typed against: { '0': { strat, map: { legIndex: strike } } }.
   // The calc ignores a map whose strat tag no longer matches, so switching
@@ -744,12 +753,13 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // auto-fill; everything else is genuinely refetched.
   const bag = is0 ? '0' : '45';
   const markHeld = (b, k) => setHeld(h => (h[b + ':' + k] ? h : { ...h, [b + ':' + k]: true }));
-  const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); };
+  const SRC_KEYS = ['netCreditDebit', 'win', 'risk', 'pop'];
+  const set0 = (k,v) => { setI0(p => ({...p,[k]:v})); if (MKT_0.includes(k)) markHeld('0', k); if (SRC_KEYS.includes(k)) noteSrc('0', k, 'typed', v); };
   // Outlook is held too (Oct 2026): the daily trend sets it on every vol-surface
   // pull until you choose one yourself.
   // Typing POP replaces a model-filled one (popSource 'model' → '').
   const set45 = (k,v) => { setI45(p => ({...p,[k]:v, ...(k === 'pop' ? { popSource: '' } : {}),
-    ...(k === 'win' ? { winSource: '' } : {}), ...(k === 'risk' ? { riskSource: '' } : {})})); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
+    ...(k === 'win' ? { winSource: '' } : {}), ...(k === 'risk' ? { riskSource: '' } : {})})); if (SRC_KEYS.includes(k)) noteSrc('45', k, 'typed', v); if (MKT_45.includes(k) || GREEKS_45.includes(k) || VOL_45.includes(k) || k === 'outlook') markHeld('45', k); };
   const fv = (o,k) => parseFloat(o[k]) || 0;
 
   const isHeld = k => !!held[bag + ':' + k];
@@ -866,8 +876,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const oscRef = useRef(onStateChange);
   oscRef.current = onStateChange;
   useEffect(() => {
-    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec });
-  }, [i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec]);
+    if (oscRef.current) oscRef.current({ i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec, sizeSrc });
+  }, [sizeSrc, i0, i45, overrideStrat, overrideStrikes, vertVariant, dataFresh, esContract, esMeta, greeksFresh, held, feed, volMeta, loggedAt, loggedSig, strikeMethod, legGreeks, deltaApplied, calExp, tsClose, vertPick, sizeOv, ratioSpec]);
 
   // Does the ES overnight block describe the session this ticket is for? The bridge
   // reports its own session date, so prefer comparing the two; without one (snapshot
@@ -1463,6 +1473,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (cur !== '' && cur != null) { netAutoRef.current = { key: netKey, value: '' }; return; }
     const v = netTarget.toFixed(2);
     netAutoRef.current = { key: netKey, value: v };
+    noteSrc(is0 ? '0' : '45', 'netCreditDebit', 'target', v);
     if (is0) setI0(p => ({ ...p, netCreditDebit: v }));
     else setI45(p => ({ ...p, netCreditDebit: v }));
   }, [netKey, netTarget]);
@@ -1916,13 +1927,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // live price wrote them and they are still in place, a target when the engine suggested
   // the net, typed otherwise.
   const liveWritten = (liveOn && liveRef.current && liveRef.current[bag] && liveRef.current[bag].written) || {};
+  // Only a value you typed yourself says "typed"; one with no known origin (an older tab) shows no tag.
   const srcOf = k => {
     const v = secBag[k];
     if (v === '' || v == null) return null;
     if (liveWritten[k] != null && String(liveWritten[k]) === String(v)) return sourceTag('tws', livePx && livePx.asOf);
     if (k === 'netCreditDebit' && netIsTarget) return sourceTag('target');
-    return sourceTag('typed');
+    if (!is0 && secBag[k + 'Source'] === 'model') return sourceTag('model');
+    const rec = sizeSrc[bag + ':' + k];
+    if (rec && rec.v === String(v)) return sourceTag(rec.kind, rec.at);
+    if (!is0 && secBag[k + 'Source'] === 'live') return sourceTag('tws');
+    return null;
   };
+  // Record what the last TWS fetch wrote, so the tag survives a reload.
+  useEffect(() => {
+    if (!livePx) return;
+    const w = (liveRef.current[livePx.bag] || {}).written || {};
+    Object.keys(w).forEach(k => { if (w[k] != null) noteSrc(livePx.bag, k, 'tws', w[k], livePx.asOf); });
+  }, [livePx]);   // eslint-disable-line react-hooks/exhaustive-deps
   // "Net credit 1.85 → 1.92 from TWS": say it when the live price replaces the net.
   const prevNetRef = useRef(secBag.netCreditDebit);
   useEffect(() => {
@@ -2161,6 +2183,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (exitSim && (i45.pop === '' || i45.popSource === 'model')) {
       const p = String(Math.round(exitSim.pop * 100));
       if (i45.pop !== p) setI45(prev => ({ ...prev, pop: p, popSource: 'model' }));
+      noteSrc('45', 'pop', 'model', p);
     }
     // Win and Risk for time spreads (TWS gives neither for two expiries). Win = the
     // peak of the near-expiry curve; Risk = the most the curve can lose at the near
@@ -2462,6 +2485,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             const v = prev[k];
             if (v === '' || v == null) return true;
             if (k === 'netCreditDebit' && netAutoRef.current.value === String(v)) return true;
+            // Filled by TWS, the target or the model before a reload: still ours to update.
+            const rec = sizeSrcRef.current[b + ':' + k];
+            if (rec && rec.kind !== 'typed' && rec.v === String(v)) return true;
             return !!(last && last[k] != null && String(last[k]) === String(v));
           };
           const apply = prev => {
@@ -3772,7 +3798,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const money0 = v => (v == null || !isFinite(v) ? '—' : (v < 0 ? '−' : v > 0 ? '+' : '') + '$' + Math.abs(Math.round(v)).toLocaleString('en-US'));
     const numbers = [
       { testid: 'vis-n-ev', label: 'Expected value', value: missingInputs || r.ev == null ? '—' : money0(r.ev), sub: missingInputs ? 'needs win, risk and POP' : 'after commission', tag: sourceTag('model') },
-      { testid: 'vis-n-pop', label: 'Win chance', value: isFinite(popNum) && popNum > 0 ? `${Math.round(popNum)}%` : '—', sub: 'any profit at expiry', tag: srcOf('pop'), flashOn: true },
+      { testid: 'vis-n-pop', label: 'Win chance', value: isFinite(popNum) && popNum > 0 ? `${Math.round(popNum)}%` : '—', sub: !is0 && i45.popSource === 'model' ? `closed at target or ${payCurve ? payCurve.closeDte : 21} DTE` : 'any profit at expiry', tag: srcOf('pop'), flashOn: true },
       { testid: 'vis-n-maxloss', label: 'Max loss', value: maxL == null ? '—' : money0(maxL), color: maxL != null && maxL < 0 ? '#ffa39a' : undefined, sub: 'at expiry, as sized', tag: sourceTag('model') },
       { testid: 'vis-n-pml', label: 'Max-loss chance', value: pml == null ? '—' : `${(pml * 100).toFixed(1)}%`, sub: pml == null ? 'fetch greeks' : 'beyond a wing', tag: sourceTag('model') },
       { testid: 'vis-n-size', label: 'Size', value: missingInputs ? '—' : `${r.kellyContracts ?? r.contracts} ct`, sub: r.kellyDollar ? `Kelly · $${Math.round(r.kellyDollar).toLocaleString('en-US')}` : 'Kelly', tag: sourceTag('model') },

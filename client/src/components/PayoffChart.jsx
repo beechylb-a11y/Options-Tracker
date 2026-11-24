@@ -23,7 +23,7 @@
 //  on the evaluated date from this curve; the engine's own Max-loss chance stays
 //  where it is defined (one definition per number), so it is not redrawn here.
 // ================================================================
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useId } from 'react';
 import { quoteStale } from '../live/streamQuotes';
 import { curveAt, probProfit, pnlAt, positionValue, HARD_CLOSE_DTE, RATE } from '../engine/payoffCurve';
 import { addDaysYmd, fmtExpiry } from '../utils/expiries';
@@ -117,6 +117,10 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
   //   and arrow keys step them; the curves preview while dragging, the engine re-runs on drop.
   // ghost: { cl, net, label } — another structure drawn dashed for comparison.
   const svgRef = useRef(null);
+  // Clip ids unique per chart: with two charts on a page, url(#pc-above) resolved to the
+  // first chart's rect, so the profit/loss tints landed on the wrong side of zero.
+  const uid = useId().replace(/:/g, '');
+  const clipAbove = `pc-above-${uid}`, clipBelow = `pc-below-${uid}`, clipPlot = `pc-plot-${uid}`;
   const [drag, setDrag] = useState(null);   // { strike, right, to, legIdx[] }
   const moving = drag && drag.to !== drag.strike;
   const view = useMemo(() => (moving ? movedLegs(clIn, netIn, drag.strike, drag.right, drag.to, spot) : { cl: clIn, net: netIn }),
@@ -262,6 +266,12 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
   const heroWhen = intraday
     ? (d === 0 ? 'now' : d >= nearDte ? 'expiry' : isClose ? `the ${closeEt || 'exit'} close` : `${etAt(d, nearDte)} ET`)
     : (d === 0 ? 'today' : d >= nearDte ? (isTimeSpread ? 'near expiry' : 'expiry') : isClose ? `the ${closeDte}-DTE close` : fmtExpiry(dateYmd));
+  // Break-even at the moment shown; at expiry it sits elsewhere (the price map below is at
+  // expiry), so name the moment and give the expiry one under it.
+  const beWhen = intraday ? (d >= nearDte ? 'at expiry' : d === 0 ? 'now' : `at ${heroWhen}`)
+    : (d >= nearDte ? 'at expiry' : d === 0 ? 'today' : `on ${fmtExpiry(dateYmd)}`);
+  const besExp = curves.exp ? curves.exp.breakevens : null;
+  const beExpNote = besExp && besExp.length ? `${besExp.map(b => px2(b)).join(' · ')} at expiry` : null;
   const seg = on => ({ border: 'none', borderRadius: 999, padding: '8px 16px', font: 'inherit', fontSize: 14, fontWeight: 500, cursor: 'pointer',
     background: on ? 'rgba(255,255,255,0.26)' : 'transparent', color: on ? '#fff' : 'rgba(255,255,255,0.84)', boxShadow: on ? 'inset 0 1px 0 rgba(255,255,255,0.35)' : 'none' });
   return (
@@ -271,7 +281,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
           <div style={{ flex: '1 1 280px', minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 500, color: 'rgba(255,255,255,0.8)' }}>P&amp;L at {heroWhen}</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginTop: 2 }}>
-              <span data-testid="payoff-hero-pnl" className="num" style={{ fontSize: 54, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: atPx >= 0 ? '#ffffff' : '#ffa39a' }}>{signed(atPx)}</span>
+              <span data-testid="payoff-hero-pnl" className="num" style={{ fontSize: 54, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: atPx >= 0 ? '#7ee2a0' : '#ffa39a' }}>{signed(atPx)}</span>
               <span className="num" style={{ fontSize: 15, color: 'rgba(255,255,255,0.86)' }}>at {livePx ? 'live' : 'spot'} {px2(px)} · max {signed(sel.maxProfit)}</span>
             </div>
           </div>
@@ -342,9 +352,9 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
         onMouseLeave={() => { if (!drag) setHoverPx(null); }} role="img"
         aria-label={`P&L at ${label}: max ${money(sel.maxProfit)}, breakevens ${bes.join(', ') || 'none'}`}>
         <defs>
-          <clipPath id="pc-above"><rect x={PAD.left} y={PAD.top} width={cW} height={Math.max(0, zeroY - PAD.top)} /></clipPath>
-          <clipPath id="pc-below"><rect x={PAD.left} y={zeroY} width={cW} height={Math.max(0, PAD.top + cH - zeroY)} /></clipPath>
-          <clipPath id="pc-plot"><rect x={PAD.left} y={PAD.top} width={cW} height={cH} /></clipPath>
+          <clipPath id={clipAbove}><rect x={PAD.left} y={PAD.top} width={cW} height={Math.max(0, zeroY - PAD.top)} /></clipPath>
+          <clipPath id={clipBelow}><rect x={PAD.left} y={zeroY} width={cW} height={Math.max(0, PAD.top + cH - zeroY)} /></clipPath>
+          <clipPath id={clipPlot}><rect x={PAD.left} y={PAD.top} width={cW} height={cH} /></clipPath>
         </defs>
         {/* expected move to the evaluated moment */}
         {sigPts > 0 && [2, 1].map(k => {
@@ -358,8 +368,8 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
             <text x={PAD.left - 6} y={y(v) + 3.5} textAnchor="end" fontSize={fs(10.5)} fill={C.grey} fontFamily={MONO}>{kfmt(v)}</text>
           </g>
         ))}
-        <path d={selArea} fill="color-mix(in srgb, var(--c-3fb950) 18%, transparent)" clipPath="url(#pc-above)" />
-        <path d={selArea} fill="color-mix(in srgb, var(--c-f85149) 15%, transparent)" clipPath="url(#pc-below)" />
+        <path data-testid="pnl-zone-profit" d={selArea} fill={hero ? 'rgba(52,199,89,0.30)' : 'color-mix(in srgb, var(--c-3fb950) 18%, transparent)'} clipPath={`url(#${clipAbove})`} />
+        <path data-testid="pnl-zone-loss" d={selArea} fill={hero ? 'rgba(255,69,58,0.28)' : 'color-mix(in srgb, var(--c-f85149) 15%, transparent)'} clipPath={`url(#${clipBelow})`} />
         {bandPath && <path d={bandPath} fill="color-mix(in srgb, var(--c-58a6ff) 16%, transparent)" stroke="none" />}
         {tgtLines.map((t, i) => (
           <g key={'t' + i}>
@@ -373,7 +383,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
             <text x={PAD.left + 6} y={y(stopLine) - 4} fontSize={fs(10.5)} fill={C.red} fontFamily={MONO}>stop {money(stopLine)} · info only</text>
           </g>
         )}
-        <g clipPath="url(#pc-plot)">
+        <g clipPath={`url(#${clipPlot})`}>
           {curves.exp && <path d={path(curves.exp)} fill="none" stroke={C.soft} strokeWidth="1.4" opacity="0.8" />}
           {curves.now && <path d={path(curves.now)} fill="none" stroke={C.purple} strokeWidth="1.6" strokeDasharray="1.5 4" strokeLinecap="round" />}
           {ghostCurve && <path data-testid="ghost-curve" d={path(ghostCurve)} fill="none" stroke={C.text} strokeWidth="1.6" strokeDasharray="7 5" opacity="0.55" />}
@@ -471,14 +481,16 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
       {hero ? (
         <div data-testid="payoff-facts" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', textAlign: 'center', gap: 8, margin: '6px 0 12px' }}>
           {[
-            [bes.length ? (bes.length > 1 ? bes.map(b => Math.round(b).toLocaleString()).join(' · ') : px2(bes[0])) : 'none', bes.length > 1 ? 'Break-evens' : 'Break-even', '#ffffff'],
+            [bes.length ? (bes.length > 1 ? bes.map(b => Math.round(b).toLocaleString()).join(' · ') : px2(bes[0])) : 'none',
+              `${bes.length > 1 ? 'Break-evens' : 'Break-even'} ${beWhen}`, '#ffffff', beExpNote],
             [sigPts > 0 ? `±${Math.round(sigPts)} pts` : '—', `1σ to ${intraday ? (d > 0 ? etAt(d, nearDte) : 'now') : (d > 0 ? fmtExpiry(dateYmd) : 'today')}`, '#ffffff'],
             [pop == null ? '—' : Math.round(pop * 100) + '%', 'Win chance', '#7ee2a0'],
             [money(sel.maxLoss), 'Max loss', '#ffa39a'],
-          ].map(([v, k, col]) => (
+          ].map(([v, k, col, note]) => (
             <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
               <span className="num" style={{ fontSize: bes.length > 1 && k.startsWith('Break') ? 17 : 22, fontWeight: 600, color: col, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v}</span>
               <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{k}</span>
+              {note ? <span data-testid="be-expiry-note" className="num" style={{ fontSize: 12, color: 'rgba(255,255,255,0.62)' }}>{note}</span> : null}
             </div>
           ))}
         </div>

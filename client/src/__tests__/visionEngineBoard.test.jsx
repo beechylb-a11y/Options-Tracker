@@ -48,9 +48,22 @@ describe('Vision engine board', () => {
     expect(screen.getAllByTestId('vis-choice').filter(b => b.dataset.current === '1')).toHaveLength(1);
     // six numbers, each with its source
     expect(screen.getByTestId('vis-numbers').querySelectorAll('.vis-num')).toHaveLength(6);
-    expect(screen.getByTestId('vis-n-pop').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('typed');
+    // Seeded with no record of where they came from: no tag, never "typed" (25 Nov 2026).
+    expect(screen.getByTestId('vis-n-pop').querySelector('[data-testid="source-tag"]')).toBe(null);
     expect(screen.getByTestId('vis-n-ev').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('model');
-    expect(screen.getByTestId('vis-net').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('typed');
+    expect(screen.getByTestId('vis-net').querySelector('[data-testid="source-tag"]')).toBe(null);
+  });
+
+  it('source tags: "typed" only for a value you typed; a TWS fill keeps its TWS tag after a reload', () => {
+    act(() => setGlassPref('vision'));
+    render(<EnginePanel mode="0dte" onLogTrade={() => true} accountConfig={{ id: 'acct', bankroll: 25000 }}
+      strategyHistory={{}} toast={() => {}} initialState={{ i0, sizeSrc: {
+        '0:pop': { kind: 'typed', v: '89' },
+        '0:netCreditDebit': { kind: 'tws', v: '1.85', at: '2026-10-02T15:20:00Z' },
+        '0:win': { kind: 'typed', v: '999' },   // stale record: the value changed since
+      } }} />);
+    expect(screen.getByTestId('vis-n-pop').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('typed');
+    expect(screen.getByTestId('vis-net').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('tws');
   });
 
   it('Vision: reasoning, warnings, every need and the credit-spread helper fold under "Why this ticket"', () => {
