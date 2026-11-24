@@ -52,6 +52,30 @@ export const SCAN_FIELDS = {
 };
 export const VOL_SCAN_KEYS = ['iv', 'ivr', 'hv', 'ivFront', 'ivBack', 'skew'];
 
+// What a vol-surface answer is short of, in the scan's words: [] when complete.
+const VOL_NEED = [['iv', 'IV'], ['ivr', 'IV rank'], ['hv', 'HV'], ['skew', 'skew']];
+export function volShort(v) {
+  if (!v || v.error) return ['vol surface'];
+  const have = k => v[k] != null && v[k] !== '' && isFinite(v[k]) && (k === 'skew' || v[k] > 0);
+  const out = VOL_NEED.filter(([k]) => !have(k)).map(([, w]) => w);
+  if (!v.termBias) out.push('term');
+  if ('daily' in v && !(Array.isArray(v.daily) && v.daily.length)) out.push('daily bars');
+  return out;
+}
+// A retry's answer laid over the first: each field from whichever pull has it.
+export function mergeVol(a, b) {
+  if (!b || b.error) return a;
+  if (!a || a.error) return b;
+  const out = { ...a };
+  Object.keys(b).forEach(k => {
+    const x = out[k];
+    const blank = x == null || x === '' || (Array.isArray(x) && !x.length);
+    if (blank && b[k] != null) out[k] = b[k];
+  });
+  if (!a.termBias && b.termBias) { out.termBias = b.termBias; out.termRatio = b.termRatio; out.ivFront = b.ivFront; out.ivBack = b.ivBack; }
+  return out;
+}
+
 // One promise per (kind, ticker) per run — the master scan shares them across groups.
 export const newScanCache = () => new Map();
 function cached(cache, key, make) {
@@ -192,9 +216,22 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
       return staged(onProgress, 1, u, () => cached(cache, 'vs:' + u, () => getJson(bridgeUrl + '/api/vol-surface?underlying=' + u
         + (spot > 0 ? '&spot=' + spot : ''), 90000)), v => (!v ? true : v.error ? v.error : false)).then(v => ({ u, v }));
     }, signal);
-    vs.forEach(({ u, v }) => {
+    // One more ask, one name at a time, for a pull that came back short (25 Nov 2026):
+    // under a two-at-a-time scan TWS sometimes doesn't answer an option or history
+    // request in time, and the row then ranked on a blank IV, term or trend (SPX, GOOGL,
+    // GDX, AMD on 24 Nov). The fields from the retry fill only what the first pull lacked.
+    const shortOf = v => volShort(v);
+    const again = vs.filter(({ v }) => shortOf(v).length);
+    for (const item of again) {
+      if (signal && signal.aborted) break;
+      const spot = parseFloat(mergedData[item.u]?.price) || 0;
+      const v2 = await getJson(bridgeUrl + '/api/vol-surface?underlying=' + item.u + (spot > 0 ? '&spot=' + spot : ''), 90000);
+      item.v = mergeVol(item.v, v2);
+      item.retried = true;
+    }
+    vs.forEach(({ u, v, retried }) => {
       if (!mergedData[u]) return;
-      if (!v || v.error) { mergedData[u] = { ...mergedData[u], _volError: (v && v.error) || 'no answer from the bridge' }; return; }
+      if (!v || v.error) { mergedData[u] = { ...mergedData[u], _volError: (v && v.error) || 'no answer from the bridge', ...(retried ? { _volRetried: true } : {}) }; return; }
       const md = { ...mergedData[u] };
       VOL_SCAN_KEYS.forEach(k => {
         const x = v[k];
@@ -207,6 +244,9 @@ export async function fetchScanData({ mode, underlyings, manualData = {}, bridge
       md._oldBridge = !('daily' in v) && !('vix3m' in v);      // a bridge from before 6 Oct
       md._noDaily = !md._oldBridge && !tr;
       if (v.vixTermRatio) md.vixTermRatio = v.vixTermRatio;
+      const short = shortOf(v);
+      if (short.length) md._volMissing = short; else delete md._volMissing;
+      if (retried) md._volRetried = true;
       mergedData[u] = md;
     });
   }
@@ -249,6 +289,8 @@ export function computeScan(mode, underlyings, data) {
       if (m0._oldBridge) vol._oldBridge = true;
       if (m0._noDaily) vol._noDaily = true;
       if (m0._volError) vol._volError = m0._volError;
+      if (Array.isArray(m0._volMissing) && m0._volMissing.length) vol._volMissing = m0._volMissing;
+      if (m0._volRetried) vol._volRetried = true;
     }
     const rowData = is0 ? inp : { price: inp.price, vix: inp.vix, ...vol };
     if (is0 && m0._noExpiryToday) {
@@ -277,6 +319,10 @@ export function computeScan(mode, underlyings, data) {
       return { underlying, error: e.message, result: null, data: rowData };
     }
   });
-  out.sort((a, b) => (b.result?.setupScore || 0) - (a.result?.setupScore || 0));
+  // A row read without its IV, IV rank or term isn't a like-for-like score: it goes
+  // after the complete ones, so BEST is never a name TWS didn't answer for.
+  const partial = r => !!(r.data && (r.data._volError
+    || (Array.isArray(r.data._volMissing) && r.data._volMissing.some(w => w === 'IV' || w === 'IV rank' || w === 'term'))));
+  out.sort((a, b) => (partial(a) - partial(b)) || ((b.result?.setupScore || 0) - (a.result?.setupScore || 0)));
   return out;
 }

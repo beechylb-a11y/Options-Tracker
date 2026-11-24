@@ -32,7 +32,7 @@ const f2 = v => (v == null || !isFinite(v) ? '—' : Number(v).toFixed(2));
  */
 export function LiveCombo({ underlying, legs, entry, isCredit }) {
   const watch = (legs || []).map(l => ({ underlying, expiry: l.expiry, strike: l.strike, right: l.right, qty: Number(l.qty) || 0 }));
-  useLiveWatch(watch);
+  useLiveWatch(watch, { underlyings: underlying ? [String(underlying).toUpperCase()] : [] });
   const keys = useLegKeys(watch);
   const quotes = useLiveQuotes();
   const { connection } = useLiveConnection();

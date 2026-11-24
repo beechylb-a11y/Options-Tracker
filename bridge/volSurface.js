@@ -234,6 +234,9 @@ export function resolveSpot({ caller, snap, daily, dailySource, underlying, secT
 // 20 Nov 2026, while PLTR/AMD/GOOGL had theirs).
 export const HIST_TTL_MS = 30 * 60 * 1000;
 export const HIST_RETRY_MS = 2 * 60 * 1000;
+// Same for a pull without daily bars (25 Nov 2026): the scan showed "no daily bars" for
+// GDX and AMD with the IV series in, so the miss was held for the full 30 min.
 export function histTtl(entry) {
-  return entry && Array.isArray(entry.iv) && entry.iv.length ? HIST_TTL_MS : HIST_RETRY_MS;
+  const has = k => entry && Array.isArray(entry[k]) && entry[k].length > 0;
+  return has('iv') && has('daily') ? HIST_TTL_MS : HIST_RETRY_MS;
 }

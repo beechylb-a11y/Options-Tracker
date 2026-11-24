@@ -92,7 +92,7 @@ export function VisionChoices({ choices, onHover, onSwitch, onAll, total }) {
 // ── A live tile per leg ──
 export function LegTiles({ underlying, legs }) {
   const watch = (legs || []).map(l => ({ underlying, expiry: l.expiry, strike: l.strike, right: l.right, qty: Number(l.qty) || 0 }));
-  useLiveWatch(watch);
+  useLiveWatch(watch, { underlyings: underlying ? [String(underlying).toUpperCase()] : [] });
   const keys = useLegKeys(watch);
   const quotes = useLiveQuotes();
   const { connection, status } = useLiveConnection();
@@ -285,7 +285,7 @@ export function NumbersCard({ ring, read, readSub, items }) {
 /** E: the legs as one live table. */
 export function LegTable({ underlying, legs }) {
   const watch = (legs || []).map(l => ({ underlying, expiry: l.expiry, strike: l.strike, right: l.right, qty: Number(l.qty) || 0 }));
-  useLiveWatch(watch);
+  useLiveWatch(watch, { underlyings: underlying ? [String(underlying).toUpperCase()] : [] });
   const keys = useLegKeys(watch);
   const quotes = useLiveQuotes();
   const { connection, status } = useLiveConnection();
