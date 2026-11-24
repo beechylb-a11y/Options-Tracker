@@ -1667,7 +1667,11 @@ export function MultiScanPanel({ mode, cls, classLabel, scan, busy, master, now,
                 { label: 'Strategy', render: r => r.error
                     ? <span data-testid="scan-error" style={{ color: 'var(--c-f85149)', fontSize: 12.5 }}>{r.error}</span>
                     : <>{r.result?.legStrat || r.result?.bestStrat || '--'}
-                        {r.data?._volError && <div data-testid="scan-vol-error" style={{ color: 'var(--c-d29922)', fontSize: 11.5, fontWeight: 400 }}>vol surface: {r.data._volError}</div>}</> },
+                        {r.data?._volError && <div data-testid="scan-vol-error" style={{ color: 'var(--c-d29922)', fontSize: 11.5, fontWeight: 400 }}>vol surface: {r.data._volError}</div>}
+                        {!r.data?._volError && Array.isArray(r.data?._volMissing) && r.data._volMissing.length > 0 && (
+                          <div data-testid="scan-vol-missing" style={{ color: 'var(--c-d29922)', fontSize: 11.5, fontWeight: 400 }}
+                            title="TWS did not answer these in time. The strategy and score are read without them — open the ticket and Fetch from TWS, or scan again.">
+                            incomplete: no {r.data._volMissing.join(', ')}{r.data._volRetried ? ' (asked twice)' : ''}</div>)}</> },
                 { label: 'Setup score', render: r => {
                   const sc = r.result?.setupScore || 0;
                   const col = sc >= 85 ? 'var(--c-3fb950)' : sc >= 70 ? 'var(--c-2f81f7)' : sc >= 50 ? 'var(--c-d29922)' : 'var(--c-f85149)';

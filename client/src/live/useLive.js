@@ -48,7 +48,7 @@ export function useLiveWatch(legs, { underlyings = [] } = {}) {
     const ask = () => watchLegs(clean, { underlyings }).then(a => { if (!dead && a) setAnswer(a); });
     ask();
     const id = setInterval(ask, 60000);
-    return () => { dead = true; clearInterval(id); unwatchKeys(clean.map(l => liveKey(l.underlying, l.expiry, l.strike, l.right))); };
+    return () => { dead = true; clearInterval(id); unwatchKeys([...clean.map(l => liveKey(l.underlying, l.expiry, l.strike, l.right)), ...underlyings.map(u => liveKey(u))]); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
   return answer;

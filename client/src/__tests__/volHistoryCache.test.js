@@ -12,5 +12,7 @@ describe('vol history cache life', () => {
     expect(histTtl({ iv: [], hv: [25], closes: [1, 2], daily: [{}] })).toBe(HIST_RETRY_MS);
     expect(histTtl({ hv: [25] })).toBe(HIST_RETRY_MS);
     expect(histTtl(null)).toBe(HIST_RETRY_MS);
+    // no daily bars: retried too (GDX / AMD "no daily bars", 25 Nov 2026)
+    expect(histTtl({ iv: [31.2], hv: [25], daily: [] })).toBe(HIST_RETRY_MS);
   });
 });
