@@ -2826,6 +2826,7 @@ function liveOnConnect() {
   ib.on(EventName.error, (err, code, id) => {
     const k = liveReq.get(id);
     if (k && NOT_SUBSCRIBED.includes(code)) book.markNotEntitled(k, code);
+    if (k && code === 200) book.markNoContract(k);   // not a listed contract
     if (code === 2103 || code === 2105 || code === 2157) book.setStatus({ farmOk: false });   // data farm lost
     if (code === 2104 || code === 2106 || code === 2158) book.setStatus({ farmOk: true });    // data farm back
   });

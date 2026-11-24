@@ -143,6 +143,10 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
     if (v == null || v < 0 || (v === 0 && name !== 'bid')) return false; // −1 placeholders; a 0 bid is real on far OTM legs
     e.quote[name] = v;
     if (DELAYED_FIELDS.has(field)) e.quote.delayed = true;
+    // 10197 (competing live session) means no data at all, so a live tick after it means
+    // the other session has gone: drop the note (25 Nov 2026 — every line kept it after
+    // a few minutes of a second beechyibkr login).
+    else if (e.quote.notEntitled && e.quote.entCode === 10197) { delete e.quote.notEntitled; delete e.quote.entCode; }
     e.quote.mark = markOf(e.quote);
     touch(e);
     return true;
@@ -173,6 +177,15 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
     if (!e) return;
     e.quote.notEntitled = true;
     if (code != null) e.quote.entCode = code;
+    e.seq = bump();
+  }
+
+  // TWS 200 "No security definition": the contract isn't listed (a strike or expiry the
+  // chain doesn't have). Said on the quote so the ticket can name it instead of waiting.
+  function markNoContract(key) {
+    const e = entries.get(key);
+    if (!e || e.quote.noContract) return;
+    e.quote.noContract = true;
     e.seq = bump();
   }
 
@@ -237,7 +250,7 @@ export function createLiveBook({ now = () => Date.now(), maxLines = DEFAULT_MAX_
   }
 
   return {
-    want, release, expire, applyTick, applyGreeks, applyMdType, markNotEntitled,
+    want, release, expire, applyTick, applyGreeks, applyMdType, markNotEntitled, markNoContract,
     setPosition, setOrder, dropOrder, pruneOrders, setStatus, snapshot, changesSince,
     keys: () => [...entries.keys()],
     has: k => entries.has(k),

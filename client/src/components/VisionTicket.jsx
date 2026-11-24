@@ -113,7 +113,9 @@ export function LegTiles({ underlying, legs }) {
               <span style={{ flex: 1 }} /><FreshDot state={st} ts={q.ts} size={8} />
             </div>
             <span className="num" style={{ fontSize: 22, fontWeight: 600, whiteSpace: 'nowrap' }}>{f2(q.bid)} × {f2(q.ask)}</span>
-            <span className="num" style={{ fontSize: 13, color: INK2 }}>Δ {q.delta == null ? '—' : (q.delta >= 0 ? '+' : '−') + Math.abs(q.delta).toFixed(2)} · {q.ts ? (st === 'live' ? 'live' : st) : 'waiting'}</span>
+            {q.noContract && !q.ts
+              ? <span data-testid="leg-not-listed" style={{ fontSize: 13, color: '#ffa39a' }}>Not a listed contract in TWS — pick a listed expiry or strike</span>
+              : <span className="num" style={{ fontSize: 13, color: INK2 }}>Δ {q.delta == null ? '—' : (q.delta >= 0 ? '+' : '−') + Math.abs(q.delta).toFixed(2)} · {q.ts ? (st === 'live' ? 'live' : st) : 'waiting'}</span>}
           </div>
         );
       })}

@@ -134,4 +134,21 @@ describe('sseFrame', () => {
   it('writes one event with an id and JSON data', () => {
     expect(sseFrame('delta', { a: 1 }, 5)).toBe('id: 5\nevent: delta\ndata: {"a":1}\n\n');
   });
+
+  it('a live tick after 10197 (competing session) clears the note; 10167 stays (25 Nov 2026)', () => {
+    const b = createLiveBook();
+    b.want('SPX', 'watch'); b.want('VIX3M', 'watch');
+    b.markNotEntitled('SPX', 10197); b.markNotEntitled('VIX3M', 10167);
+    b.applyTick('SPX', 4, 7201.5); b.applyTick('VIX3M', 4, 25.4);
+    const q = b.snapshot().quotes;
+    expect(q.SPX.notEntitled).toBe(undefined);
+    expect(q.VIX3M.notEntitled).toBe(true);
+  });
+
+  it('marks a contract TWS has no definition for (200) as not listed', () => {
+    const b = createLiveBook();
+    b.want('META 20270219 585 P', 'ticket');
+    b.markNoContract('META 20270219 585 P');
+    expect(b.snapshot().quotes['META 20270219 585 P'].noContract).toBe(true);
+  });
 });
