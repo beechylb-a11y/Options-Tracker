@@ -24,6 +24,7 @@
 //  where it is defined (one definition per number), so it is not redrawn here.
 // ================================================================
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { quoteStale } from '../live/streamQuotes';
 import { curveAt, probProfit, pnlAt, positionValue, HARD_CLOSE_DTE, RATE } from '../engine/payoffCurve';
 import { addDaysYmd, fmtExpiry } from '../utils/expiries';
 import { useLiveQuote, useFreshness } from '../live/useLive';
@@ -142,7 +143,9 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
   // Live price from the TWS stream, when it is actually arriving.
   const q = useLiveQuote(underlying ? String(underlying).toUpperCase() : null);
   const fresh = useFreshness(q);
-  const livePx = q && fresh !== 'off' && (q.mark ?? q.last) > 0 ? (q.mark ?? q.last) : null;
+  // Not when the last tick is over 10 min old in market hours: that line is dead, and
+  // the ticket's own spot is better than a price from yesterday (25 Nov 2026, XSP).
+  const livePx = q && fresh !== 'off' && !quoteStale(q) && (q.mark ?? q.last) > 0 ? (q.mark ?? q.last) : null;
   const px = livePx || spot;
 
   const curves = useMemo(() => {

@@ -17,9 +17,21 @@ export function streamQuotesFor(underlying, legs, state = liveStore.getState()) 
   return liveQuotesFor({ underlying, legs }, state.quotes);
 }
 
-export function streamPrice(underlying, state = liveStore.getState()) {
+// A quote older than this while the US market is open is not live (25 Nov 2026: XSP's
+// stream line died at 723.72 and the ticket priced off it for 18 hours as "live").
+export const STALE_RTH_MS = 10 * 60000;
+export function rthOpen(at = new Date()) {
+  const et = new Date(at.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const d = et.getDay(), m = et.getHours() * 60 + et.getMinutes();
+  return d >= 1 && d <= 5 && m >= 9 * 60 + 30 && m < 16 * 60;
+}
+export function quoteStale(q, at = new Date()) {
+  return !!(q && q.ts && rthOpen(at) && at.getTime() - q.ts > STALE_RTH_MS);
+}
+export function streamPrice(underlying, state = liveStore.getState(), at = new Date()) {
   if (!open(state)) return null;
   const q = state.quotes[liveKey(underlying)];
+  if (quoteStale(q, at)) return null;
   const v = q ? (q.mark ?? markOf(q)) : null;
   return v > 0 ? v : null;
 }

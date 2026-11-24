@@ -2733,6 +2733,31 @@ function liveUnsubscribe(key) {
   try { if (ib && connected) ib.cancelMktData(reqId); } catch (e) {}
 }
 
+// Watchdog (25 Nov 2026): a watched underlying with no tick for 5 minutes while the
+// US market is open is resubscribed on live, its fallback and retry count cleared.
+// XSP sat at 723.72 for 18 hours after a closed-market start pushed it onto the
+// delayed-frozen fallback, which sends nothing once the account is subscribed.
+function usMarketOpen(at = new Date()) {
+  const et = new Date(at.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const d = et.getDay(), m = et.getHours() * 60 + et.getMinutes();
+  return d >= 1 && d <= 5 && m >= 9 * 60 + 30 && m < 16 * 60;
+}
+const liveHealAt = new Map();
+setInterval(() => {
+  if (!connected || !ib || !usMarketOpen()) return;
+  const quotes = book.snapshot().quotes || {};
+  for (const key of LIVE_WATCH) {
+    const q = quotes[key];
+    const age = q && q.ts ? Date.now() - q.ts : Infinity;
+    if (age < 5 * 60000 || Date.now() - (liveHealAt.get(key) || 0) < 5 * 60000) continue;
+    liveHealAt.set(key, Date.now());
+    console.log(`[BRIDGE] ${key}: no tick for ${Number.isFinite(age) ? Math.round(age / 60000) + ' min' : 'ever'} in market hours, resubscribing live`);
+    liveIndexFallback.delete(key); liveIndexTries.delete(key);
+    liveUnsubscribe(key);
+    liveSubscribe(key);
+  }
+}, 60000).unref?.();
+
 function liveWant(key, reason, ttl = Infinity) {
   const r = book.want(key, reason, ttl);
   if (r !== 'refused' && !liveReqOf.has(key)) liveSubscribe(key);
