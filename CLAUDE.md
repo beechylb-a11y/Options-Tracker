@@ -7,9 +7,9 @@ Options-trading app: React/Vite client (`client/`), Express server (`server/`) o
 - **Every other session is a subordinate.** If that's you:
   - Work only on a feature branch started from the latest `origin/main`.
   - Never push to `main`, merge, deploy, run migrations or edit live data — even if it seems quicker.
-  - When the work is done and Vasa is happy: push the branch, open a pull request (`gh pr create --base main`), add one line under "Handoffs" in `claude/MASTER-SESSION.md` (`date · session link · branch @ commit · PR # · what · tests run · bridge change? · DB change?`), and tell Vasa to say "merge <branch> and deploy" in the master.
+  - When the work is done and Vasa is happy: push the branch, open a pull request — `gh pr create` doesn't work from Claude sessions, use REST: `gh api repos/beechylb-a11y/Options-Tracker/pulls -f title='…' -f head='<branch>' -f base=main -f body='…'`, add one line under "Handoffs" in `claude/MASTER-SESSION.md` (`date · session link · branch @ commit · PR # · what · tests run · bridge change? · DB change?`), and tell Vasa to say "merge <branch> and deploy" in the master.
   - Write durable findings to their own project doc.
-- `main` only takes changes through pull requests. Railway deploys every push to `main`.
+- `main` only takes changes through pull requests. The master merges them (`gh api -X PUT repos/beechylb-a11y/Options-Tracker/pulls/<n>/merge -f merge_method=rebase`). Railway deploys every change to `main`.
 
 ## Hard rules (every session)
 - Staged TWS orders are always `transmit=false`.
