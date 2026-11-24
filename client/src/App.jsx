@@ -5,6 +5,7 @@ import { getSupabase } from './utils/supabase';
 import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import VolBanner from './components/VolBanner';
+import NewVersionBanner from './components/NewVersionBanner';
 import GlassSurface from './components/GlassSurface';
 import VisionRail from './components/VisionRail';
 import { ScanHairline, ScanDoneToast, useScanBadge } from './components/ScanProgress';
@@ -214,6 +215,7 @@ export default function App() {
               title={PAGE_NAMES[tab]}
               onOpenEngine={() => setTab('decision')}
             />
+            <NewVersionBanner authenticated={authenticated} />
             <VolBanner authenticated={authenticated} account={selectedAccount} onOpenRisk={() => setTab('risk')} />
             {pages}
           </main>
@@ -285,6 +287,7 @@ export default function App() {
           onLogin={handleLogout}
           onOpenEngine={() => setTab('decision')}
         />
+        <NewVersionBanner authenticated={authenticated} wrapClass="max-w-[1400px] mx-auto px-6 pt-4" />
         <VolBanner authenticated={authenticated} account={selectedAccount} onOpenRisk={() => setTab('risk')} wrapClass="max-w-[1400px] mx-auto px-6 pt-4" />
         {pages}
       </main>
