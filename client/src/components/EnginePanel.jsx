@@ -23,7 +23,10 @@ import { solveBreakevenNet, winRiskAtNet } from '../engine/breakeven';
 import PayoffChart, { INTRADAY_DAYS_PER_HOUR } from './PayoffChart';
 import GlassSurface from './GlassSurface';
 import MarketCard from './MarketCard';
-import { VCard, VisionChoices, LegTiles, ComboCard, WhatIfCard, NeedsCard } from './VisionTicket';
+import { VCard, VisionChoices, DecisionBar, NumbersCard, LegTable, TwsCard, DataInChip, SourceTag, NetFlash } from './VisionTicket';
+import { useLiveConnection, useLiveQuote, useLiveQuotes, useLegKeys } from '../live/useLive';
+import { inboundStatus, sourceTag } from '../utils/inbound';
+import { marketClock } from '../engine/marketClock';
 import { useVisionOn } from './ThemeToggle';
 import { computeTrend, trendLabel } from '../engine/trend';
 import { legQty } from '../engine/legQty.js';
@@ -778,6 +781,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // separately because they are the ones that are time-critical rather than
   // structural. Blockers never collapse — they stop the trade. (Sep 2026.)
   const [showAdvisories, setShowAdvisories] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false);     // Vision: "Why this ticket" fold
   // Evidence drawer (Oct 2026): which tab is open, or null for closed. Closed by
   // default — the verdict, the choices and the Needs-you queue carry the decision.
   const [drawerTab, setDrawerTab] = useState(null);
@@ -813,6 +817,24 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // sets hardBlocker ('Enter IV…', hasVol = iv > 0) when iv <= 0 plus the same
   // missingSize gate. Nothing else blanks the banner, so nothing else counts.
   const secBag = is0 ? i0 : i45;
+  // ── Data in from TWS (24 Nov 2026) ── the live stream, the underlying's last tick, and
+  // when each pull last came back, for the chip at the top of the Vision ticket.
+  const liveConn = useLiveConnection();
+  const undQuote = useLiveQuote(String(secBag.underlying || '').toUpperCase());
+  const liveQuotesAll = useLiveQuotes();
+  const [whatIfState, setWhatIfState] = useState('idle');
+  const inAtRef = useRef({});
+  const busyRef = useRef({});
+  const [, setInTick] = useState(0);
+  useEffect(() => {
+    const b = busyRef.current;
+    [['market', autoFilling], ['greeks', fetchingGreeks], ['vol', fetchingVol]].forEach(([k, v]) => { if (b[k] && !v) inAtRef.current[k] = Date.now(); b[k] = v; });
+  }, [autoFilling, fetchingGreeks, fetchingVol]);
+  useEffect(() => {
+    if (!visionOn) return undefined;
+    const h = setInterval(() => setInTick(t => t + 1), 2000);   // ages on the chip move on
+    return () => clearInterval(h);
+  }, [visionOn]);
   const missingOf = keys => keys.reduce((n, k) => n + (fv(secBag, k) > 0 ? 0 : 1), 0);
   const secMissing = {
     market: missingOf(['price']),
@@ -1886,6 +1908,30 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     if (out.some(l => !l.expiry)) return { why: 'No listed expiry yet — once the bridge loads the chain, staging turns on.', ref };
     return { legs: out, ref };
   })();
+  const inLegWatch = (stageInfo.legs || []).map(l => ({ underlying: String(secBag.underlying || '').toUpperCase(), expiry: l.expiry, strike: l.strike, right: l.right }));
+  const inLegKeys = useLegKeys(inLegWatch);
+  // Where the ticket's own numbers came from: the net, Win, Risk and POP are TWS when the
+  // live price wrote them and they are still in place, a target when the engine suggested
+  // the net, typed otherwise.
+  const liveWritten = (liveOn && liveRef.current && liveRef.current[bag] && liveRef.current[bag].written) || {};
+  const srcOf = k => {
+    const v = secBag[k];
+    if (v === '' || v == null) return null;
+    if (liveWritten[k] != null && String(liveWritten[k]) === String(v)) return sourceTag('tws', livePx && livePx.asOf);
+    if (k === 'netCreditDebit' && netIsTarget) return sourceTag('target');
+    return sourceTag('typed');
+  };
+  // "Net credit 1.85 → 1.92 from TWS": say it when the live price replaces the net.
+  const prevNetRef = useRef(secBag.netCreditDebit);
+  useEffect(() => {
+    const prev = prevNetRef.current, cur = secBag.netCreditDebit;
+    prevNetRef.current = cur;
+    if (!visionOn || prev === cur || prev === '' || prev == null || cur === '' || cur == null) return;
+    if (liveWritten.netCreditDebit != null && String(liveWritten.netCreditDebit) === String(cur)) {
+      notify(`${cashType === 'debit' ? 'Net debit' : 'Net credit'} ${Math.abs(parseFloat(prev)).toFixed(2)} → ${Math.abs(parseFloat(cur)).toFixed(2)} from TWS`, 'success');
+    }
+  }, [secBag.netCreditDebit]);   // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Log gate. A blocker no longer leaves a green button under a red banner: it
   // turns the button into the reason, with a deliberate "Log anyway" for the cases
@@ -3109,6 +3155,99 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   // Confidence chips and the warnings/notices stack. Rendered under the price map when
   // there is one (so the strikes get the left column to themselves), else in the left
   // column. (Oct 2026.)
+  // The strikes, their expiry pickers and checks (Zone 1b), on the verdict band in Solid
+  // and under the ticket's title in the Vision board (24 Nov 2026).
+  function renderStrikeControls() {
+    return (<>
+        {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
+        {r.legs.length > 0 && (
+          <div style={{marginTop:8}}>
+            {/* Vertical position variants. Picking one rebuilds the structure as a single
+                unambiguous two-leg spread and everything downstream — EV, P(max loss),
+                Kelly, payoff, Log trade, Print summary — recomputes from it. `rr` is a
+                CEILING derived from the long leg's intrinsic value, so the real fill is
+                worse; it is shown because the engine cannot price the debit and the cost
+                of shifting into the money is otherwise invisible until the fill. */}
+            {r.vertVariants && (
+              <StrikeChoices variants={r.vertVariants} active={strikesBuiltBy === 'Delta' ? 'delta' : strikesBuiltBy === 'Manual' ? null : (r.vertVariant || 'engine')}
+                strat={r.legStrat} plan={r.deltaPlan} check={r.deltaCheck} emRem={r.emRemaining}
+                onPick={chooseVertical} fetching={fetchingGreeks || applyingDelta} deltaDefault={vertPick !== 'em'} />
+            )}
+            {false ? (
+              <div />            ) : (
+              // The trade on one line, low strike to high, order-ticket style
+              // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
+              <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
+                {r.legs.map((l,i) => ({ l, i })).sort((a, b) => (a.l.strike - b.l.strike)
+                  || String(legExpiryOf(a.l) || '').localeCompare(String(legExpiryOf(b.l) || ''))).map(({ l, i }) => (
+                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact fill
+                    expiryTag={legExpiryOf(l) ? fmtExpiry(legExpiryOf(l)) : null}
+                    step={strikeStep} onCommit={commitStrike}
+                    ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
+                    onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
+                ))}
+                {(r.wingTxt || r.strikeLine) && (
+                  <span title={r.wingTxt || r.strikeLine} aria-label={'Strike placement: ' + (r.wingTxt || r.strikeLine)}
+                    style={{flex:'none',fontSize:12.5,color:'var(--c-8b949e)',cursor:'help',padding:'0 4px'}}>ⓘ</span>
+                )}
+              </div>
+            )}
+            {!is0 && r.legStrat === 'Ratio spread' && (
+              <RatioPicker spec={ratioSpec} legs={r.legs} onChange={changeRatio} outlook={i45.outlook} />
+            )}
+            {is0 && listedChain && listedChain.mode === '0' && (() => {
+              const note = listedStrikeNote(listedChain, todayYmd, r.legs, r.listedFit);
+              return note ? <div data-testid="listed-note-0dte" style={{marginTop:6,fontSize:12.5,color: r.listedFit && r.listedFit.skipped || listedChain.err ? 'var(--c-d29922)' : 'var(--c-8b949e)'}}>
+                {fmtExpiry(todayYmd)} · {note}</div> : null;
+            })()}
+            {!is0 && !isTimeSpread && singleExp && (
+              <SingleExpiryPicker today={todayYmd} list={expList} sel={singleExp} onPick={pickSingle}
+                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'}
+                strikeNote={listedStrikeNote(listedChain, singleExp, r.legs, r.listedFit)} />
+            )}
+            {isTimeSpread && nearExp && (
+              <ExpiryPicker today={todayYmd} list={expList} near={nearExp} far={farExp}
+                onNear={pickNear} onFar={pickFar} isDiagonal={/diagonal/i.test(effectiveStrat || '')}
+                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'} />
+            )}
+            {editedCount > 0 && (
+              <div style={{marginTop:4,fontSize:12.5,color:'var(--c-d29922)'}}>
+                ✎ {editedCount} leg{editedCount>1?'s':''} edited ·{' '}
+                <span onClick={resetStrikes} title="Clear every hand-edited strike and take the engine's suggestion back"
+                  style={{textDecoration:'underline',cursor:'pointer'}}>reset to engine</span>
+              </div>
+            )}
+            {(() => {
+              // Unequal condor / iron-fly wings: TWS lists them as a custom combo, not an
+              // iron condor, and max loss is set by the wider wing. (Oct 2026.)
+              const L = r.legs || [];
+              if (L.length !== 4 || !/Iron Condor|Iron butterfly|Chicken condor/i.test(r.legStrat || '')) return null;
+              const ks = L.map(l => l.strike).slice().sort((a, b) => a - b);
+              const wp = ks[1] - ks[0], wc = ks[3] - ks[2];
+              if (!(wp > 0 && wc > 0) || Math.abs(wp - wc) < 1e-9) return null;
+              return (
+                <div data-testid="unequal-wings" style={{marginTop:4,fontSize:12.5,color:'var(--c-d29922)'}}>
+                  ⚠ Wings are {wp} and {wc} wide — TWS shows unequal wings as a custom combo, not an iron condor, and max loss is set by the {Math.max(wp, wc)}-wide side.
+                </div>
+              );
+            })()}
+            {r.strikeOrderWarning && (
+              <div style={{marginTop:4,fontSize:12.5,color:'var(--c-f85149)'}}>⚠ {r.strikeOrderWarning}</div>
+            )}
+            {r.flyBand && r.flyBand.pInside != null && <FlyBandLine band={r.flyBand} />}
+            {r.deltaCheck && r.legs.length > 0 && (
+              <DeltaStrip strat={r.legStrat} check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]} hideMethod={!!r.vertVariants}
+                onMethod={setStrikeMethod} builtBy={strikesBuiltBy}
+                confirmed={!!(deltaMatches && deltaApplied && deltaApplied.confirmed)}
+                pop={fv(secBag, 'pop')} legs={r.legs}
+                onFetch={handleFetchGreeks} fetching={fetchingGreeks}
+                onApply={() => setStrikeMethod('delta')} applying={applyingDelta} onBack={() => setStrikeMethod('em')} />
+            )}
+          </div>
+        )}
+
+    </>);
+  }
   function renderSideStack() {
     return (<div style={{display:'flex',flexDirection:'column',gap:10}}>
             {!r.hardBlocker && (
@@ -3494,94 +3633,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 kellyCt={r.kellyContracts ?? r.contracts} kellyDollar={r.kellyDollar} />
             )}
 
-        {/* Zone 1b — strike chips (compact mono) with wing-distance appended inline */}
-        {r.legs.length > 0 && (
-          <div style={{marginTop:8}}>
-            {/* Vertical position variants. Picking one rebuilds the structure as a single
-                unambiguous two-leg spread and everything downstream — EV, P(max loss),
-                Kelly, payoff, Log trade, Print summary — recomputes from it. `rr` is a
-                CEILING derived from the long leg's intrinsic value, so the real fill is
-                worse; it is shown because the engine cannot price the debit and the cost
-                of shifting into the money is otherwise invisible until the fill. */}
-            {r.vertVariants && (
-              <StrikeChoices variants={r.vertVariants} active={strikesBuiltBy === 'Delta' ? 'delta' : strikesBuiltBy === 'Manual' ? null : (r.vertVariant || 'engine')}
-                strat={r.legStrat} plan={r.deltaPlan} check={r.deltaCheck} emRem={r.emRemaining}
-                onPick={chooseVertical} fetching={fetchingGreeks || applyingDelta} deltaDefault={vertPick !== 'em'} />
-            )}
-            {false ? (
-              <div />            ) : (
-              // The trade on one line, low strike to high, order-ticket style
-              // (+751P −2×754P +756P). Wing distance moves to the ⓘ tooltip. (Oct 2026.)
-              <div data-testid="strike-line" style={{display:'flex',flexWrap:'nowrap',gap:6,alignItems:'center',minWidth:0}}>
-                {r.legs.map((l,i) => ({ l, i })).sort((a, b) => (a.l.strike - b.l.strike)
-                  || String(legExpiryOf(a.l) || '').localeCompare(String(legExpiryOf(b.l) || ''))).map(({ l, i }) => (
-                  <StrikeChip key={i} leg={l} idx={i} engineStrike={r.engineLegs?.[i]?.strike} compact fill
-                    expiryTag={legExpiryOf(l) ? fmtExpiry(legExpiryOf(l)) : null}
-                    step={strikeStep} onCommit={commitStrike}
-                    ladderOpen={ladder?.idx === i} ladder={ladder} outcomes={ladder?.idx === i ? ladderOutcomes : null}
-                    onOpenLadder={toggleLadder} onCloseLadder={closeLadder} onRetryLadder={retryLadder} />
-                ))}
-                {(r.wingTxt || r.strikeLine) && (
-                  <span title={r.wingTxt || r.strikeLine} aria-label={'Strike placement: ' + (r.wingTxt || r.strikeLine)}
-                    style={{flex:'none',fontSize:12.5,color:'var(--c-8b949e)',cursor:'help',padding:'0 4px'}}>ⓘ</span>
-                )}
-              </div>
-            )}
-            {!is0 && r.legStrat === 'Ratio spread' && (
-              <RatioPicker spec={ratioSpec} legs={r.legs} onChange={changeRatio} outlook={i45.outlook} />
-            )}
-            {is0 && listedChain && listedChain.mode === '0' && (() => {
-              const note = listedStrikeNote(listedChain, todayYmd, r.legs, r.listedFit);
-              return note ? <div data-testid="listed-note-0dte" style={{marginTop:6,fontSize:12.5,color: r.listedFit && r.listedFit.skipped || listedChain.err ? 'var(--c-d29922)' : 'var(--c-8b949e)'}}>
-                {fmtExpiry(todayYmd)} · {note}</div> : null;
-            })()}
-            {!is0 && !isTimeSpread && singleExp && (
-              <SingleExpiryPicker today={todayYmd} list={expList} sel={singleExp} onPick={pickSingle}
-                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'}
-                strikeNote={listedStrikeNote(listedChain, singleExp, r.legs, r.listedFit)} />
-            )}
-            {isTimeSpread && nearExp && (
-              <ExpiryPicker today={todayYmd} list={expList} near={nearExp} far={farExp}
-                onNear={pickNear} onFar={pickFar} isDiagonal={/diagonal/i.test(effectiveStrat || '')}
-                source={chainOk ? 'chain' : (chainExp && chainExp.err) ? 'fallback:' + chainExp.err : chainExp ? 'fallback' : 'loading'} />
-            )}
-            {editedCount > 0 && (
-              <div style={{marginTop:4,fontSize:12.5,color:'var(--c-d29922)'}}>
-                ✎ {editedCount} leg{editedCount>1?'s':''} edited ·{' '}
-                <span onClick={resetStrikes} title="Clear every hand-edited strike and take the engine's suggestion back"
-                  style={{textDecoration:'underline',cursor:'pointer'}}>reset to engine</span>
-              </div>
-            )}
-            {(() => {
-              // Unequal condor / iron-fly wings: TWS lists them as a custom combo, not an
-              // iron condor, and max loss is set by the wider wing. (Oct 2026.)
-              const L = r.legs || [];
-              if (L.length !== 4 || !/Iron Condor|Iron butterfly|Chicken condor/i.test(r.legStrat || '')) return null;
-              const ks = L.map(l => l.strike).slice().sort((a, b) => a - b);
-              const wp = ks[1] - ks[0], wc = ks[3] - ks[2];
-              if (!(wp > 0 && wc > 0) || Math.abs(wp - wc) < 1e-9) return null;
-              return (
-                <div data-testid="unequal-wings" style={{marginTop:4,fontSize:12.5,color:'var(--c-d29922)'}}>
-                  ⚠ Wings are {wp} and {wc} wide — TWS shows unequal wings as a custom combo, not an iron condor, and max loss is set by the {Math.max(wp, wc)}-wide side.
-                </div>
-              );
-            })()}
-            {r.strikeOrderWarning && (
-              <div style={{marginTop:4,fontSize:12.5,color:'var(--c-f85149)'}}>⚠ {r.strikeOrderWarning}</div>
-            )}
-            {r.flyBand && r.flyBand.pInside != null && <FlyBandLine band={r.flyBand} />}
-            {r.deltaCheck && r.legs.length > 0 && (
-              <DeltaStrip strat={r.legStrat} check={r.deltaCheck} plan={r.deltaPlan} method={strikeMethod[bag]} hideMethod={!!r.vertVariants}
-                onMethod={setStrikeMethod} builtBy={strikesBuiltBy}
-                confirmed={!!(deltaMatches && deltaApplied && deltaApplied.confirmed)}
-                pop={fv(secBag, 'pop')} legs={r.legs}
-                onFetch={handleFetchGreeks} fetching={fetchingGreeks}
-                onApply={() => setStrikeMethod('delta')} applying={applyingDelta} onBack={() => setStrikeMethod('em')} />
-            )}
-          </div>
-        )}
+        {!vGrid && renderStrikeControls()}
 
-            {(!mapPay || vGrid) && renderSideStack()}
+            {!mapPay && !vGrid && renderSideStack()}
           </div>
 
           {/* Right: price map — where price can go, against this structure */}
@@ -3673,55 +3727,161 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
       closeDay: payCurve0.closeDay, closeEt: payCurve0.closeEt, todayYmd, underlying: i0.underlying,
       divYield: payCurve0.divYield, targets: flyTargets, onStrikeChange: (i, k) => commitStrike(i, k), strikeSnap, ghost: ghostCurve };
   }
+  // ── The Vision ticket in decision order (24 Nov 2026) ──
+  //   A decision bar · title + data in · strikes · B numbers | C payoff over the price map
+  //   · D choices | E legs | F TWS · then the order (below) · "Why this ticket" folded.
+  function visionInbound() {
+    let bridge = '';
+    try { bridge = localStorage.getItem('bridgeUrl') || ''; } catch (e) { /* private mode */ }
+    const ph = marketClock(new Date()).phase;
+    const df = dataFresh;
+    const pulls = [
+      { key: 'market', label: 'Market data', busy: autoFilling, at: (df && (df.pulledAt || df.asOf)) || inAtRef.current.market,
+        fallback: df && df.isLive === false && (df.pulledAt || df.asOf) ? (String(df.label || df.dataType || 'delayed').toLowerCase()) : null },
+      { key: 'greeks', label: 'Greeks / IV', busy: fetchingGreeks, at: (greeksFresh && greeksFresh.asOf) || inAtRef.current.greeks },
+      ...(is0 ? [] : [{ key: 'vol', label: 'Vol surface', busy: fetchingVol, at: inAtRef.current.vol }]),
+      { key: 'price', label: 'Ticket price', busy: false, at: liveOn && livePx ? livePx.asOf : null },
+    ];
+    return inboundStatus({ now: Date.now(), bridge: !!bridge, connection: liveConn.connection, marketOpen: ph === 'open' || ph === 'late',
+      underlying: undQuote ? { ts: undQuote.ts } : null, legs: inLegKeys.map(k => ({ ts: liveQuotesAll[k] && liveQuotesAll[k].ts })), pulls, whatIf: whatIfState });
+  }
   function renderVisionGrid() {
     const goToOrder = () => { const el = document.querySelector('[data-testid="execution"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const openWhy = () => { setWhyOpen(true); setTimeout(() => { const el = panelRef.current && panelRef.current.querySelector('[data-testid="vis-why"]'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 30); };
     const entry = Math.abs(signedNet(ticketNet, cashType));
     const isCredit = cashType === 'credit' || (cashType !== 'debit' && signedNet(ticketNet, cashType) > 0);
-    const firstNeed = needs.find(n => !n.resolved) || needs[0];
+    const open = needs.filter(n => !n.resolved);
+    const first = open[0] || null;
+    const blk = !first && blockers.length ? splitMsg(blockers[0]) : null;
+    const read = is0 ? `${r.dirLabel || '—'} · ${r.trendPattern || '—'}` : `${String(i45.outlook || 'neutral').replace(/^./, ch => ch.toUpperCase())} outlook`;
+    const tone = verdict.tone === 'bad' ? 'bad' : verdict.tone === 'warn' ? 'warn' : verdict.tone === 'pass' ? 'pass'
+      : (bannerGrade === 'strong' || bannerGrade === 'decent') ? 'good' : 'warn';
+    const btn = a => (
+      <button key={a.label} type="button" data-testid={a.testid} onClick={a.onClick} disabled={a.busy}
+        className={a.primary ? 'vis-btn vis-btn-blue' : 'vis-btn'}>{a.busy ? (a.busyLabel || 'Working…') : a.label}</button>
+    );
+    const pay = mapPay || sizingPay;
+    const maxP = pay && isFinite(pay.maxProfit) ? pay.maxProfit : null;
+    const maxL = pay && isFinite(pay.maxLoss) ? pay.maxLoss : null;
+    const popNum = parseFloat(secBag.pop);
+    const pml = r.pMaxLoss;
+    const money0 = v => (v == null || !isFinite(v) ? '—' : (v < 0 ? '−' : v > 0 ? '+' : '') + '$' + Math.abs(Math.round(v)).toLocaleString('en-US'));
+    const numbers = [
+      { testid: 'vis-n-ev', label: 'Expected value', value: missingInputs || r.ev == null ? '—' : money0(r.ev), sub: missingInputs ? 'needs win, risk and POP' : 'after commission', tag: sourceTag('model') },
+      { testid: 'vis-n-pop', label: 'Win chance', value: isFinite(popNum) && popNum > 0 ? `${Math.round(popNum)}%` : '—', sub: 'any profit at expiry', tag: srcOf('pop'), flashOn: true },
+      { testid: 'vis-n-maxloss', label: 'Max loss', value: maxL == null ? '—' : money0(maxL), color: maxL != null && maxL < 0 ? '#ffa39a' : undefined, sub: 'at expiry, as sized', tag: sourceTag('model') },
+      { testid: 'vis-n-pml', label: 'Max-loss chance', value: pml == null ? '—' : `${(pml * 100).toFixed(1)}%`, sub: pml == null ? 'fetch greeks' : 'beyond a wing', tag: sourceTag('model') },
+      { testid: 'vis-n-size', label: 'Size', value: missingInputs ? '—' : `${r.kellyContracts ?? r.contracts} ct`, sub: r.kellyDollar ? `Kelly · $${Math.round(r.kellyDollar).toLocaleString('en-US')}` : 'Kelly', tag: sourceTag('model') },
+      { testid: 'vis-n-rr', label: 'Reward : risk', value: maxP != null && maxL ? `${(maxP / Math.abs(maxL)).toFixed(2)}×` : '—', sub: maxP != null && maxL ? `${Math.round(maxP).toLocaleString('en-US')} / ${Math.abs(Math.round(maxL)).toLocaleString('en-US')}` : '', tag: sourceTag('model') },
+    ];
+    const strikesSorted = [...new Set((r.legs || []).map(l => Number(l.strike)))].sort((x, y) => x - y);
+    const expiryYmd = is0 ? todayYmd : ((r.legs || []).map(l => legExpiryOf(l)).filter(Boolean).sort()[0] || null);
+    const netTag = srcOf('netCreditDebit');
+    const net = parseFloat(ticketNet);
+    const domain = is0 ? (payCurve0 ? { lo: payCurve0.lo, hi: payCurve0.hi } : null) : (payCurve ? { lo: payCurve.lo, hi: payCurve.hi } : null);
     return (
-      <div className="vis-eng-grid" data-testid="vis-eng-grid">
-        <div className="vis-eng-col vis-eng-left">{verdictBand}</div>
-        <div className="vis-eng-col">
-          <VCard testid="vis-payoff">
-            {is0 && flyTastyOk && (
-              <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)} aria-pressed={tastyFly}
-                title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
-                style={{ alignSelf: 'flex-start', padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: 'none',
-                  background: tastyFly ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.12)', color: '#fff' }}>
-                {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
-              </button>
-            )}
-            {is0 ? (payCurve0 ? <PayoffChart hero {...payProps0()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>The payoff needs the underlying price and VIX1D.</span>)
-              : (payCurve ? <PayoffChart hero {...payProps45()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.</span>)}
-          </VCard>
-          <div className="vis-eng-pair">
-            <ComboCard underlying={secBag.underlying} legs={stageInfo.legs || null} whyNot={stageInfo.why} entry={entry} isCredit={isCredit} onGoToOrder={goToOrder} />
-            <WhatIfCard underlying={secBag.underlying} legs={stageInfo.legs || null} lots={r.contracts} entry={entry} isCredit={isCredit} />
-          </div>
-          {mapPay && (
-            <VCard testid="vis-price-map">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.8)' }}>Where price can go</span>
-                {cushion && <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.86)' }}>
-                  Cushion{cushion.below != null ? ` below ${cushion.below.toFixed(2)} EM` : ''}{cushion.below != null && cushion.above != null ? ' ·' : ''}{cushion.above != null ? ` above ${cushion.above.toFixed(2)} EM` : ''}</span>}
-              </div>
-              <PriceMap pay={mapPay} legs={r.legs} price={fv(secBag, 'price')} em={mapEM}
-                emLabel={is0 ? 'Expected move left' : '1 SD to expiry'}
-                high={is0 ? fv(i0, 'high') : 0} low={is0 ? fv(i0, 'low') : 0}
-                vwap={is0 ? scaleVWAP(i0.vwap5) : 0} underlying={secBag.underlying} />
-            </VCard>
+      <div className="vis-eng-board" data-testid="vis-eng-grid" ref={decisionRef}>
+        <DecisionBar word={verdict.word} tone={tone}
+          title={first ? first.title : blk ? blk[0] : (verdict.sub || read)}
+          detail={first ? first.detail : blk ? blk[1] : (r.behaviour ? `Profits if: ${r.behaviour}` : null)}
+          more={Math.max(0, open.length - 1)} onMore={openWhy}>
+          {first && first.net && (
+            <NeedNum label={cashType === 'debit' ? 'Net debit' : 'Net credit'} value={ticketNet} onChange={v => is0 ? set0('netCreditDebit', v) : set45('netCreditDebit', v)} />
           )}
+          {first && (first.actions || []).map(btn)}
+          {!first && showLiveTop && btn({ label: '⚡ Price from TWS', onClick: () => handleFetchGreeks(), busy: fetchingGreeks, busyLabel: 'Pricing…', primary: true, testid: 'vis-decision-price' })}
+        </DecisionBar>
+
+        <div className="vis-eng-titlerow">
+          <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+            <VerdictTitle word={null} tone={vTone.color} underlying={secBag.underlying} price={fv(secBag, 'price') || null}
+              strikes={strikesSorted} strategy={String(effectiveStrat || '').replace(/\s*-\s*Normal\b/i, '')}
+              qty={missingInputs ? null : r.contracts} expiry={expiryYmd} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, marginLeft: 'auto' }}>
+          <span data-testid="vis-net" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.8)' }}>{cashType === 'debit' ? 'Debit' : 'Credit'}</span>
+            <NetFlash value={isFinite(net) && net !== 0 ? Math.abs(net).toFixed(2) : '—'} on={!!(netTag && netTag.kind === 'tws')} />
+            <SourceTag tag={netTag} />
+            {isOverride && <span className="vis-tag-warn">manual override</span>}
+            <EarningsBadge risk={r.earningsRisk} cal={earningsCal && earningsCal.und === String(secBag.underlying || '').toUpperCase() ? earningsCal : null} underlying={secBag.underlying} />
+          </span>
+          <DataInChip status={visionInbound()} />
+          </div>
         </div>
-        <div className="vis-eng-col">
+        <div className="vis-eng-strikes">{renderStrikeControls()}</div>
+
+        <div className="vis-eng-row2">
+          <div className="vis-eng-col">
+          <NumbersCard
+            ring={<EdgeRing score={compositeScore} color={vTone.color} label={missingInputs ? 'SETUP' : 'EDGE'}
+              title="Composite edge score: setup quality blended with Kelly, vol, Sharpe, POP margin and EV per unit of risk." />}
+            read={`${missingInputs ? 'Setup' : 'Edge'} ${compositeScore} · ${read.split(' · ')[0].toLowerCase()}`}
+            readSub={skewClause || (is0 ? r.trendPattern : null)}
+            items={numbers} />
           {choiceList.length > 0 && (
             <VisionChoices choices={choiceList} total={(r.ratings || []).length}
               onHover={setGhostHover} onAll={() => setDrawerTab('structures')}
               onSwitch={name => { setGhostPin(null); setGhostHover(null); switchStructure(name); }} />
           )}
-          {stageInfo.legs && stageInfo.legs.length > 0 && <LegTiles underlying={secBag.underlying} legs={stageInfo.legs} />}
-          {(needs.length > 0 || showLiveTop) && (
-            <NeedsCard count={needs.filter(n => !n.resolved).length} first={firstNeed ? firstNeed.title : 'Fill the net, win, risk and POP from live TWS quotes.'}
-              tone={firstNeed ? firstNeed.tone : null} defaultOpen={needs.some(n => n.sizing || n.net)}>
+          </div>
+          <VCard testid="vis-payoff">
+            {is0 && flyTastyOk && (
+              <button type="button" data-testid="tasty-fly-toggle" onClick={() => setTastyFly(v => !v)} aria-pressed={tastyFly}
+                title="Long-fly targets: take 25–50% of MAX PROFIT. The app's 0DTE default is a % return on the debit, which on a cheap fly is far less."
+                className="vis-btn" style={{ alignSelf: 'flex-start' }}>
+                {tastyFly ? '✓ ' : ''}Long-fly targets: 25–50% of max
+              </button>
+            )}
+            {is0 ? (payCurve0 ? <PayoffChart hero {...payProps0()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>The payoff needs the underlying price and VIX1D.</span>)
+              : (payCurve ? <PayoffChart hero {...payProps45()} /> : <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>Payoff over time needs the underlying price and IV — Auto-fill or Fetch vol fills both.</span>)}
+            {mapPay && (
+              <div data-testid="vis-price-map" style={{ marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', padding: '0 4px 2px' }}>
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>Where price can go</span>
+                  {cushion && <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.86)' }}>
+                    Cushion{cushion.below != null ? ` below ${cushion.below.toFixed(2)} EM` : ''}{cushion.below != null && cushion.above != null ? ' ·' : ''}{cushion.above != null ? ` above ${cushion.above.toFixed(2)} EM` : ''}</span>}
+                </div>
+                <PriceMap pay={mapPay} legs={r.legs} price={fv(secBag, 'price')} em={mapEM}
+                  emLabel={is0 ? '1σ left today' : '1 SD to expiry'}
+                  high={is0 ? fv(i0, 'high') : 0} low={is0 ? fv(i0, 'low') : 0}
+                  vwap={is0 ? scaleVWAP(i0.vwap5) : 0} underlying={secBag.underlying}
+                  big domain={domain} />
+                <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', padding: '0 4px' }}>
+                  {domain ? 'Same price axis as the payoff above: each strike sits under its kink.' : ''} Break-evens marked are at expiry.
+                </div>
+              </div>
+            )}
+          </VCard>
+        </div>
+
+        <div className="vis-eng-row3">
+          {stageInfo.legs && stageInfo.legs.length > 0 && <LegTable underlying={secBag.underlying} legs={stageInfo.legs} />}
+          <TwsCard underlying={secBag.underlying} legs={stageInfo.legs || null} whyNot={stageInfo.why} lots={r.contracts}
+            entry={entry} isCredit={isCredit} onGoToOrder={goToOrder} onWhatIf={setWhatIfState} />
+        </div>
+      </div>
+    );
+  }
+  // "Why this ticket" — the reasoning, warnings, every need and the credit-spread helper,
+  // folded under the order in the Vision board.
+  function renderVisionWhy() {
+    const read = is0 ? `${r.dirLabel || '—'} · ${r.trendPattern || '—'}` : `${String(i45.outlook || 'neutral').replace(/^./, ch => ch.toUpperCase())} outlook`;
+    const nWarn = (r.warnings || []).length, nNeed = needs.filter(n => !n.resolved).length;
+    return (
+      <section data-testid="vis-why" className="card vis-eng-card vis-why">
+        <button type="button" data-testid="vis-why-toggle" aria-expanded={whyOpen} onClick={() => setWhyOpen(o => !o)} className="vis-why-head">
+          <span style={{ fontSize: 16, fontWeight: 600 }}>{whyOpen ? '▾' : '▸'} Why this ticket</span>
+          <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.8)' }}>
+            reasoning{nNeed ? ` · ${nNeed} need${nNeed > 1 ? 's' : ''} you` : ''}{nWarn ? ` · ${nWarn} warning${nWarn > 1 ? 's' : ''}` : ''}{is0 ? ' · credit-spread helper' : ''}
+          </span>
+        </button>
+        {whyOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+            <div style={{ fontSize: 14.5, lineHeight: 1.5, maxWidth: '80ch' }}>
+              <b>{read}</b>{skewClause ? ` — ${skewClause}.` : '.'}{r.behaviour ? <> Profits if: {r.behaviour}</> : null}
+            </div>
+            {(needs.length > 0 || showLiveTop) && (
               <div data-testid="needs-you" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {showLiveTop && (
                   <LivePriceStrip on={liveOn} px={livePx} now={liveNow} stale={liveStale}
@@ -3731,10 +3891,16 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
                 )}
                 {renderNeedsList()}
               </div>
-            </NeedsCard>
-          )}
-        </div>
-      </div>
+            )}
+            {renderSideStack()}
+            {is0 && r.decision !== 'Error' && (
+              <CreditSpreadPanel r={r} price={fv(secBag, 'price')} underlying={secBag.underlying}
+                bridgeUrl={(() => { try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; } })()}
+                currentStrat={r.legStrat || r.bestStrat} currentVariant={r.vertVariant} onBuild={buildCreditSpread} previewLegs={creditPreview} />
+            )}
+          </div>
+        )}
+      </section>
     );
   }
 
@@ -3841,7 +4007,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
       {/* ── 2a · CREDIT SPREAD ── a 0DTE credit vertical on purpose, whatever the engine
           picked: side and strike distance from the replay's rules (creditSide.js). */}
-      {is0 && r.decision !== 'Error' && (
+      {is0 && r.decision !== 'Error' && !vGrid && (
         <CreditSpreadPanel r={r} price={fv(secBag, 'price')} underlying={secBag.underlying}
           bridgeUrl={(() => { try { return localStorage.getItem('bridgeUrl') || ''; } catch (e) { return ''; } })()}
           currentStrat={r.legStrat || r.bestStrat} currentVariant={r.vertVariant} onBuild={buildCreditSpread} previewLegs={creditPreview} />
@@ -4022,6 +4188,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
 
       {/* ── 4 · EVIDENCE DRAWER ── closed by default. Every panel stays mounted
           (display:none) so half-typed inputs and open details survive a tab switch. */}
+      {vGrid && renderVisionWhy()}
       <section data-testid="evidence" style={{borderRadius:12,background:'var(--c-161b22)',border:'1px solid var(--c-21262d)'}}>
         <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',padding:'8px 10px'}}>
           <span style={{...EX_LBL,padding:'0 8px 0 6px'}}>Evidence</span>
@@ -4043,7 +4210,9 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             {drawerTab ? 'Click the tab again to close' : ''}
           </span>
         </div>
-        {inputChips.length > 0 && (
+        {/* Vision: the data-in chip and the source tags on the ticket say what came from
+            TWS, so this strip only shows when something required is still blank. */}
+        {inputChips.length > 0 && (!vGrid || nMissing > 0) && (
           <div data-testid="input-chips" style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',padding:'8px 12px 10px',borderTop:'1px solid var(--c-21262d)'}}>
             <span style={{...EX_LBL,marginRight:4}} title="Everything the Bridge does not fill. Click one to jump to it.">
               Not from Bridge{nMissing ? <span style={{color:'var(--c-f85149)'}}> · {nMissing} to enter</span> : ''}
@@ -5957,7 +6126,10 @@ function ChoiceCard({ c, price, underlying, rrMax, onSwitch, onNewTab, onHover, 
 // One strip on a price axis answering "where can price go, and what happens to me
 // there": payoff zones, strikes, breakevens, the remaining expected move, today's
 // range and VWAP, and price itself. Every mark is placed with one scale.
-function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }) {
+// big (Vision, 24 Nov 2026): drawn on a narrower view box so the type lands at 13–15 px
+// at the payoff's width, in the sans face; with `domain` it takes the payoff's own price
+// range and side margins, so a strike here sits right under its kink on the payoff.
+function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying, big = false, domain = null }) {
   if (!pay || !Array.isArray(pay.points) || pay.points.length < 2 || !(price > 0)) return null;
   const use = (Array.isArray(legs) && legs.length === 4 && legs[0]?.label?.includes('VIX')) ? legs.slice(0, 2) : (legs || []);
   const strikes = use.filter(l => isFinite(l.strike)).map(l => ({
@@ -5969,7 +6141,10 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
   let hi = Math.max(...ks, price, hasEM ? price + em : price, high > 0 ? high : price);
   const padPts = (hi - lo) * 0.14 || 10;
   lo -= padPts; hi += padPts;
-  const L = 30, R = 690, W = 720;
+  if (domain && domain.hi > domain.lo) { lo = domain.lo; hi = domain.hi; }
+  // The payoff chart: view box 760 wide, plot from x 60 to 744. Big mode scales that to 600.
+  const W = big ? 600 : 720;
+  const L = big ? (domain ? 60 * W / 760 : 24) : 30, R = big ? (domain ? 744 * W / 760 : W - 24) : 690;
   const X = p => L + (p - lo) / (hi - lo) * (R - L);
   const inDom = p => p >= lo && p <= hi;
 
@@ -6045,8 +6220,8 @@ function PriceMap({ pay, legs, price, em, emLabel, high, low, vwap, underlying }
 
   const pxX = X(price);
   const pillW = Math.max(46, String(Math.round(price)).length * 8 + 14);
-  const T = { fontFamily: 'JetBrains Mono,monospace' };
-  const S = { fontFamily: 'DM Sans,system-ui,sans-serif' };
+  const T = big ? { fontFamily: 'Inter,system-ui,sans-serif', fontVariantNumeric: 'tabular-nums' } : { fontFamily: 'JetBrains Mono,monospace' };
+  const S = big ? { fontFamily: 'Inter,system-ui,sans-serif' } : { fontFamily: 'DM Sans,system-ui,sans-serif' };
   return (
     <svg data-testid="price-map" viewBox={`0 0 ${W} 170`} width="100%" role="img"
       aria-label={`${underlying || 'Price'} ${Math.round(price)}; strikes ${ks.join(', ')}${bes.length ? '; breakevens ' + bes.map(Math.round).join(' and ') : ''}${hasEM ? `; expected move ±${em.toFixed(em < 10 ? 1 : 0)} (${(price - em).toFixed(price < 1000 ? 1 : 0)} to ${(price + em).toFixed(price < 1000 ? 1 : 0)})` : ''}`}>

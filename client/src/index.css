@@ -366,3 +366,7 @@ body {
 .scan-bubble-work { animation: sb-pulse 1.4s ease-out infinite; }
 .scan-dot { animation: sb-pulse 1.4s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .scan-bubble-work, .scan-dot, .vis-rail-spin { animation: none !important; } }
+/* Data in from TWS: a shimmer moving along a feed's bar while data arrives (Nov 2026). */
+@keyframes sb-shimmer { from { left: -40%; } to { left: 100%; } }
+.data-in-shimmer { position: absolute; top: 0; bottom: 0; width: 40%; animation: sb-shimmer 1.3s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .data-in-shimmer { animation: none; left: 0; width: 100%; opacity: 0.6; } }

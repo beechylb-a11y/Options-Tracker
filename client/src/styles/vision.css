@@ -815,3 +815,30 @@
 
 /* Batting dial and SPX tiles span both tile columns (Nov 2026). */
 :root[data-vision="on"]:not(#_) .vd-tiles > .vd-tile.vd-tile-wide { grid-column: 1 / -1; min-height: 0; }
+
+/* ── Decision Engine ticket in decision order (24 Nov 2026) ──
+   A decision bar · title + data in · strikes · numbers | payoff over the price map ·
+   choices | legs | TWS · the order · "Why this ticket". */
+:root[data-vision="on"]:not(#_) .vis-eng-board { display: flex; flex-direction: column; gap: 16px; }
+:root[data-vision="on"]:not(#_) .vis-eng-titlerow { display: flex; align-items: center; gap: 14px 18px; flex-wrap: wrap; padding: 4px 6px 0; }
+:root[data-vision="on"]:not(#_) .vis-eng-titlerow [data-testid="verdict-title"] { font-family: Inter, system-ui, sans-serif; font-weight: 600; font-size: 24px; letter-spacing: -0.01em; column-gap: 10px; }
+:root[data-vision="on"]:not(#_) .vis-eng-titlerow [data-testid="verdict-title"] > span + span::before { content: '· '; opacity: 0.6; }
+:root[data-vision="on"]:not(#_) .vis-eng-strikes { padding: 0 6px; }
+:root[data-vision="on"]:not(#_) .vis-eng-row2 { display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+:root[data-vision="on"]:not(#_) .vis-eng-row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: stretch; }
+@media (max-width: 1000px) { :root[data-vision="on"]:not(#_) .vis-eng-row2 { grid-template-columns: minmax(0, 1fr); } }
+:root[data-vision="on"]:not(#_) .vis-decision { border-radius: 26px; }
+:root[data-vision="on"]:not(#_) .vis-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 600;
+  color: #fff; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.18); cursor: pointer; white-space: nowrap;
+}
+:root[data-vision="on"]:not(#_) .vis-btn:hover { background: rgba(255, 255, 255, 0.22); }
+:root[data-vision="on"]:not(#_) .vis-btn:disabled { opacity: 0.6; cursor: default; }
+:root[data-vision="on"]:not(#_) .vis-btn-blue { background: #3d82f0; border-color: transparent; box-shadow: 0 10px 24px -12px rgba(61, 130, 240, 0.9); }
+:root[data-vision="on"]:not(#_) .vis-btn-blue:hover { background: #4b8ef5; }
+:root[data-vision="on"]:not(#_) .vis-tag-warn { padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #ffd479; background: rgba(255, 212, 121, 0.16); }
+:root[data-vision="on"]:not(#_) .vis-why { padding: 14px 20px; }
+:root[data-vision="on"]:not(#_) .vis-why-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; width: 100%; padding: 0; border: none; background: none; color: #fff; font: inherit; text-align: left; cursor: pointer; }
+:root[data-vision="on"]:not(#_) .vis-eng-row2 { grid-template-columns: minmax(300px, 350px) minmax(0, 1fr); }
+:root[data-vision="on"]:not(#_) .vis-eng-row2 > .vis-eng-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+:root[data-vision="on"]:not(#_) .vis-eng-row3 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }

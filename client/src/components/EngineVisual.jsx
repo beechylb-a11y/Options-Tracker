@@ -29,8 +29,8 @@ export function VerdictTitle({ word, tone, underlying, strikes = [], strategy, q
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span data-testid="verdict" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 8, fontWeight: 800,
-          fontSize: 15, letterSpacing: '.02em', color: tone, background: alpha(tone, '1f'), border: `1.5px solid ${tone}` }}>{word}</span>
+        {word && <span data-testid="verdict" style={{ display: 'inline-flex', alignItems: 'center', padding: '6px 12px', borderRadius: 8, fontWeight: 800,
+          fontSize: 15, letterSpacing: '.02em', color: tone, background: alpha(tone, '1f'), border: `1.5px solid ${tone}` }}>{word}</span>}
         {price ? <span className="mono" style={{ fontSize: 13, color: C.grey }}>{underlying} @ {price}</span> : null}
       </span>
       <span data-testid="verdict-title" className="mono" style={{ color: 'var(--c-ffffff)', fontWeight: 800, fontSize: 21, lineHeight: 1.25, display: 'flex', flexWrap: 'wrap', columnGap: 12 }}>

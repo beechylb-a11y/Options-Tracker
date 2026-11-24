@@ -107,6 +107,9 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
   todayYmd, isTimeSpread, underlying, divYield, closeDte = HARD_CLOSE_DTE, target, targets, stop,
   closeOptions, closeLeg, onCloseDte, exitSim, intraday = false, closeEt = '', scopeNote = '',
   onStrikeChange, strikeSnap, ghost, hero = false }) {
+  // Hero (Vision): chart type a quarter larger, so axis and strike labels read at 13 px
+  // rather than 10 at the ticket's width (24 Nov 2026).
+  const fs = n => (hero ? Math.round(n * 1.25 * 10) / 10 : n);
   // hero (Vision ticket, Nov 2026): the P&L at the moment shown leads, big, with Now /
   // close / Expiry as one segmented pill, and four large facts under the chart.
   // onStrikeChange(legIdx, strike): strike blocks drag (snapping to strikeSnap: { P, C, step })
@@ -349,7 +352,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
         {yTicks.map(v => (
           <g key={'y' + v}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(v)} y2={y(v)} stroke={v === 0 ? C.dim : C.line2} strokeWidth={v === 0 ? 1 : 0.6} />
-            <text x={PAD.left - 6} y={y(v) + 3.5} textAnchor="end" fontSize="10.5" fill={C.grey} fontFamily={MONO}>{kfmt(v)}</text>
+            <text x={PAD.left - 6} y={y(v) + 3.5} textAnchor="end" fontSize={fs(10.5)} fill={C.grey} fontFamily={MONO}>{kfmt(v)}</text>
           </g>
         ))}
         <path d={selArea} fill="color-mix(in srgb, var(--c-3fb950) 18%, transparent)" clipPath="url(#pc-above)" />
@@ -358,13 +361,13 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
         {tgtLines.map((t, i) => (
           <g key={'t' + i}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(t.pnl)} y2={y(t.pnl)} stroke={t.color} strokeWidth="1.1" strokeDasharray="6 4" />
-            <text x={W - PAD.right - 4} y={y(t.pnl) - 4} textAnchor="end" fontSize="10.5" fill={t.color} fontFamily={MONO}>{t.label}</text>
+            <text x={W - PAD.right - 4} y={y(t.pnl) - 4} textAnchor="end" fontSize={fs(10.5)} fill={t.color} fontFamily={MONO}>{t.label}</text>
           </g>
         ))}
         {stopLine != null && (
           <g data-testid="stop-line">
             <line x1={PAD.left} x2={W - PAD.right} y1={y(stopLine)} y2={y(stopLine)} stroke={C.red} strokeWidth="1.1" strokeDasharray="6 4" />
-            <text x={PAD.left + 6} y={y(stopLine) - 4} fontSize="10.5" fill={C.red} fontFamily={MONO}>stop {money(stopLine)} · info only</text>
+            <text x={PAD.left + 6} y={y(stopLine) - 4} fontSize={fs(10.5)} fill={C.red} fontFamily={MONO}>stop {money(stopLine)} · info only</text>
           </g>
         )}
         <g clipPath="url(#pc-plot)">
@@ -378,7 +381,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
           return (
             <g key={'be' + b} data-testid="breakeven">
               <path d={`M${bx},${zeroY - 6}L${bx + 6},${zeroY}L${bx},${zeroY + 6}L${bx - 6},${zeroY}Z`} fill={C.amber} />
-              <text x={bx} y={up ? zeroY - 10 : zeroY + 18} textAnchor="middle" fontSize="10.5" fill={C.amber} fontFamily={MONO}>{px2(b)}</text>
+              <text x={bx} y={up ? zeroY - 10 : zeroY + 18} textAnchor="middle" fontSize={fs(10.5)} fill={C.amber} fontFamily={MONO}>{px2(b)}</text>
             </g>
           );
         })}
@@ -404,9 +407,9 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
               return (
                 <g>
                   <rect x={bx} y={PAD.top + 6} width="190" height={22 + rows.length * 17} rx="8" fill="var(--c-161b22)" stroke={C.line} opacity="0.96" />
-                  <text x={bx + 10} y={PAD.top + 23} fontSize="11.5" fontWeight="700" fill={C.text} fontFamily={MONO}>at {px2(hoverPx)}</text>
+                  <text x={bx + 10} y={PAD.top + 23} fontSize={fs(11.5)} fontWeight="700" fill={C.text} fontFamily={MONO}>at {px2(hoverPx)}</text>
                   {rows.map(([k, v, col], i) => (
-                    <text key={k} x={bx + 10} y={PAD.top + 40 + i * 17} fontSize="11" fill={col} fontFamily={MONO}>{k}  {signed(v)}</text>
+                    <text key={k} x={bx + 10} y={PAD.top + 40 + i * 17} fontSize={fs(11)} fill={col} fontFamily={MONO}>{k}  {signed(v)}</text>
                   ))}
                 </g>
               );
@@ -425,7 +428,7 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
                 const kx = x(px + k * sigPts);
                 return kx > PAD.left && kx < W - PAD.right ? (
                   <g key={k}><line x1={kx} x2={kx} y1={BELL_TOP} y2={base} stroke={C.blue} strokeWidth="0.8" opacity="0.5" />
-                    <text x={kx} y={BELL_TOP - 1} textAnchor="middle" fontSize="9.5" fill={C.grey} fontFamily={MONO}>{k > 0 ? '+' : '−'}{Math.abs(k)}σ</text></g>
+                    <text x={kx} y={BELL_TOP - 1} textAnchor="middle" fontSize={fs(9.5)} fill={C.grey} fontFamily={MONO}>{k > 0 ? '+' : '−'}{Math.abs(k)}σ</text></g>
                 ) : null;
               })}
             </g>
@@ -438,12 +441,12 @@ export default function PayoffChart({ cl: clIn, net: netIn, netSource, spot, lo,
               'aria-valuenow': b.strike, onPointerDown: e => startDrag(b, e), onKeyDown: e => onBlockKey(b, e), style: { cursor: 'ew-resize', outline: 'none' } } : {})}>
             <rect x={b.x - 24} y={STRIKE_Y + b.row * 19} width="48" height="16" rx="5" fill={b.net < 0 ? C.red : C.green} opacity="0.9"
               stroke={moving && b.strike === drag.to && b.right === drag.right ? C.text : 'none'} strokeWidth="1.5" />
-            <text x={b.x} y={STRIKE_Y + b.row * 19 + 12} textAnchor="middle" fontSize="10" fontWeight="700" fill="#ffffff" fontFamily={MONO}>
+            <text x={b.x} y={STRIKE_Y + b.row * 19 + 12} textAnchor="middle" fontSize={fs(10)} fontWeight="700" fill="#ffffff" fontFamily={MONO}>
               {b.net < 0 ? '−' : '+'}{Math.abs(b.net) > 1 ? Math.abs(b.net) + '×' : ''}{b.strike}{b.right}</text>
           </g>
         ))}
         {xTicks.map(v => (
-          <text key={'x' + v} x={x(v)} y={AXIS_Y} textAnchor="middle" fontSize="10.5" fill={C.grey} fontFamily={MONO}>{Math.round(v)}</text>
+          <text key={'x' + v} x={x(v)} y={AXIS_Y} textAnchor="middle" fontSize={fs(10.5)} fill={C.grey} fontFamily={MONO}>{Math.round(v)}</text>
         ))}
       </svg>
 

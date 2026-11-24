@@ -1,6 +1,6 @@
-/* The Decision Engine ticket as one board in Vision (20 Nov 2026): verdict | payoff hero +
-   combo + what-if | choices as bars, a live tile per leg, needs folded. Solid keeps the
-   stacked layout. */
+/* The Decision Engine ticket in Vision (20 Nov, reordered 24 Nov 2026): decision bar, title
+   and data in, numbers | payoff over the price map, legs | TWS, "Why this ticket" folded.
+   Solid keeps the stacked layout. */
 import React from 'react';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
@@ -25,21 +25,51 @@ describe('Vision engine board', () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-02T15:30:00Z')); });
   afterEach(() => { cleanup(); vi.useRealTimers(); act(() => setGlassPref('off')); });
 
-  it('Vision: three columns — verdict, payoff hero, choices — and the old cockpit and choice cards are gone', () => {
+  it('Vision: the ticket in decision order — decision bar, title + data in, numbers | payoff over the price map, legs | TWS', () => {
     act(() => setGlassPref('vision'));
     panel();
-    const grid = screen.getByTestId('vis-eng-grid');
-    const cols = grid.querySelectorAll(':scope > .vis-eng-col');
-    expect(cols).toHaveLength(3);
-    expect(cols[0].querySelector('[data-testid="verdict-band"]')).not.toBe(null);
-    expect(cols[1].querySelector('[data-testid="payoff-hero"]')).not.toBe(null);
-    expect(cols[1].querySelector('[data-testid="vis-combo"]')).not.toBe(null);
-    expect(cols[1].querySelector('[data-testid="vis-what-if"]')).not.toBe(null);
-    expect(cols[2].querySelector('[data-testid="vis-choices"]')).not.toBe(null);
+    const board = screen.getByTestId('vis-eng-grid');
+    const kids = [...board.children];
+    expect(kids[0].getAttribute('data-testid')).toBe('vis-decision');
+    expect(screen.getByTestId('vis-decision-word').textContent).toMatch(/Blocked/);
+    // the blocker's own fix sits on the bar
+    expect(screen.getByTestId('vis-decision').textContent).toMatch(/Net credit 1\.85 vs/);
+    expect(screen.getByTestId('data-in-chip').dataset.state).toBe('offline');
+    const row2 = board.querySelector('.vis-eng-row2');
+    expect(row2.querySelector('[data-testid="vis-numbers"]')).not.toBe(null);
+    expect(row2.querySelector('[data-testid="vis-choices"]')).not.toBe(null);
+    const payoff = row2.querySelector('[data-testid="vis-payoff"]');
+    expect(payoff.querySelector('[data-testid="payoff-hero"]')).not.toBe(null);
+    expect(payoff.querySelector('[data-testid="vis-price-map"] [data-testid="price-map"]')).not.toBe(null);
+    expect(board.querySelector('.vis-eng-row3 [data-testid="vis-tws"]')).not.toBe(null);
     expect(screen.queryByTestId('cockpit')).toBe(null);
     expect(screen.queryByTestId('choices')).toBe(null);
     expect(screen.getByTestId('payoff-hero').textContent).toMatch(/^P&L at the .* close[+−]\$/);
     expect(screen.getAllByTestId('vis-choice').filter(b => b.dataset.current === '1')).toHaveLength(1);
+    // six numbers, each with its source
+    expect(screen.getByTestId('vis-numbers').querySelectorAll('.vis-num')).toHaveLength(6);
+    expect(screen.getByTestId('vis-n-pop').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('typed');
+    expect(screen.getByTestId('vis-n-ev').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('model');
+    expect(screen.getByTestId('vis-net').querySelector('[data-testid="source-tag"]').dataset.kind).toBe('typed');
+  });
+
+  it('Vision: reasoning, warnings, every need and the credit-spread helper fold under "Why this ticket"', () => {
+    act(() => setGlassPref('vision'));
+    panel();
+    expect(screen.queryByTestId('needs-you')).toBe(null);
+    fireEvent.click(screen.getByTestId('vis-why-toggle'));
+    const why = screen.getByTestId('vis-why');
+    expect(why.querySelector('[data-testid="needs-you"]')).not.toBe(null);
+    expect(why.textContent).toMatch(/Profits if/);
+  });
+
+  it('Vision: the data-in chip opens a row per feed', () => {
+    act(() => setGlassPref('vision'));
+    panel();
+    fireEvent.click(screen.getByTestId('data-in-chip'));
+    const p = screen.getByTestId('data-in-panel');
+    expect(p.querySelector('[data-testid="data-in-market"]').dataset.state).toBe('off');
+    expect(p.querySelector('[data-testid="data-in-greeks"]')).not.toBe(null);
   });
 
   it('Solid: the stacked layout as before', () => {
@@ -68,7 +98,7 @@ describe('choice bars', () => {
   it('hover ghosts an alternative, click switches to it; the ticket itself does neither', () => {
     const onHover = vi.fn(), onSwitch = vi.fn();
     render(<VisionChoices choices={choices} onHover={onHover} onSwitch={onSwitch} total={13} />);
-    const [cur, alt] = screen.getAllByTestId('vis-choice');
+    const [cur, alt] = screen.getAllByTestId('vis-choice-row');
     fireEvent.mouseEnter(cur); fireEvent.click(cur);
     expect(onHover).not.toHaveBeenCalledWith('Put credit spread');
     expect(onSwitch).not.toHaveBeenCalled();
