@@ -75,7 +75,11 @@ export class Day {
     return [...new Set([...this.map.keys()].filter(k => k.startsWith(exp + '|') && (!right || k.endsWith('|' + right)))
       .map(k => Number(k.split('|')[1])))].sort((a, b) => a - b);
   }
-  minutes() { return [...new Set([...this.map.values()].flatMap(rows => rows.map(r => r.m)))].sort((a, b) => a - b); }
+  minutes() {
+    // cached: replay asks for this once per structure × exit, and rebuilding it walks every quote row
+    if (!this._minutes) { const set = new Set(); for (const rows of this.map.values()) for (const r of rows) set.add(r.m); this._minutes = [...set].sort((a, b) => a - b); }
+    return this._minutes;
+  }
 
   /**
    * The quote standing at minute t for one leg: the last update at or before t.
