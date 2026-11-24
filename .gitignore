@@ -13,3 +13,6 @@ Claude outputs/
 # Bridge state (staged orders it watches, quotes at fill)
 bridge/.staged-orders.json
 bridge/.fill-quotes.json
+
+# ThetaData history download (tools/theta/theta_download.py)
+data/thetadata/
