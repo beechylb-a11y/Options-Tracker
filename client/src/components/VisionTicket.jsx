@@ -312,7 +312,9 @@ export function LegTable({ underlying, legs }) {
             return (
               <tr key={keys[i] || i} data-testid="vis-leg-row" style={{ textAlign: 'right' }}>
                 <td style={{ ...td, textAlign: 'left', fontWeight: 600, color: l.qty < 0 ? DOWN : UP }}>{name}</td>
-                <td style={td}>{q.ts ? `${f2(q.bid)} × ${f2(q.ask)}` : <span style={{ color: INK3 }}>{connection === 'off' ? 'no stream' : 'waiting'}</span>}</td>
+                <td style={td}>{q.ts ? `${f2(q.bid)} × ${f2(q.ask)}`
+                  : q.noContract ? <span data-testid="leg-not-listed" title="TWS has no contract for this strike and expiry — pick a listed expiry or strike" style={{ color: '#ffa39a' }}>not listed in TWS</span>
+                  : <span style={{ color: INK3 }}>{connection === 'off' ? 'no stream' : 'waiting'}</span>}</td>
                 <td style={td}>{q.delta == null ? '—' : (q.delta >= 0 ? '' : '−') + Math.abs(q.delta).toFixed(2)}</td>
                 <td style={td}>{iv == null ? '—' : iv.toFixed(1)}</td>
                 <td style={{ ...td, paddingLeft: 8 }}><FreshDot state={st} ts={q.ts} size={7} /></td>
