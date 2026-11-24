@@ -78,6 +78,8 @@ export const DIMENSIONS = {
   ev: { label: 'EV sign', keys: r => (r.ev == null || r.ev === '') ? [] : [Number(r.ev) > 0 ? 'EV > 0' : 'EV ≤ 0'] },
   strategy: { label: 'Strategy', keys: r => r.strategy ? [String(r.strategy)] : [] },
   underlying: { label: 'Underlying', keys: r => r.underlying ? [String(r.underlying)] : [] },
+  // Engine version stamps (Nov 2026): verdicts split by the engine rules that produced them.
+  version: { label: 'Engine version', keys: r => [r.rules_hash ? `rules ${r.rules_hash}` : 'before stamps'] },
 };
 
 /**

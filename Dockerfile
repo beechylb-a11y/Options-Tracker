@@ -11,6 +11,8 @@ COPY client/package.json client/
 RUN cd client && npm install
 
 COPY client/ client/
+# Engine version stamps: Railway passes the commit as a build variable (no .git in the image).
+ARG RAILWAY_GIT_COMMIT_SHA
 RUN cd client && npm run build
 
 # Copy server

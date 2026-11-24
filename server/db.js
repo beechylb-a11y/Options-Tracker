@@ -1534,19 +1534,38 @@ const SHADOW_COLS = ['account', 'engine', 'session_date', 'underlying', 'strateg
   'verdict', 'blockers', 'edge_score', 'ev', 'kelly_usd', 'contracts', 'entry_net', 'entry_source', 'win', 'risk', 'pop',
   'p_max_loss', 'move_cost', 'inputs', 'decision_ts', 'entry_half_spread'];
 const camel = c => c.replace(/_([a-z])/g, (_, x) => x.toUpperCase());
+// Engine version stamps (Nov 2026): engine_commit and rules_hash are written only once
+// migration 20261124_options_shadow_engine_version.sql has added them. Until then the
+// verdict saves exactly as before; the check is repeated every 10 minutes so the stamps
+// start without a restart once the columns exist.
+const SHADOW_VERSION_COLS = ['engine_commit', 'rules_hash'];
+let versionColsSeen = { ok: false, at: 0 };
+async function shadowVersionColsReady() {
+  if (versionColsSeen.ok || Date.now() - versionColsSeen.at < 10 * 60 * 1000) return versionColsSeen.ok;
+  try {
+    const { rows } = await q(`select count(*)::int as n from information_schema.columns
+      where table_schema = 'options' and table_name = 'shadow_verdicts' and column_name = any($1)`, [SHADOW_VERSION_COLS]);
+    versionColsSeen = { ok: rows[0].n === SHADOW_VERSION_COLS.length, at: Date.now() };
+  } catch {
+    versionColsSeen = { ok: false, at: Date.now() };
+  }
+  return versionColsSeen.ok;
+}
+export function _resetShadowVersionCheck() { versionColsSeen = { ok: false, at: 0 }; }
 export async function upsertShadow(v) {
   if (!v || !v.sig || !v.engine || !v.underlying || !v.expiry || !v.sessionDate || !Array.isArray(v.legs) || !v.legs.length) {
     throw new Error('sig, engine, underlying, expiry, sessionDate and legs are required');
   }
-  const vals = SHADOW_COLS.map(c => {
+  const shadowCols = (await shadowVersionColsReady()) ? [...SHADOW_COLS, ...SHADOW_VERSION_COLS] : SHADOW_COLS;
+  const vals = shadowCols.map(c => {
     const x = v[camel(c)];
     if (x === undefined || x === '' || (typeof x === 'number' && !Number.isFinite(x))) return null;
     return (c === 'legs' || c === 'inputs') ? JSON.stringify(x) : x;
   });
-  const cols = ['sig', ...SHADOW_COLS];
+  const cols = ['sig', ...shadowCols];
   const ph = cols.map((_, i) => '$' + (i + 1)).join(', ');
   // A taken ticket stays taken; otherwise the latest look of the day wins.
-  const upd = SHADOW_COLS.filter(c => c !== 'session_date').map(c => c === 'category'
+  const upd = shadowCols.filter(c => c !== 'session_date').map(c => c === 'category'
     ? `category = case when options.shadow_verdicts.category = 'taken' then 'taken' else excluded.category end`
     : c === 'decision_ts' ? `decision_ts = coalesce(excluded.decision_ts, options.shadow_verdicts.decision_ts)`
     : `${c} = excluded.${c}`).join(', ');

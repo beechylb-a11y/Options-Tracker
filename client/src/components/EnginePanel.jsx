@@ -12,6 +12,7 @@ import { earningsSymbols, earningsWindow, isSingleStock } from '../engine/earnin
 import { DEFAULT_STRIKE_METHOD, DELTA_TARGETS, deltaStrikePlan, bracketStrikes, pickByDelta, shortDeltaSummary, strikeGrid, typedStrikeStep } from '../engine/deltaStrikes';
 import { listedLadder } from '../engine/listedStrikes';
 import { shadowLegs, fairNet0, fairNet45, categoryOf, shadowSig, whyNoShadow } from '../engine/shadow';
+import { ENGINE_COMMIT, RULES_HASH, versionLine } from '../utils/engineVersion';
 import { defaultHalfSpread } from '../engine/managed';
 import { api } from '../utils/api';
 import { accrualTable, windowShare, sessionsToExpiry } from '../engine/accrual';
@@ -1737,6 +1738,8 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
             exitTarget: r.exitTarget ? r.exitTarget.target : null }
         : { iv: fv(i45, 'iv'), ivr: fv(i45, 'ivr'), hv: fv(i45, 'hv'), vix: fv(i45, 'vix'), dte: fv(i45, 'dte'), outlook: i45.outlook || null, regime: r.regime || null, sessionBasis: ses.basis },
       decisionTs: extra.decisionTs || null,
+      // Engine version stamps (Nov 2026): the build and the engine rules behind this verdict.
+      engineCommit: ENGINE_COMMIT, rulesHash: RULES_HASH,
     };
     v.sig = shadowSig({ sessionDate: v.sessionDate, engine: v.engine, underlying: v.underlying, strategy, legs, expiry, account: v.account });
     return v;
@@ -3447,7 +3450,7 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const ivxLine = is0 && r.ivxEM > 0
       ? `IVX at entry: ±${r.ivxEM.toFixed(2)}${r.emIsStraddle ? ` · 16Δ ≈ ±${(r.ivxEM / 0.85 * 1.2533).toFixed(2)} (straddle)` : ' (estimated from VIX1D)'} · ${(() => { const m = nyMinutes(); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')} ET`; })()}\n`
       : '';
-    const fullNotes = expiriesLine + legsLine + legIvsLine + ivxLine + engineSummary + planBlock
+    const fullNotes = expiriesLine + legsLine + legIvsLine + ivxLine + versionLine() + '\n' + engineSummary + planBlock
       + '\n\n--- My notes ---\n'
       + (logNote.trim() || '(none)');
     setLogNoteOpen(false);
