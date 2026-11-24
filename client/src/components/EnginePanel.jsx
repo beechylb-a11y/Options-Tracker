@@ -824,12 +824,11 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
   const liveQuotesAll = useLiveQuotes();
   const [whatIfState, setWhatIfState] = useState('idle');
   const inAtRef = useRef({});
-  const busyRef = useRef({});
   const [, setInTick] = useState(0);
-  useEffect(() => {
-    const b = busyRef.current;
-    [['market', autoFilling], ['greeks', fetchingGreeks], ['vol', fetchingVol]].forEach(([k, v]) => { if (b[k] && !v) inAtRef.current[k] = Date.now(); b[k] = v; });
-  }, [autoFilling, fetchingGreeks, fetchingVol]);
+  // A pull's time is recorded only when it brought data back — a failed pull (TWS not
+  // running) used to stamp the moment it gave up. Market and greeks carry their own asOf.
+  const volSeenRef = useRef(volMeta);   // the scan's vol at open is not a pull from this ticket
+  useEffect(() => { if (volMeta && volMeta !== volSeenRef.current) inAtRef.current.vol = Date.now(); volSeenRef.current = volMeta; }, [volMeta]);
   useEffect(() => {
     if (!visionOn) return undefined;
     const h = setInterval(() => setInTick(t => t + 1), 2000);   // ages on the chip move on
@@ -3736,13 +3735,15 @@ export default function EnginePanel({ mode, onLogTrade, accountConfig, strategyH
     const ph = marketClock(new Date()).phase;
     const df = dataFresh;
     const pulls = [
-      { key: 'market', label: 'Market data', busy: autoFilling, at: (df && (df.pulledAt || df.asOf)) || inAtRef.current.market,
+      { key: 'market', label: 'Market data', busy: autoFilling, at: df && (df.pulledAt || df.asOf),
         fallback: df && df.isLive === false && (df.pulledAt || df.asOf) ? (String(df.label || df.dataType || 'delayed').toLowerCase()) : null },
-      { key: 'greeks', label: 'Greeks / IV', busy: fetchingGreeks, at: (greeksFresh && greeksFresh.asOf) || inAtRef.current.greeks },
+      { key: 'greeks', label: 'Greeks / IV', busy: fetchingGreeks, at: greeksFresh && greeksFresh.asOf,
+        fallback: greeksFresh && greeksFresh.asOf && greeksFresh.dataType && !/real|live/i.test(greeksFresh.dataType) ? String(greeksFresh.label || greeksFresh.dataType).toLowerCase() : null },
       ...(is0 ? [] : [{ key: 'vol', label: 'Vol surface', busy: fetchingVol, at: inAtRef.current.vol }]),
       { key: 'price', label: 'Ticket price', busy: false, at: liveOn && livePx ? livePx.asOf : null },
     ];
-    return inboundStatus({ now: Date.now(), bridge: !!bridge, connection: liveConn.connection, marketOpen: ph === 'open' || ph === 'late',
+    return inboundStatus({ now: Date.now(), bridge: !!bridge, connection: liveConn.connection, tws: liveConn.status ? liveConn.status.connected !== false : undefined,
+      marketOpen: ph === 'open' || ph === 'late',
       underlying: undQuote ? { ts: undQuote.ts } : null, legs: inLegKeys.map(k => ({ ts: liveQuotesAll[k] && liveQuotesAll[k].ts })), pulls, whatIf: whatIfState });
   }
   function renderVisionGrid() {

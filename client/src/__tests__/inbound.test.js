@@ -57,6 +57,19 @@ describe('inboundStatus', () => {
     expect(s.feeds.find(f => f.key === 'market')).toMatchObject({ state: 'off', when: 'no bridge' });
   });
 
+  it('bridge up but TWS not connected: says so, quotes are off, and the last pull is named — never "TWS connected"', () => {
+    const s = inboundStatus({ ...base, tws: false, underlying: null, legs: [{}, {}],
+      pulls: [{ key: 'market', label: 'Market data', at: Date.parse('2026-11-24T15:46:41Z') }, { key: 'greeks', label: 'Greeks / IV' }] });
+    expect(s.state).toBe('stale');
+    expect(s.title).toBe('Bridge up · TWS not connected');
+    expect(s.sub).toMatch(/^nothing new can arrive — last pull \d\d:\d\d:\d\d$/);
+    expect(s.feeds.find(f => f.key === 'underlying')).toMatchObject({ state: 'off', when: 'TWS not connected' });
+    expect(s.feeds.find(f => f.key === 'legs')).toMatchObject({ state: 'off', when: 'TWS not connected' });
+    expect(s.feeds.find(f => f.key === 'greeks')).toMatchObject({ state: 'waiting', when: 'not pulled yet' });
+    const none = inboundStatus({ ...base, tws: false, pulls: [] });
+    expect(none.sub).toMatch(/start TWS or IB Gateway/);
+  });
+
   it('what-if has its own row', () => {
     const s = inboundStatus({ ...base, underlying: { ts: NOW }, whatIf: 'ok' });
     expect(s.feeds.find(f => f.key === 'whatif')).toMatchObject({ state: 'done', when: 'in' });

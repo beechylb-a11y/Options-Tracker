@@ -17,7 +17,9 @@ const tsOf = v => { if (v == null || v === '') return null; const t = typeof v =
 /**
  * @param o.now           ms
  * @param o.bridge        a bridge URL is set
- * @param o.connection    live stream: 'open' | 'connecting' | 'off' | …
+ * @param o.connection    live stream to the bridge: 'open' | 'connecting' | 'off' | …
+ * @param o.tws           the bridge's own link to TWS is up (status.connected); false = bridge
+ *                        answers but TWS / IB Gateway is not there, so nothing new can arrive
  * @param o.marketOpen    regular session
  * @param o.underlying    { ts } newest streamed quote for the underlying
  * @param o.legs          [{ ts }] newest streamed quote per leg ([] when the ticket has none)
@@ -30,12 +32,13 @@ const tsOf = v => { if (v == null || v === '') return null; const t = typeof v =
 export function inboundStatus(o) {
   const now = o.now ?? Date.now();
   const open = o.connection === 'open';
+  const noTws = open && o.tws === false;      // bridge up, TWS not
   const feeds = [];
 
   // Streamed quotes: live while fresh; older than that, stale in session, done after.
   const streamRow = (key, label, list) => {
     const ts = list.map(q => tsOf(q && q.ts)).filter(t => t != null);
-    if (!open) { feeds.push({ key, label, state: o.bridge ? 'off' : 'off', when: o.connection === 'connecting' ? 'connecting…' : 'stream off' }); return; }
+    if (!open || noTws) { feeds.push({ key, label, state: 'off', when: noTws ? 'TWS not connected' : o.connection === 'connecting' ? 'connecting…' : 'stream off' }); return; }
     if (!ts.length) { feeds.push({ key, label, state: 'waiting', when: 'waiting for a tick' }); return; }
     const oldest = Math.min(...ts), age = now - oldest;
     const state = age <= LIVE_MS ? 'live' : (o.marketOpen ? 'stale' : 'done');
@@ -62,7 +65,12 @@ export function inboundStatus(o) {
   const pulled = feeds.filter(f => f.at != null && f.key !== 'underlying' && f.key !== 'legs');
   const newest = pulled.length ? Math.max(...pulled.map(f => f.at)) : null;
   let state, title, sub;
-  if (has('pulling')) {
+  if (noTws && !has('pulling')) {
+    // The bridge answers but TWS doesn't: say so plainly — what's on the ticket is the last
+    // pull (if any), and nothing new can come in until TWS is back.
+    state = 'stale'; title = 'Bridge up · TWS not connected';
+    sub = newest != null ? `nothing new can arrive — last pull ${clock(newest)}` : 'start TWS or IB Gateway — numbers are yours or the model\'s';
+  } else if (has('pulling')) {
     const busy = feeds.filter(f => f.state === 'pulling').map(f => f.label.toLowerCase());
     state = 'receiving'; title = 'Pulling from TWS…'; sub = busy.join(' · ');
   } else if (open && stream.some(f => f.state === 'live')) {
