@@ -4,6 +4,7 @@
 // the same trades, the same P&L and the same R. Pure functions; the pages draw.
 
 import { isAggExcluded } from './stats.js';
+import { wilson, meanCI, MIN_N, SOLID_N } from '../engine/calibration.js';
 
 const num = v => { const x = parseFloat(String(v ?? '').replace(/[$,]/g, '')); return Number.isFinite(x) ? x : null; };
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -102,14 +103,58 @@ export function maxDrawdown(series) {
   return best;
 }
 
-/** Confidence bands → { label, n, win (0–1), avgR }. Only trades with both a score and an R. */
+/**
+ * Confidence bands → { label, n, win (0–1), avgR, winCI, rCI, read }. Only trades with
+ * both a score and an R. winCI is the Wilson 95% range of the win rate, rCI the 95%
+ * range of average R (null bounds under 2 trades). read: 'few' under MIN_N trades,
+ * 'early' under SOLID_N, else 'solid' — the same bars as Analytics › Calibration.
+ */
 export const CONF_BANDS = [[0, 25, '0–24'], [25, 40, '25–39'], [40, 50, '40–49'], [50, 101, '50+']];
 export function calibration(trades, bands = CONF_BANDS) {
   return bands.map(([lo, hi, label]) => {
     const s = (trades || []).filter(t => t.conf != null && t.r != null && t.conf >= lo && t.conf < hi);
     const w = s.filter(t => t.r > 0).length;
-    return { label, lo, hi, n: s.length, win: s.length ? w / s.length : 0, avgR: s.length ? s.reduce((a, t) => a + t.r, 0) / s.length : 0 };
+    const n = s.length;
+    return {
+      label, lo, hi, n, win: n ? w / n : 0, avgR: n ? s.reduce((a, t) => a + t.r, 0) / n : 0,
+      winCI: wilson(w, n), rCI: meanCI(s.map(t => t.r)),
+      read: n < MIN_N ? 'few' : n < SOLID_N ? 'early' : 'solid',
+    };
   });
+}
+
+/**
+ * What the bands say, in words. A band is read only from MIN_N trades. "Re-weight the
+ * score" is said only when the best and worst readable bands' R ranges don't overlap
+ * and every readable band has SOLID_N trades; short of that the score is context.
+ * → { kind: 'few'|'overlap'|'climbs'|'early'|'reweight', text }
+ */
+export function calibrationRead(b) {
+  const had = (b || []).filter(x => x.n);
+  const scored = had.reduce((a, x) => a + x.n, 0);
+  const ok = had.filter(x => x.n >= MIN_N && x.rCI && x.rCI.lo != null);
+  const left = had.length - ok.length;
+  const leftTxt = left ? ` (${left} band${left > 1 ? 's' : ''} under ${MIN_N} trades not counted)` : '';
+  if (ok.length < 2) {
+    return { kind: 'few', text: `Too few trades to judge the score: ${ok.length} of ${had.length} bands ${ok.length === 1 ? 'has' : 'have'} ${MIN_N} or more (${scored} scored trades). Read it as context, not a grade, and keep logging.` };
+  }
+  const climbs = ok.every((x, i, a) => i === 0 || x.avgR >= a[i - 1].avgR - 0.02);
+  const byR = [...ok].sort((p, q) => q.avgR - p.avgR);
+  const best = byR[0], worst = byR[byR.length - 1];
+  const apart = best.rCI.lo > worst.rCI.hi;
+  const early = ok.some(x => x.n < SOLID_N);
+  if (!apart) {
+    return climbs
+      ? { kind: 'overlap', text: `Average R climbs with the score, but the 95% ranges overlap${leftTxt}, so it isn't shown yet. Keep logging.` }
+      : { kind: 'overlap', text: `No band is clearly better: the 95% ranges of average R overlap${leftTxt}. Read the score as context, not a grade, and keep logging before re-weighting it.` };
+  }
+  if (climbs) {
+    return { kind: 'climbs', text: `Average R climbs with the score and the ${best.label} band is clear of the ${worst.label} band: the engine is ranking trades the right way.${early ? ` Early: some bands have under ${SOLID_N} trades.` : ''}` };
+  }
+  if (early) {
+    return { kind: 'early', text: `The ${best.label} band is clear of the ${worst.label} band, but it's early (bands under ${SOLID_N} trades). Keep logging before re-weighting the score.` };
+  }
+  return { kind: 'reweight', text: `They don't climb: the ${best.label} band is clear of the ${worst.label} band on ${SOLID_N}+ trades each. Re-weight the score on its own results.` };
 }
 
 /**
