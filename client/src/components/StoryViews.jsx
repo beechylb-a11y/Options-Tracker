@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { fmt$ } from '../utils/format';
 import {
-  equitySeries, maxDrawdown, calibration, structureEdge, rHistogram, structureGrid,
+  equitySeries, maxDrawdown, calibration, calibrationRead, structureEdge, rHistogram, structureGrid,
   dailyPnl, dayStats, heatCells, monthPace, weekCards, fmtDay,
 } from '../utils/tradeStory';
 import { rollChain } from '../engine/rollChain';
+import { MIN_N, SOLID_N, meanCI } from '../engine/calibration';
 
 // Story views (Nov 2026): Trades, Journal and Analytics as pictures that answer one
 // question each, with the tables one tab away. Drawn in plain SVG at the measured
@@ -162,7 +163,12 @@ export function ConfidenceScatter({ trades }) {
       </svg>
       <Insight>
         <b>Read it:</b> tickets scored under 50 averaged {rTxt(avg(lo))} over {lo.length}; 50 and above averaged {rTxt(avg(hi))} over {hi.length}.
-        {avg(lo) >= avg(hi) ? ' The score is not separating winners from losers yet — treat it as context, not a grade, until it does.' : ' Higher scores are paying more, as they should.'}
+        {(() => {
+          const a = meanCI(lo.map(t => t.r)), b = meanCI(hi.map(t => t.r));
+          const apart = a && b && a.lo != null && b.lo != null && (a.lo > b.hi || b.lo > a.hi) && lo.length >= MIN_N && hi.length >= MIN_N;
+          if (!apart) return ` The 95% ranges overlap${lo.length < MIN_N || hi.length < MIN_N ? ` (a side has under ${MIN_N} trades)` : ''}, so the score isn't separating winners from losers yet — treat it as context, not a grade.`;
+          return avg(lo) >= avg(hi) ? ' Lower scores are paying more, beyond the noise — the score is ranking trades the wrong way.' : ' Higher scores are paying more, beyond the noise, as they should.';
+        })()}
       </Insight>
     </div>
   );
@@ -340,24 +346,36 @@ export function CalibrationBars({ trades }) {
   const b = useMemo(() => calibration(trades), [trades]);
   const scored = b.reduce((a, x) => a + x.n, 0);
   if (scored < 4) return <Empty>Not enough scored tickets yet.</Empty>;
-  const climbs = b.filter(x => x.n).every((x, i, a) => i === 0 || x.avgR >= a[i - 1].avgR - 0.02);
-  const best = [...b].filter(x => x.n).sort((p, q) => q.avgR - p.avgR)[0];
+  const read = calibrationRead(b);
+  const rng = ci => (ci && ci.lo != null ? `${rTxt(ci.lo).replace('R', '')} to ${rTxt(ci.hi)}` : 'no range yet');
   return (
     <div data-testid="calibration">
       <div className="flex gap-3 items-end">
-        {b.map(x => (
-          <div key={x.label} className="flex-1 flex flex-col items-center gap-2">
-            <div className="num font-semibold text-[15px]">{x.n ? rTxt(x.avgR) : '—'}</div>
-            <div className="w-14 rounded-2xl overflow-hidden flex items-end" style={{ height: 160, background: C.track }}>
-              <div style={{ width: '100%', height: `${x.win * 100}%`, background: `linear-gradient(180deg, ${C.blue}, ${C.blueSolid})` }} />
+        {b.map(x => {
+          const few = x.read === 'few';
+          return (
+            <div key={x.label} className="flex-1 flex flex-col items-center gap-2" data-testid={`cal-band-${x.label}`}
+              title={x.n ? `${x.n} trades · won ${Math.round(x.win * 100)}% (95% range ${Math.round(x.winCI.lo * 100)}–${Math.round(x.winCI.hi * 100)}%) · average ${rTxt(x.avgR)} (95% range ${rng(x.rCI)})` : 'No trades in this band'}>
+              <div className="flex flex-col items-center leading-tight">
+                <div className="num font-semibold text-[15px]" style={few ? { color: C.faint } : undefined}>{x.n ? rTxt(x.avgR) : '—'}</div>
+                <div className="num text-[11.5px] text-text-faint" data-testid="cal-r-range">{x.n ? rng(x.rCI) : '\u00a0'}</div>
+              </div>
+              <div className="relative w-14 rounded-2xl overflow-hidden flex items-end" style={{ height: 160, background: C.track }}>
+                <div style={{ width: '100%', height: `${x.win * 100}%`, background: `linear-gradient(180deg, ${C.blue}, ${C.blueSolid})`, opacity: few ? 0.4 : 1 }} />
+                {x.winCI && (
+                  <div data-testid="cal-win-range" className="absolute left-0 right-0 pointer-events-none"
+                    style={{ bottom: `${x.winCI.lo * 100}%`, height: `${(x.winCI.hi - x.winCI.lo) * 100}%`, background: 'rgba(255,255,255,0.16)', borderTop: '2px solid rgba(255,255,255,0.75)', borderBottom: '2px solid rgba(255,255,255,0.75)' }} />
+                )}
+              </div>
+              <div className="text-[13.5px]">{x.label}</div>
+              <div className="text-[12px] text-text-muted">{x.n ? `${Math.round(x.win * 100)}% won · ${x.n}` : 'none'}</div>
+              {x.n > 0 && x.read !== 'solid' && <Pill tone={few ? null : 'warn'}>{few ? 'too few' : 'early'}</Pill>}
             </div>
-            <div className="text-[13.5px]">{x.label}</div>
-            <div className="text-[12px] text-text-muted">{x.n ? `${Math.round(x.win * 100)}% won · ${x.n}` : 'none'}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <Insight>{climbs ? 'Average R climbs with the score — the engine is ranking trades the right way.'
-        : `They don't climb: the ${best.label} band has the best average R. Re-weight the score on its own results, or read it as context, not a grade.`}</Insight>
+      <div className="mt-3 text-[12px] text-text-faint">White lines: the 95% range of the win rate. Under each R: its 95% range. Under {MIN_N} trades a band is too few to read; under {SOLID_N}, early.</div>
+      <Insight><span data-testid="cal-read" data-kind={read.kind}>{read.text}</span></Insight>
     </div>
   );
 }
