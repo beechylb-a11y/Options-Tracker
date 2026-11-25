@@ -57,8 +57,8 @@ test('runDay produces every study × exit × fill and expiry settles on the clos
   const { info, rows } = runDay(d, 'SPXW', '10:30');
   assert.ok(Math.abs(info.Fclose - 7309.97) < 0.2, `Fclose ${info.Fclose}`);
   const credit = rows.filter(r => r.study === 'credit'), fly = rows.filter(r => r.study === 'fly');
-  assert.equal(credit.length, 2 * 5 * 4 * 2);
-  assert.equal(fly.length, 3 * 4 * 2);
+  assert.equal(credit.length, 2 * 5 * 6 * 2);
+  assert.equal(fly.length, 3 * 6 * 2);
   const exp = rows.find(r => r.study === 'credit' && r.side === 'put' && r.param === 1 && r.exit === 'expiry' && r.fill === 'natural');
   // the put spread finishes worthless (F 7310 > short): keep the whole credit
   assert.equal(exp.exitNet, 0);

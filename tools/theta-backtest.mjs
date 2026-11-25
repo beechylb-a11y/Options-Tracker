@@ -40,7 +40,10 @@ export const WIDTH = { SPXW: 20, XSP: 2, SPY: 2, QQQ: 2, IWM: 1 };
 export const TIME_EXIT = { SPXW: '15:30', XSP: '15:30', SPY: '15:45', QQQ: '15:45', IWM: '15:45' };
 export const DIST = [0.5, 0.75, 1.0, 1.25, 1.5];
 export const WINGS = [0.5, 0.75, 1.0];
-export const EXITS = ['t25', 't50', 'time', 'expiry'];
+// t25 / t50: closed on the minute the mid touches the target, at natural or mid.
+// t25r / t50r: the app's resting limit at the target (fills only when the natural reaches it).
+export const EXITS = ['t25', 't50', 't25r', 't50r', 'time', 'expiry'];
+export const TICK = { SPXW: 0.05 };
 const EM_FACTOR = 0.85;
 
 /** Forward and ATM straddle at minute t from put-call parity. null when no strike has both sides. */
@@ -88,7 +91,7 @@ export function flyLegs(day, F, em, w) {
 }
 
 /** One structure, every exit and fill: trade rows. */
-export function runStructure(day, legs, { study, side, param, maxLossOf, timeExit, Fclose, entry, bounds = null }) {
+export function runStructure(day, legs, { study, side, param, maxLossOf, timeExit, Fclose, entry, bounds = null, tick = 0.01 }) {
   const rows = [];
   for (const fill of ['natural', 'mid']) {
     for (const exit of EXITS) {
@@ -100,7 +103,8 @@ export function runStructure(day, legs, { study, side, param, maxLossOf, timeExi
         const settle = legs.reduce((s, l) => s + l.qty * intrinsic(l, Fclose), 0);
         r = { ok: true, entryNet, exitNet: settle, pnlPerCt: Math.round((entryNet + settle) * 10000) / 100, exitReason: 'expiry', exitAt: '16:00' };
       } else {
-        r = replay(day, legs, { entry, exit: timeExit, fill, target: exit === 't25' ? 0.25 : exit === 't50' ? 0.5 : null });
+        const target = exit.startsWith('t25') ? 0.25 : exit.startsWith('t50') ? 0.5 : null;
+        r = replay(day, legs, { entry, exit: timeExit, fill, target, targetFill: exit.endsWith('r') ? 'resting' : 'touch', tick });
         if (!r.ok) continue;
         // A close can't cost more than the structure can ever be worth (a vertical's width, a fly's
         // zero floor): a price outside that is a broken quote on a dead wing, and holding to expiry
@@ -133,7 +137,7 @@ export function runDay(day, symbol, entry = ENTRY) {
       const legs = creditLegs(day, side, f0.F, em, d, width);
       if (!legs) continue;
       const w = Math.abs(legs[0].strike - legs[1].strike);
-      rows.push(...runStructure(day, legs, { study: 'credit', side, param: d, timeExit, entry, Fclose: info.Fclose, bounds: [-w, 0],
+      rows.push(...runStructure(day, legs, { study: 'credit', side, param: d, timeExit, entry, Fclose: info.Fclose, bounds: [-w, 0], tick: TICK[symbol] ?? 0.01,
         maxLossOf: entryNet => (entryNet > 0 ? w - entryNet : null) }));
     }
   }
@@ -141,7 +145,7 @@ export function runDay(day, symbol, entry = ENTRY) {
     const legs = flyLegs(day, f0.F, em, w);
     if (!legs) continue;
     const wing = legs[1].strike - legs[0].strike;
-    rows.push(...runStructure(day, legs, { study: 'fly', side: 'call', param: w, timeExit, entry, Fclose: info.Fclose, bounds: [0, wing],
+    rows.push(...runStructure(day, legs, { study: 'fly', side: 'call', param: w, timeExit, entry, Fclose: info.Fclose, bounds: [0, wing], tick: TICK[symbol] ?? 0.01,
       maxLossOf: entryNet => (entryNet < 0 ? -entryNet : null) }));
   }
   return { info, rows: rows.map(r => ({ symbol, date: day.date, ...r })) };
