@@ -140,13 +140,20 @@ export function combo(day, legs, t, opts = {}) {
  * Returns per-share entry and exit, P&L per contract, and the mid path with its best
  * and worst points (MFE / MAE) — or { ok: false, reason } when a leg was unpriced.
  */
-export function replay(day, legs, { entry = '10:00', exit = '15:45', fill = 'natural', target = null, stop = null, exp, maxAgeMin = 5 } = {}) {
+// targetFill: 'touch' closes on the minute the mid reaches the target, at the fill price
+// (natural or mid). 'resting' is the app's own order: a limit at the target price, rounded
+// onto the tick in the trader's favour, that fills only on a minute the natural close
+// reaches it (no stale legs), and then at the limit price, never better.
+export function replay(day, legs, { entry = '10:00', exit = '15:45', fill = 'natural', target = null, stop = null, exp, maxAgeMin = 5, targetFill = 'touch', tick = 0.01 } = {}) {
   const opts = { exp: exp || day.date, maxAgeMin };
   const e0 = toMin(entry), x0 = toMin(exit);
   const at0 = combo(day, legs, e0, opts);
   if (!at0.ok) return { ok: false, reason: `no quote at entry ${entry} for ${at0.missing.map(l => `${l.strike}${l.right}`).join(', ')}` };
   const entryNet = fill === 'mid' ? -at0.mark : at0.open;
   const premium = Math.abs(entryNet);
+  // resting target: the closing value (per share, + credit / − debit) the limit is sent at
+  const restAt = target != null && premium > 0
+    ? Math.round(Math.ceil((target * premium - entryNet) / tick - 1e-9) * tick * 1e6) / 1e6 : null;
   const path = [];
   let mfe = -Infinity, mae = Infinity, end = null;
   const mins = day.minutes().filter(m => m > e0 && m <= x0);
@@ -157,10 +164,13 @@ export function replay(day, legs, { entry = '10:00', exit = '15:45', fill = 'nat
     const pnl = r2(entryNet + c.mark);
     path.push({ t: c.t, mark: c.mark, pnl });
     mfe = Math.max(mfe, pnl); mae = Math.min(mae, pnl);
-    const hitTarget = target != null && premium > 0 && pnl >= target * premium;
+    const hitTarget = target != null && premium > 0 && (targetFill === 'resting'
+      ? !c.stale.length && c.close >= restAt - 1e-9
+      : pnl >= target * premium);
     const hitStop = stop != null && premium > 0 && pnl <= -stop * premium;
     if (hitTarget || hitStop || m === x0) {
-      end = { t: c.t, reason: hitTarget ? 'target' : hitStop ? 'stop' : 'time', value: fill === 'mid' ? c.mark : c.close, stale: c.stale.length };
+      const value = hitTarget && targetFill === 'resting' ? restAt : fill === 'mid' ? c.mark : c.close;
+      end = { t: c.t, reason: hitTarget ? 'target' : hitStop ? 'stop' : 'time', value, stale: c.stale.length };
       break;
     }
   }

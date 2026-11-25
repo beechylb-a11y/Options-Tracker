@@ -123,3 +123,26 @@ test('parseLegs reads the usual spellings and rejects nonsense', () => {
 test('rejects a file whose columns are not the download format', () => {
   assert.throws(() => parseQuotes('a,b,c\n1,2,3'), /unexpected columns/);
 });
+
+test('resting target: fills at the limit only when the natural close reaches it', async () => {
+  const { replay, parseQuotes, Day } = await import('./quotes.mjs');
+  const H = 'symbol,expiration,strike,right,timestamp,bid_size,bid_exchange,bid,bid_condition,ask_size,ask_exchange,ask,ask_condition';
+  const row = (k, t, bid, ask) => `SPXW,2026-11-17,${k}.0,PUT,2026-11-17T${t}:00.000-0500,1,5,${bid},50,1,5,${ask},50`;
+  // short 7300P / long 7280P. Entry 10:30 natural credit = 3.00 − 1.00 = 2.00; 25% target → close for ≤ 1.50 debit.
+  const mk = later => new Day(parseQuotes([H,
+    row(7300, '10:30', '3.00', '3.20'), row(7280, '10:30', '0.80', '1.00'),
+    ...later.flatMap(([t, s, l]) => [row(7300, t, s[0], s[1]), row(7280, t, l[0], l[1])])].join('\n')), { symbol: 'SPXW', date: '2026-11-17' });
+  const legs = [{ qty: -1, strike: 7300, right: 'P' }, { qty: 1, strike: 7280, right: 'P' }];
+  // 11:00 mid of the spread = 1.40 (target touched on mid) but natural close = 1.80 − 0.20 = 1.60 debit: no resting fill
+  const d1 = mk([['11:00', ['1.00', '1.80'], ['0.20', '0.40']], ['15:45', ['2.00', '2.20'], ['0.50', '0.70']]]);
+  const touch = replay(d1, legs, { entry: '10:30', exit: '15:45', target: 0.25 });
+  assert.equal(touch.exitReason, 'target');
+  const rest = replay(d1, legs, { entry: '10:30', exit: '15:45', target: 0.25, targetFill: 'resting' });
+  assert.equal(rest.exitReason, 'time');
+  // 11:00 natural close = 1.50 − 0.10 = 1.40 debit ≤ 1.50 limit: filled at the limit, 1.50
+  const d2 = mk([['11:00', ['1.30', '1.50'], ['0.10', '0.30']], ['15:45', ['2.00', '2.20'], ['0.50', '0.70']]]);
+  const r2 = replay(d2, legs, { entry: '10:30', exit: '15:45', target: 0.25, targetFill: 'resting', tick: 0.05 });
+  assert.equal(r2.exitReason, 'target');
+  assert.equal(r2.exitNet, -1.5);
+  assert.equal(r2.pnlPerCt, 50);
+});
