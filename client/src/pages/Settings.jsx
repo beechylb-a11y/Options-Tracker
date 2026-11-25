@@ -11,6 +11,7 @@ import { useAccountSummary } from '../components/CapitalPanel';
 import { matchAccount, bankrollOf, bankrollGap } from '../utils/capital';
 import { CVAR_TRADE_PCT } from '../engine/sizing';
 import Modal from '../components/Modal';
+import DataHealthPanel from '../components/DataHealthPanel';
 
 // Settings, grouped by job (Nov 2026): a contents bar, the bridge's health, a card per
 // account (edit in a side panel), the risk limits as one row per account with what
@@ -424,6 +425,7 @@ export default function SettingsPage({ authenticated, onLogin, accounts: account
     ['accounts', 'Accounts', `${accounts.length}${needsLook ? ` · ${needsLook} need${needsLook === 1 ? 's' : ''} a look` : ''}`],
     ['risk', 'Risk & sizing', 'per account'],
     ['connection', 'Connection', conn],
+    ['health', 'Data health', 'quotes, bars, settles'],
     ['appearance', 'Appearance', vision ? 'Vision' : glass ? 'Glass' : 'Solid'],
     ['data', 'Data', 'Supabase'],
     ['danger', 'Danger zone', ''],
@@ -483,6 +485,10 @@ export default function SettingsPage({ authenticated, onLogin, accounts: account
         </div>
         <div className="text-[13px] font-semibold mb-1">TWS accounts</div>
         <LinkTws summary={summary} health={health} accounts={accounts} onLink={link} saving={saving} />
+      </Section>
+
+      <Section id="health" title="Data health" sub="what the engine is reading right now, and anything missing">
+        <DataHealthPanel />
       </Section>
 
       <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>

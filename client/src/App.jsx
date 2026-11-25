@@ -6,6 +6,7 @@ import Login from './components/Login';
 import HeaderStrip from './components/HeaderStrip';
 import VolBanner from './components/VolBanner';
 import NewVersionBanner from './components/NewVersionBanner';
+import DataHealthBanner from './components/DataHealthBanner';
 import GlassSurface from './components/GlassSurface';
 import VisionRail from './components/VisionRail';
 import { ScanHairline, ScanDoneToast, useScanBadge } from './components/ScanProgress';
@@ -85,6 +86,11 @@ export default function App() {
   const setTab = id => {
     setTabState(id);
     try { localStorage.setItem('ot_tab', id); } catch (e) {}
+  };
+  // Data banner → Settings › Data health, scrolled into view once the page has drawn.
+  const openHealth = () => {
+    setTab('settings');
+    setTimeout(() => { const el = document.getElementById('health'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 120);
   };
   const setSelectedAccount = id => {
     setSelectedAccountState(id);
@@ -217,6 +223,7 @@ export default function App() {
             />
             <NewVersionBanner authenticated={authenticated} />
             <VolBanner authenticated={authenticated} account={selectedAccount} onOpenRisk={() => setTab('risk')} />
+            <DataHealthBanner authenticated={authenticated} onOpen={openHealth} />
             {pages}
           </main>
         </div>
@@ -289,6 +296,7 @@ export default function App() {
         />
         <NewVersionBanner authenticated={authenticated} wrapClass="max-w-[1400px] mx-auto px-6 pt-4" />
         <VolBanner authenticated={authenticated} account={selectedAccount} onOpenRisk={() => setTab('risk')} wrapClass="max-w-[1400px] mx-auto px-6 pt-4" />
+        <DataHealthBanner authenticated={authenticated} onOpen={openHealth} wrapClass="max-w-[1400px] mx-auto px-6 pt-4" />
         {pages}
       </main>
     </div>
