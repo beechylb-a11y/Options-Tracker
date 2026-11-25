@@ -17,6 +17,7 @@ import { settleShadows } from '../utils/shadowSettle';
 import { fillQualitySummary } from '../engine/fills';
 import { storyTrades, normStrategy } from '../utils/tradeStory';
 import { StoryCard, EdgeBars, CalibrationBars, RHistogram, StructureGrid } from '../components/StoryViews';
+import HonestyPanel from '../components/HonestyPanel';
 
 export default function Analytics({ authenticated, account, accounts = [] }) {
   const [tracker, setTracker] = useState([]);
@@ -246,6 +247,8 @@ function ShadowVerdicts({ account }) {
   const sum = shadowSummary(rows);
   const money = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(0);
   return (
+    <div className="space-y-4">
+    {rows.length > 0 && <HonestyPanel rows={rows} />}
     <div className="card" data-testid="shadow-verdicts">
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <div>
@@ -313,6 +316,7 @@ function ShadowVerdicts({ account }) {
           <div className="text-text-faint text-xs mt-2">* entry priced at the model's fair value — no fill was typed on the ticket.</div>
         </div>
       )}
+    </div>
     </div>
   );
 }
